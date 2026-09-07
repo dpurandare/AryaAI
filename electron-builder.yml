@@ -1,0 +1,24 @@
+appId: com.sachiv.app
+productName: Sachiv
+directories:
+  buildResources: build
+  output: release
+files:
+  - out/**/*
+  - '!**/.vscode/*'
+mac:
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: false # set to true once an Apple Developer notarization profile is configured
+  target:
+    - dmg
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Utility
+publish: null # wire up an update feed (e.g. GitHub Releases) once CI/CD is set up
