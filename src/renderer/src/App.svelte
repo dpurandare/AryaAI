@@ -114,33 +114,39 @@
     const userMsg: DisplayMessage = { id: crypto.randomUUID(), role: 'user', text }
     const assistantMsg: DisplayMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', pending: true }
     messages.push(userMsg, assistantMsg)
+    // messages is $state, and push() deep-proxies the pushed objects — mutate the
+    // in-place proxy via this index, not the pre-proxy `assistantMsg` reference,
+    // or Svelte's reactive graph never sees the updates (verified live: without
+    // this, the pending spinner freezes forever even though the stream completes).
+    const assistantIdx = messages.length - 1
 
     const { streamId } = await window.sachiv.sendChatMessage(activeId, text)
 
     const unsubscribe = window.sachiv.onChatStreamEvent((payload) => {
       if (payload.streamId !== streamId) return
       const event = payload.event
+      const msg = messages[assistantIdx]
       if (event.type === 'text_delta') {
-        assistantMsg.text += event.text
+        msg.text += event.text
       } else if (event.type === 'tool_use_start') {
-        assistantMsg.toolCalls = [...(assistantMsg.toolCalls ?? []), { id: event.id, name: event.name, input: '' }]
+        msg.toolCalls = [...(msg.toolCalls ?? []), { id: event.id, name: event.name, input: '' }]
       } else if (event.type === 'tool_use_delta') {
-        const call = assistantMsg.toolCalls?.find((c) => c.id === event.id)
+        const call = msg.toolCalls?.find((c) => c.id === event.id)
         if (call) call.input += event.partialInput
       } else if (event.type === 'tool_result') {
-        const call = assistantMsg.toolCalls?.find((c) => c.id === event.toolUseId)
+        const call = msg.toolCalls?.find((c) => c.id === event.toolUseId)
         if (call) {
           call.result = event.content
           call.isError = event.isError
         }
       } else if (event.type === 'error') {
-        assistantMsg.text = `Error: ${event.message}`
-        assistantMsg.pending = false
+        msg.text = `Error: ${event.message}`
+        msg.pending = false
         sending = false
         unsubscribe()
       } else if (event.type === 'message_stop') {
         if (event.stopReason === 'tool_use') return
-        assistantMsg.pending = false
+        msg.pending = false
         sending = false
         unsubscribe()
       }
