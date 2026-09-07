@@ -11,9 +11,9 @@ The order we'll actually build in, referencing item numbers below. Everything st
 3. Single-agent chat loop, end-to-end (streaming text, no tools yet) — **53**
 4. Session list wired to real data + new-session flow — **26**, **23**
 5. First tool + human-in-loop confirmation — **31**, **34**, **39**, **54**
-6. Orchestrator (routing + agent handoff) — **27**, **28**
-7. Test harness locked in against the skeleton above — **57**, **58**, **59**
-8. Cross-platform CI (build/typecheck/test on mac/win/linux) — **10**
+6. Cross-platform CI (build/typecheck/test on mac/win/linux) — **10**
+7. Orchestrator (routing + agent handoff) — **27**, **28**
+8. Test harness locked in against the skeleton above — **57**, **58**, **59**
 9. Widen tools — **33**, **35**, **36**, **37**, **38**, **32**
 10. Widen providers — **16**, **17**, **18**, **19**, **20**
 11. MCP client + config — **42**, **43**, **44**, **45**

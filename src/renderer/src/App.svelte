@@ -37,7 +37,29 @@
   let hasKey = $state(false)
   let currentModel = $state('')
   let sidebarCollapsed = $state(false)
+  let sidebarWidth = $state(260)
   let isMac = $state(false)
+
+  const SIDEBAR_MIN_WIDTH = 180
+  const SIDEBAR_MAX_WIDTH = 480
+
+  function startSidebarResize(event: PointerEvent): void {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = sidebarWidth
+
+    function onMove(moveEvent: PointerEvent): void {
+      const next = startWidth + (moveEvent.clientX - startX)
+      sidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, next))
+    }
+    function onUp(): void {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.sachiv.setSetting('sidebarWidth', String(sidebarWidth))
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
   let pendingConfirm = $state<ToolConfirmRequestPayload | null>(null)
   let autoApproveTools = $state(false)
 
@@ -210,6 +232,10 @@
     pendingConfirm = payload
   })
 
+  window.sachiv.getSetting('sidebarWidth').then((stored) => {
+    if (stored) sidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Number(stored)))
+  })
+
   initProvider()
   loadSessions()
 </script>
@@ -227,7 +253,10 @@
     </svg>
   </button>
 </div>
-<main class:sidebar-collapsed={sidebarCollapsed}>
+<main
+  class:sidebar-collapsed={sidebarCollapsed}
+  style={sidebarCollapsed ? undefined : `grid-template-columns: ${sidebarWidth}px 4px 1fr`}
+>
   <aside>
     <SessionList {sessions} {activeId} onSelect={selectSession} onNew={newSession} onDelete={removeSession} />
     <button class="user-row" onclick={() => (showSettings = true)}>
@@ -238,6 +267,15 @@
       </svg>
     </button>
   </aside>
+  {#if !sidebarCollapsed}
+    <div
+      class="sidebar-resize-handle"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      onpointerdown={startSidebarResize}
+    ></div>
+  {/if}
   <section>
     <ChatView
       {messages}
@@ -337,22 +375,46 @@
   }
   main {
     display: grid;
-    grid-template-columns: 260px 1fr;
+    grid-template-columns: 260px 4px 1fr;
     flex: 1;
     min-height: 0;
   }
   main.sidebar-collapsed {
     grid-template-columns: 0 1fr;
   }
+  .sidebar-resize-handle {
+    cursor: col-resize;
+    background: transparent;
+    position: relative;
+  }
+  .sidebar-resize-handle::after {
+    content: '';
+    position: absolute;
+    inset: 0 1.5px;
+    border-radius: 2px;
+  }
+  .sidebar-resize-handle:hover::after,
+  .sidebar-resize-handle:active::after {
+    background: var(--accent);
+  }
   aside {
     display: flex;
     flex-direction: column;
+    min-height: 0;
     background: var(--sidebar-bg);
     border-right: 1px solid var(--border);
     overflow: hidden;
   }
   main.sidebar-collapsed aside {
     border-right: none;
+  }
+  section {
+    /* Grid items default to min-height: auto, so without this the chat area
+       grows to fit every message instead of being clipped to the available
+       space — the inner ChatView's overflow-y:auto never gets a chance to
+       kick in and messages just get cut off with no way to scroll. */
+    min-height: 0;
+    overflow: hidden;
   }
   .user-row {
     display: flex;
