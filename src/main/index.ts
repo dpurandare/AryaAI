@@ -9,8 +9,12 @@ function createMainWindow(): void {
     height: 800,
     show: false,
     autoHideMenuBar: true,
+    backgroundColor: '#171717',
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 16 } }
+      : {}),
     webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
+      preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
@@ -30,6 +34,11 @@ function createMainWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+
+// Prevents the app from sharing Electron's generic default userData
+// directory (~/.../Electron) with other unpackaged Electron apps on the
+// same machine — each app must have its own isolated data/credentials.
+app.setName('Sachiv')
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.sachiv.app')

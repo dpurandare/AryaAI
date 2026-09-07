@@ -20,7 +20,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
-    "better-sqlite3": "^13.0.3"
+    "better-sqlite3": "^13.0.3",
+    "openai": "^7.10.0"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^2.0.0",
