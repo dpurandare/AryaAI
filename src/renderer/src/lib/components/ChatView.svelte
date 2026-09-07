@@ -1,5 +1,6 @@
 <script lang="ts">
   import ModelPicker from './ModelPicker.svelte'
+  import { AGENT_ROLES, AGENT_ROLE_LABELS, type AgentRole } from '@shared/agents'
 
   interface ToolCallDisplay {
     id: string
@@ -9,12 +10,19 @@
     isError?: boolean
   }
 
+  interface DisplaySegment {
+    id: string
+    kind: 'text' | 'tool'
+    agentRole?: AgentRole
+    text?: string
+    toolCall?: ToolCallDisplay
+  }
+
   interface DisplayMessage {
     id: string
     role: 'user' | 'assistant'
-    text: string
     pending?: boolean
-    toolCalls?: ToolCallDisplay[]
+    segments: DisplaySegment[]
   }
 
   interface Provider {
@@ -38,7 +46,7 @@
     messages: DisplayMessage[]
     statusLine: string
     sending: boolean
-    onSend: (text: string) => void
+    onSend: (text: string, forcedRole?: AgentRole | null) => void
     providers: readonly Provider[]
     providerId: string
     model: string
@@ -59,11 +67,24 @@
   const PREVIEW_MAX_CHARS = 500
   const PREVIEW_MAX_LINES = 10
 
+  /** `null` = Auto (orchestrator decides). Sticky across sends until cycled again. */
+  let forcedRole: AgentRole | null = $state(null)
+  const MODE_CYCLE: (AgentRole | null)[] = [null, ...AGENT_ROLES]
+
+  function cycleMode(direction: 1 | -1): void {
+    const idx = MODE_CYCLE.indexOf(forcedRole)
+    forcedRole = MODE_CYCLE[(idx + direction + MODE_CYCLE.length) % MODE_CYCLE.length]
+  }
+
+  function modeLabel(role: AgentRole | null): string {
+    return role ? AGENT_ROLE_LABELS[role] : 'Auto'
+  }
+
   function submit(): void {
     const text = draft.trim()
     if (!text || sending) return
     draft = ''
-    onSend(text)
+    onSend(text, forcedRole)
   }
 
   function toggleExpand(id: string): void {
@@ -88,34 +109,51 @@
     {/if}
     {#each messages as message (message.id)}
       <div class="bubble {message.role}">
-        {#each message.toolCalls ?? [] as call (call.id)}
-          <div class="tool-call">
-            <div class="tool-call-head">
-              <span class="tool-icon">⚙</span>
-              <code>{call.name}</code>
-              <span class="tool-input">{call.input}</span>
-            </div>
-            {#if call.result !== undefined}
-              <div class="tool-result" class:error={call.isError}>{call.result}</div>
-            {:else}
-              <div class="tool-result pending">Waiting for confirmation...</div>
-            {/if}
-          </div>
-        {/each}
-        {#if message.text || !message.toolCalls?.length}
-          {#if message.role === 'user'}
-            {@const preview = previewOf(message.text)}
-            {@const expanded = Boolean(expandedIds[message.id])}
-            <span class="text">{expanded ? message.text : preview.text}{#if preview.truncated && !expanded}…{/if}</span>
-            {#if preview.truncated}
-              <button class="expand-toggle" onclick={() => toggleExpand(message.id)}>
-                {expanded ? 'Show less' : 'Show more'}
-              </button>
-            {/if}
-          {:else}
-            <span class="text">{message.text}{#if message.pending}▌{/if}</span>
+        {#each message.segments as segment, i (segment.id)}
+          {@const prevRole = i > 0 ? message.segments[i - 1].agentRole : undefined}
+          {#if segment.agentRole && segment.agentRole !== prevRole}
+            <div class="agent-chip">{AGENT_ROLE_LABELS[segment.agentRole]} agent</div>
           {/if}
-        {/if}
+          {#if segment.kind === 'tool' && segment.toolCall}
+            {@const isDelegate = segment.toolCall.name.startsWith('delegate_to_')}
+            <div class="tool-call">
+              <div class="tool-call-head">
+                <span class="tool-icon">⚙</span>
+                <code>{segment.toolCall.name}</code>
+                <span class="tool-input">{segment.toolCall.input}</span>
+              </div>
+              {#if !isDelegate}
+                {#if segment.toolCall.result !== undefined}
+                  <div class="tool-result" class:error={segment.toolCall.isError}>{segment.toolCall.result}</div>
+                {:else}
+                  <div class="tool-result pending">Waiting for confirmation...</div>
+                {/if}
+              {:else if segment.toolCall.result === undefined}
+                <!-- Delegate calls need no confirmation and no result box of their own —
+                     the specialist's own attributed segments right below already show the
+                     answer; showing it again here (the tool_result content the outer model
+                     needs for its own context) would just duplicate it. -->
+                <div class="tool-result pending">Working...</div>
+              {/if}
+            </div>
+          {:else if segment.kind === 'text'}
+            {#if message.role === 'user'}
+              {@const preview = previewOf(segment.text ?? '')}
+              {@const expanded = Boolean(expandedIds[segment.id])}
+              <span class="text"
+                >{expanded ? segment.text : preview.text}{#if preview.truncated && !expanded}…{/if}</span
+              >
+              {#if preview.truncated}
+                <button class="expand-toggle" onclick={() => toggleExpand(segment.id)}>
+                  {expanded ? 'Show less' : 'Show more'}
+                </button>
+              {/if}
+            {:else}
+              <span class="text">{segment.text}</span>
+            {/if}
+          {/if}
+        {/each}
+        {#if message.pending}<span class="text cursor">▌</span>{/if}
       </div>
     {/each}
   </div>
@@ -130,6 +168,12 @@
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
             submit()
+          } else if (e.key === 'Tab' && e.ctrlKey) {
+            // Cmd+Tab is the OS app-switcher and can't be intercepted by any app,
+            // hence Ctrl+Tab here — capturable within a focused field, and the
+            // same convention browsers/editors already use for cycling tabs.
+            e.preventDefault()
+            cycleMode(e.shiftKey ? -1 : 1)
           }
         }}
       ></textarea>
@@ -137,7 +181,17 @@
     </form>
 
     <div class="status-bar">
-      <span class="status-text">{statusLine}</span>
+      <div class="status-left">
+        <span class="status-text">{statusLine}</span>
+        <button
+          class="mode-picker"
+          onclick={() => cycleMode(1)}
+          title="Ctrl+Tab to cycle agent, Ctrl+Shift+Tab to reverse"
+        >
+          <span class="dot"></span>
+          Agent: {modeLabel(forcedRole)}
+        </button>
+      </div>
       <ModelPicker
         {providers}
         {providerId}
@@ -184,6 +238,20 @@
   .bubble.assistant {
     align-self: flex-start;
     background: var(--panel);
+  }
+  .agent-chip {
+    display: inline-block;
+    margin-bottom: 0.3rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+  .cursor {
+    color: var(--text-muted);
   }
   .expand-toggle {
     display: block;
@@ -288,8 +356,36 @@
     justify-content: space-between;
     padding: 0.4rem 0.25rem 0;
   }
+  .status-left {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
   .status-text {
     font-size: 0.72rem;
     color: var(--text-muted);
+  }
+  .mode-picker {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    cursor: pointer;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+  }
+  .mode-picker:hover {
+    background: var(--panel-hover);
+    color: var(--text);
+  }
+  .mode-picker .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
   }
 </style>

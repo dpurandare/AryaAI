@@ -28,13 +28,14 @@ Opens the Electron app with hot reload on the renderer. Closing the window (or C
 
 ## Current state (review this before testing)
 
-Work Order stages 1–5 work end to end (see `TASKS.md`):
+Work Order stages 1–7 work end to end (see `TASKS.md`):
 
 - A window opens with a resizable session list on the left (create/switch/delete — the active session can't be deleted) and a chat pane on the right.
 - Click **Settings** (bottom of the session list) to pick a provider (Anthropic or OpenAI), paste an API key, and enter a model name (e.g. `claude-sonnet-5`, `gpt-4o`) — whatever you have access to. This is stored via the OS keychain (`safeStorage`), never in a plaintext file. The provider/model choice persists across restarts.
 - Type a message and hit Enter (Shift+Enter for a newline) to chat. Responses stream in live and scroll correctly once they overflow the window. Long pasted/typed messages collapse with a "Show more" toggle. Everything is persisted to a local SQLite database (`sachiv.db` under the app's userData folder) and reloads when you switch sessions or restart.
 - The assistant can read/list/write files inside a dedicated workspace folder (`~/Documents/Sachiv Workspace`). Any file write asks for approval first (approve/deny/edit the JSON args, with a session-level auto-approve toggle) before it runs.
-- Not yet built: the multi-agent orchestrator (routing/handoff between roles — single agent only for now), session export, context/token usage display, and Google/Ollama adapters.
+- **Multi-agent orchestrator:** the assistant can hand a step off to a specialist (Planning, Research, Coding, Terminal/DevOps, Data, Distribution) when a task fits one — shown live as a "Coding agent" (etc.) label on the attributed part of the reply. Only Coding has real tools today (the file-ops above); the rest are reasoning-only until their tools land later in the work order. Press **Ctrl+Tab** (**Ctrl+Shift+Tab** to reverse) in the composer, or click the "Agent: ..." pill next to the model picker, to force a specific specialist instead of letting the orchestrator decide.
+- Not yet built: session export, context/token usage display, and Google/Ollama adapters.
 
 This section will be updated as each Work Order stage lands, so a reviewer always knows what to actually try.
 

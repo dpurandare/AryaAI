@@ -58,8 +58,8 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [x] 26. Session list panel wired to real data (resizable, scrollable)
 
 ## Multi-agent system
-- [ ] 27. Implement `Orchestrator.run` (routing step -> agent handoff -> result; tool-call loop below moves here once it lands)
-- [ ] 28. Define system prompts/tool sets per agent role (Planning, Research, Coding, Terminal/DevOps, Data, Distribution)
+- [x] 27. Implement `Orchestrator.run` (routing step -> agent handoff -> result; tool-call loop below moves here once it lands)
+- [x] 28. Define system prompts/tool sets per agent role (Planning, Research, Coding, Terminal/DevOps, Data, Distribution)
 - [ ] 29. Cancellation & steering: AbortController plumbed from UI -> orchestrator -> provider stream
 - [ ] 30. Mid-run steering: edit a pending tool action before it executes
 

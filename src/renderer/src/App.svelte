@@ -9,7 +9,7 @@
     type MessageDto,
     type ToolConfirmRequestPayload
   } from '@shared/ipc-contract'
-  import type { ContentBlock } from '@shared/protocol'
+  import type { AgentRole } from '@shared/agents'
 
   interface ToolCallDisplay {
     id: string
@@ -19,12 +19,26 @@
     isError?: boolean
   }
 
+  /**
+   * A message's content in the order it actually happened. `agentRole` set
+   * means a specialist (not the orchestrator itself) produced that segment
+   * — see main/agents/orchestrator.ts. Replaces a flat {text, toolCalls}
+   * shape so delegated content can be visually attributed and interleaving
+   * (text, then a tool call, then more text) renders correctly.
+   */
+  interface DisplaySegment {
+    id: string
+    kind: 'text' | 'tool'
+    agentRole?: AgentRole
+    text?: string
+    toolCall?: ToolCallDisplay
+  }
+
   interface DisplayMessage {
     id: string
     role: 'user' | 'assistant'
-    text: string
     pending?: boolean
-    toolCalls?: ToolCallDisplay[]
+    segments: DisplaySegment[]
   }
 
   let statusLine = $state('Connecting...')
@@ -65,7 +79,7 @@
 
   function mapMessagesToDisplay(records: MessageDto[]): DisplayMessage[] {
     const result: DisplayMessage[] = []
-    const toolCallsById = new Map<string, ToolCallDisplay>()
+    const toolSegmentsById = new Map<string, DisplaySegment>()
 
     for (const m of records) {
       const isPureToolResult =
@@ -73,27 +87,31 @@
       if (isPureToolResult) {
         for (const b of m.content) {
           if (b.type !== 'tool_result') continue
-          const call = toolCallsById.get(b.toolUseId)
-          if (call) {
-            call.result = b.content
-            call.isError = b.isError
+          const seg = toolSegmentsById.get(b.toolUseId)
+          if (seg?.toolCall) {
+            seg.toolCall.result = b.content
+            seg.toolCall.isError = b.isError
           }
         }
         continue
       }
 
-      const text = m.content
-        .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-        .map((b) => b.text)
-        .join('')
-      const toolCalls: ToolCallDisplay[] = m.content
-        .filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
-        .map((b) => {
-          const call: ToolCallDisplay = { id: b.id, name: b.name, input: JSON.stringify(b.input) }
-          toolCallsById.set(b.id, call)
-          return call
-        })
-      result.push({ id: m.id, role: m.role, text, toolCalls: toolCalls.length ? toolCalls : undefined })
+      const segments: DisplaySegment[] = []
+      for (const b of m.content) {
+        if (b.type === 'text') {
+          segments.push({ id: crypto.randomUUID(), kind: 'text', agentRole: b.agentRole, text: b.text })
+        } else if (b.type === 'tool_use') {
+          const seg: DisplaySegment = {
+            id: crypto.randomUUID(),
+            kind: 'tool',
+            agentRole: b.agentRole,
+            toolCall: { id: b.id, name: b.name, input: JSON.stringify(b.input) }
+          }
+          segments.push(seg)
+          toolSegmentsById.set(b.id, seg)
+        }
+      }
+      result.push({ id: m.id, role: m.role, segments })
     }
     return result
   }
@@ -125,7 +143,17 @@
     sessions = sessions.filter((s) => s.id !== id)
   }
 
-  async function sendMessage(text: string): Promise<void> {
+  /** Appends to the trailing segment if it's the same kind+speaker, else starts a new one — keeps consecutive same-speaker text as one flowing block. */
+  function appendTextSegment(msg: DisplayMessage, text: string, agentRole?: AgentRole): void {
+    const last = msg.segments[msg.segments.length - 1]
+    if (last && last.kind === 'text' && last.agentRole === agentRole) {
+      last.text = (last.text ?? '') + text
+    } else {
+      msg.segments.push({ id: crypto.randomUUID(), kind: 'text', agentRole, text })
+    }
+  }
+
+  async function sendMessage(text: string, forcedRole?: AgentRole | null): Promise<void> {
     if (sending) return
     if (!hasKey) {
       showSettings = true
@@ -133,8 +161,17 @@
     }
     sending = true
 
-    const userMsg: DisplayMessage = { id: crypto.randomUUID(), role: 'user', text }
-    const assistantMsg: DisplayMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', pending: true }
+    const userMsg: DisplayMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      segments: [{ id: crypto.randomUUID(), kind: 'text', text }]
+    }
+    const assistantMsg: DisplayMessage = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      segments: [],
+      pending: true
+    }
     messages.push(userMsg, assistantMsg)
     // messages is $state, and push() deep-proxies the pushed objects — mutate the
     // in-place proxy via this index, not the pre-proxy `assistantMsg` reference,
@@ -142,32 +179,40 @@
     // this, the pending spinner freezes forever even though the stream completes).
     const assistantIdx = messages.length - 1
 
-    const { streamId } = await window.sachiv.sendChatMessage(activeId, text)
+    const { streamId } = await window.sachiv.sendChatMessage(activeId, text, forcedRole)
 
     const unsubscribe = window.sachiv.onChatStreamEvent((payload) => {
       if (payload.streamId !== streamId) return
       const event = payload.event
       const msg = messages[assistantIdx]
       if (event.type === 'text_delta') {
-        msg.text += event.text
+        appendTextSegment(msg, event.text, event.agentRole)
       } else if (event.type === 'tool_use_start') {
-        msg.toolCalls = [...(msg.toolCalls ?? []), { id: event.id, name: event.name, input: '' }]
+        msg.segments.push({
+          id: crypto.randomUUID(),
+          kind: 'tool',
+          agentRole: event.agentRole,
+          toolCall: { id: event.id, name: event.name, input: '' }
+        })
       } else if (event.type === 'tool_use_delta') {
-        const call = msg.toolCalls?.find((c) => c.id === event.id)
-        if (call) call.input += event.partialInput
+        const seg = msg.segments.find((s) => s.kind === 'tool' && s.toolCall?.id === event.id)
+        if (seg?.toolCall) seg.toolCall.input += event.partialInput
       } else if (event.type === 'tool_result') {
-        const call = msg.toolCalls?.find((c) => c.id === event.toolUseId)
+        const seg = msg.segments.find((s) => s.kind === 'tool' && s.toolCall?.id === event.toolUseId)
+        const call = seg?.toolCall
         if (call) {
           call.result = event.content
           call.isError = event.isError
         }
       } else if (event.type === 'error') {
-        msg.text = `Error: ${event.message}`
+        appendTextSegment(msg, `Error: ${event.message}`)
         msg.pending = false
         sending = false
         unsubscribe()
       } else if (event.type === 'message_stop') {
-        if (event.stopReason === 'tool_use') return
+        // A tagged stop is a nested specialist's own round ending, not the whole
+        // exchange — only an untagged (top-level) non-tool_use stop is truly final.
+        if (event.stopReason === 'tool_use' || event.agentRole) return
         msg.pending = false
         sending = false
         unsubscribe()

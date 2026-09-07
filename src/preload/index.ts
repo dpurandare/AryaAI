@@ -8,6 +8,7 @@ import {
   type ChatStreamEventPayload,
   type ToolConfirmRequestPayload
 } from '@shared/ipc-contract'
+import type { AgentRole } from '@shared/agents'
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(IpcChannel.AppGetInfo),
@@ -32,8 +33,12 @@ const api = {
   setSetting: (key: string, value: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.SettingsSet, key, value),
 
-  sendChatMessage: (sessionId: string, text: string): Promise<{ streamId: string }> =>
-    ipcRenderer.invoke(IpcChannel.ChatSend, sessionId, text),
+  sendChatMessage: (
+    sessionId: string,
+    text: string,
+    forcedRole?: AgentRole | null
+  ): Promise<{ streamId: string }> =>
+    ipcRenderer.invoke(IpcChannel.ChatSend, sessionId, text, forcedRole ?? null),
 
   onChatStreamEvent: (callback: (payload: ChatStreamEventPayload) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, payload: ChatStreamEventPayload): void =>
