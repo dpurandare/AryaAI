@@ -18,6 +18,8 @@ export type StreamEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_use_start'; id: string; name: string }
   | { type: 'tool_use_delta'; id: string; partialInput: string }
+  /** Synthesized by the main process once a tool call finishes running — not emitted by providers. */
+  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
   | { type: 'message_stop'; stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'aborted' }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   | { type: 'error'; message: string }

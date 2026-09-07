@@ -2,13 +2,29 @@
   import SessionList from './lib/components/SessionList.svelte'
   import ChatView from './lib/components/ChatView.svelte'
   import SettingsPanel from './lib/components/SettingsPanel.svelte'
-  import { SUPPORTED_PROVIDERS, type SessionDto, type MessageDto } from '@shared/ipc-contract'
+  import ToolConfirmDialog from './lib/components/ToolConfirmDialog.svelte'
+  import {
+    SUPPORTED_PROVIDERS,
+    type SessionDto,
+    type MessageDto,
+    type ToolConfirmRequestPayload
+  } from '@shared/ipc-contract'
+  import type { ContentBlock } from '@shared/protocol'
+
+  interface ToolCallDisplay {
+    id: string
+    name: string
+    input: string
+    result?: string
+    isError?: boolean
+  }
 
   interface DisplayMessage {
     id: string
     role: 'user' | 'assistant'
     text: string
     pending?: boolean
+    toolCalls?: ToolCallDisplay[]
   }
 
   let statusLine = $state('Connecting...')
@@ -22,19 +38,48 @@
   let currentModel = $state('')
   let sidebarCollapsed = $state(false)
   let isMac = $state(false)
+  let pendingConfirm = $state<ToolConfirmRequestPayload | null>(null)
+  let autoApproveTools = $state(false)
 
-  function toDisplay(m: MessageDto): DisplayMessage {
-    const text = m.content
-      .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-      .map((b) => b.text)
-      .join('')
-    return { id: m.id, role: m.role, text }
+  function mapMessagesToDisplay(records: MessageDto[]): DisplayMessage[] {
+    const result: DisplayMessage[] = []
+    const toolCallsById = new Map<string, ToolCallDisplay>()
+
+    for (const m of records) {
+      const isPureToolResult =
+        m.content.length > 0 && m.content.every((b) => b.type === 'tool_result')
+      if (isPureToolResult) {
+        for (const b of m.content) {
+          if (b.type !== 'tool_result') continue
+          const call = toolCallsById.get(b.toolUseId)
+          if (call) {
+            call.result = b.content
+            call.isError = b.isError
+          }
+        }
+        continue
+      }
+
+      const text = m.content
+        .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+        .map((b) => b.text)
+        .join('')
+      const toolCalls: ToolCallDisplay[] = m.content
+        .filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
+        .map((b) => {
+          const call: ToolCallDisplay = { id: b.id, name: b.name, input: JSON.stringify(b.input) }
+          toolCallsById.set(b.id, call)
+          return call
+        })
+      result.push({ id: m.id, role: m.role, text, toolCalls: toolCalls.length ? toolCalls : undefined })
+    }
+    return result
   }
 
   async function selectSession(id: string): Promise<void> {
     activeId = id
     const records = await window.sachiv.listMessages(id)
-    messages = records.map(toDisplay)
+    messages = mapMessagesToDisplay(records)
   }
 
   async function loadSessions(): Promise<void> {
@@ -77,17 +122,41 @@
       const event = payload.event
       if (event.type === 'text_delta') {
         assistantMsg.text += event.text
+      } else if (event.type === 'tool_use_start') {
+        assistantMsg.toolCalls = [...(assistantMsg.toolCalls ?? []), { id: event.id, name: event.name, input: '' }]
+      } else if (event.type === 'tool_use_delta') {
+        const call = assistantMsg.toolCalls?.find((c) => c.id === event.id)
+        if (call) call.input += event.partialInput
+      } else if (event.type === 'tool_result') {
+        const call = assistantMsg.toolCalls?.find((c) => c.id === event.toolUseId)
+        if (call) {
+          call.result = event.content
+          call.isError = event.isError
+        }
       } else if (event.type === 'error') {
         assistantMsg.text = `Error: ${event.message}`
         assistantMsg.pending = false
         sending = false
         unsubscribe()
       } else if (event.type === 'message_stop') {
+        if (event.stopReason === 'tool_use') return
         assistantMsg.pending = false
         sending = false
         unsubscribe()
       }
     })
+  }
+
+  function approveTool(input: Record<string, unknown>): void {
+    if (!pendingConfirm) return
+    window.sachiv.respondToolConfirm(pendingConfirm.toolUseId, true, input)
+    pendingConfirm = null
+  }
+
+  function denyTool(): void {
+    if (!pendingConfirm) return
+    window.sachiv.respondToolConfirm(pendingConfirm.toolUseId, false)
+    pendingConfirm = null
   }
 
   async function loadProviderState(id: string): Promise<void> {
@@ -126,6 +195,14 @@
     .catch((err: unknown) => {
       statusLine = `IPC error: ${String(err)}`
     })
+
+  window.sachiv.onToolConfirmRequest((payload) => {
+    if (autoApproveTools) {
+      window.sachiv.respondToolConfirm(payload.toolUseId, true, payload.input)
+      return
+    }
+    pendingConfirm = payload
+  })
 
   initProvider()
   loadSessions()
@@ -178,6 +255,18 @@
     {hasKey}
     onSave={saveApiKey}
     onClose={() => (showSettings = false)}
+  />
+{/if}
+
+{#if pendingConfirm}
+  <ToolConfirmDialog
+    name={pendingConfirm.name}
+    description={pendingConfirm.description}
+    input={pendingConfirm.input}
+    autoApprove={autoApproveTools}
+    onApprove={approveTool}
+    onDeny={denyTool}
+    onToggleAutoApprove={(value) => (autoApproveTools = value)}
   />
 {/if}
 

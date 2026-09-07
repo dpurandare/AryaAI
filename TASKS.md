@@ -58,22 +58,22 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [x] 26. Session list panel wired to real data (resizable, scrollable)
 
 ## Multi-agent system
-- [ ] 27. Implement `Orchestrator.run` (routing step -> agent handoff -> result)
+- [ ] 27. Implement `Orchestrator.run` (routing step -> agent handoff -> result; tool-call loop below moves here once it lands)
 - [ ] 28. Define system prompts/tool sets per agent role (Planning, Research, Coding, Terminal/DevOps, Data, Distribution)
 - [ ] 29. Cancellation & steering: AbortController plumbed from UI -> orchestrator -> provider stream
 - [ ] 30. Mid-run steering: edit a pending tool action before it executes
 
 ## Tools
-- [ ] 31. Tool registry + `Tool` interface wiring into orchestrator
+- [x] 31. Tool registry + `Tool` interface wired into the chat loop (moves to the orchestrator when #27 lands)
 - [ ] 32. Web search tool
 - [ ] 33. Shell execution tool (through workspace guard)
-- [ ] 34. File operations tool (through workspace guard)
+- [x] 34. File operations tool (through workspace guard): `read_file`, `list_directory`, `write_file`
 - [ ] 35. Database access tool (schema introspection + generated SQL execution; writes require confirmation)
 - [ ] 36. AWS tool (shells out to configured AWS CLI)
 - [ ] 37. Azure tool (shells out to configured Azure CLI)
 - [ ] 38. GCP tool (shells out to configured gcloud CLI)
-- [ ] 39. Human-in-loop confirmation flow for all `mutates: true` tool calls
-- [ ] 40. Auto-approve configuration (per tool / per workspace)
+- [x] 39. Human-in-loop confirmation flow for all `mutates: true` tool calls
+- [ ] 40. Auto-approve configuration (per tool / per workspace) — session-only toggle lives in #54 for now; persisted per-tool/per-workspace config still open
 - [ ] 41. Workspace boundary configuration UI
 
 ## MCP
@@ -92,8 +92,8 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [ ] 52. Agent-driven relevance selection (decide what enters context, not everything)
 
 ## UI
-- [ ] 53. Chat view: streaming message rendering (text done; tool-use block rendering pending tools work)
-- [ ] 54. Tool-call confirmation dialog (approve/deny/edit, auto-approve toggle)
+- [x] 53. Chat view: streaming message rendering (text + tool-use/tool-result block rendering)
+- [x] 54. Tool-call confirmation dialog (approve/deny/edit, session auto-approve toggle)
 - [ ] 55. Settings screens: providers/keys, MCP servers, workspace boundaries, auto-approve rules
 - [ ] 56. Context/cost meter component
 

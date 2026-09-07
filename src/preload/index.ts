@@ -5,7 +5,8 @@ import {
   type AppInfo,
   type SessionDto,
   type MessageDto,
-  type ChatStreamEventPayload
+  type ChatStreamEventPayload,
+  type ToolConfirmRequestPayload
 } from '@shared/ipc-contract'
 
 const api = {
@@ -39,7 +40,19 @@ const api = {
       callback(payload)
     ipcRenderer.on(IpcChannel.ChatStreamEvent, listener)
     return () => ipcRenderer.removeListener(IpcChannel.ChatStreamEvent, listener)
-  }
+  },
+
+  onToolConfirmRequest: (callback: (payload: ToolConfirmRequestPayload) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, payload: ToolConfirmRequestPayload): void =>
+      callback(payload)
+    ipcRenderer.on(IpcChannel.ToolConfirmRequest, listener)
+    return () => ipcRenderer.removeListener(IpcChannel.ToolConfirmRequest, listener)
+  },
+  respondToolConfirm: (
+    toolUseId: string,
+    approved: boolean,
+    input?: Record<string, unknown>
+  ): Promise<void> => ipcRenderer.invoke(IpcChannel.ToolConfirmRespond, toolUseId, approved, input)
 }
 
 export type SachivApi = typeof api

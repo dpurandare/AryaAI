@@ -21,7 +21,10 @@ export const IpcChannel = {
   SettingsSet: 'settings:set',
 
   ChatSend: 'chat:send',
-  ChatStreamEvent: 'chat:stream-event'
+  ChatStreamEvent: 'chat:stream-event',
+
+  ToolConfirmRequest: 'tools:confirm-request',
+  ToolConfirmRespond: 'tools:confirm-respond'
 } as const
 
 /** Providers wired into the app. Extend as adapters land (TASKS.md #16-18). */
@@ -57,4 +60,13 @@ export interface ChatStreamEventPayload {
   streamId: string
   sessionId: string
   event: StreamEvent
+}
+
+export interface ToolConfirmRequestPayload {
+  streamId: string
+  sessionId: string
+  toolUseId: string
+  name: string
+  input: Record<string, unknown>
+  description: string
 }

@@ -1,11 +1,20 @@
 <script lang="ts">
   import ModelPicker from './ModelPicker.svelte'
 
+  interface ToolCallDisplay {
+    id: string
+    name: string
+    input: string
+    result?: string
+    isError?: boolean
+  }
+
   interface DisplayMessage {
     id: string
     role: 'user' | 'assistant'
     text: string
     pending?: boolean
+    toolCalls?: ToolCallDisplay[]
   }
 
   interface Provider {
@@ -56,7 +65,23 @@
     {/if}
     {#each messages as message (message.id)}
       <div class="bubble {message.role}">
-        <span class="text">{message.text}{#if message.pending}▌{/if}</span>
+        {#each message.toolCalls ?? [] as call (call.id)}
+          <div class="tool-call">
+            <div class="tool-call-head">
+              <span class="tool-icon">⚙</span>
+              <code>{call.name}</code>
+              <span class="tool-input">{call.input}</span>
+            </div>
+            {#if call.result !== undefined}
+              <div class="tool-result" class:error={call.isError}>{call.result}</div>
+            {:else}
+              <div class="tool-result pending">Waiting for confirmation...</div>
+            {/if}
+          </div>
+        {/each}
+        {#if message.text || !message.toolCalls?.length}
+          <span class="text">{message.text}{#if message.pending}▌{/if}</span>
+        {/if}
       </div>
     {/each}
   </div>
@@ -125,6 +150,47 @@
   .bubble.assistant {
     align-self: flex-start;
     background: var(--panel);
+  }
+  .tool-call {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.65rem;
+    margin-bottom: 0.4rem;
+    font-size: 0.78rem;
+  }
+  .tool-call-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    color: var(--text-muted);
+  }
+  .tool-icon {
+    color: var(--accent);
+  }
+  .tool-call-head code {
+    color: var(--text);
+    font-family: ui-monospace, monospace;
+  }
+  .tool-input {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, monospace;
+  }
+  .tool-result {
+    font-family: ui-monospace, monospace;
+    white-space: pre-wrap;
+    color: var(--text-muted);
+  }
+  .tool-result.pending {
+    font-style: italic;
+  }
+  .tool-result.error {
+    color: #e0a24a;
   }
   .composer-area {
     padding: 0.75rem 1.25rem 0.6rem;

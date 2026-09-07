@@ -1,18 +1,19 @@
+import type { WorkspaceGuard } from '../security/workspace-guard'
+
+export interface ToolContext {
+  workspaceGuard: WorkspaceGuard
+}
+
 /**
- * A Tool is what agents call. `mutates: true` tools must go through the
- * human-in-loop confirmation flow unless the user has configured auto-approve
- * for that tool within the current workspace boundary.
+ * A tool the model can call. `mutates: true` routes every call through the
+ * human-in-loop confirmation flow in ipc/register.ts before `execute` runs.
  */
-export interface Tool<Input = Record<string, unknown>, Output = unknown> {
+export interface Tool {
   name: string
   description: string
   inputSchema: Record<string, unknown>
   mutates: boolean
-  run(input: Input, context: ToolContext): Promise<Output>
-}
-
-export interface ToolContext {
-  workspaceRoot: string
-  sessionId: string
-  signal: AbortSignal
+  /** Human-readable summary shown in the confirmation dialog. Defaults to the raw input JSON. */
+  describe?(input: Record<string, unknown>): string
+  execute(input: Record<string, unknown>, ctx: ToolContext): Promise<string>
 }
