@@ -35,7 +35,7 @@ The order we'll actually build in, referencing item numbers below. Everything st
 
 ## Versioning & CI/CD
 - [ ] 9. Adopt semver policy (major.minor.patch), CHANGELOG convention
-- [ ] 10. CI pipeline: build + typecheck + test on macOS/Windows/Linux runners
+- [x] 10. CI pipeline: build + typecheck + test on macOS/Windows/Linux runners
 - [ ] 11. Code signing (Windows Authenticode) + notarization (macOS) wired into CI
 - [ ] 12. Auto-update feed (e.g. GitHub Releases) with signature-verified updates
 - [ ] 13. Release packaging pipeline (`dist:mac`/`dist:win`/`dist:linux`) validated end-to-end
