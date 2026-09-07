@@ -49,12 +49,35 @@
   } = $props()
 
   let draft = $state('')
+  // Plain $state object, not $state(new Set()) — a raw Set's own add/delete
+  // methods aren't deep-reactive under Svelte 5 runes (that needs SvelteSet
+  // from svelte/reactivity); property writes on a plain object are, and
+  // that's already the pattern used elsewhere in this app (verified live:
+  // a Set here silently never triggered a re-render on click).
+  let expandedIds = $state<Record<string, boolean>>({})
+
+  const PREVIEW_MAX_CHARS = 500
+  const PREVIEW_MAX_LINES = 10
 
   function submit(): void {
     const text = draft.trim()
     if (!text || sending) return
     draft = ''
     onSend(text)
+  }
+
+  function toggleExpand(id: string): void {
+    expandedIds[id] = !expandedIds[id]
+  }
+
+  // Long pasted/typed user input renders as one huge bubble otherwise —
+  // collapse it to a short preview with a click-to-expand toggle. Display
+  // only: the full text is still what gets sent to the model and stored.
+  function previewOf(text: string): { text: string; truncated: boolean } {
+    const lines = text.split('\n')
+    let preview = lines.length > PREVIEW_MAX_LINES ? lines.slice(0, PREVIEW_MAX_LINES).join('\n') : text
+    if (preview.length > PREVIEW_MAX_CHARS) preview = preview.slice(0, PREVIEW_MAX_CHARS)
+    return { text: preview, truncated: preview.length < text.length }
   }
 </script>
 
@@ -80,7 +103,18 @@
           </div>
         {/each}
         {#if message.text || !message.toolCalls?.length}
-          <span class="text">{message.text}{#if message.pending}▌{/if}</span>
+          {#if message.role === 'user'}
+            {@const preview = previewOf(message.text)}
+            {@const expanded = Boolean(expandedIds[message.id])}
+            <span class="text">{expanded ? message.text : preview.text}{#if preview.truncated && !expanded}…{/if}</span>
+            {#if preview.truncated}
+              <button class="expand-toggle" onclick={() => toggleExpand(message.id)}>
+                {expanded ? 'Show less' : 'Show more'}
+              </button>
+            {/if}
+          {:else}
+            <span class="text">{message.text}{#if message.pending}▌{/if}</span>
+          {/if}
         {/if}
       </div>
     {/each}
@@ -150,6 +184,20 @@
   .bubble.assistant {
     align-self: flex-start;
     background: var(--panel);
+  }
+  .expand-toggle {
+    display: block;
+    margin-top: 0.35rem;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent);
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .expand-toggle:hover {
+    text-decoration: underline;
   }
   .tool-call {
     display: flex;
