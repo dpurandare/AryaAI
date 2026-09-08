@@ -10,7 +10,8 @@ mac:
   category: public.app-category.productivity
   hardenedRuntime: true
   gatekeeperAssess: false
-  notarize: false # set to true once an Apple Developer notarization profile is configured
+  notarize: false # set to true once an Apple Developer notarization profile is configured (TASKS.md #63/#64)
+  identity: null # no Apple Developer ID yet (TASKS.md #63) — explicit, not an implicit auto-discovery fallback
   target:
     - dmg
 win:
@@ -21,4 +22,8 @@ linux:
     - AppImage
     - deb
   category: Utility
-publish: null # wire up an update feed (e.g. GitHub Releases) once CI/CD is set up
+publish:
+  provider: github
+  owner: dpurandare
+  repo: AryaAI
+  releaseType: draft # human reviews and publishes manually — see TASKS.md #13

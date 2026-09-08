@@ -48,9 +48,22 @@ Work Order stages 1–9 work end to end (see `TASKS.md`):
 
 This section will be updated as each Work Order stage lands, so a reviewer always knows what to actually try.
 
+## Downloads
+
+Packaged installers are published on the [GitHub Releases](https://github.com/dpurandare/AryaAI/releases) page for macOS, Windows, and Linux.
+
+**These builds are not yet code-signed** (no Apple Developer ID or Windows Authenticode certificate — tracked in `TASKS.md` #11/#63-66), so:
+
+- **macOS**: Gatekeeper will call the app "unidentified" and refuse to open it normally — right-click (or Control-click) the app and choose **Open**, then confirm, to bypass this once.
+- **Windows**: SmartScreen will warn "Windows protected your PC" — click **More info**, then **Run anyway**.
+
+Neither warning means anything is broken; it's expected for an unsigned build. The app checks the Releases feed on launch and shows a banner if a newer version is available (no silent auto-install — same signing limitation).
+
 ## Continuous integration
 
 Every push to `main` and every PR runs `npm ci`, `typecheck`, `build`, and `test` (Vitest) on macOS, Windows, and Linux via GitHub Actions (`.github/workflows/ci.yml`). The test suite mocks providers/SDKs — no live API calls or Electron runtime needed — and includes an integration test that runs a full `Orchestrator` turn (including delegation) against a mocked provider.
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds installers for all 3 platforms and uploads them to a **draft** GitHub Release for manual review before publishing.
 
 ## Other commands
 

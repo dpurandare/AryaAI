@@ -14,12 +14,19 @@ import {
   type SaveMcpServerInput,
   type ToolDescriptor,
   type SessionUsageDto,
-  type SessionExportResult
+  type SessionExportResult,
+  type AppUpdateAvailablePayload
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(IpcChannel.AppGetInfo),
+  onUpdateAvailable: (callback: (payload: AppUpdateAvailablePayload) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, payload: AppUpdateAvailablePayload): void =>
+      callback(payload)
+    ipcRenderer.on(IpcChannel.AppUpdateAvailable, listener)
+    return () => ipcRenderer.removeListener(IpcChannel.AppUpdateAvailable, listener)
+  },
 
   listSessions: (): Promise<SessionDto[]> => ipcRenderer.invoke(IpcChannel.SessionsList),
   createSession: (title: string): Promise<SessionDto> =>

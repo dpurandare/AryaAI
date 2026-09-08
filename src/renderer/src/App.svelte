@@ -55,6 +55,7 @@
   let sidebarWidth = $state(260)
   let isMac = $state(false)
   let userName = $state('')
+  let updateAvailable = $state<{ version: string; releaseUrl: string } | null>(null)
 
   const SIDEBAR_MIN_WIDTH = 180
   const SIDEBAR_MAX_WIDTH = 480
@@ -306,6 +307,10 @@
       statusLine = `IPC error: ${String(err)}`
     })
 
+  window.sachiv.onUpdateAvailable((payload) => {
+    updateAvailable = payload
+  })
+
   window.sachiv.onToolConfirmRequest((payload) => {
     if (autoApproveTools || autoApproveRules[payload.name]) {
       window.sachiv.respondToolConfirm(payload.toolUseId, true, payload.input)
@@ -345,6 +350,13 @@
     </svg>
   </button>
 </div>
+{#if updateAvailable}
+  <div class="update-banner">
+    <span>A new version (v{updateAvailable.version}) is available.</span>
+    <a href={updateAvailable.releaseUrl} target="_blank" rel="noopener noreferrer">View release</a>
+    <button class="dismiss" onclick={() => (updateAvailable = null)} aria-label="Dismiss">×</button>
+  </div>
+{/if}
 <main
   class:sidebar-collapsed={sidebarCollapsed}
   style={sidebarCollapsed ? undefined : `grid-template-columns: ${sidebarWidth}px 4px 1fr`}
@@ -458,6 +470,34 @@
   }
   .titlebar.mac {
     padding-left: 5.5rem;
+  }
+  .update-banner {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.4rem 0.9rem;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.82rem;
+  }
+  .update-banner a {
+    color: #fff;
+    text-decoration: underline;
+    font-weight: 600;
+  }
+  .update-banner .dismiss {
+    margin-left: auto;
+    border: none;
+    background: none;
+    color: #fff;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.8;
+  }
+  .update-banner .dismiss:hover {
+    opacity: 1;
   }
   .sidebar-toggle {
     -webkit-app-region: no-drag;

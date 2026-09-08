@@ -3,10 +3,11 @@ import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/register'
 import { setDbPath } from './db'
+import { initUpdater } from './updater'
 
 const devIconPath = join(__dirname, '../../build/icon.png')
 
-function createMainWindow(): void {
+function createMainWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -37,6 +38,8 @@ function createMainWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  return mainWindow
 }
 
 // Prevents the app from sharing Electron's generic default userData
@@ -57,7 +60,11 @@ app.whenReady().then(() => {
 
   setDbPath(join(app.getPath('userData'), 'sachiv.db'))
   registerIpcHandlers()
-  createMainWindow()
+  const mainWindow = createMainWindow()
+
+  if (!is.dev) {
+    initUpdater(mainWindow)
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow()

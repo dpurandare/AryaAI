@@ -37,9 +37,13 @@ The order we'll actually build in, referencing item numbers below. Everything st
 ## Versioning & CI/CD
 - [x] 9. Adopt semver policy (major.minor.patch), CHANGELOG convention — policy documented in `README.md`'s Versioning section, `CHANGELOG.md` added (Keep a Changelog format)
 - [x] 10. CI pipeline: build + typecheck + test on macOS/Windows/Linux runners
-- [ ] 11. Code signing (Windows Authenticode) + notarization (macOS) wired into CI
-- [ ] 12. Auto-update feed (e.g. GitHub Releases) with signature-verified updates
-- [ ] 13. Release packaging pipeline (`dist:mac`/`dist:win`/`dist:linux`) validated end-to-end
+- [ ] 11. Code signing (Windows Authenticode) + notarization (macOS) wired into CI — blocked on 63-65 (external credentials the user needs to obtain)
+- [ ] 63. Apple Developer Program enrollment ($99/yr) + generate a "Developer ID Application" certificate — user action, needed before macOS signing/notarization can be wired up
+- [ ] 64. Apple notarization credentials (an app-specific password or App Store Connect API key) generated and added as CI secrets — depends on 63
+- [ ] 65. Windows code-signing (Authenticode) certificate obtained (e.g. DigiCert/SSL.com/Sectigo — OV is cheaper than EV, EV avoids SmartScreen reputation warm-up) — user action
+- [ ] 66. Wire real signing + notarization into `electron-builder.yml` and `release.yml` once 63-65 exist — sets `mac.identity`/notarize config and `win.certificateFile`/`certificatePassword` (or CI secret equivalents), replacing the interim `mac.identity: null` / unsigned-Windows defaults
+- [x] 12. Auto-update feed (e.g. GitHub Releases) with signature-verified updates — check-only, not silent auto-apply: `electron-updater` checks the GitHub Releases feed and notifies the user with a link; `autoDownload` stays off since an unsigned build (see #11) can't reliably self-replace, especially on macOS
+- [ ] 13. Release packaging pipeline (`dist:mac`/`dist:win`/`dist:linux`) validated end-to-end — pending the real `release.yml` CI run
 
 ## Provider adapter layer
 - [x] 14. Unified `ModelProvider` interface (messages, streaming events, tool schema)

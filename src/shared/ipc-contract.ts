@@ -6,6 +6,7 @@ import type { ContentBlock, StreamEvent } from './protocol'
  */
 export const IpcChannel = {
   AppGetInfo: 'app:get-info',
+  AppUpdateAvailable: 'app:update-available',
 
   SessionsList: 'sessions:list',
   SessionsCreate: 'sessions:create',
@@ -62,6 +63,12 @@ export interface AppInfo {
   version: string
   platform: NodeJS.Platform
   userName: string
+}
+
+/** Pushed from main to renderer when electron-updater finds a newer release. */
+export interface AppUpdateAvailablePayload {
+  version: string
+  releaseUrl: string
 }
 
 export interface SessionDto {
