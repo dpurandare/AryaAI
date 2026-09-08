@@ -3,6 +3,7 @@ import type { WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
+import { userInfo } from 'node:os'
 import {
   IpcChannel,
   type AppInfo,
@@ -71,7 +72,8 @@ export function registerIpcHandlers(): void {
     (): AppInfo => ({
       name: 'Sachiv',
       version: app.getVersion(),
-      platform: process.platform
+      platform: process.platform,
+      userName: userInfo().username
     })
   )
 

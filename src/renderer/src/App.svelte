@@ -54,6 +54,7 @@
   let sidebarCollapsed = $state(false)
   let sidebarWidth = $state(260)
   let isMac = $state(false)
+  let userName = $state('')
 
   const SIDEBAR_MIN_WIDTH = 180
   const SIDEBAR_MAX_WIDTH = 480
@@ -299,6 +300,7 @@
     .then((info) => {
       statusLine = `Sachiv v${info.version}`
       isMac = info.platform === 'darwin'
+      userName = info.userName
     })
     .catch((err: unknown) => {
       statusLine = `IPC error: ${String(err)}`
@@ -357,8 +359,8 @@
       onExport={exportSession}
     />
     <button class="user-row" onclick={() => (showSettings = true)}>
-      <span class="avatar">S</span>
-      <span class="user-name">Sachiv</span>
+      <span class="avatar">{(userName || '?').charAt(0).toUpperCase()}</span>
+      <span class="user-name">{userName || 'Account'}</span>
       <svg class="chevron" width="14" height="14" viewBox="0 0 16 16" fill="none">
         <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
