@@ -99,6 +99,7 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [x] 54. Tool-call confirmation dialog (approve/deny/edit, session auto-approve toggle)
 - [x] 55. Settings screens: providers/keys, MCP servers, workspace boundaries, auto-approve rules
 - [x] 56. Context/cost meter component — `ContextMeter.svelte`, in `ChatView`'s status bar
+- [ ] 62. Mermaid diagram rendering in chat Markdown — detect ```mermaid fenced code blocks in `MarkdownText.svelte` and render them via the `mermaid` npm package (SVG output) instead of leaving them as plain code text; needs async render handling (`mermaid.render()` returns a Promise) and a DOMPurify SVG-safe config (`USE_PROFILES: { svg: true }` or equivalent), since sanitizing SVG output differs from the HTML allowlist used for regular Markdown — deferred, not part of the current Work Order
 
 ## Testing
 - [x] 57. Mocked-provider test harness (no live API calls in CI)
