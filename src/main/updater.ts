@@ -1,6 +1,12 @@
 import type { BrowserWindow } from 'electron'
-import { autoUpdater } from 'electron-updater'
+// electron-updater is CommonJS; a named `import { autoUpdater }` resolves
+// fine under electron-vite's dev bundler but breaks in the real packaged
+// build ("Named export 'autoUpdater' not found") — confirmed live, the
+// packaged app's first-ever launch this project hit this exact error.
+import electronUpdater from 'electron-updater'
 import { IpcChannel, type AppUpdateAvailablePayload } from '@shared/ipc-contract'
+
+const { autoUpdater } = electronUpdater
 
 const RELEASE_BASE_URL = 'https://github.com/dpurandare/AryaAI/releases/tag'
 
