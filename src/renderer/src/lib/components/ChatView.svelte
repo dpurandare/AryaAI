@@ -195,8 +195,11 @@
         <span class="status-text">{statusLine}</span>
         <button
           class="mode-picker"
+          class:pinned={forcedRole !== null}
           onclick={() => cycleMode(1)}
-          title="Ctrl+Tab to cycle agent, Ctrl+Shift+Tab to reverse"
+          title={forcedRole !== null
+            ? `Pinned to ${modeLabel(forcedRole)} — this agent alone, no auto hand-off to others. Click or Ctrl+Tab to cycle, Ctrl+Shift+Tab to reverse.`
+            : 'Ctrl+Tab to cycle agent, Ctrl+Shift+Tab to reverse'}
         >
           <span class="dot"></span>
           Agent: {modeLabel(forcedRole)}
@@ -498,5 +501,16 @@
     border-radius: 50%;
     background: var(--accent);
     flex-shrink: 0;
+  }
+  /* Pinned away from "Auto" changes what the app can do (no delegation, no
+     orchestrator) — worth standing out from the rest of the muted status
+     bar rather than reading as just another status label. Found live: a
+     session stayed pinned to one specialist across several unrelated
+     follow-ups without the user noticing. */
+  .mode-picker.pinned {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent);
+    font-weight: 600;
   }
 </style>

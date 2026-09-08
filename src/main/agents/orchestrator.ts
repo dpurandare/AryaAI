@@ -124,7 +124,8 @@ export class Orchestrator {
     if (forcedRole) {
       const agent = this.agents.get(forcedRole)
       if (!agent) throw new Error(`Unknown agent role "${forcedRole}".`)
-      yield* this.runLoop(agent.systemPrompt, agent.tools, conversation, state, forcedRole, [], true)
+      const systemPrompt = agent.systemPrompt + this.buildForcedModeNotice(forcedRole)
+      yield* this.runLoop(systemPrompt, agent.tools, conversation, state, forcedRole, [], true)
       return
     }
 
@@ -149,6 +150,35 @@ export class Orchestrator {
       'fits one of these roles — especially anything substantial involving code or files, which should ' +
       `usually go to the Coding specialist rather than being handled directly:\n${specialists}\n\n` +
       'For simple or general requests, just answer directly (or use your own tools) without delegating.'
+    )
+  }
+
+  /**
+   * Forced-role mode (the composer's "Agent: X" mode picker pinned away
+   * from "Auto") skips the orchestrator and its delegate tools entirely, so
+   * a pinned specialist has no mechanism to hand off even when the request
+   * clearly needs a different one. Found live: a session pinned to Research
+   * was asked to save/convert a file, and — having no visibility into the
+   * other specialists at all — replied "I'm the only agent running in this
+   * conversation," which is only true because of the pin, not a real
+   * capability gap. This notice gives the pinned specialist enough
+   * awareness to name the right specialist and point the user back to the
+   * mode picker, instead of claiming no other agents exist.
+   */
+  private buildForcedModeNotice(currentRole: AgentRole): string {
+    const others = [...this.agents.values()]
+      .filter((a) => a.role !== currentRole)
+      .map((a) => `- ${AGENT_ROLE_LABELS[a.role]}: ${a.summary}`)
+      .join('\n')
+    return (
+      '\n\n---\n' +
+      `You are currently pinned to the ${AGENT_ROLE_LABELS[currentRole]} specialist only (the ` +
+      'composer\'s "Agent:" selector, bottom-left, is set away from "Auto") — you cannot hand off to ' +
+      'another specialist yourself right now, even when one clearly fits the request better, and you ' +
+      "have no delegate tools available. If the user's request needs a capability outside your own " +
+      "tools, don't say you have no other agents or no way to do it at all — name which specialist " +
+      'would actually handle it from this list, and tell the user to switch the "Agent:" selector to ' +
+      `"Auto" (so the orchestrator can delegate automatically) or directly to that specialist:\n${others}`
     )
   }
 
