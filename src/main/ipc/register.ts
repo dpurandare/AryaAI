@@ -6,6 +6,7 @@ import {
   type AppInfo,
   type ChatStreamEventPayload,
   type SaveDataConnectionInput,
+  type SaveMcpServerInput,
   type ToolConfirmRequestPayload
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
@@ -14,6 +15,8 @@ import { insertMessage, listMessages } from '../db/messages'
 import { getSetting, setSetting } from '../db/settings'
 import { setApiKey, getApiKey } from '../security/keychain'
 import { deleteConnection, listConnections, saveConnection } from '../data/connections'
+import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/config'
+import { McpManager } from '../mcp/manager'
 import { createDefaultProviderRegistry } from '../providers/setup'
 import type { Message } from '../providers/types'
 import { createDefaultRegistry, createToolContext } from '../tools/setup'
@@ -34,6 +37,7 @@ function modelSettingKey(providerId: string): string {
 
 const toolRegistry = createDefaultRegistry()
 const agents = createAgents(toolRegistry)
+const mcpManager = new McpManager()
 let toolContext: ToolContext | undefined
 
 const pendingConfirmations = new Map<string, (decision: ConfirmDecision) => void>()
@@ -45,6 +49,13 @@ const pendingConfirmations = new Map<string, (decision: ConfirmDecision) => void
  */
 export function registerIpcHandlers(): void {
   toolContext = createToolContext()
+
+  // Fire-and-forget: connecting can involve spawning a process or a network
+  // round trip, and shouldn't block app startup. toolRegistry.list() is
+  // re-read fresh on every chat send, so tools just appear once ready.
+  mcpManager.connectAll(toolRegistry).catch((err: unknown) => {
+    console.error('Failed to connect configured MCP servers:', err)
+  })
 
   ipcMain.handle(
     IpcChannel.AppGetInfo,
@@ -94,6 +105,28 @@ export function registerIpcHandlers(): void {
     saveConnection(input)
   )
   ipcMain.handle(IpcChannel.DataConnectionsDelete, (_event, id: string) => deleteConnection(id))
+
+  ipcMain.handle(IpcChannel.McpServersList, () =>
+    listServerConfigs().map((config) => {
+      const status = mcpManager.getStatus(config.id)
+      return {
+        ...config,
+        status: status?.status ?? 'connecting',
+        error: status?.error,
+        toolCount: status?.toolCount ?? 0
+      }
+    })
+  )
+  ipcMain.handle(IpcChannel.McpServersSave, async (_event, input: SaveMcpServerInput) => {
+    const config = saveServerConfig(input)
+    await mcpManager.reconnect(config.id, toolRegistry)
+    return config
+  })
+  ipcMain.handle(IpcChannel.McpServersDelete, (_event, id: string) => {
+    mcpManager.disconnect(id, toolRegistry)
+    deleteServerConfig(id)
+  })
+  ipcMain.handle(IpcChannel.McpServersReconnect, (_event, id: string) => mcpManager.reconnect(id, toolRegistry))
 
   ipcMain.handle(
     IpcChannel.ChatSend,

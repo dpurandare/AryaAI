@@ -80,10 +80,10 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [x] 61. GitHub CLI tool (shells out to a configured `gh` — issues, PRs, repo operations, same pattern as the AWS/Azure/GCP CLI tools)
 
 ## MCP
-- [ ] 42. stdio MCP client (child process + JSON-RPC)
-- [ ] 43. HTTP/SSE MCP client
-- [ ] 44. MCP server configuration UI
-- [ ] 45. Discovered MCP tools merged into the agent tool registry
+- [x] 42. stdio MCP client (child process + JSON-RPC)
+- [x] 43. HTTP/SSE MCP client
+- [x] 44. MCP server configuration UI
+- [x] 45. Discovered MCP tools merged into the agent tool registry
 
 ## Context management & token economy
 - [ ] 46. Exact token counting per provider (tiktoken for OpenAI, provider-native counts elsewhere)

@@ -9,7 +9,9 @@ import {
   type ToolConfirmRequestPayload,
   type DataConnectionDto,
   type SaveDataConnectionInput,
-  type ProviderDescriptor
+  type ProviderDescriptor,
+  type McpServerDto,
+  type SaveMcpServerInput
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 
@@ -43,6 +45,13 @@ const api = {
     ipcRenderer.invoke(IpcChannel.DataConnectionsSave, input),
   deleteDataConnection: (id: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.DataConnectionsDelete, id),
+
+  listMcpServers: (): Promise<McpServerDto[]> => ipcRenderer.invoke(IpcChannel.McpServersList),
+  saveMcpServer: (input: SaveMcpServerInput): Promise<McpServerDto> =>
+    ipcRenderer.invoke(IpcChannel.McpServersSave, input),
+  deleteMcpServer: (id: string): Promise<void> => ipcRenderer.invoke(IpcChannel.McpServersDelete, id),
+  reconnectMcpServer: (id: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.McpServersReconnect, id),
 
   sendChatMessage: (
     sessionId: string,

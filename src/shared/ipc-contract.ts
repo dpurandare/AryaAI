@@ -25,6 +25,11 @@ export const IpcChannel = {
   DataConnectionsSave: 'data-connections:save',
   DataConnectionsDelete: 'data-connections:delete',
 
+  McpServersList: 'mcp-servers:list',
+  McpServersSave: 'mcp-servers:save',
+  McpServersDelete: 'mcp-servers:delete',
+  McpServersReconnect: 'mcp-servers:reconnect',
+
   ChatSend: 'chat:send',
   ChatStreamEvent: 'chat:stream-event',
 
@@ -105,4 +110,34 @@ export interface SaveDataConnectionInput {
   database?: string
   username?: string
   password?: string
+}
+
+export type McpTransport = 'stdio' | 'http'
+export type McpServerStatus = 'connecting' | 'connected' | 'error'
+
+/** Config metadata plus live connection state — never carries a bearer token. */
+export interface McpServerDto {
+  id: string
+  name: string
+  transport: McpTransport
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  url?: string
+  hasToken?: boolean
+  status: McpServerStatus
+  error?: string
+  toolCount: number
+}
+
+/** `id` omitted creates a new server; `token` omitted on an edit leaves the stored one unchanged. */
+export interface SaveMcpServerInput {
+  id?: string
+  name: string
+  transport: McpTransport
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  url?: string
+  token?: string
 }

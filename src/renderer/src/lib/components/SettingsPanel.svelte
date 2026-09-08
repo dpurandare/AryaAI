@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DataConnectionDto } from '@shared/ipc-contract'
+  import type { DataConnectionDto, McpServerDto, McpTransport } from '@shared/ipc-contract'
 
   let {
     providerDisplayName,
@@ -79,6 +79,89 @@
   async function removeConnection(id: string): Promise<void> {
     await window.sachiv.deleteDataConnection(id)
     await loadConnections()
+  }
+
+  // --- MCP servers (TASKS.md #42-45) ---
+  let mcpServers = $state<McpServerDto[]>([])
+  let showAddMcpServer = $state(false)
+  let mcpName = $state('')
+  let mcpTransport = $state<McpTransport>('stdio')
+  let mcpCommand = $state('')
+  let mcpArgs = $state('')
+  let mcpEnv = $state('')
+  let mcpUrl = $state('')
+  let mcpToken = $state('')
+  let savingMcpServer = $state(false)
+  let mcpError = $state('')
+
+  async function loadMcpServers(): Promise<void> {
+    mcpServers = await window.sachiv.listMcpServers()
+  }
+  loadMcpServers()
+
+  function resetMcpForm(): void {
+    mcpName = ''
+    mcpTransport = 'stdio'
+    mcpCommand = ''
+    mcpArgs = ''
+    mcpEnv = ''
+    mcpUrl = ''
+    mcpToken = ''
+    mcpError = ''
+    showAddMcpServer = false
+  }
+
+  /** One `KEY=VALUE` per line; blank/malformed lines are skipped rather than rejected. */
+  function parseEnvLines(text: string): Record<string, string> | undefined {
+    const entries = text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const i = line.indexOf('=')
+        return i > 0 ? ([line.slice(0, i).trim(), line.slice(i + 1).trim()] as const) : undefined
+      })
+      .filter((e): e is readonly [string, string] => e !== undefined)
+    return entries.length ? Object.fromEntries(entries) : undefined
+  }
+
+  async function saveMcpServer(): Promise<void> {
+    if (!mcpName.trim()) return
+    savingMcpServer = true
+    mcpError = ''
+    try {
+      await window.sachiv.saveMcpServer({
+        name: mcpName.trim(),
+        transport: mcpTransport,
+        command: mcpTransport === 'stdio' ? mcpCommand.trim() : undefined,
+        args: mcpTransport === 'stdio' ? mcpArgs.trim().split(/\s+/).filter(Boolean) : undefined,
+        env: mcpTransport === 'stdio' ? parseEnvLines(mcpEnv) : undefined,
+        url: mcpTransport === 'http' ? mcpUrl.trim() : undefined,
+        token: mcpTransport === 'http' && mcpToken ? mcpToken : undefined
+      })
+      resetMcpForm()
+      await loadMcpServers()
+    } catch (err) {
+      mcpError = err instanceof Error ? err.message : String(err)
+    } finally {
+      savingMcpServer = false
+    }
+  }
+
+  async function removeMcpServer(id: string): Promise<void> {
+    await window.sachiv.deleteMcpServer(id)
+    await loadMcpServers()
+  }
+
+  async function reconnectMcpServer(id: string): Promise<void> {
+    await window.sachiv.reconnectMcpServer(id)
+    await loadMcpServers()
+  }
+
+  function mcpStatusLabel(server: McpServerDto): string {
+    if (server.status === 'connecting') return 'Connecting...'
+    if (server.status === 'error') return `Error: ${server.error ?? 'unknown'}`
+    return `Connected · ${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`
   }
 </script>
 
@@ -167,6 +250,58 @@
     {:else}
       <button onclick={() => (showAddConnection = true)}>+ Add connection</button>
     {/if}
+
+    <hr />
+
+    <h2>MCP servers</h2>
+    <p class="status">
+      Servers whose tools get merged into the agent tool registry automatically once connected.
+    </p>
+
+    {#if mcpServers.length}
+      <ul class="connection-list">
+        {#each mcpServers as server (server.id)}
+          <li>
+            <span class="conn-name">
+              {server.name}
+              <span class="mcp-status" class:error={server.status === 'error'}>{mcpStatusLabel(server)}</span>
+            </span>
+            <span class="conn-engine">{server.transport}</span>
+            <button class="link-danger" onclick={() => reconnectMcpServer(server.id)}>Reconnect</button>
+            <button class="link-danger" onclick={() => removeMcpServer(server.id)}>Remove</button>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="status">No MCP servers configured yet.</p>
+    {/if}
+
+    {#if showAddMcpServer}
+      <div class="add-connection-form">
+        <input placeholder="Server name" bind:value={mcpName} />
+        <select bind:value={mcpTransport}>
+          <option value="stdio">Local (stdio)</option>
+          <option value="http">Remote (HTTP)</option>
+        </select>
+        {#if mcpTransport === 'stdio'}
+          <input placeholder="Command, e.g. npx" bind:value={mcpCommand} />
+          <input placeholder="Args (space-separated)" bind:value={mcpArgs} />
+          <textarea placeholder={'Env vars, one per line: KEY=value'} bind:value={mcpEnv}></textarea>
+        {:else}
+          <input placeholder="Server URL" bind:value={mcpUrl} />
+          <input placeholder="Bearer token (optional)" type="password" bind:value={mcpToken} />
+        {/if}
+        {#if mcpError}<p class="status error">{mcpError}</p>{/if}
+        <div class="actions">
+          <button onclick={resetMcpForm}>Cancel</button>
+          <button class="primary" disabled={savingMcpServer || !mcpName.trim()} onclick={saveMcpServer}>
+            {savingMcpServer ? 'Saving...' : 'Add server'}
+          </button>
+        </div>
+      </div>
+    {:else}
+      <button onclick={() => (showAddMcpServer = true)}>+ Add MCP server</button>
+    {/if}
   </div>
 </div>
 
@@ -207,13 +342,31 @@
     width: 100%;
   }
   input,
-  select {
+  select,
+  textarea {
     padding: 0.5rem;
     border-radius: 6px;
     border: 1px solid var(--border);
     background: var(--bg);
     color: var(--text);
     font-size: 0.85rem;
+    font-family: inherit;
+  }
+  textarea {
+    min-height: 3.5rem;
+    resize: vertical;
+  }
+  .status.error {
+    color: #e0654a;
+  }
+  .mcp-status {
+    display: block;
+    font-weight: 400;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+  .mcp-status.error {
+    color: #e0654a;
   }
   .connection-list {
     list-style: none;
