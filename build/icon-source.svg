@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#e2875c"/>
-      <stop offset="100%" stop-color="#b8532f"/>
+      <stop offset="0%" stop-color="#3d6fb0"/>
+      <stop offset="100%" stop-color="#1b3f6e"/>
     </linearGradient>
   </defs>
 
@@ -30,11 +30,12 @@
     fill="#ffffff"
   />
 
-  <!-- Laptop as a solid darker-shade accent, not a background-gradient
-       cutout — the cutout looked like a flat mismatched patch instead of a
-       clean see-through (the gradient reference resolves oddly reused
-       across two very different-sized shapes even with userSpaceOnUse). A
-       deliberate two-tone accent is simpler and more reliable. -->
-  <rect x="366" y="800" width="292" height="156" rx="26" fill="#b8532f"/>
+  <!-- Laptop as a solid black accent, not a background-gradient cutout —
+       the cutout looked like a flat mismatched patch instead of a clean
+       see-through (the gradient reference resolves oddly reused across two
+       very different-sized shapes even with userSpaceOnUse). A deliberate
+       two-tone accent is simpler and more reliable, and gives the
+       blue-and-black palette its "black" half. -->
+  <rect x="366" y="800" width="292" height="156" rx="26" fill="#14181f"/>
   <rect x="464" y="900" width="96" height="26" rx="13" fill="#ffffff"/>
 </svg>
