@@ -17,11 +17,11 @@
        reference's literal multi-element illustration (person + headset +
        separate clipboard), which is too detailed to hold up at icon sizes.
        Eyes sized/spaced to clear the earpieces with a real gap — the first
-       pass had them colliding into one blob. Mic boom routed to stay left
-       of the eye (x <= 350, clearing the eye's x >= 364 edge) and end above
-       the smile (y = 592, clearing the smile's y = 648 start) — the first
-       attempt at a boom cut across both and had to be dropped; this one is
-       routed around them instead of just deleted. -->
+       pass had them colliding into one blob. The face (eyes + smile) is
+       shifted right of center, as if the head has turned slightly toward
+       the mic side, and the boom is re-anchored to actually meet the new
+       mouth position (previously it ended well short of the mouth, looking
+       disconnected) rather than just avoiding a collision. -->
   <path
     d="M 266 420 Q 290 176 512 166 Q 734 176 758 420"
     fill="none"
@@ -32,18 +32,18 @@
   <circle cx="266" cy="420" r="52" fill="#ffffff"/>
   <circle cx="758" cy="420" r="52" fill="#ffffff"/>
   <path
-    d="M 266 420 C 246 495 252 560 340 592"
+    d="M 266 420 C 240 500 270 565 395 598"
     fill="none"
     stroke="#ffffff"
     stroke-width="30"
     stroke-linecap="round"
   />
-  <circle cx="340" cy="592" r="24" fill="#ffffff"/>
+  <circle cx="395" cy="598" r="22" fill="#ffffff"/>
 
-  <ellipse cx="404" cy="452" rx="40" ry="82" fill="#ffffff"/>
-  <ellipse cx="620" cy="452" rx="40" ry="82" fill="#ffffff"/>
+  <ellipse cx="452" cy="452" rx="40" ry="82" fill="#ffffff"/>
+  <ellipse cx="668" cy="452" rx="40" ry="82" fill="#ffffff"/>
   <path
-    d="M 380 648 Q 512 764 644 648"
+    d="M 428 648 Q 560 764 692 648"
     fill="none"
     stroke="#ffffff"
     stroke-width="54"
