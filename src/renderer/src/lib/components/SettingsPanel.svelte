@@ -1,18 +1,22 @@
 <script lang="ts">
-  import type { DataConnectionDto, McpServerDto, McpTransport } from '@shared/ipc-contract'
+  import type { DataConnectionDto, McpServerDto, McpTransport, ToolDescriptor } from '@shared/ipc-contract'
 
   let {
     providerDisplayName,
     providerRequiresApiKey = true,
     hasKey,
+    autoApproveRules,
     onSave,
-    onClose
+    onClose,
+    onToggleAutoApproveRule
   }: {
     providerDisplayName: string
     providerRequiresApiKey?: boolean
     hasKey: boolean
+    autoApproveRules: Record<string, boolean>
     onSave: (apiKey: string) => void | Promise<void>
     onClose: () => void
+    onToggleAutoApproveRule: (name: string, value: boolean) => void
   } = $props()
 
   let apiKey = $state('')
@@ -163,6 +167,40 @@
     if (server.status === 'error') return `Error: ${server.error ?? 'unknown'}`
     return `Connected · ${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`
   }
+
+  // --- Workspace boundary (TASKS.md #41) ---
+  let workspaceRoot = $state('')
+  let workspaceRootInput = $state('')
+  let savingWorkspace = $state(false)
+  let workspaceError = $state('')
+
+  async function loadWorkspaceRoot(): Promise<void> {
+    workspaceRoot = await window.sachiv.getWorkspaceRoot()
+    workspaceRootInput = workspaceRoot
+  }
+  loadWorkspaceRoot()
+
+  async function saveWorkspaceRoot(): Promise<void> {
+    if (!workspaceRootInput.trim() || workspaceRootInput === workspaceRoot) return
+    savingWorkspace = true
+    workspaceError = ''
+    try {
+      await window.sachiv.setWorkspaceRoot(workspaceRootInput.trim())
+      await loadWorkspaceRoot()
+    } catch (err) {
+      workspaceError = err instanceof Error ? err.message : String(err)
+    } finally {
+      savingWorkspace = false
+    }
+  }
+
+  // --- Auto-approve rules (TASKS.md #40) ---
+  let tools = $state<ToolDescriptor[]>([])
+
+  async function loadTools(): Promise<void> {
+    tools = await window.sachiv.listTools()
+  }
+  loadTools()
 </script>
 
 <div
@@ -302,6 +340,57 @@
     {:else}
       <button onclick={() => (showAddMcpServer = true)}>+ Add MCP server</button>
     {/if}
+
+    <hr />
+
+    <h2>Workspace</h2>
+    <p class="status">
+      The folder file/shell/git/cloud-CLI tools are confined to. Changes take effect on your next
+      message — no restart needed.
+    </p>
+    <input placeholder="Workspace folder path" bind:value={workspaceRootInput} />
+    {#if workspaceError}<p class="status error">{workspaceError}</p>{/if}
+    <div class="actions">
+      <button
+        class="primary"
+        disabled={savingWorkspace || !workspaceRootInput.trim() || workspaceRootInput === workspaceRoot}
+        onclick={saveWorkspaceRoot}
+      >
+        {savingWorkspace ? 'Saving...' : 'Save'}
+      </button>
+    </div>
+
+    <hr />
+
+    <h2>Auto-approve rules</h2>
+    <p class="status">Tools checked here skip the confirmation dialog, persisted across restarts.</p>
+
+    {#if tools.length}
+      <ul class="connection-list">
+        {#each tools as tool (tool.name)}
+          <li>
+            <label class="tool-rule">
+              <input
+                type="checkbox"
+                checked={Boolean(autoApproveRules[tool.name])}
+                onchange={(e) =>
+                  onToggleAutoApproveRule(tool.name, (e.target as HTMLInputElement).checked)}
+              />
+              <span class="conn-name">
+                {tool.name}
+                {#if tool.mutates === 'sometimes'}
+                  <span class="mcp-status error">
+                    Only some calls of this tool mutate — enabling skips confirmation for all of them, writes included
+                  </span>
+                {/if}
+              </span>
+            </label>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="status">No tools need confirmation yet.</p>
+    {/if}
   </div>
 </div>
 
@@ -393,6 +482,16 @@
     color: var(--text-muted);
     font-size: 0.75rem;
     text-transform: uppercase;
+  }
+  .tool-rule {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    flex: 1;
+    cursor: pointer;
+  }
+  .tool-rule input {
+    margin-top: 0.15rem;
   }
   .link-danger {
     background: none;

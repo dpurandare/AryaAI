@@ -30,6 +30,11 @@ export const IpcChannel = {
   McpServersDelete: 'mcp-servers:delete',
   McpServersReconnect: 'mcp-servers:reconnect',
 
+  WorkspaceGetRoot: 'workspace:get-root',
+  WorkspaceSetRoot: 'workspace:set-root',
+
+  ToolsList: 'tools:list',
+
   ChatSend: 'chat:send',
   ChatStreamEvent: 'chat:stream-event',
 
@@ -140,4 +145,16 @@ export interface SaveMcpServerInput {
   env?: Record<string, string>
   url?: string
   token?: string
+}
+
+/**
+ * A registered tool's public shape, for the Settings auto-approve rules
+ * list. Tools whose `mutates` is statically `false` (never ask for
+ * confirmation at all) are filtered out server-side — there'd be nothing
+ * for an auto-approve toggle to do.
+ */
+export interface ToolDescriptor {
+  name: string
+  description: string
+  mutates: 'always' | 'sometimes'
 }

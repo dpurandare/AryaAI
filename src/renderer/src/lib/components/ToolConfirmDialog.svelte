@@ -4,17 +4,21 @@
     description,
     input,
     autoApprove,
+    autoApproveTool,
     onApprove,
     onDeny,
-    onToggleAutoApprove
+    onToggleAutoApprove,
+    onToggleAutoApproveTool
   }: {
     name: string
     description: string
     input: Record<string, unknown>
     autoApprove: boolean
+    autoApproveTool: boolean
     onApprove: (input: Record<string, unknown>) => void
     onDeny: () => void
     onToggleAutoApprove: (value: boolean) => void
+    onToggleAutoApproveTool: (value: boolean) => void
   } = $props()
 
   let editedJson = $state(JSON.stringify(input, null, 2))
@@ -45,6 +49,14 @@
         onchange={(e) => onToggleAutoApprove((e.target as HTMLInputElement).checked)}
       />
       Auto-approve tool calls for this session
+    </label>
+    <label class="auto-approve">
+      <input
+        type="checkbox"
+        checked={autoApproveTool}
+        onchange={(e) => onToggleAutoApproveTool((e.target as HTMLInputElement).checked)}
+      />
+      Always auto-approve <code>{name}</code>
     </label>
 
     <div class="actions">

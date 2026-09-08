@@ -11,7 +11,8 @@ import {
   type SaveDataConnectionInput,
   type ProviderDescriptor,
   type McpServerDto,
-  type SaveMcpServerInput
+  type SaveMcpServerInput,
+  type ToolDescriptor
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 
@@ -52,6 +53,12 @@ const api = {
   deleteMcpServer: (id: string): Promise<void> => ipcRenderer.invoke(IpcChannel.McpServersDelete, id),
   reconnectMcpServer: (id: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.McpServersReconnect, id),
+
+  getWorkspaceRoot: (): Promise<string> => ipcRenderer.invoke(IpcChannel.WorkspaceGetRoot),
+  setWorkspaceRoot: (path: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.WorkspaceSetRoot, path),
+
+  listTools: (): Promise<ToolDescriptor[]> => ipcRenderer.invoke(IpcChannel.ToolsList),
 
   sendChatMessage: (
     sessionId: string,

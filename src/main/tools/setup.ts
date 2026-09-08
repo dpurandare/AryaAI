@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { getSetting } from '../db/settings'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import { awsCliTool, azureCliTool, gcloudCliTool } from './cloud-cli'
 import { dbExecuteSqlTool, dbIntrospectSchemaTool, dbListConnectionsTool } from './db'
@@ -12,13 +13,17 @@ import { shellExecuteTool } from './shell'
 import type { ToolContext } from './types'
 import { webSearchTool } from './web-search'
 
-/**
- * Workspace root file/shell/cloud-CLI tools are confined to. Not yet
- * user-configurable (TASKS.md #41) — hardcoded to a dedicated folder under
- * Documents.
- */
+/** Settings key the persisted, user-configurable workspace root is stored under (TASKS.md #41). */
+export const WORKSPACE_ROOT_SETTING_KEY = 'workspaceRoot'
+
+/** Fallback when the user hasn't configured a workspace root yet — a dedicated folder under Documents. */
+export function defaultWorkspaceRoot(): string {
+  return join(app.getPath('documents'), 'Sachiv Workspace')
+}
+
+/** Workspace root file/shell/cloud-CLI/git tools are confined to. */
 export function createToolContext(): ToolContext {
-  const root = join(app.getPath('documents'), 'Sachiv Workspace')
+  const root = getSetting(WORKSPACE_ROOT_SETTING_KEY) || defaultWorkspaceRoot()
   mkdirSync(root, { recursive: true })
   return { workspaceGuard: new WorkspaceGuard(root) }
 }

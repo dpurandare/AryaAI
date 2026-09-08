@@ -74,8 +74,8 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [x] 37. Azure tool (shells out to configured Azure CLI)
 - [x] 38. GCP tool (shells out to configured gcloud CLI)
 - [x] 39. Human-in-loop confirmation flow for all `mutates: true` tool calls
-- [ ] 40. Auto-approve configuration (per tool / per workspace) — session-only toggle lives in #54 for now; persisted per-tool/per-workspace config still open
-- [ ] 41. Workspace boundary configuration UI
+- [x] 40. Auto-approve configuration (per tool) — persisted, restart-surviving rules, settable from the confirmation dialog or a Settings list; the #54 session-only blanket toggle stays as an additive quick option. No per-workspace axis — only one workspace root exists at a time, so that dimension is moot until multi-workspace support lands.
+- [x] 41. Workspace boundary configuration UI
 - [x] 60. Git operations tool (status/diff/log/branch/commit/etc., through workspace guard; mutating operations require confirmation)
 - [x] 61. GitHub CLI tool (shells out to a configured `gh` — issues, PRs, repo operations, same pattern as the AWS/Azure/GCP CLI tools)
 
@@ -97,7 +97,7 @@ The order we'll actually build in, referencing item numbers below. Everything st
 ## UI
 - [x] 53. Chat view: streaming message rendering (text + tool-use/tool-result block rendering)
 - [x] 54. Tool-call confirmation dialog (approve/deny/edit, session auto-approve toggle)
-- [ ] 55. Settings screens: providers/keys, MCP servers, workspace boundaries, auto-approve rules
+- [x] 55. Settings screens: providers/keys, MCP servers, workspace boundaries, auto-approve rules
 - [ ] 56. Context/cost meter component
 
 ## Testing

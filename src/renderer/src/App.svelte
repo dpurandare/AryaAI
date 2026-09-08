@@ -77,6 +77,10 @@
   }
   let pendingConfirm = $state<ToolConfirmRequestPayload | null>(null)
   let autoApproveTools = $state(false)
+  // Persisted per-tool rules (TASKS.md #40) — additive to the session-only
+  // blanket toggle above, not a replacement for it. A plain object, not
+  // $state(new Set()) — see feedback_svelte5-runes-gotchas memory.
+  let autoApproveRules = $state<Record<string, boolean>>({})
 
   function mapMessagesToDisplay(records: MessageDto[]): DisplayMessage[] {
     const result: DisplayMessage[] = []
@@ -233,6 +237,11 @@
     pendingConfirm = null
   }
 
+  function toggleAutoApproveTool(name: string, value: boolean): void {
+    autoApproveRules = { ...autoApproveRules, [name]: value }
+    window.sachiv.setSetting('autoApproveToolRules', JSON.stringify(autoApproveRules))
+  }
+
   async function loadProviderState(id: string): Promise<void> {
     const descriptor = providers.find((p) => p.id === id)
     hasKey = descriptor?.requiresApiKey === false ? true : await window.sachiv.hasApiKey(id)
@@ -273,7 +282,7 @@
     })
 
   window.sachiv.onToolConfirmRequest((payload) => {
-    if (autoApproveTools) {
+    if (autoApproveTools || autoApproveRules[payload.name]) {
       window.sachiv.respondToolConfirm(payload.toolUseId, true, payload.input)
       return
     }
@@ -282,6 +291,16 @@
 
   window.sachiv.getSetting('sidebarWidth').then((stored) => {
     if (stored) sidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Number(stored)))
+  })
+
+  window.sachiv.getSetting('autoApproveToolRules').then((stored) => {
+    if (stored) {
+      try {
+        autoApproveRules = JSON.parse(stored) as Record<string, boolean>
+      } catch {
+        // Malformed stored value — ignore and keep the empty default.
+      }
+    }
   })
 
   initProvider()
@@ -346,8 +365,10 @@
     providerDisplayName={providers.find((p) => p.id === providerId)?.displayName ?? providerId}
     providerRequiresApiKey={providers.find((p) => p.id === providerId)?.requiresApiKey ?? true}
     {hasKey}
+    {autoApproveRules}
     onSave={saveApiKey}
     onClose={() => (showSettings = false)}
+    onToggleAutoApproveRule={toggleAutoApproveTool}
   />
 {/if}
 
@@ -357,9 +378,11 @@
     description={pendingConfirm.description}
     input={pendingConfirm.input}
     autoApprove={autoApproveTools}
+    autoApproveTool={Boolean(autoApproveRules[pendingConfirm.name])}
     onApprove={approveTool}
     onDeny={denyTool}
     onToggleAutoApprove={(value) => (autoApproveTools = value)}
+    onToggleAutoApproveTool={(value) => pendingConfirm && toggleAutoApproveTool(pendingConfirm.name, value)}
   />
 {/if}
 

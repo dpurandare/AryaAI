@@ -1,0 +1,64 @@
+import { existsSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// tools/setup.ts imports `electron` directly (app.getPath('documents')) and
+// transitively via tools/db/index.ts -> data/connections.ts ->
+// security/keychain.ts — same hazard documented in mcp/config.test.ts.
+let documentsDir: string
+let userDataDir: string
+
+vi.mock('electron', () => ({
+  app: {
+    getPath: (name: string) => (name === 'documents' ? documentsDir : userDataDir)
+  },
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (plain: string) => Buffer.from(plain, 'utf-8'),
+    decryptString: (buf: Buffer) => buf.toString('utf-8')
+  }
+}))
+
+const { setDbPath } = await import('../db')
+const { setSetting } = await import('../db/settings')
+const { createToolContext, defaultWorkspaceRoot, WORKSPACE_ROOT_SETTING_KEY } = await import('./setup')
+
+describe('createToolContext', () => {
+  beforeEach(async () => {
+    setDbPath(':memory:')
+    documentsDir = await mkdtemp(join(tmpdir(), 'sachiv-setup-docs-'))
+    userDataDir = await mkdtemp(join(tmpdir(), 'sachiv-setup-userdata-'))
+  })
+
+  afterEach(async () => {
+    await rm(documentsDir, { recursive: true, force: true })
+    await rm(userDataDir, { recursive: true, force: true })
+  })
+
+  it('defaults to a "Sachiv Workspace" folder under Documents when unconfigured', () => {
+    const ctx = createToolContext()
+    expect(ctx.workspaceGuard.root).toBe(defaultWorkspaceRoot())
+    expect(existsSync(ctx.workspaceGuard.root)).toBe(true)
+  })
+
+  it('uses the persisted workspace root when one is configured', async () => {
+    const custom = await mkdtemp(join(tmpdir(), 'sachiv-custom-workspace-'))
+    setSetting(WORKSPACE_ROOT_SETTING_KEY, custom)
+
+    const ctx = createToolContext()
+
+    expect(ctx.workspaceGuard.root).toBe(custom)
+    await rm(custom, { recursive: true, force: true })
+  })
+
+  it('creates the workspace directory if it does not exist yet', () => {
+    const missing = join(documentsDir, 'not-yet-created')
+    setSetting(WORKSPACE_ROOT_SETTING_KEY, missing)
+
+    const ctx = createToolContext()
+
+    expect(existsSync(ctx.workspaceGuard.root)).toBe(true)
+  })
+})

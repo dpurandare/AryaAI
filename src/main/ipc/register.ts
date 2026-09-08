@@ -1,25 +1,29 @@
 import { app, ipcMain } from 'electron'
 import type { WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { mkdirSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 import {
   IpcChannel,
   type AppInfo,
-  type ChatStreamEventPayload,
   type SaveDataConnectionInput,
   type SaveMcpServerInput,
-  type ToolConfirmRequestPayload
+  type ChatStreamEventPayload,
+  type ToolConfirmRequestPayload,
+  type ToolDescriptor
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 import { createSession, listSessions, deleteSession } from '../db/sessions'
 import { insertMessage, listMessages } from '../db/messages'
 import { getSetting, setSetting } from '../db/settings'
 import { setApiKey, getApiKey } from '../security/keychain'
+import { WorkspaceGuard } from '../security/workspace-guard'
 import { deleteConnection, listConnections, saveConnection } from '../data/connections'
 import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/config'
 import { McpManager } from '../mcp/manager'
 import { createDefaultProviderRegistry } from '../providers/setup'
 import type { Message } from '../providers/types'
-import { createDefaultRegistry, createToolContext } from '../tools/setup'
+import { createDefaultRegistry, createToolContext, defaultWorkspaceRoot, WORKSPACE_ROOT_SETTING_KEY } from '../tools/setup'
 import type { ToolContext } from '../tools/types'
 import { Orchestrator, type ConfirmDecision, type ToolConfirmRequest } from '../agents/orchestrator'
 import { createAgents } from '../agents/roles'
@@ -127,6 +131,32 @@ export function registerIpcHandlers(): void {
     deleteServerConfig(id)
   })
   ipcMain.handle(IpcChannel.McpServersReconnect, (_event, id: string) => mcpManager.reconnect(id, toolRegistry))
+
+  ipcMain.handle(IpcChannel.WorkspaceGetRoot, () => toolContext?.workspaceGuard.root ?? defaultWorkspaceRoot())
+  ipcMain.handle(IpcChannel.WorkspaceSetRoot, (_event, path: string) => {
+    if (!path || !isAbsolute(path)) {
+      throw new Error('Workspace root must be a non-empty absolute path.')
+    }
+    mkdirSync(path, { recursive: true })
+    setSetting(WORKSPACE_ROOT_SETTING_KEY, path)
+    if (toolContext) {
+      // Mutated in place, not reassigned — `toolContext` is the same object
+      // reference `runChat` reads fresh on every call, so this takes effect
+      // on the very next message with no app restart.
+      toolContext.workspaceGuard = new WorkspaceGuard(path)
+    }
+  })
+
+  ipcMain.handle(IpcChannel.ToolsList, (): ToolDescriptor[] =>
+    toolRegistry
+      .list()
+      .filter((tool) => typeof tool.mutates === 'function' || tool.mutates === true)
+      .map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        mutates: typeof tool.mutates === 'function' ? 'sometimes' : 'always'
+      }))
+  )
 
   ipcMain.handle(
     IpcChannel.ChatSend,
