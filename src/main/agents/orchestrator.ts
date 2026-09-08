@@ -79,6 +79,7 @@ interface AccumulatedToolCall {
   id: string
   name: string
   inputJson: string
+  thoughtSignature?: string
 }
 
 /**
@@ -196,7 +197,12 @@ export class Orchestrator {
         if (event.type === 'text_delta') {
           assistantText += event.text
         } else if (event.type === 'tool_use_start') {
-          const call: AccumulatedToolCall = { id: event.id, name: event.name, inputJson: '' }
+          const call: AccumulatedToolCall = {
+            id: event.id,
+            name: event.name,
+            inputJson: '',
+            thoughtSignature: event.thoughtSignature
+          }
           toolCalls.push(call)
           toolCallsById.set(event.id, call)
         } else if (event.type === 'tool_use_delta') {
@@ -221,7 +227,14 @@ export class Orchestrator {
           // Malformed tool input is surfaced back to the model as an error result below.
         }
         inputByCallId.set(call.id, input)
-        assistantBlocks.push({ type: 'tool_use', id: call.id, name: call.name, input, agentRole })
+        assistantBlocks.push({
+          type: 'tool_use',
+          id: call.id,
+          name: call.name,
+          input,
+          agentRole,
+          thoughtSignature: call.thoughtSignature
+        })
       }
       // Snapshot before appending this round's assistant blocks: a delegate call's
       // nested conversation must NOT include the orchestrator's own (not-yet-resolved)

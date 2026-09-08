@@ -14,9 +14,8 @@ import { insertMessage, listMessages } from '../db/messages'
 import { getSetting, setSetting } from '../db/settings'
 import { setApiKey, getApiKey } from '../security/keychain'
 import { deleteConnection, listConnections, saveConnection } from '../data/connections'
-import { AnthropicProvider } from '../providers/anthropic'
-import { OpenAIProvider } from '../providers/openai'
-import type { Message, ModelProvider } from '../providers/types'
+import { createDefaultProviderRegistry } from '../providers/setup'
+import type { Message } from '../providers/types'
 import { createDefaultRegistry, createToolContext } from '../tools/setup'
 import type { ToolContext } from '../tools/types'
 import { Orchestrator, type ConfirmDecision, type ToolConfirmRequest } from '../agents/orchestrator'
@@ -24,10 +23,7 @@ import { createAgents } from '../agents/roles'
 
 const SYSTEM_PROMPT = "You are Sachiv, a helpful AI assistant running locally on the user's machine."
 
-const PROVIDER_FACTORIES: Record<string, (apiKey: string) => ModelProvider> = {
-  anthropic: (key) => new AnthropicProvider(key),
-  openai: (key) => new OpenAIProvider(key)
-}
+const providerRegistry = createDefaultProviderRegistry()
 
 const ACTIVE_PROVIDER_KEY = 'activeProviderId'
 const DEFAULT_PROVIDER_ID = 'openai'
@@ -65,6 +61,11 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IpcChannel.MessagesList, (_event, sessionId: string) => listMessages(sessionId))
 
+  ipcMain.handle(IpcChannel.ProvidersList, () =>
+    providerRegistry
+      .list()
+      .map(({ id, displayName, requiresApiKey }) => ({ id, displayName, requiresApiKey }))
+  )
   ipcMain.handle(IpcChannel.ProvidersSetApiKey, (_event, providerId: string, apiKey: string) => {
     setApiKey(providerId, apiKey)
   })
@@ -72,12 +73,15 @@ export function registerIpcHandlers(): void {
     Boolean(getApiKey(providerId))
   )
   ipcMain.handle(IpcChannel.ProvidersListModels, async (_event, providerId: string) => {
+    const descriptor = providerRegistry.get(providerId)
+    if (!descriptor) {
+      throw new Error(`Unknown provider "${providerId}".`)
+    }
     const apiKey = getApiKey(providerId)
-    const factory = PROVIDER_FACTORIES[providerId]
-    if (!factory || !apiKey) {
+    if (descriptor.requiresApiKey && !apiKey) {
       throw new Error(`No API key configured for ${providerId}.`)
     }
-    return factory(apiKey).listModels()
+    return descriptor.create(apiKey).listModels()
   })
 
   ipcMain.handle(IpcChannel.SettingsGet, (_event, key: string) => getSetting(key) ?? null)
@@ -146,12 +150,12 @@ async function runChat(
   const providerId = getSetting(ACTIVE_PROVIDER_KEY) ?? DEFAULT_PROVIDER_ID
   const model = getSetting(modelSettingKey(providerId))
   const apiKey = getApiKey(providerId)
-  const factory = PROVIDER_FACTORIES[providerId]
+  const descriptor = providerRegistry.get(providerId)
 
-  if (!factory) {
+  if (!descriptor) {
     throw new Error(`Unknown provider "${providerId}".`)
   }
-  if (!apiKey) {
+  if (descriptor.requiresApiKey && !apiKey) {
     throw new Error(`No API key configured for ${providerId}. Add one in Settings.`)
   }
   if (!model) {
@@ -166,7 +170,7 @@ async function runChat(
   conversation.push({ role: 'user', content: [{ type: 'text', text }] })
   insertMessage(sessionId, 'user', [{ type: 'text', text }])
 
-  const provider = factory(apiKey)
+  const provider = descriptor.create(apiKey)
   const orchestrator = new Orchestrator(
     provider,
     model,

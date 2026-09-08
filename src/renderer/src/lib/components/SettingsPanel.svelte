@@ -3,11 +3,13 @@
 
   let {
     providerDisplayName,
+    providerRequiresApiKey = true,
     hasKey,
     onSave,
     onClose
   }: {
     providerDisplayName: string
+    providerRequiresApiKey?: boolean
     hasKey: boolean
     onSave: (apiKey: string) => void | Promise<void>
     onClose: () => void
@@ -95,23 +97,30 @@
     onkeydown={(e) => e.stopPropagation()}
   >
     <h2>{providerDisplayName} API key</h2>
-    <p class="status">
-      {hasKey ? 'A key is currently configured.' : 'No key configured yet.'} Pick a different provider
-      from the model picker in the chat footer.
-    </p>
-    <input
-      id="anthropic-key"
-      type="password"
-      placeholder="Paste your API key"
-      bind:value={apiKey}
-      onkeydown={(e) => e.key === 'Enter' && save()}
-    />
-    <div class="actions">
-      <button onclick={onClose}>Cancel</button>
-      <button class="primary" disabled={saving || !apiKey.trim()} onclick={save}>
-        {saving ? 'Saving...' : 'Save'}
-      </button>
-    </div>
+    {#if providerRequiresApiKey}
+      <p class="status">
+        {hasKey ? 'A key is currently configured.' : 'No key configured yet.'} Pick a different provider
+        from the model picker in the chat footer.
+      </p>
+      <input
+        id="anthropic-key"
+        type="password"
+        placeholder="Paste your API key"
+        bind:value={apiKey}
+        onkeydown={(e) => e.key === 'Enter' && save()}
+      />
+      <div class="actions">
+        <button onclick={onClose}>Cancel</button>
+        <button class="primary" disabled={saving || !apiKey.trim()} onclick={save}>
+          {saving ? 'Saving...' : 'Save'}
+        </button>
+      </div>
+    {:else}
+      <p class="status">This provider runs locally — no API key needed.</p>
+      <div class="actions">
+        <button onclick={onClose}>Close</button>
+      </div>
+    {/if}
 
     <hr />
 

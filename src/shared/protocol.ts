@@ -8,7 +8,19 @@ import type { AgentRole } from './agents'
 export type ContentBlock =
   /** `agentRole` set means a specialist (not the orchestrator itself) produced this block — see main/agents/orchestrator.ts. */
   | { type: 'text'; text: string; agentRole?: AgentRole }
-  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown>; agentRole?: AgentRole }
+  | {
+      type: 'tool_use'
+      id: string
+      name: string
+      input: Record<string, unknown>
+      agentRole?: AgentRole
+      /**
+       * Opaque per-call signature Gemini requires echoed back on the next
+       * turn's functionCall part (400s otherwise, confirmed live) — unused
+       * by other providers. See main/providers/google.ts.
+       */
+      thoughtSignature?: string
+    }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
 
 export interface Message {
@@ -18,7 +30,7 @@ export interface Message {
 
 export type StreamEvent =
   | { type: 'text_delta'; text: string; agentRole?: AgentRole }
-  | { type: 'tool_use_start'; id: string; name: string; agentRole?: AgentRole }
+  | { type: 'tool_use_start'; id: string; name: string; agentRole?: AgentRole; thoughtSignature?: string }
   | { type: 'tool_use_delta'; id: string; partialInput: string }
   /** Synthesized by the main process once a tool call finishes running — not emitted by providers. */
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }

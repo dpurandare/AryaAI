@@ -4,10 +4,10 @@
   import SettingsPanel from './lib/components/SettingsPanel.svelte'
   import ToolConfirmDialog from './lib/components/ToolConfirmDialog.svelte'
   import {
-    SUPPORTED_PROVIDERS,
     type SessionDto,
     type MessageDto,
-    type ToolConfirmRequestPayload
+    type ToolConfirmRequestPayload,
+    type ProviderDescriptor
   } from '@shared/ipc-contract'
   import type { AgentRole } from '@shared/agents'
 
@@ -47,6 +47,7 @@
   let messages = $state<DisplayMessage[]>([])
   let sending = $state(false)
   let showSettings = $state(false)
+  let providers = $state<ProviderDescriptor[]>([])
   let providerId = $state('openai')
   let hasKey = $state(false)
   let currentModel = $state('')
@@ -233,7 +234,8 @@
   }
 
   async function loadProviderState(id: string): Promise<void> {
-    hasKey = await window.sachiv.hasApiKey(id)
+    const descriptor = providers.find((p) => p.id === id)
+    hasKey = descriptor?.requiresApiKey === false ? true : await window.sachiv.hasApiKey(id)
     currentModel = (await window.sachiv.getSetting(`model:${id}`)) ?? ''
   }
 
@@ -255,6 +257,7 @@
   }
 
   async function initProvider(): Promise<void> {
+    providers = await window.sachiv.listProviders()
     providerId = (await window.sachiv.getSetting('activeProviderId')) ?? 'openai'
     await loadProviderState(providerId)
   }
@@ -327,7 +330,7 @@
       {statusLine}
       {sending}
       onSend={sendMessage}
-      providers={SUPPORTED_PROVIDERS}
+      {providers}
       {providerId}
       model={currentModel}
       {hasKey}
@@ -340,7 +343,8 @@
 
 {#if showSettings}
   <SettingsPanel
-    providerDisplayName={SUPPORTED_PROVIDERS.find((p) => p.id === providerId)?.displayName ?? providerId}
+    providerDisplayName={providers.find((p) => p.id === providerId)?.displayName ?? providerId}
+    providerRequiresApiKey={providers.find((p) => p.id === providerId)?.requiresApiKey ?? true}
     {hasKey}
     onSave={saveApiKey}
     onClose={() => (showSettings = false)}

@@ -8,7 +8,8 @@ import {
   type ChatStreamEventPayload,
   type ToolConfirmRequestPayload,
   type DataConnectionDto,
-  type SaveDataConnectionInput
+  type SaveDataConnectionInput,
+  type ProviderDescriptor
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 
@@ -23,6 +24,7 @@ const api = {
   listMessages: (sessionId: string): Promise<MessageDto[]> =>
     ipcRenderer.invoke(IpcChannel.MessagesList, sessionId),
 
+  listProviders: (): Promise<ProviderDescriptor[]> => ipcRenderer.invoke(IpcChannel.ProvidersList),
   setApiKey: (providerId: string, apiKey: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.ProvidersSetApiKey, providerId, apiKey),
   hasApiKey: (providerId: string): Promise<boolean> =>

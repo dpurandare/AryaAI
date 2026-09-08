@@ -13,6 +13,7 @@ export const IpcChannel = {
 
   MessagesList: 'messages:list',
 
+  ProvidersList: 'providers:list',
   ProvidersSetApiKey: 'providers:set-api-key',
   ProvidersHasApiKey: 'providers:has-api-key',
   ProvidersListModels: 'providers:list-models',
@@ -31,13 +32,17 @@ export const IpcChannel = {
   ToolConfirmRespond: 'tools:confirm-respond'
 } as const
 
-/** Providers wired into the app. Extend as adapters land (TASKS.md #16-18). */
-export const SUPPORTED_PROVIDERS = [
-  { id: 'anthropic', displayName: 'Anthropic' },
-  { id: 'openai', displayName: 'OpenAI' }
-] as const
-
-export type ProviderId = (typeof SUPPORTED_PROVIDERS)[number]['id']
+/**
+ * A provider's public shape, as seen over IPC — the main-process registry
+ * (`src/main/providers/registry.ts`) is the actual source of truth; the
+ * renderer fetches this list at startup via `ProvidersList` instead of
+ * hardcoding it, so adding a provider needs no renderer change.
+ */
+export interface ProviderDescriptor {
+  id: string
+  displayName: string
+  requiresApiKey: boolean
+}
 
 export interface AppInfo {
   name: string

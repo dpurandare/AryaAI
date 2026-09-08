@@ -1,0 +1,225 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Message, StreamEvent } from './types'
+
+const mockGenerateContentStream = vi.fn()
+const mockList = vi.fn()
+const mockCountTokens = vi.fn()
+
+vi.mock('@google/genai', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@google/genai')>()
+  return {
+    ...actual,
+    GoogleGenAI: vi.fn().mockImplementation(function FakeGoogleGenAI() {
+      return {
+        models: {
+          generateContentStream: mockGenerateContentStream,
+          list: mockList,
+          countTokens: mockCountTokens
+        }
+      }
+    })
+  }
+})
+
+// Imported after the mock so the class picks up the mocked SDK.
+const { GoogleProvider } = await import('./google')
+
+function fakeStream(events: unknown[]): AsyncIterable<unknown> {
+  return {
+    [Symbol.asyncIterator]: async function* () {
+      for (const e of events) yield e
+    }
+  }
+}
+
+async function collect(events: AsyncIterable<StreamEvent>): Promise<StreamEvent[]> {
+  const out: StreamEvent[] = []
+  for await (const e of events) out.push(e)
+  return out
+}
+
+describe('GoogleProvider', () => {
+  beforeEach(() => {
+    mockGenerateContentStream.mockReset()
+    mockList.mockReset()
+    mockCountTokens.mockReset()
+  })
+
+  it('streams text deltas and a final end_turn stop with usage', async () => {
+    mockGenerateContentStream.mockResolvedValue(
+      fakeStream([
+        { candidates: [{ content: { parts: [{ text: 'Hel' }] } }] },
+        { candidates: [{ content: { parts: [{ text: 'lo!' }] } }] },
+        {
+          candidates: [{ finishReason: 'STOP' }],
+          usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 3 }
+        }
+      ])
+    )
+
+    const provider = new GoogleProvider('key')
+    const events = await collect(
+      provider.stream({ model: 'gemini-flash-latest', messages: [], maxTokens: 100 })
+    )
+
+    expect(events).toEqual([
+      { type: 'text_delta', text: 'Hel' },
+      { type: 'text_delta', text: 'lo!' },
+      { type: 'usage', inputTokens: 12, outputTokens: 3 },
+      { type: 'message_stop', stopReason: 'end_turn' }
+    ])
+  })
+
+  it('streams a tool call whose finishReason arrives in a later, call-free chunk (the real shape, confirmed live)', async () => {
+    mockGenerateContentStream.mockResolvedValue(
+      fakeStream([
+        {
+          candidates: [
+            {
+              content: {
+                parts: [{ functionCall: { id: 'call_1', name: 'write_file', args: { path: 'a.txt' } } }]
+              }
+            }
+          ]
+        },
+        { candidates: [{ finishReason: 'STOP' }] }
+      ])
+    )
+
+    const provider = new GoogleProvider('key')
+    const events = await collect(
+      provider.stream({ model: 'gemini-flash-latest', messages: [], maxTokens: 100 })
+    )
+
+    expect(events).toEqual([
+      { type: 'tool_use_start', id: 'call_1', name: 'write_file' },
+      { type: 'tool_use_delta', id: 'call_1', partialInput: '{"path":"a.txt"}' },
+      { type: 'message_stop', stopReason: 'tool_use' }
+    ])
+  })
+
+  it('carries thoughtSignature from the functionCall part onto tool_use_start (Gemini 400s on the next turn without it, confirmed live)', async () => {
+    mockGenerateContentStream.mockResolvedValue(
+      fakeStream([
+        {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    functionCall: { id: 'call_1', name: 'write_file', args: {} },
+                    thoughtSignature: 'opaque-sig'
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        { candidates: [{ finishReason: 'STOP' }] }
+      ])
+    )
+
+    const provider = new GoogleProvider('key')
+    const events = await collect(provider.stream({ model: 'gemini-flash-latest', messages: [], maxTokens: 100 }))
+
+    expect(events[0]).toEqual({
+      type: 'tool_use_start',
+      id: 'call_1',
+      name: 'write_file',
+      thoughtSignature: 'opaque-sig'
+    })
+  })
+
+  it('echoes thoughtSignature back on the functionCall part when replaying a tool_use block', async () => {
+    mockGenerateContentStream.mockResolvedValue(fakeStream([]))
+    const provider = new GoogleProvider('key')
+    const messages: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'call_1', name: 'write_file', input: {}, thoughtSignature: 'opaque-sig' }
+        ]
+      }
+    ]
+
+    await collect(provider.stream({ model: 'gemini-flash-latest', messages, maxTokens: 100 }))
+
+    const params = mockGenerateContentStream.mock.calls[0][0]
+    expect(params.contents[0].parts[0].thoughtSignature).toBe('opaque-sig')
+  })
+
+  it('maps finishReason MAX_TOKENS to max_tokens', async () => {
+    mockGenerateContentStream.mockResolvedValue(fakeStream([{ candidates: [{ finishReason: 'MAX_TOKENS' }] }]))
+    const provider = new GoogleProvider('key')
+    const events = await collect(provider.stream({ model: 'gemini-flash-latest', messages: [], maxTokens: 100 }))
+    expect(events).toEqual([{ type: 'message_stop', stopReason: 'max_tokens' }])
+  })
+
+  it('maps the request: system instruction, tool_result -> functionResponse, assistant tool_use -> functionCall', async () => {
+    mockGenerateContentStream.mockResolvedValue(fakeStream([]))
+    const provider = new GoogleProvider('key')
+    const messages: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'do it' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'ok' },
+          { type: 'tool_use', id: 'call_1', name: 'write_file', input: { path: 'a.txt' } }
+        ]
+      },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'call_1', content: 'wrote it' }] }
+    ]
+
+    await collect(
+      provider.stream({ model: 'gemini-flash-latest', system: 'be helpful', messages, maxTokens: 100 })
+    )
+
+    expect(mockGenerateContentStream).toHaveBeenCalledTimes(1)
+    const params = mockGenerateContentStream.mock.calls[0][0]
+    expect(params.config.systemInstruction).toBe('be helpful')
+    expect(params.contents).toEqual([
+      { role: 'user', parts: [{ text: 'do it' }] },
+      {
+        role: 'model',
+        parts: [{ text: 'ok' }, { functionCall: { id: 'call_1', name: 'write_file', args: { path: 'a.txt' } } }]
+      },
+      {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: { id: 'call_1', name: 'write_file', response: { output: 'wrote it' } }
+          }
+        ]
+      }
+    ])
+  })
+
+  it('wraps an error tool_result under the error key', async () => {
+    mockGenerateContentStream.mockResolvedValue(fakeStream([]))
+    const provider = new GoogleProvider('key')
+    const messages: Message[] = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'x', input: {} }] },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', toolUseId: 'call_1', content: 'boom', isError: true }]
+      }
+    ]
+
+    await collect(provider.stream({ model: 'gemini-flash-latest', messages, maxTokens: 100 }))
+
+    const params = mockGenerateContentStream.mock.calls[0][0]
+    expect(params.contents[1].parts[0].functionResponse.response).toEqual({ error: 'boom' })
+  })
+
+  it('lists model ids, stripping the "models/" prefix', async () => {
+    mockList.mockResolvedValue(fakeStream([{ name: 'models/gemini-flash-latest' }, { name: 'models/gemini-3.8-flash' }]))
+    const provider = new GoogleProvider('key')
+    expect(await provider.listModels()).toEqual(['gemini-flash-latest', 'gemini-3.8-flash'])
+  })
+
+  it('counts tokens via the real endpoint', async () => {
+    mockCountTokens.mockResolvedValue({ totalTokens: 42 })
+    const provider = new GoogleProvider('key')
+    expect(await provider.countTokens([], 'gemini-flash-latest')).toBe(42)
+  })
+})

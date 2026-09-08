@@ -44,9 +44,9 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [x] 14. Unified `ModelProvider` interface (messages, streaming events, tool schema)
 - [x] 15. Anthropic adapter (streaming, token counting, model listing)
 - [x] 16. OpenAI adapter (Chat Completions streaming + tool-call mapping; Responses API migration left for later)
-- [ ] 17. Google (Gemini) adapter (Tools mapping)
-- [ ] 18. Ollama adapter (local models, tool format mapping)
-- [ ] 19. Provider registry: add-a-provider plugin mechanism
+- [x] 17. Google (Gemini) adapter (Tools mapping)
+- [x] 18. Ollama adapter (local models, tool format mapping)
+- [x] 19. Provider registry: add-a-provider plugin mechanism
 - [x] 20. Runtime model/provider switcher (UI + persisted preference via `app_settings` table)
 - [x] 21. API key registration UI (uses keychain store)
 

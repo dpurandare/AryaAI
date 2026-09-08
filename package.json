@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
+    "@google/genai": "^2.21.0",
     "better-sqlite3": "^13.0.3",
     "openai": "^7.10.0",
     "pg": "^8.23.0"
@@ -46,6 +47,8 @@
     "electron-winstaller@5.4.0": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true,
-    "fsevents@2.3.3": true
+    "fsevents@2.3.3": true,
+    "@google/genai@2.21.0": true,
+    "protobufjs@7.6.6": true
   }
 }
