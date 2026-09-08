@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import type { ToolContext } from './types'
@@ -10,7 +12,11 @@ vi.mock('node:child_process', () => ({
 
 const { awsCliTool, azureCliTool, gcloudCliTool } = await import('./cloud-cli')
 
-const ctx: ToolContext = { workspaceGuard: new WorkspaceGuard('/workspace') }
+// A real OS-native absolute path, not a hand-built one — see
+// workspace-guard.test.ts for why a synthetic path like '/workspace'
+// resolves differently on Windows (drive-relative) than POSIX.
+const root = resolve(tmpdir(), 'sachiv-cloud-cli-root')
+const ctx: ToolContext = { workspaceGuard: new WorkspaceGuard(root) }
 
 function respondWith(exitCode: number | null, stdout: string, stderr: string, spawnError?: NodeJS.ErrnoException): void {
   mockExecFile.mockImplementation((_bin, _args, _opts, callback) => {
@@ -46,7 +52,7 @@ describe('cloud CLI tools', () => {
     expect(mockExecFile).toHaveBeenCalledWith(
       'aws',
       ['sts', 'get-caller-identity'],
-      expect.objectContaining({ cwd: '/workspace' }),
+      expect.objectContaining({ cwd: root }),
       expect.any(Function)
     )
   })

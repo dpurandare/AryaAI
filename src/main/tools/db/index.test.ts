@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 let userDataDir: string
@@ -20,8 +20,9 @@ const { saveConnection } = await import('../../data/connections')
 const { dbListConnectionsTool, dbIntrospectSchemaTool, dbExecuteSqlTool } = await import('./index')
 const { WorkspaceGuard } = await import('../../security/workspace-guard')
 
-// These tools ignore ctx, but Tool.execute's signature requires one.
-const ctx = { workspaceGuard: new WorkspaceGuard('/workspace') }
+// These tools ignore ctx, but Tool.execute's signature requires one. A real
+// OS-native path, not a hand-built one — see workspace-guard.test.ts.
+const ctx = { workspaceGuard: new WorkspaceGuard(resolve(tmpdir(), 'sachiv-db-tools-root')) }
 
 describe('db_* tools', () => {
   let dir: string

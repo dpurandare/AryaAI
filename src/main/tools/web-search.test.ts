@@ -1,10 +1,13 @@
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import { webSearchTool } from './web-search'
 import type { ToolContext } from './types'
 
-// web_search ignores ctx, but Tool.execute's signature requires one.
-const ctx: ToolContext = { workspaceGuard: new WorkspaceGuard('/workspace') }
+// web_search ignores ctx, but Tool.execute's signature requires one. A real
+// OS-native path, not a hand-built one — see workspace-guard.test.ts.
+const ctx: ToolContext = { workspaceGuard: new WorkspaceGuard(resolve(tmpdir(), 'sachiv-web-search-root')) }
 
 describe('web_search', () => {
   beforeEach(() => {
