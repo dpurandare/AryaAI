@@ -20,6 +20,10 @@ export const IpcChannel = {
   SettingsGet: 'settings:get',
   SettingsSet: 'settings:set',
 
+  DataConnectionsList: 'data-connections:list',
+  DataConnectionsSave: 'data-connections:save',
+  DataConnectionsDelete: 'data-connections:delete',
+
   ChatSend: 'chat:send',
   ChatStreamEvent: 'chat:stream-event',
 
@@ -69,4 +73,31 @@ export interface ToolConfirmRequestPayload {
   name: string
   input: Record<string, unknown>
   description: string
+}
+
+export type DbEngine = 'sqlite' | 'postgres'
+
+/** Connection metadata only — never carries a password. */
+export interface DataConnectionDto {
+  id: string
+  name: string
+  engine: DbEngine
+  filePath?: string
+  host?: string
+  port?: number
+  database?: string
+  username?: string
+}
+
+/** `id` omitted creates a new connection; `password` omitted on an edit leaves the stored one unchanged. */
+export interface SaveDataConnectionInput {
+  id?: string
+  name: string
+  engine: DbEngine
+  filePath?: string
+  host?: string
+  port?: number
+  database?: string
+  username?: string
+  password?: string
 }

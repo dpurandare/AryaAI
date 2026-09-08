@@ -5,6 +5,7 @@ import {
   IpcChannel,
   type AppInfo,
   type ChatStreamEventPayload,
+  type SaveDataConnectionInput,
   type ToolConfirmRequestPayload
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
@@ -12,6 +13,7 @@ import { createSession, listSessions, deleteSession } from '../db/sessions'
 import { insertMessage, listMessages } from '../db/messages'
 import { getSetting, setSetting } from '../db/settings'
 import { setApiKey, getApiKey } from '../security/keychain'
+import { deleteConnection, listConnections, saveConnection } from '../data/connections'
 import { AnthropicProvider } from '../providers/anthropic'
 import { OpenAIProvider } from '../providers/openai'
 import type { Message, ModelProvider } from '../providers/types'
@@ -82,6 +84,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.SettingsSet, (_event, key: string, value: string) =>
     setSetting(key, value)
   )
+
+  ipcMain.handle(IpcChannel.DataConnectionsList, () => listConnections())
+  ipcMain.handle(IpcChannel.DataConnectionsSave, (_event, input: SaveDataConnectionInput) =>
+    saveConnection(input)
+  )
+  ipcMain.handle(IpcChannel.DataConnectionsDelete, (_event, id: string) => deleteConnection(id))
 
   ipcMain.handle(
     IpcChannel.ChatSend,

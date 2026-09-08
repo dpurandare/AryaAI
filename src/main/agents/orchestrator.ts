@@ -47,17 +47,32 @@ function roleFromDelegateName(name: string, agents: Map<AgentRole, Agent>): Agen
   return agents.has(slug) ? slug : undefined
 }
 
+/** Tags text/tool_use events for UI attribution (the "X agent" chip) — safe at any nesting level, including the top level in forced-role mode. */
 function tagEvent(event: StreamEvent, agentRole: AgentRole | undefined): StreamEvent {
   if (!agentRole) return event
   if (event.type === 'text_delta') return { ...event, agentRole }
   if (event.type === 'tool_use_start') return { ...event, agentRole }
-  // A nested specialist's own message_stop must be distinguishable from the top-level
-  // exchange truly ending, or the renderer can't tell them apart and stops listening
-  // early — found live: a delegated call's own tool_result and the orchestrator's real
-  // final reply were both silently dropped because the specialist's own end_turn looked
-  // identical to the whole conversation's end_turn.
-  if (event.type === 'message_stop') return { ...event, agentRole }
   return event
+}
+
+/**
+ * A nested specialist's own message_stop must be distinguishable from the
+ * whole exchange truly ending, or the renderer can't tell them apart and
+ * stops listening early — found live: a delegated call's own tool_result
+ * and the orchestrator's real final reply were both silently dropped
+ * because the specialist's own end_turn looked identical to the whole
+ * conversation's end_turn. Tagging is keyed on nesting level, not on
+ * whether agentRole is set: in forced-role mode the *top-level* call
+ * itself carries an agentRole (for the chip), but its own message_stop is
+ * still the true final one — found live too, as a stuck "sending" state
+ * that never re-enabled the composer after a forced-role reply.
+ */
+function tagMessageStop(
+  event: Extract<StreamEvent, { type: 'message_stop' }>,
+  agentRole: AgentRole | undefined,
+  isTopLevel: boolean
+): StreamEvent {
+  return isTopLevel || !agentRole ? event : { ...event, agentRole }
 }
 
 interface AccumulatedToolCall {
@@ -100,7 +115,7 @@ export class Orchestrator {
     if (forcedRole) {
       const agent = this.agents.get(forcedRole)
       if (!agent) throw new Error(`Unknown agent role "${forcedRole}".`)
-      yield* this.runLoop(agent.systemPrompt, agent.tools, conversation, budget, forcedRole)
+      yield* this.runLoop(agent.systemPrompt, agent.tools, conversation, budget, forcedRole, [], true)
       return
     }
 
@@ -110,7 +125,8 @@ export class Orchestrator {
       conversation,
       budget,
       undefined,
-      this.buildDelegateToolDefinitions()
+      this.buildDelegateToolDefinitions(),
+      true
     )
   }
 
@@ -153,7 +169,8 @@ export class Orchestrator {
     conversation: Message[],
     budget: { used: number },
     agentRole: AgentRole | undefined,
-    extraToolDefs: ToolDefinition[] = []
+    extraToolDefs: ToolDefinition[] = [],
+    isTopLevel = false
   ): AsyncGenerator<OrchestratorEvent, { text: string; isError: boolean }> {
     const toolByName = new Map(tools.map((t) => [t.name, t]))
     const toolDefs: ToolDefinition[] = [
@@ -188,7 +205,9 @@ export class Orchestrator {
         } else if (event.type === 'message_stop') {
           stopReason = event.stopReason
         }
-        yield { kind: 'stream', event: tagEvent(event, agentRole) }
+        const outEvent =
+          event.type === 'message_stop' ? tagMessageStop(event, agentRole, isTopLevel) : tagEvent(event, agentRole)
+        yield { kind: 'stream', event: outEvent }
       }
 
       const assistantBlocks: ContentBlock[] = []
@@ -258,7 +277,8 @@ export class Orchestrator {
       return { content: `Unknown tool "${name}".`, isError: true }
     }
 
-    if (tool.mutates) {
+    const mutates = typeof tool.mutates === 'function' ? tool.mutates(input) : tool.mutates
+    if (mutates) {
       const decision = await this.confirmTool({
         toolUseId,
         name: tool.name,

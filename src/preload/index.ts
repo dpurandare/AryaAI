@@ -6,7 +6,9 @@ import {
   type SessionDto,
   type MessageDto,
   type ChatStreamEventPayload,
-  type ToolConfirmRequestPayload
+  type ToolConfirmRequestPayload,
+  type DataConnectionDto,
+  type SaveDataConnectionInput
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 
@@ -32,6 +34,13 @@ const api = {
     ipcRenderer.invoke(IpcChannel.SettingsGet, key),
   setSetting: (key: string, value: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.SettingsSet, key, value),
+
+  listDataConnections: (): Promise<DataConnectionDto[]> =>
+    ipcRenderer.invoke(IpcChannel.DataConnectionsList),
+  saveDataConnection: (input: SaveDataConnectionInput): Promise<DataConnectionDto> =>
+    ipcRenderer.invoke(IpcChannel.DataConnectionsSave, input),
+  deleteDataConnection: (id: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.DataConnectionsDelete, id),
 
   sendChatMessage: (
     sessionId: string,

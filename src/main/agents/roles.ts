@@ -3,17 +3,21 @@ import type { ToolRegistry } from '../tools/registry'
 import type { Tool } from '../tools/types'
 import type { Agent } from './orchestrator'
 
+function pickTools(registry: ToolRegistry, names: string[]): Tool[] {
+  return names.map((name) => registry.get(name)).filter((tool): tool is Tool => tool !== undefined)
+}
+
 /**
- * The 6 specialist roles per TASKS.md #28. Only `coding` has real tools
- * today (file-ops, pulled from the shared registry) — the rest are
- * reasoning-only until their tools land later in the work order (TASKS.md
- * "Widen tools", step 9). Their prompts say so explicitly rather than
- * letting the model imply a capability it doesn't have.
+ * The 6 specialist roles per TASKS.md #28. `planning`/`distribution` stay
+ * reasoning-only (no tools of their own exist for either yet) — their
+ * prompts say so explicitly rather than letting the model imply a
+ * capability it doesn't have.
  */
 export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
-  const codingTools: Tool[] = ['read_file', 'list_directory', 'write_file']
-    .map((name) => registry.get(name))
-    .filter((tool): tool is Tool => tool !== undefined)
+  const codingTools = pickTools(registry, ['read_file', 'list_directory', 'write_file'])
+  const terminalDevopsTools = pickTools(registry, ['shell_execute', 'aws_cli', 'azure_cli', 'gcloud_cli'])
+  const dataTools = pickTools(registry, ['db_list_connections', 'db_introspect_schema', 'db_execute_sql'])
+  const researchTools = pickTools(registry, ['web_search'])
 
   const agents: Agent[] = [
     {
@@ -29,10 +33,12 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
       role: 'research',
       summary: 'Gathers and synthesizes information relevant to the request.',
       systemPrompt:
-        'You are the Research specialist for Sachiv. Gather and synthesize information relevant to the ' +
-        'request and present clear findings. You do not have live web search yet — rely on your own ' +
-        'knowledge, and clearly flag anything that would need an external lookup once a search tool is available.',
-      tools: []
+        'You are the Research specialist for Sachiv. Use web_search to look things up, but be aware ' +
+        "it's DuckDuckGo's free Instant Answer API — it only covers well-known topics with an existing " +
+        "summary/infobox, not general web search, so it will often return nothing for current-events " +
+        'or niche queries. When it does, fall back to your own knowledge and say plainly that a real ' +
+        'web search was not available for that query rather than guessing.',
+      tools: researchTools
     },
     {
       role: 'coding',
@@ -44,19 +50,27 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     },
     {
       role: 'terminal-devops',
-      summary: 'Runs shell/terminal commands and DevOps tasks.',
+      summary: 'Runs shell commands and AWS/Azure/GCP CLI operations.',
       systemPrompt:
-        'You are the Terminal/DevOps specialist for Sachiv. You do not have shell execution access yet ' +
-        '— explain what commands would need to run and why, rather than claiming to have run them.',
-      tools: []
+        'You are the Terminal/DevOps specialist for Sachiv. You can run shell commands (shell_execute, ' +
+        "scoped to the workspace as cwd but not otherwise sandboxed) and cloud CLI commands via aws_cli/" +
+        'azure_cli/gcloud_cli — these assume the respective CLI is already installed and authenticated ' +
+        'on this machine; if a CLI is missing, say so plainly rather than guessing at its output. Call ' +
+        'the tool directly to run a command — the app already shows the user a confirmation dialog with ' +
+        "the exact command before anything executes, so don't ask for permission in chat first or " +
+        'describe what a command would do instead of just running it.',
+      tools: terminalDevopsTools
     },
     {
       role: 'data',
-      summary: 'Accesses and analyzes data sources such as databases.',
+      summary: 'Introspects and queries configured database connections.',
       systemPrompt:
-        'You are the Data specialist for Sachiv. You do not have database access yet — describe what ' +
-        'data or queries would be needed rather than claiming to have run them.',
-      tools: []
+        'You are the Data specialist for Sachiv. Use db_list_connections to see what data connections ' +
+        'are configured (in Settings > Data sources), db_introspect_schema to see a connection\'s ' +
+        'tables/columns before writing queries against it, and db_execute_sql to run SQL. If no ' +
+        'connection is configured yet, say so and ask the user to add one in Settings rather than ' +
+        'guessing at a schema.',
+      tools: dataTools
     },
     {
       role: 'distribution',

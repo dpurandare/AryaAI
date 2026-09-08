@@ -65,13 +65,13 @@ The order we'll actually build in, referencing item numbers below. Everything st
 
 ## Tools
 - [x] 31. Tool registry + `Tool` interface wired into the chat loop (moves to the orchestrator when #27 lands)
-- [ ] 32. Web search tool
-- [ ] 33. Shell execution tool (through workspace guard)
+- [x] 32. Web search tool
+- [x] 33. Shell execution tool (through workspace guard)
 - [x] 34. File operations tool (through workspace guard): `read_file`, `list_directory`, `write_file`
-- [ ] 35. Database access tool (schema introspection + generated SQL execution; writes require confirmation)
-- [ ] 36. AWS tool (shells out to configured AWS CLI)
-- [ ] 37. Azure tool (shells out to configured Azure CLI)
-- [ ] 38. GCP tool (shells out to configured gcloud CLI)
+- [x] 35. Database access tool (schema introspection + generated SQL execution; writes require confirmation)
+- [x] 36. AWS tool (shells out to configured AWS CLI)
+- [x] 37. Azure tool (shells out to configured Azure CLI)
+- [x] 38. GCP tool (shells out to configured gcloud CLI)
 - [x] 39. Human-in-loop confirmation flow for all `mutates: true` tool calls
 - [ ] 40. Auto-approve configuration (per tool / per workspace) — session-only toggle lives in #54 for now; persisted per-tool/per-workspace config still open
 - [ ] 41. Workspace boundary configuration UI

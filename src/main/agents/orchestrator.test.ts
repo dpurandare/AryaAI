@@ -294,5 +294,13 @@ describe('Orchestrator (integration, mocked provider)', () => {
     const writeStart = streamEvents.find((e) => e.type === 'tool_use_start' && e.name === 'write_file')
     expect(writeStart).toMatchObject({ agentRole: 'coding' })
     expect(await readFile(join(root, 'forced.txt'), 'utf-8')).toBe('forced')
+
+    // Regression test for a live-found bug: in forced-role mode the TOP-LEVEL
+    // call itself carries an agentRole (for the "Coding agent" chip above),
+    // but its own final message_stop must stay untagged, or App.svelte's
+    // "untagged + non-tool_use = truly final" check never fires and the
+    // composer's `sending` state gets stuck disabled forever.
+    const finalStop = streamEvents.at(-1)
+    expect(finalStop).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
   })
 })
