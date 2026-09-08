@@ -45,7 +45,10 @@ function createMainWindow(): BrowserWindow {
 // Prevents the app from sharing Electron's generic default userData
 // directory (~/.../Electron) with other unpackaged Electron apps on the
 // same machine — each app must have its own isolated data/credentials.
-app.setName('Sachiv')
+// Renaming this (Sachiv -> Sachivji) changes the userData folder name too —
+// existing local sessions/keys under the old name won't be picked up, a
+// fresh empty one gets created under the new name instead.
+app.setName('Sachivji')
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.sachiv.app')

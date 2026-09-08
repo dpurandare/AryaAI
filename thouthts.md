@@ -1,4 +1,4 @@
-Application name: Sachiv (Sanskrit/Hindi: secretary/assistant/representative/companion/associate).
+Application name: Sachivji (Sanskrit/Hindi: secretary/assistant/representative/companion/associate — "Sachiv" plus "-ji", the respectful honorific suffix).
 
 I want to create a portable desktop application and the main points are as follows:
 

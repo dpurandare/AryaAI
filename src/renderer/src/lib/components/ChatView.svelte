@@ -168,7 +168,7 @@
     <form class="composer" onsubmit={(e) => (e.preventDefault(), submit())}>
       <textarea
         bind:value={draft}
-        placeholder="Message Sachiv..."
+        placeholder="Message Sachivji..."
         disabled={sending}
         onkeydown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {

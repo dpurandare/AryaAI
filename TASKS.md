@@ -1,4 +1,4 @@
-# Sachiv — Task List
+# Sachivji — Task List
 
 Tracks implementation work against `thouthts.md`. Every requirement below has a stable number; check items off as they land, but don't renumber — the Work Order section refers to these numbers.
 
@@ -32,7 +32,7 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [x] 5. Workspace boundary path-guard utility
 - [x] 6. electron-builder config (mac/win/linux targets)
 - [x] 7. App icon / branding assets (all platforms) — placeholder monogram (`build/icon-source.svg`), generated to `.icns`/`.ico`/`.png` via `npm run icons:generate` (icon-gen + sharp); swap the source SVG and regenerate for real brand art later
-- [x] 8. Decide & add tagline to app metadata — "Sachiv — your local-first, multi-agent AI companion." in `package.json`'s `description` (feeds Windows/Linux installer metadata) and `README.md`
+- [x] 8. Decide & add tagline to app metadata — "Sachivji — your local-first, multi-agent AI companion." in `package.json`'s `description` (feeds Windows/Linux installer metadata) and `README.md` (renamed from "Sachiv" to "Sachivji" — more respectful-sounding, per explicit request)
 
 ## Versioning & CI/CD
 - [x] 9. Adopt semver policy (major.minor.patch), CHANGELOG convention — policy documented in `README.md`'s Versioning section, `CHANGELOG.md` added (Keep a Changelog format)

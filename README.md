@@ -1,4 +1,4 @@
-# Sachiv
+# Sachivji
 
 Your local-first, multi-agent AI companion.
 
@@ -78,7 +78,7 @@ npm run dist:linux  # package a Linux installer
 
 ## Versioning
 
-Sachiv follows [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`). While the major version is `0`, any release may include breaking changes. From `1.0.0` onward: `MAJOR` is reserved for breaking changes to stored data, config, or IPC contracts; `MINOR` for backward-compatible features; `PATCH` for fixes. See `CHANGELOG.md` for release notes.
+Sachivji follows [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`). While the major version is `0`, any release may include breaking changes. From `1.0.0` onward: `MAJOR` is reserved for breaking changes to stored data, config, or IPC contracts; `MINOR` for backward-compatible features; `PATCH` for fixes. See `CHANGELOG.md` for release notes.
 
 ## Where things live
 

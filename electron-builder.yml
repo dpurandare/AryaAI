@@ -1,5 +1,5 @@
-appId: com.sachiv.app
-productName: Sachiv
+appId: com.sachiv.app # kept as-is despite the Sachiv -> Sachivji rename — an internal bundle identifier, not display branding; changing it would be treated as a different app by OS update/keychain scoping
+productName: Sachivji
 directories:
   buildResources: build
   output: release

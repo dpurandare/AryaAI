@@ -299,7 +299,7 @@
   window.sachiv
     .getAppInfo()
     .then((info) => {
-      statusLine = `Sachiv v${info.version}`
+      statusLine = `Sachivji v${info.version}`
       isMac = info.platform === 'darwin'
       userName = info.userName
     })

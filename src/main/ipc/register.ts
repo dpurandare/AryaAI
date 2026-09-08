@@ -35,7 +35,7 @@ import type { ToolContext } from '../tools/types'
 import { Orchestrator, type ConfirmDecision, type ToolConfirmRequest } from '../agents/orchestrator'
 import { createAgents } from '../agents/roles'
 
-const SYSTEM_PROMPT = "You are Sachiv, a helpful AI assistant running locally on the user's machine."
+const SYSTEM_PROMPT = "You are Sachivji, a helpful AI assistant running locally on the user's machine."
 
 const providerRegistry = createDefaultProviderRegistry()
 
@@ -78,7 +78,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IpcChannel.AppGetInfo,
     (): AppInfo => ({
-      name: 'Sachiv',
+      name: 'Sachivji',
       version: app.getVersion(),
       platform: process.platform,
       userName: userInfo().username
