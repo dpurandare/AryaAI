@@ -69,6 +69,7 @@ const api = {
     forcedRole?: AgentRole | null
   ): Promise<{ streamId: string }> =>
     ipcRenderer.invoke(IpcChannel.ChatSend, sessionId, text, forcedRole ?? null),
+  cancelChat: (streamId: string): Promise<void> => ipcRenderer.invoke(IpcChannel.ChatCancel, streamId),
 
   onChatStreamEvent: (callback: (payload: ChatStreamEventPayload) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, payload: ChatStreamEventPayload): void =>

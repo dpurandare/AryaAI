@@ -18,6 +18,8 @@ export interface ScriptedTurn {
   stopReason?: 'end_turn' | 'tool_use' | 'max_tokens'
   /** Yielded twice in a row before message_stop, matching real providers (Anthropic, Gemini) that repeat a cumulative usage total across chunks rather than sending it once — see orchestrator.ts's roundUsage handling. */
   usage?: { inputTokens: number; outputTokens: number }
+  /** Throws instead of streaming anything — every real SDK throws its own differently-shaped error when the request's AbortSignal fires mid-call; the orchestrator is expected to tell that apart from a genuine failure via `request.signal.aborted`, not by inspecting the error itself. */
+  throwError?: string
 }
 
 /**
@@ -58,6 +60,10 @@ export class MockProvider implements ModelProvider {
       throw new Error(
         `MockProvider ran out of scripted turns (received ${this.nextTurnIndex} stream() calls, only ${this.turns.length} scripted).`
       )
+    }
+
+    if (turn.throwError) {
+      throw new Error(turn.throwError)
     }
 
     if (turn.text) {

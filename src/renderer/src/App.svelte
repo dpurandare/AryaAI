@@ -78,6 +78,8 @@
   let pendingConfirm = $state<ToolConfirmRequestPayload | null>(null)
   let autoApproveTools = $state(false)
   let sessionUsage = $state({ inputTokens: 0, outputTokens: 0 })
+  /** The in-flight turn's stream id, for the Stop button — not reactive UI state, just bookkeeping read by stopGeneration(). */
+  let currentStreamId = ''
   // Persisted per-tool rules (TASKS.md #40) — additive to the session-only
   // blanket toggle above, not a replacement for it. A plain object, not
   // $state(new Set()) — see feedback_svelte5-runes-gotchas memory.
@@ -187,6 +189,7 @@
     const assistantIdx = messages.length - 1
 
     const { streamId } = await window.sachiv.sendChatMessage(activeId, text, forcedRole)
+    currentStreamId = streamId
 
     const unsubscribe = window.sachiv.onChatStreamEvent((payload) => {
       if (payload.streamId !== streamId) return
@@ -228,11 +231,16 @@
         // A tagged stop is a nested specialist's own round ending, not the whole
         // exchange — only an untagged (top-level) non-tool_use stop is truly final.
         if (event.stopReason === 'tool_use' || event.agentRole) return
+        if (event.stopReason === 'aborted') appendTextSegment(msg, '\n\n⏹ Stopped.')
         msg.pending = false
         sending = false
         unsubscribe()
       }
     })
+  }
+
+  function stopGeneration(): void {
+    if (currentStreamId) window.sachiv.cancelChat(currentStreamId)
   }
 
   function approveTool(input: Record<string, unknown>): void {
@@ -370,6 +378,7 @@
         {statusLine}
         {sending}
         onSend={sendMessage}
+        onStop={stopGeneration}
         {providers}
         {providerId}
         model={currentModel}

@@ -44,10 +44,12 @@ function autoApprove(): (request: ToolConfirmRequest) => Promise<ConfirmDecision
 describe('Orchestrator (integration, mocked provider)', () => {
   let root: string
   let ctx: ToolContext
+  let signal: AbortSignal
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'sachiv-orchestrator-'))
     ctx = { workspaceGuard: new WorkspaceGuard(root) }
+    signal = new AbortController().signal
   })
 
   afterEach(async () => {
@@ -81,7 +83,8 @@ describe('Orchestrator (integration, mocked provider)', () => {
       'You are Sachiv.',
       registry.list(),
       autoApprove(),
-      ctx
+      ctx,
+      signal
     )
 
     const conversation: Message[] = [
@@ -139,7 +142,8 @@ describe('Orchestrator (integration, mocked provider)', () => {
       'You are Sachiv.',
       registry.list(),
       autoApprove(),
-      ctx
+      ctx,
+      signal
     )
 
     const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
@@ -167,7 +171,8 @@ describe('Orchestrator (integration, mocked provider)', () => {
       'You are Sachiv.',
       registry.list(),
       denyAll,
-      ctx
+      ctx,
+      signal
     )
 
     const events = await collect(orchestrator, [
@@ -194,7 +199,8 @@ describe('Orchestrator (integration, mocked provider)', () => {
       'You are Sachiv.',
       registry.list(),
       autoApprove(),
-      ctx
+      ctx,
+      signal
     )
 
     const events = await collect(orchestrator, [
@@ -226,7 +232,8 @@ describe('Orchestrator (integration, mocked provider)', () => {
       'You are Sachiv.',
       registry.list(),
       autoApprove(),
-      ctx
+      ctx,
+      signal
     )
 
     const events = await collect(orchestrator, [
@@ -255,7 +262,8 @@ describe('Orchestrator (integration, mocked provider)', () => {
       'You are Sachiv.',
       registry.list(),
       autoApprove(),
-      ctx
+      ctx,
+      signal
     )
 
     const iterable = orchestrator.run(
@@ -280,7 +288,8 @@ describe('Orchestrator (integration, mocked provider)', () => {
       'You are Sachiv.',
       registry.list(),
       autoApprove(),
-      ctx
+      ctx,
+      signal
     )
 
     const events = await collect(
@@ -330,7 +339,8 @@ describe('Orchestrator (integration, mocked provider)', () => {
       'You are Sachiv.',
       registry.list(),
       autoApprove(),
-      ctx
+      ctx,
+      signal
     )
 
     const events = await collect(orchestrator, [
@@ -352,5 +362,49 @@ describe('Orchestrator (integration, mocked provider)', () => {
       { input: 0, output: 0 }
     )
     expect(total).toEqual({ input: 170, output: 23 })
+  })
+
+  it('an aborted signal yields a clean message_stop("aborted") instead of a thrown error', async () => {
+    const registry = buildRegistry()
+    const agents = createAgents(registry)
+    const provider = new MockProvider([{ throwError: 'simulated SDK abort error' }])
+    const controller = new AbortController()
+    controller.abort()
+
+    const orchestrator = new Orchestrator(
+      provider,
+      'mock-model',
+      agents,
+      'You are Sachiv.',
+      registry.list(),
+      autoApprove(),
+      ctx,
+      controller.signal
+    )
+
+    const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+    const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+    expect(streamEvents).toEqual([{ type: 'message_stop', stopReason: 'aborted' }])
+  })
+
+  it('a genuine provider error still propagates (not swallowed as an abort) when the signal was never fired', async () => {
+    const registry = buildRegistry()
+    const agents = createAgents(registry)
+    const provider = new MockProvider([{ throwError: 'a real network failure' }])
+    const orchestrator = new Orchestrator(
+      provider,
+      'mock-model',
+      agents,
+      'You are Sachiv.',
+      registry.list(),
+      autoApprove(),
+      ctx,
+      signal
+    )
+
+    const iterable = orchestrator.run([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+    const iterator = iterable[Symbol.asyncIterator]()
+    await expect(iterator.next()).rejects.toThrow('a real network failure')
   })
 })

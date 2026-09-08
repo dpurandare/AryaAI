@@ -36,6 +36,7 @@
     statusLine = '',
     sending = false,
     onSend,
+    onStop,
     providers,
     providerId,
     model,
@@ -49,6 +50,7 @@
     statusLine: string
     sending: boolean
     onSend: (text: string, forcedRole?: AgentRole | null) => void
+    onStop: () => void
     providers: readonly Provider[]
     providerId: string
     model: string
@@ -180,7 +182,11 @@
           }
         }}
       ></textarea>
-      <button class="send" type="submit" disabled={sending || !draft.trim()} aria-label="Send">↵</button>
+      {#if sending}
+        <button class="send stop" type="button" onclick={onStop} aria-label="Stop generating">⏹</button>
+      {:else}
+        <button class="send" type="submit" disabled={!draft.trim()} aria-label="Send">↵</button>
+      {/if}
     </form>
 
     <div class="status-bar">

@@ -47,6 +47,7 @@ const mcpManager = new McpManager()
 let toolContext: ToolContext | undefined
 
 const pendingConfirmations = new Map<string, (decision: ConfirmDecision) => void>()
+const activeStreams = new Map<string, AbortController>()
 
 /**
  * Central place where every ipcMain.handle/on channel is registered.
@@ -166,16 +167,29 @@ export function registerIpcHandlers(): void {
     (event, sessionId: string, text: string, forcedRole: AgentRole | null) => {
       const streamId = randomUUID()
       const sender = event.sender
-      runChat(sessionId, text, streamId, sender, forcedRole).catch((err: unknown) => {
-        emit(sender, {
-          streamId,
-          sessionId,
-          event: { type: 'error', message: err instanceof Error ? err.message : String(err) }
+      // Created and registered synchronously, before returning streamId to
+      // the renderer, so a ChatCancel that arrives immediately after can
+      // never race ahead of this being in the map.
+      const controller = new AbortController()
+      activeStreams.set(streamId, controller)
+      runChat(sessionId, text, streamId, sender, forcedRole, controller.signal)
+        .catch((err: unknown) => {
+          emit(sender, {
+            streamId,
+            sessionId,
+            event: { type: 'error', message: err instanceof Error ? err.message : String(err) }
+          })
         })
-      })
+        .finally(() => activeStreams.delete(streamId))
       return { streamId }
     }
   )
+
+  ipcMain.handle(IpcChannel.ChatCancel, (_event, streamId: string) => {
+    // A no-op if the stream already finished — same defensive shape as
+    // ToolConfirmRespond's "no matching pending entry" handling below.
+    activeStreams.get(streamId)?.abort()
+  })
 
   ipcMain.handle(
     IpcChannel.ToolConfirmRespond,
@@ -211,7 +225,8 @@ async function runChat(
   text: string,
   streamId: string,
   sender: WebContents,
-  forcedRole: AgentRole | null
+  forcedRole: AgentRole | null,
+  signal: AbortSignal
 ): Promise<void> {
   const providerId = getSetting(ACTIVE_PROVIDER_KEY) ?? DEFAULT_PROVIDER_ID
   const model = getSetting(modelSettingKey(providerId))
@@ -249,7 +264,8 @@ async function runChat(
     SYSTEM_PROMPT,
     toolRegistry.list(),
     makeConfirmTool(sender, streamId, sessionId),
-    toolContext
+    toolContext,
+    signal
   )
 
   for await (const orchestratorEvent of orchestrator.run(conversation, forcedRole)) {

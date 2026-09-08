@@ -37,6 +37,7 @@ export const IpcChannel = {
   ToolsList: 'tools:list',
 
   ChatSend: 'chat:send',
+  ChatCancel: 'chat:cancel',
   ChatStreamEvent: 'chat:stream-event',
 
   ToolConfirmRequest: 'tools:confirm-request',

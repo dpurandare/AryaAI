@@ -108,7 +108,8 @@ export class Orchestrator {
     private readonly defaultSystemPrompt: string,
     private readonly defaultTools: Tool[],
     private readonly confirmTool: (request: ToolConfirmRequest) => Promise<ConfirmDecision>,
-    private readonly toolContext: ToolContext
+    private readonly toolContext: ToolContext,
+    private readonly signal: AbortSignal
   ) {}
 
   /**
@@ -200,36 +201,48 @@ export class Orchestrator {
       // double/triple-count if they summed the raw events.
       let roundUsage: { inputTokens: number; outputTokens: number } | undefined
 
-      for await (const event of this.provider.stream({
-        model: this.model,
-        system: systemPrompt,
-        messages: conversation,
-        maxTokens: 4096,
-        tools: toolDefs.length ? toolDefs : undefined
-      })) {
-        if (event.type === 'text_delta') {
-          assistantText += event.text
-        } else if (event.type === 'tool_use_start') {
-          const call: AccumulatedToolCall = {
-            id: event.id,
-            name: event.name,
-            inputJson: '',
-            thoughtSignature: event.thoughtSignature
+      try {
+        for await (const event of this.provider.stream({
+          model: this.model,
+          system: systemPrompt,
+          messages: conversation,
+          maxTokens: 4096,
+          tools: toolDefs.length ? toolDefs : undefined,
+          signal: this.signal
+        })) {
+          if (event.type === 'text_delta') {
+            assistantText += event.text
+          } else if (event.type === 'tool_use_start') {
+            const call: AccumulatedToolCall = {
+              id: event.id,
+              name: event.name,
+              inputJson: '',
+              thoughtSignature: event.thoughtSignature
+            }
+            toolCalls.push(call)
+            toolCallsById.set(event.id, call)
+          } else if (event.type === 'tool_use_delta') {
+            const call = toolCallsById.get(event.id)
+            if (call) call.inputJson += event.partialInput
+          } else if (event.type === 'message_stop') {
+            stopReason = event.stopReason
+          } else if (event.type === 'usage') {
+            roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
+            continue
           }
-          toolCalls.push(call)
-          toolCallsById.set(event.id, call)
-        } else if (event.type === 'tool_use_delta') {
-          const call = toolCallsById.get(event.id)
-          if (call) call.inputJson += event.partialInput
-        } else if (event.type === 'message_stop') {
-          stopReason = event.stopReason
-        } else if (event.type === 'usage') {
-          roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
-          continue
+          const outEvent =
+            event.type === 'message_stop' ? tagMessageStop(event, agentRole, isTopLevel) : tagEvent(event, agentRole)
+          yield { kind: 'stream', event: outEvent }
         }
-        const outEvent =
-          event.type === 'message_stop' ? tagMessageStop(event, agentRole, isTopLevel) : tagEvent(event, agentRole)
-        yield { kind: 'stream', event: outEvent }
+      } catch (err) {
+        // The signal is the source of truth for "was this a user-requested
+        // stop" — every provider SDK throws its own differently-shaped abort
+        // error, and pattern-matching on error names/types across all 4
+        // would be brittle. A genuine failure (network error, bad request,
+        // etc.) rethrows unchanged, preserving today's error surfacing.
+        if (!this.signal.aborted) throw err
+        yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, agentRole, isTopLevel) }
+        return { text: assistantText, isError: true }
       }
 
       if (roundUsage) {

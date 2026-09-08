@@ -61,8 +61,8 @@ The order we'll actually build in, referencing item numbers below. Everything st
 ## Multi-agent system
 - [x] 27. Implement `Orchestrator.run` (routing step -> agent handoff -> result; tool-call loop below moves here once it lands)
 - [x] 28. Define system prompts/tool sets per agent role (Planning, Research, Coding, Terminal/DevOps, Data, Distribution)
-- [ ] 29. Cancellation & steering: AbortController plumbed from UI -> orchestrator -> provider stream
-- [ ] 30. Mid-run steering: edit a pending tool action before it executes
+- [x] 29. Cancellation & steering: AbortController plumbed from UI -> orchestrator -> provider stream — cancels the in-flight streaming response; does not interrupt a tool already executing or auto-dismiss an open confirmation dialog (the existing Deny button covers that)
+- [x] 30. Mid-run steering: edit a pending tool action before it executes — was already implemented via the confirmation dialog's editable JSON, just never checked off; live-verified this pass (edited a write_file call's content, confirmed the edit — not the model's original — landed on disk)
 
 ## Tools
 - [x] 31. Tool registry + `Tool` interface wired into the chat loop (moves to the orchestrator when #27 lands)
