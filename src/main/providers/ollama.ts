@@ -1,14 +1,15 @@
 import OpenAI from 'openai'
 import { countTokensApprox, streamOpenAICompatible } from './openai-compatible'
-import type { CompletionRequest, Message, ModelProvider, StreamEvent } from './types'
+import type { CompletionRequest, EmbeddingProvider, Message, ModelProvider, StreamEvent } from './types'
 
 /**
  * Ollama's `/v1/*` endpoints are OpenAI Chat Completions-wire-compatible
  * (confirmed live, including real tool-call responses), so this just points
  * the OpenAI SDK at the local server instead of api.openai.com. The API key
- * is unused by Ollama but the SDK requires a non-empty string.
+ * is unused by Ollama but the SDK requires a non-empty string. The same
+ * compatibility extends to `/v1/embeddings`.
  */
-export class OllamaProvider implements ModelProvider {
+export class OllamaProvider implements ModelProvider, EmbeddingProvider {
   readonly id = 'ollama'
   readonly displayName = 'Ollama (local)'
   private client: OpenAI
@@ -30,5 +31,10 @@ export class OllamaProvider implements ModelProvider {
 
   stream(request: CompletionRequest): AsyncIterable<StreamEvent> {
     return streamOpenAICompatible(this.client, request)
+  }
+
+  async embed(texts: string[], model: string): Promise<number[][]> {
+    const response = await this.client.embeddings.create({ model, input: texts })
+    return response.data.map((item) => item.embedding)
   }
 }

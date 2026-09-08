@@ -17,7 +17,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
   const codingTools = pickTools(registry, ['read_file', 'list_directory', 'write_file', 'git_exec'])
   const terminalDevopsTools = pickTools(registry, ['shell_execute', 'aws_cli', 'azure_cli', 'gcloud_cli'])
   const dataTools = pickTools(registry, ['db_list_connections', 'db_introspect_schema', 'db_execute_sql'])
-  const researchTools = pickTools(registry, ['web_search'])
+  const researchTools = pickTools(registry, ['web_search', 'search_history'])
   const distributionTools = pickTools(registry, ['github_cli'])
 
   const agents: Agent[] = [
@@ -38,7 +38,11 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         "it's DuckDuckGo's free Instant Answer API — it only covers well-known topics with an existing " +
         "summary/infobox, not general web search, so it will often return nothing for current-events " +
         'or niche queries. When it does, fall back to your own knowledge and say plainly that a real ' +
-        'web search was not available for that query rather than guessing.',
+        'web search was not available for that query rather than guessing. Use search_history when a ' +
+        "question needs recalling something from an earlier conversation or comparing how a detail " +
+        'changed over time (a "delta") — it searches the user\'s own past sessions, not the current one. ' +
+        "If search_history reports it's unavailable, tell the user plainly rather than silently working " +
+        'around it or guessing.',
       tools: researchTools
     },
     {

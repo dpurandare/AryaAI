@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { FinishReason, FunctionCallingConfigMode, GoogleGenAI } from '@google/genai'
 import type { Content, Part } from '@google/genai'
-import type { CompletionRequest, Message, ModelProvider, StreamEvent } from './types'
+import type { CompletionRequest, EmbeddingProvider, Message, ModelProvider, StreamEvent } from './types'
 
 /**
  * Gemini has no separate "tool" role — a tool result is a `functionResponse`
@@ -39,7 +39,7 @@ function toGeminiContents(messages: Message[]): Content[] {
   })
 }
 
-export class GoogleProvider implements ModelProvider {
+export class GoogleProvider implements ModelProvider, EmbeddingProvider {
   readonly id = 'google'
   readonly displayName = 'Google (Gemini)'
   private client: GoogleGenAI
@@ -62,6 +62,11 @@ export class GoogleProvider implements ModelProvider {
       contents: toGeminiContents(messages)
     })
     return result.totalTokens ?? 0
+  }
+
+  async embed(texts: string[], model: string): Promise<number[][]> {
+    const response = await this.client.models.embedContent({ model, contents: texts })
+    return (response.embeddings ?? []).map((embedding) => embedding.values ?? [])
   }
 
   async *stream(request: CompletionRequest): AsyncIterable<StreamEvent> {

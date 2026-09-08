@@ -12,11 +12,13 @@ import {
   type ChatStreamEventPayload,
   type SessionExportResult,
   type ToolConfirmRequestPayload,
-  type ToolDescriptor
+  type ToolDescriptor,
+  type SearchHistoryStatusDto
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 import { createSession, listSessions, deleteSession } from '../db/sessions'
 import { insertMessage, listMessages } from '../db/messages'
+import { enqueueMessage, getEmbeddingConfig, getIndexState, rebuildIndex, runBackfill } from '../search-history/indexer'
 import { getSetting, setSetting } from '../db/settings'
 import { addUsage, getUsage } from '../db/usage'
 import { setApiKey, getApiKey } from '../security/keychain'
@@ -67,6 +69,12 @@ export function registerIpcHandlers(): void {
     console.error('Failed to connect configured MCP servers:', err)
   })
 
+  // Fire-and-forget, same reasoning as MCP connect above — catches up any
+  // messages missing from the search_history index without blocking startup.
+  runBackfill().catch((err: unknown) => {
+    console.error('search_history: backfill failed:', err)
+  })
+
   ipcMain.handle(
     IpcChannel.AppGetInfo,
     (): AppInfo => ({
@@ -90,7 +98,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.ProvidersList, () =>
     providerRegistry
       .list()
-      .map(({ id, displayName, requiresApiKey }) => ({ id, displayName, requiresApiKey }))
+      .map(({ id, displayName, requiresApiKey, supportsEmbeddings }) => ({
+        id,
+        displayName,
+        requiresApiKey,
+        supportsEmbeddings
+      }))
   )
   ipcMain.handle(IpcChannel.ProvidersSetApiKey, (_event, providerId: string, apiKey: string) => {
     setApiKey(providerId, apiKey)
@@ -168,6 +181,19 @@ export function registerIpcHandlers(): void {
         mutates: typeof tool.mutates === 'function' ? 'sometimes' : 'always'
       }))
   )
+
+  ipcMain.handle(IpcChannel.SearchHistoryStatus, (): SearchHistoryStatusDto => {
+    const config = getEmbeddingConfig()
+    const state = getIndexState()
+    return {
+      providerId: config.providerId,
+      model: config.model,
+      state: state.kind,
+      indexed: state.kind === 'ready' ? state.indexed : 0,
+      total: state.kind === 'ready' ? state.total : 0
+    }
+  })
+  ipcMain.handle(IpcChannel.SearchHistoryRebuildIndex, () => rebuildIndex())
 
   ipcMain.handle(
     IpcChannel.ChatSend,
@@ -262,7 +288,8 @@ async function runChat(
   // on what's about to be sent, never on what's persisted/displayed.
   const conversation = await prepareConversation(priorTurns, model, provider)
   conversation.push({ role: 'user', content: [{ type: 'text', text }] })
-  insertMessage(sessionId, 'user', [{ type: 'text', text }])
+  const userMessage = insertMessage(sessionId, 'user', [{ type: 'text', text }])
+  enqueueMessage(userMessage.id, sessionId, userMessage.content)
 
   const orchestrator = new Orchestrator(
     provider,
@@ -271,7 +298,7 @@ async function runChat(
     SYSTEM_PROMPT,
     toolRegistry.list(),
     makeConfirmTool(sender, streamId, sessionId),
-    toolContext,
+    { ...toolContext, currentSessionId: sessionId },
     signal
   )
 
@@ -282,7 +309,8 @@ async function runChat(
         addUsage(sessionId, orchestratorEvent.event.inputTokens, orchestratorEvent.event.outputTokens)
       }
     } else {
-      insertMessage(sessionId, orchestratorEvent.role, orchestratorEvent.content)
+      const record = insertMessage(sessionId, orchestratorEvent.role, orchestratorEvent.content)
+      enqueueMessage(record.id, sessionId, record.content)
     }
   }
 }

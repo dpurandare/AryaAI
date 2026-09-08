@@ -33,7 +33,8 @@
     "js-tiktoken": "^1.0.21",
     "marked": "^18.0.12",
     "openai": "^7.10.0",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "sqlite-vec": "^0.1.9"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^2.0.0",

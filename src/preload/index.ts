@@ -15,7 +15,8 @@ import {
   type ToolDescriptor,
   type SessionUsageDto,
   type SessionExportResult,
-  type AppUpdateAvailablePayload
+  type AppUpdateAvailablePayload,
+  type SearchHistoryStatusDto
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 
@@ -70,6 +71,10 @@ const api = {
   getWorkspaceRoot: (): Promise<string> => ipcRenderer.invoke(IpcChannel.WorkspaceGetRoot),
   setWorkspaceRoot: (path: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.WorkspaceSetRoot, path),
+
+  getSearchHistoryStatus: (): Promise<SearchHistoryStatusDto> =>
+    ipcRenderer.invoke(IpcChannel.SearchHistoryStatus),
+  rebuildSearchHistoryIndex: (): Promise<void> => ipcRenderer.invoke(IpcChannel.SearchHistoryRebuildIndex),
 
   listTools: (): Promise<ToolDescriptor[]> => ipcRenderer.invoke(IpcChannel.ToolsList),
 

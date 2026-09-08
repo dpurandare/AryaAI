@@ -2,6 +2,8 @@ import type { WorkspaceGuard } from '../security/workspace-guard'
 
 export interface ToolContext {
   workspaceGuard: WorkspaceGuard
+  /** The session the current chat turn belongs to — used by search_history to exclude it from its own results (already in context). */
+  currentSessionId: string
 }
 
 /**

@@ -394,6 +394,7 @@
         providerRequiresApiKey={providers.find((p) => p.id === providerId)?.requiresApiKey ?? true}
         {hasKey}
         {autoApproveRules}
+        {providers}
         onSave={saveApiKey}
         onClose={() => (showSettings = false)}
         onToggleAutoApproveRule={toggleAutoApproveTool}

@@ -12,7 +12,7 @@ describe('file-ops tools', () => {
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'sachiv-fileops-'))
-    ctx = { workspaceGuard: new WorkspaceGuard(root) }
+    ctx = { workspaceGuard: new WorkspaceGuard(root), currentSessionId: 'test-session' }
   })
 
   afterEach(async () => {

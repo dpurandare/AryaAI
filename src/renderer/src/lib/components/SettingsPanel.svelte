@@ -1,11 +1,18 @@
 <script lang="ts">
-  import type { DataConnectionDto, McpServerDto, McpTransport, ToolDescriptor } from '@shared/ipc-contract'
+  import type {
+    DataConnectionDto,
+    McpServerDto,
+    McpTransport,
+    ProviderDescriptor,
+    ToolDescriptor
+  } from '@shared/ipc-contract'
 
   let {
     providerDisplayName,
     providerRequiresApiKey = true,
     hasKey,
     autoApproveRules,
+    providers,
     onSave,
     onClose,
     onToggleAutoApproveRule
@@ -14,6 +21,7 @@
     providerRequiresApiKey?: boolean
     hasKey: boolean
     autoApproveRules: Record<string, boolean>
+    providers: ProviderDescriptor[]
     onSave: (apiKey: string) => void | Promise<void>
     onClose: () => void
     onToggleAutoApproveRule: (name: string, value: boolean) => void
@@ -194,6 +202,87 @@
     }
   }
 
+  // --- Search history / embedding provider (TASKS.md #52 — decoupled from the chat provider above) ---
+  const EMBEDDING_PROVIDER_SETTING_KEY = 'embeddingProviderId'
+  const EMBEDDING_MODEL_SETTING_KEY = 'embeddingModel'
+  const DEFAULT_EMBEDDING_PROVIDER_ID = 'ollama'
+  const DEFAULT_EMBEDDING_MODEL = 'nomic-embed-text'
+
+  const embeddingCapableProviders = $derived(providers.filter((p) => p.supportsEmbeddings))
+
+  let embeddingProviderId = $state(DEFAULT_EMBEDDING_PROVIDER_ID)
+  let embeddingModel = $state(DEFAULT_EMBEDDING_MODEL)
+  let embeddingHasKey = $state(false)
+  let embeddingApiKey = $state('')
+  let savingEmbeddingKey = $state(false)
+  let searchHistoryStatus = $state<{
+    state: 'empty' | 'ready' | 'needs-rebuild'
+    indexed: number
+    total: number
+  } | null>(null)
+  let rebuildingIndex = $state(false)
+
+  async function loadEmbeddingConfig(): Promise<void> {
+    embeddingProviderId = (await window.sachiv.getSetting(EMBEDDING_PROVIDER_SETTING_KEY)) ?? DEFAULT_EMBEDDING_PROVIDER_ID
+    embeddingModel = (await window.sachiv.getSetting(EMBEDDING_MODEL_SETTING_KEY)) ?? DEFAULT_EMBEDDING_MODEL
+    await refreshEmbeddingHasKey()
+  }
+  loadEmbeddingConfig()
+
+  async function refreshEmbeddingHasKey(): Promise<void> {
+    const descriptor = embeddingCapableProviders.find((p) => p.id === embeddingProviderId)
+    embeddingHasKey = descriptor?.requiresApiKey === false ? true : await window.sachiv.hasApiKey(embeddingProviderId)
+  }
+
+  async function loadSearchHistoryStatus(): Promise<void> {
+    searchHistoryStatus = await window.sachiv.getSearchHistoryStatus()
+  }
+  loadSearchHistoryStatus()
+
+  async function changeEmbeddingProvider(id: string): Promise<void> {
+    embeddingProviderId = id
+    embeddingApiKey = ''
+    await window.sachiv.setSetting(EMBEDDING_PROVIDER_SETTING_KEY, id)
+    await refreshEmbeddingHasKey()
+    await loadSearchHistoryStatus()
+  }
+
+  async function changeEmbeddingModel(): Promise<void> {
+    if (!embeddingModel.trim()) return
+    await window.sachiv.setSetting(EMBEDDING_MODEL_SETTING_KEY, embeddingModel.trim())
+    await loadSearchHistoryStatus()
+  }
+
+  async function saveEmbeddingKey(): Promise<void> {
+    if (!embeddingApiKey.trim()) return
+    savingEmbeddingKey = true
+    try {
+      await window.sachiv.setApiKey(embeddingProviderId, embeddingApiKey.trim())
+      embeddingApiKey = ''
+      await refreshEmbeddingHasKey()
+    } finally {
+      savingEmbeddingKey = false
+    }
+  }
+
+  async function rebuildSearchHistoryIndex(): Promise<void> {
+    rebuildingIndex = true
+    try {
+      await window.sachiv.rebuildSearchHistoryIndex()
+      await loadSearchHistoryStatus()
+    } finally {
+      rebuildingIndex = false
+    }
+  }
+
+  function searchHistoryStatusLabel(): string {
+    if (!searchHistoryStatus) return 'Loading...'
+    if (searchHistoryStatus.state === 'needs-rebuild') {
+      return 'Embedding model changed — index needs a rebuild before search works again.'
+    }
+    return `${searchHistoryStatus.indexed} / ${searchHistoryStatus.total} messages indexed`
+  }
+
   // --- Auto-approve rules (TASKS.md #40) ---
   let tools = $state<ToolDescriptor[]>([])
 
@@ -290,6 +379,48 @@
     {:else}
       <button onclick={() => (showAddConnection = true)}>+ Add connection</button>
     {/if}
+
+    <hr />
+
+    <h2>Search history</h2>
+    <p class="status">
+      Lets the agent search your own past conversations (search_history tool). Uses a separate,
+      independently-configured embedding model — not whatever provider you picked for chat above.
+      Defaults to a local Ollama model, no setup required.
+    </p>
+
+    <select value={embeddingProviderId} onchange={(e) => changeEmbeddingProvider(e.currentTarget.value)}>
+      {#each embeddingCapableProviders as provider (provider.id)}
+        <option value={provider.id}>{provider.displayName}</option>
+      {/each}
+    </select>
+    <input placeholder="Model (e.g. nomic-embed-text)" bind:value={embeddingModel} onblur={changeEmbeddingModel} />
+
+    {#if embeddingCapableProviders.find((p) => p.id === embeddingProviderId)?.requiresApiKey}
+      <p class="status">
+        {embeddingHasKey ? 'A key is currently configured.' : 'No key configured yet.'}
+      </p>
+      <input
+        type="password"
+        placeholder="Paste your API key"
+        bind:value={embeddingApiKey}
+        onkeydown={(e) => e.key === 'Enter' && saveEmbeddingKey()}
+      />
+      <div class="actions">
+        <button class="primary" disabled={savingEmbeddingKey || !embeddingApiKey.trim()} onclick={saveEmbeddingKey}>
+          {savingEmbeddingKey ? 'Saving...' : 'Save key'}
+        </button>
+      </div>
+    {:else}
+      <p class="status">This provider runs locally — no API key needed.</p>
+    {/if}
+
+    <p class="status">{searchHistoryStatusLabel()}</p>
+    <div class="actions">
+      <button disabled={rebuildingIndex} onclick={rebuildSearchHistoryIndex}>
+        {rebuildingIndex ? 'Rebuilding...' : 'Rebuild index'}
+      </button>
+    </div>
 
     <hr />
 

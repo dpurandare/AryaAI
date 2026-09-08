@@ -21,7 +21,7 @@ describe('shell_execute', () => {
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'sachiv-shell-'))
-    ctx = { workspaceGuard: new WorkspaceGuard(root) }
+    ctx = { workspaceGuard: new WorkspaceGuard(root), currentSessionId: 'test-session' }
   })
 
   afterEach(async () => {

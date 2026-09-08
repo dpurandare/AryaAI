@@ -6,6 +6,16 @@ directories:
 files:
   - out/**/*
   - '!**/.vscode/*'
+# Native binaries (.node addons, sqlite-vec's platform .dylib/.so/.dll) can't
+# be dlopen()'d from inside the asar virtual filesystem. Confirmed live on
+# this app's first-ever real packaged launch: without this, the app hangs
+# behind a native "uncaught exception" alert. Necessary but not sufficient on
+# its own — sqlite-vec's own path resolution doesn't know to look in
+# app.asar.unpacked either, so src/main/db/index.ts also rewrites the
+# resolved path itself before loading. See that file's comment for why.
+asarUnpack:
+  - '**/*.node'
+  - 'node_modules/sqlite-vec-*/**'
 mac:
   category: public.app-category.productivity
   hardenedRuntime: true

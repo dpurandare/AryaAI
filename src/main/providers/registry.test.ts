@@ -19,6 +19,7 @@ describe('ProviderRegistry', () => {
       id: 'fake',
       displayName: 'Fake',
       requiresApiKey: true,
+      supportsEmbeddings: false,
       create: (key) => fakeProvider(`fake:${key}`)
     })
 
@@ -33,8 +34,20 @@ describe('ProviderRegistry', () => {
 
   it('lists every registered provider', () => {
     const registry = new ProviderRegistry()
-    registry.register({ id: 'a', displayName: 'A', requiresApiKey: true, create: () => fakeProvider('a') })
-    registry.register({ id: 'b', displayName: 'B', requiresApiKey: false, create: () => fakeProvider('b') })
+    registry.register({
+      id: 'a',
+      displayName: 'A',
+      requiresApiKey: true,
+      supportsEmbeddings: false,
+      create: () => fakeProvider('a')
+    })
+    registry.register({
+      id: 'b',
+      displayName: 'B',
+      requiresApiKey: false,
+      supportsEmbeddings: false,
+      create: () => fakeProvider('b')
+    })
     expect(registry.list().map((d) => d.id)).toEqual(['a', 'b'])
   })
 })

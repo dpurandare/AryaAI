@@ -29,3 +29,17 @@ export interface ModelProvider {
   stream(request: CompletionRequest): AsyncIterable<StreamEvent>
   countTokens(messages: Message[], model: string): Promise<number>
 }
+
+/**
+ * A provider capable of generating text embeddings — a separate capability
+ * from chat (ModelProvider). Only openai/google/ollama implement this;
+ * Anthropic has no embeddings API at all. `embed` is required, not optional,
+ * because callers only ever obtain an EmbeddingProvider via
+ * `providers/setup.ts`'s `getEmbeddingProvider()`, which is scoped to the
+ * closed set of providers that actually implement it — there's no code path
+ * where an EmbeddingProvider instance exists without a working `embed`.
+ */
+export interface EmbeddingProvider {
+  readonly id: string
+  embed(texts: string[], model: string): Promise<number[][]>
+}

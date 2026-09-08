@@ -16,7 +16,7 @@ const { gitExecTool } = await import('./git')
 // workspace-guard.test.ts for why a synthetic path like '/workspace'
 // resolves differently on Windows (drive-relative) than POSIX.
 const root = resolve(tmpdir(), 'sachiv-git-root')
-const ctx: ToolContext = { workspaceGuard: new WorkspaceGuard(root) }
+const ctx: ToolContext = { workspaceGuard: new WorkspaceGuard(root), currentSessionId: 'test-session' }
 
 function respondWith(exitCode: number | null, stdout: string, stderr: string): void {
   mockExecFile.mockImplementation((_bin, _args, _opts, callback) => {

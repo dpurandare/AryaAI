@@ -12,6 +12,7 @@ import { ToolRegistry } from './registry'
 import { shellExecuteTool } from './shell'
 import type { ToolContext } from './types'
 import { webSearchTool } from './web-search'
+import { searchHistoryTool } from '../search-history/tool'
 
 /** Settings key the persisted, user-configurable workspace root is stored under (TASKS.md #41). */
 export const WORKSPACE_ROOT_SETTING_KEY = 'workspaceRoot'
@@ -21,11 +22,17 @@ export function defaultWorkspaceRoot(): string {
   return join(app.getPath('documents'), 'Sachiv Workspace')
 }
 
-/** Workspace root file/shell/cloud-CLI/git tools are confined to. */
+/**
+ * Workspace root file/shell/cloud-CLI/git tools are confined to. This is a
+ * template reused as the shared base for every chat turn — `currentSessionId`
+ * is always overridden per-turn (`{ ...toolContext, currentSessionId }` in
+ * ipc/register.ts's runChat) since a session isn't known at app-startup
+ * construction time; the empty-string placeholder here is never read directly.
+ */
 export function createToolContext(): ToolContext {
   const root = getSetting(WORKSPACE_ROOT_SETTING_KEY) || defaultWorkspaceRoot()
   mkdirSync(root, { recursive: true })
-  return { workspaceGuard: new WorkspaceGuard(root) }
+  return { workspaceGuard: new WorkspaceGuard(root), currentSessionId: '' }
 }
 
 export function createDefaultRegistry(): ToolRegistry {
@@ -43,5 +50,6 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(webSearchTool)
   registry.register(gitExecTool)
   registry.register(githubCliTool)
+  registry.register(searchHistoryTool)
   return registry
 }

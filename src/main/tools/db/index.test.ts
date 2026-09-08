@@ -22,7 +22,7 @@ const { WorkspaceGuard } = await import('../../security/workspace-guard')
 
 // These tools ignore ctx, but Tool.execute's signature requires one. A real
 // OS-native path, not a hand-built one — see workspace-guard.test.ts.
-const ctx = { workspaceGuard: new WorkspaceGuard(resolve(tmpdir(), 'sachiv-db-tools-root')) }
+const ctx = { workspaceGuard: new WorkspaceGuard(resolve(tmpdir(), 'sachiv-db-tools-root')), currentSessionId: 'test-session' }
 
 describe('db_* tools', () => {
   let dir: string

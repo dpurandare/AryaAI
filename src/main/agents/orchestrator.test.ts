@@ -48,7 +48,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'sachiv-orchestrator-'))
-    ctx = { workspaceGuard: new WorkspaceGuard(root) }
+    ctx = { workspaceGuard: new WorkspaceGuard(root), currentSessionId: 'test-session' }
     signal = new AbortController().signal
   })
 

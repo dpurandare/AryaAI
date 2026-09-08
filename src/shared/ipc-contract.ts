@@ -43,7 +43,10 @@ export const IpcChannel = {
   ChatStreamEvent: 'chat:stream-event',
 
   ToolConfirmRequest: 'tools:confirm-request',
-  ToolConfirmRespond: 'tools:confirm-respond'
+  ToolConfirmRespond: 'tools:confirm-respond',
+
+  SearchHistoryStatus: 'search-history:status',
+  SearchHistoryRebuildIndex: 'search-history:rebuild-index'
 } as const
 
 /**
@@ -56,6 +59,8 @@ export interface ProviderDescriptor {
   id: string
   displayName: string
   requiresApiKey: boolean
+  /** Whether this provider can be picked for the separate embedding-provider role (Settings > Search history) — independent of the chat provider. */
+  supportsEmbeddings: boolean
 }
 
 export interface AppInfo {
@@ -69,6 +74,14 @@ export interface AppInfo {
 export interface AppUpdateAvailablePayload {
   version: string
   releaseUrl: string
+}
+
+export interface SearchHistoryStatusDto {
+  providerId: string
+  model: string
+  state: 'empty' | 'ready' | 'needs-rebuild'
+  indexed: number
+  total: number
 }
 
 export interface SessionDto {
