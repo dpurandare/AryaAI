@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { join, sep } from 'node:path'
+import { join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { WorkspaceGuard } from './workspace-guard'
 
 describe('WorkspaceGuard', () => {
-  const root = join(sep, 'workspace')
+  // A real OS-native absolute path (not a hand-built one) so the expected
+  // values match WorkspaceGuard's own internal `resolve()` call exactly on
+  // every platform — a synthetic path like `/workspace` is fully absolute on
+  // POSIX but drive-relative on Windows, where `resolve()` prepends the
+  // current drive (e.g. `D:\workspace`), which a naive hand-built expectation
+  // wouldn't account for. Caught live by this project's cross-platform CI.
+  const root = resolve(tmpdir(), 'sachiv-workspace-guard-root')
+  const outsideDir = resolve(tmpdir(), 'sachiv-workspace-guard-outside')
   const guard = new WorkspaceGuard(root)
 
   it('resolves a simple relative path within the workspace', () => {
@@ -27,7 +35,7 @@ describe('WorkspaceGuard', () => {
   })
 
   it('rejects an absolute path outside the workspace', () => {
-    expect(() => guard.assertWithinWorkspace(join(sep, 'etc', 'passwd'))).toThrow(
+    expect(() => guard.assertWithinWorkspace(join(outsideDir, 'secret.txt'))).toThrow(
       /outside the workspace/
     )
   })
