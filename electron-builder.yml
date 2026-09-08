@@ -22,6 +22,8 @@ linux:
     - AppImage
     - deb
   category: Utility
+deb:
+  maintainer: "Deepak Purandare <dpurandare@users.noreply.github.com>"
 publish:
   provider: github
   owner: dpurandare
