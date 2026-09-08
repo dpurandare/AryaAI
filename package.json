@@ -5,7 +5,10 @@
   "main": "./out/main/index.js",
   "private": true,
   "type": "module",
-  "author": "Deepak Purandare",
+  "author": {
+    "name": "Deepak Purandare",
+    "email": "dpurandare@users.noreply.github.com"
+  },
   "license": "UNLICENSED",
   "scripts": {
     "dev": "electron-vite dev",
