@@ -32,6 +32,8 @@ Unified Provider Adapter Layer: Define a standardized internal schema for tool d
     -- AWS Operations : Using configured AWS CLI
     -- Azure Operations : Using Configured Azure CLI
     -- GCP Operations : Using GCloud
+    -- Git Operations : status/diff/log/branch/commit/etc. against the workspace's repo
+    -- GitHub Operations : Using the configured GitHub CLI (`gh`) — issues, PRs, repo operations
 - There should be Human-in-loop confirmations on every tool call that is going to make any change of state. There should be facility to configure the auto-approve.
 - There should be facility to specify workspace boundaries so that the Agents operate within those constraints. This must be enforced with actual path canonicalization/allowlist checks on every file/shell/tool call, not just a configured setting the agent is expected to respect, so the agent can't wander outside the workspace by mistake or misinterpretation.
 - The Agents should be able to create and enhance the required Data Access tools based on the schema they infer. This will happen when user points the app to a new database with the required connection parameters. Agents generate and execute raw SQL/query code tailored to the inferred schema (not restricted to a fixed query-builder tool); any write/mutating query goes through the existing human-in-loop confirmation.

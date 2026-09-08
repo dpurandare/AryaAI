@@ -14,10 +14,11 @@ function pickTools(registry: ToolRegistry, names: string[]): Tool[] {
  * capability it doesn't have.
  */
 export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
-  const codingTools = pickTools(registry, ['read_file', 'list_directory', 'write_file'])
+  const codingTools = pickTools(registry, ['read_file', 'list_directory', 'write_file', 'git_exec'])
   const terminalDevopsTools = pickTools(registry, ['shell_execute', 'aws_cli', 'azure_cli', 'gcloud_cli'])
   const dataTools = pickTools(registry, ['db_list_connections', 'db_introspect_schema', 'db_execute_sql'])
   const researchTools = pickTools(registry, ['web_search'])
+  const distributionTools = pickTools(registry, ['github_cli'])
 
   const agents: Agent[] = [
     {
@@ -45,7 +46,10 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
       summary: 'Reads, writes, and organizes files in the workspace to implement changes.',
       systemPrompt:
         "You are the Coding specialist for Sachiv. Read, write, and organize files inside the user's " +
-        'workspace to implement the requested change. Always explain what you changed and why.',
+        'workspace to implement the requested change. Always explain what you changed and why. Use ' +
+        'git_exec for git operations against the workspace repo — read-only inspection (status, diff, ' +
+        "log, show, blame, etc.) runs without confirmation; anything that changes repo state (commit, " +
+        'branch, checkout, merge, push, etc.) shows the user a confirmation dialog first.',
       tools: codingTools
     },
     {
@@ -76,9 +80,12 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
       role: 'distribution',
       summary: 'Packages, publishes, and ships work (releases, deployment).',
       systemPrompt:
-        'You are the Distribution specialist for Sachiv. You do not have cloud/deployment CLI access ' +
-        'yet — describe what publishing or deployment steps would be needed rather than claiming to have done them.',
-      tools: []
+        'You are the Distribution specialist for Sachiv. Use github_cli (the "gh" CLI — issues, PRs, ' +
+        'releases, repo operations) for GitHub work; it assumes gh is already installed and ' +
+        'authenticated on this machine, and every call shows the user a confirmation dialog with the ' +
+        'exact command first. You do not have cloud/deployment CLI access yet — describe what those ' +
+        'steps would be rather than claiming to have done them.',
+      tools: distributionTools
     }
   ]
 

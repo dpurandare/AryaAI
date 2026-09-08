@@ -16,12 +16,13 @@ The order we'll actually build in, referencing item numbers below. Everything st
 8. Test harness locked in against the skeleton above — **57**, **58**, **59**
 9. Widen tools — **33**, **35**, **36**, **37**, **38**, **32**
 10. Widen providers — **16**, **17**, **18**, **19**, **20**
-11. MCP client + config — **42**, **43**, **44**, **45**
-12. Remaining config UI — **40**, **41**, **55**
-13. Context management & token economy — **46**, **47**, **48**, **56**, **49**, **50**, **51**, **52**
-14. Cancellation & steering — **29**, **30**
-15. Session lifecycle extras — **24**, **25**
-16. Ship readiness (branding, versioning, signing, auto-update, release validation) — **7**, **8**, **9**, **11**, **12**, **13**
+11. Widen tools further: git & GitHub CLI — **60**, **61**
+12. MCP client + config — **42**, **43**, **44**, **45**
+13. Remaining config UI — **40**, **41**, **55**
+14. Context management & token economy — **46**, **47**, **48**, **56**, **49**, **50**, **51**, **52**
+15. Cancellation & steering — **29**, **30**
+16. Session lifecycle extras — **24**, **25**
+17. Ship readiness (branding, versioning, signing, auto-update, release validation) — **7**, **8**, **9**, **11**, **12**, **13**
 
 ## Scaffolding & tooling
 - [x] 1. Electron + TypeScript + Svelte 5 project scaffold (electron-vite)
@@ -75,6 +76,8 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [x] 39. Human-in-loop confirmation flow for all `mutates: true` tool calls
 - [ ] 40. Auto-approve configuration (per tool / per workspace) — session-only toggle lives in #54 for now; persisted per-tool/per-workspace config still open
 - [ ] 41. Workspace boundary configuration UI
+- [x] 60. Git operations tool (status/diff/log/branch/commit/etc., through workspace guard; mutating operations require confirmation)
+- [x] 61. GitHub CLI tool (shells out to a configured `gh` — issues, PRs, repo operations, same pattern as the AWS/Azure/GCP CLI tools)
 
 ## MCP
 - [ ] 42. stdio MCP client (child process + JSON-RPC)

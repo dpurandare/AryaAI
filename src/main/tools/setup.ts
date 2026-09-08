@@ -5,6 +5,8 @@ import { WorkspaceGuard } from '../security/workspace-guard'
 import { awsCliTool, azureCliTool, gcloudCliTool } from './cloud-cli'
 import { dbExecuteSqlTool, dbIntrospectSchemaTool, dbListConnectionsTool } from './db'
 import { listDirectoryTool, readFileTool, writeFileTool } from './file-ops'
+import { gitExecTool } from './git'
+import { githubCliTool } from './github-cli'
 import { ToolRegistry } from './registry'
 import { shellExecuteTool } from './shell'
 import type { ToolContext } from './types'
@@ -34,5 +36,7 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(dbIntrospectSchemaTool)
   registry.register(dbExecuteSqlTool)
   registry.register(webSearchTool)
+  registry.register(gitExecTool)
+  registry.register(githubCliTool)
   return registry
 }
