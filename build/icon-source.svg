@@ -11,16 +11,42 @@
        full-bleed square the way the squircle-enforcement research implied. -->
   <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#bg)"/>
 
-  <!-- A simple, friendly face — two eyes and a smile — evoking "Sachiv"
-       (secretary/companion) directly, the way Finder's icon is literally a
-       face, rather than an abstract initial. -->
-  <ellipse cx="382" cy="448" rx="52" ry="92" fill="#ffffff"/>
-  <ellipse cx="642" cy="448" rx="52" ry="92" fill="#ffffff"/>
+  <!-- A friendly face wearing a headset — borrows the "operator/secretary"
+       idea (headset = assistant, from a reference the user pointed to)
+       merged with the face concept already settled on, rather than the
+       reference's literal multi-element illustration (person + headset +
+       separate clipboard), which is too detailed to hold up at icon sizes.
+       Eyes sized/spaced to clear the earpieces with a real gap — the first
+       pass had them colliding into one blob. Mic boom routed to stay left
+       of the eye (x <= 350, clearing the eye's x >= 364 edge) and end above
+       the smile (y = 592, clearing the smile's y = 648 start) — the first
+       attempt at a boom cut across both and had to be dropped; this one is
+       routed around them instead of just deleted. -->
   <path
-    d="M 366 640 Q 512 776 658 640"
+    d="M 266 420 Q 290 176 512 166 Q 734 176 758 420"
     fill="none"
     stroke="#ffffff"
-    stroke-width="58"
+    stroke-width="44"
+    stroke-linecap="round"
+  />
+  <circle cx="266" cy="420" r="52" fill="#ffffff"/>
+  <circle cx="758" cy="420" r="52" fill="#ffffff"/>
+  <path
+    d="M 266 420 C 246 495 252 560 340 592"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="30"
+    stroke-linecap="round"
+  />
+  <circle cx="340" cy="592" r="24" fill="#ffffff"/>
+
+  <ellipse cx="404" cy="452" rx="40" ry="82" fill="#ffffff"/>
+  <ellipse cx="620" cy="452" rx="40" ry="82" fill="#ffffff"/>
+  <path
+    d="M 380 648 Q 512 764 644 648"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="54"
     stroke-linecap="round"
   />
 </svg>
