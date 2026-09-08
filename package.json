@@ -1,7 +1,7 @@
 {
   "name": "sachiv",
   "version": "0.1.0",
-  "description": "Sachiv — a local-first, multi-agent AI desktop assistant",
+  "description": "Sachiv — your local-first, multi-agent AI companion.",
   "main": "./out/main/index.js",
   "private": true,
   "type": "module",
@@ -17,7 +17,8 @@
     "test": "vitest run",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win",
-    "dist:linux": "npm run build && electron-builder --linux"
+    "dist:linux": "npm run build && electron-builder --linux",
+    "icons:generate": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
@@ -40,7 +41,9 @@
     "electron": "^44.2.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "icon-gen": "^5.0.0",
     "jsdom": "^30.0.1",
+    "sharp": "^0.35.4",
     "svelte": "^5.57.0",
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",
@@ -54,6 +57,10 @@
     "esbuild@0.28.2": true,
     "fsevents@2.3.3": true,
     "@google/genai@2.21.0": true,
-    "protobufjs@7.6.6": true
+    "protobufjs@7.6.6": true,
+    "sharp@0.35.4": true
+  },
+  "overrides": {
+    "sharp": "^0.35.4"
   }
 }

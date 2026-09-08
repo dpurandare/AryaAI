@@ -4,6 +4,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/register'
 import { setDbPath } from './db'
 
+const devIconPath = join(__dirname, '../../build/icon.png')
+
 function createMainWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -14,6 +16,7 @@ function createMainWindow(): void {
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 16 } }
       : {}),
+    ...(is.dev ? { icon: devIconPath } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -43,6 +46,10 @@ app.setName('Sachiv')
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.sachiv.app')
+
+  if (is.dev && process.platform === 'darwin') {
+    app.dock?.setIcon(devIconPath)
+  }
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
