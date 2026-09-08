@@ -24,6 +24,7 @@
     "@google/genai": "^2.21.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^13.0.3",
+    "js-tiktoken": "^1.0.21",
     "openai": "^7.10.0",
     "pg": "^8.23.0"
   },

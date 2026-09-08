@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
-import { streamOpenAICompatible } from './openai-compatible'
-import type { CompletionRequest, ModelProvider, StreamEvent } from './types'
+import { countTokensApprox, streamOpenAICompatible } from './openai-compatible'
+import type { CompletionRequest, Message, ModelProvider, StreamEvent } from './types'
 
 /**
  * Ollama's `/v1/*` endpoints are OpenAI Chat Completions-wire-compatible
@@ -22,8 +22,10 @@ export class OllamaProvider implements ModelProvider {
     return page.data.map((model) => model.id)
   }
 
-  async countTokens(): Promise<number> {
-    return 0
+  async countTokens(messages: Message[]): Promise<number> {
+    // An approximation of an approximation — local models use their own
+    // tokenizers, not OpenAI's — but still far better than a hardcoded 0.
+    return countTokensApprox(undefined, messages)
   }
 
   stream(request: CompletionRequest): AsyncIterable<StreamEvent> {

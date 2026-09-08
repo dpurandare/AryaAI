@@ -77,6 +77,7 @@
   }
   let pendingConfirm = $state<ToolConfirmRequestPayload | null>(null)
   let autoApproveTools = $state(false)
+  let sessionUsage = $state({ inputTokens: 0, outputTokens: 0 })
   // Persisted per-tool rules (TASKS.md #40) — additive to the session-only
   // blanket toggle above, not a replacement for it. A plain object, not
   // $state(new Set()) — see feedback_svelte5-runes-gotchas memory.
@@ -125,6 +126,7 @@
     activeId = id
     const records = await window.sachiv.listMessages(id)
     messages = mapMessagesToDisplay(records)
+    sessionUsage = await window.sachiv.getSessionUsage(id)
   }
 
   async function loadSessions(): Promise<void> {
@@ -208,6 +210,14 @@
         if (call) {
           call.result = event.content
           call.isError = event.isError
+        }
+      } else if (event.type === 'usage') {
+        // Safe to sum: the orchestrator emits exactly one clean usage event
+        // per round (see orchestrator.ts's roundUsage handling), not the raw
+        // per-chunk events some providers repeat as a cumulative total.
+        sessionUsage = {
+          inputTokens: sessionUsage.inputTokens + event.inputTokens,
+          outputTokens: sessionUsage.outputTokens + event.outputTokens
         }
       } else if (event.type === 'error') {
         appendTextSegment(msg, `Error: ${event.message}`)
@@ -367,6 +377,7 @@
         onChangeProvider={changeProvider}
         onChangeModel={changeModel}
         onNeedKey={() => (showSettings = true)}
+        {sessionUsage}
       />
     {/if}
   </section>

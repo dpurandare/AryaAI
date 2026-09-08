@@ -12,7 +12,8 @@ import {
   type ProviderDescriptor,
   type McpServerDto,
   type SaveMcpServerInput,
-  type ToolDescriptor
+  type ToolDescriptor,
+  type SessionUsageDto
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 
@@ -26,6 +27,8 @@ const api = {
 
   listMessages: (sessionId: string): Promise<MessageDto[]> =>
     ipcRenderer.invoke(IpcChannel.MessagesList, sessionId),
+  getSessionUsage: (sessionId: string): Promise<SessionUsageDto> =>
+    ipcRenderer.invoke(IpcChannel.SessionsGetUsage, sessionId),
 
   listProviders: (): Promise<ProviderDescriptor[]> => ipcRenderer.invoke(IpcChannel.ProvidersList),
   setApiKey: (providerId: string, apiKey: string): Promise<void> =>

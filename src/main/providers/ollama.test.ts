@@ -63,6 +63,12 @@ describe('OllamaProvider', () => {
     ])
   })
 
+  it('counts tokens via a real tiktoken estimate, not a stub', async () => {
+    const provider = new OllamaProvider()
+    const count = await provider.countTokens([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+    expect(count).toBeGreaterThan(0)
+  })
+
   it('lists model ids from the local server', async () => {
     mockList.mockResolvedValue({ data: [{ id: 'gpt-oss:20b' }, { id: 'gemma4:latest' }] })
     const provider = new OllamaProvider()

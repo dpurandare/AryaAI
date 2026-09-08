@@ -86,19 +86,19 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [x] 45. Discovered MCP tools merged into the agent tool registry
 
 ## Context management & token economy
-- [ ] 46. Exact token counting per provider (tiktoken for OpenAI, provider-native counts elsewhere)
-- [ ] 47. Real-time cost estimation per session
-- [ ] 48. Context-usage meter in UI (current usage vs. model limit, low-context warning)
-- [ ] 49. Rolling summarization of earlier turns
-- [ ] 50. Tool-output trimming after the agent extracts the essential answer
-- [ ] 51. Sliding-window retention (system prompt + recent turns)
-- [ ] 52. Agent-driven relevance selection (decide what enters context, not everything)
+- [x] 46. Exact token counting per provider (tiktoken for OpenAI, provider-native counts elsewhere) — tiktoken (js-tiktoken, o200k_base) for OpenAI and, as a documented approximation-of-an-approximation, Ollama; real API-based counts already existed for Anthropic/Google
+- [x] 47. Real-time cost estimation per session — approximate, hand-maintained pricing table (`src/shared/model-metadata.ts`); unknown models show "cost unknown" rather than a fabricated number, Ollama models are correctly free
+- [x] 48. Context-usage meter in UI (current usage vs. model limit, low-context warning) — tracks cumulative session usage (not live post-trim context size, which #51 now keeps bounded by design) against the model's context window, with a warning state past ~80%
+- [ ] 49. Rolling summarization of earlier turns — deferred, needs its own LLM-call/trigger-policy design
+- [x] 50. Tool-output trimming after the agent extracts the essential answer — oversized tool_result content capped (~4000 chars) only in what's sent to the provider; full result always stays in SQLite and the UI transcript
+- [x] 51. Sliding-window retention (system prompt + recent turns) — drops the oldest complete turns once `provider.countTokens()` exceeds ~70% of the model's context window, never splitting a tool_use/tool_result pair
+- [ ] 52. Agent-driven relevance selection (decide what enters context, not everything) — deferred, same reasoning as #49
 
 ## UI
 - [x] 53. Chat view: streaming message rendering (text + tool-use/tool-result block rendering)
 - [x] 54. Tool-call confirmation dialog (approve/deny/edit, session auto-approve toggle)
 - [x] 55. Settings screens: providers/keys, MCP servers, workspace boundaries, auto-approve rules
-- [ ] 56. Context/cost meter component
+- [x] 56. Context/cost meter component — `ContextMeter.svelte`, in `ChatView`'s status bar
 
 ## Testing
 - [x] 57. Mocked-provider test harness (no live API calls in CI)

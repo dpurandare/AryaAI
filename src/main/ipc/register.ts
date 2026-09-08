@@ -16,9 +16,11 @@ import type { AgentRole } from '@shared/agents'
 import { createSession, listSessions, deleteSession } from '../db/sessions'
 import { insertMessage, listMessages } from '../db/messages'
 import { getSetting, setSetting } from '../db/settings'
+import { addUsage, getUsage } from '../db/usage'
 import { setApiKey, getApiKey } from '../security/keychain'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import { deleteConnection, listConnections, saveConnection } from '../data/connections'
+import { prepareConversation } from '../context/prepare-context'
 import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/config'
 import { McpManager } from '../mcp/manager'
 import { createDefaultProviderRegistry } from '../providers/setup'
@@ -75,6 +77,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.SessionsDelete, (_event, id: string) => deleteSession(id))
 
   ipcMain.handle(IpcChannel.MessagesList, (_event, sessionId: string) => listMessages(sessionId))
+  ipcMain.handle(IpcChannel.SessionsGetUsage, (_event, sessionId: string) => getUsage(sessionId))
 
   ipcMain.handle(IpcChannel.ProvidersList, () =>
     providerRegistry
@@ -228,12 +231,17 @@ async function runChat(
     throw new Error('Tool context not initialized.')
   }
 
+  const provider = descriptor.create(apiKey)
+
   const history = listMessages(sessionId)
-  const conversation: Message[] = history.map((m) => ({ role: m.role, content: m.content }))
+  const priorTurns: Message[] = history.map((m) => ({ role: m.role, content: m.content }))
+  // Trims oversized tool results and drops the oldest turns once the loaded
+  // history is getting close to the model's context window — operates only
+  // on what's about to be sent, never on what's persisted/displayed.
+  const conversation = await prepareConversation(priorTurns, model, provider)
   conversation.push({ role: 'user', content: [{ type: 'text', text }] })
   insertMessage(sessionId, 'user', [{ type: 'text', text }])
 
-  const provider = descriptor.create(apiKey)
   const orchestrator = new Orchestrator(
     provider,
     model,
@@ -247,6 +255,9 @@ async function runChat(
   for await (const orchestratorEvent of orchestrator.run(conversation, forcedRole)) {
     if (orchestratorEvent.kind === 'stream') {
       emit(sender, { streamId, sessionId, event: orchestratorEvent.event })
+      if (orchestratorEvent.event.type === 'usage') {
+        addUsage(sessionId, orchestratorEvent.event.inputTokens, orchestratorEvent.event.outputTokens)
+      }
     } else {
       insertMessage(sessionId, orchestratorEvent.role, orchestratorEvent.content)
     }

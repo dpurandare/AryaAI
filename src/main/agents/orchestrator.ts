@@ -82,6 +82,13 @@ interface AccumulatedToolCall {
   thoughtSignature?: string
 }
 
+/** Shared across every nesting level of one `run()` call — the round cap and cumulative token usage both need to span top-level + every delegate. */
+interface RunState {
+  roundsUsed: number
+  inputTokens: number
+  outputTokens: number
+}
+
 /**
  * The Orchestrator owns the conversation: it can act directly with its own
  * default tools, or delegate a step to a specialized Agent (sequential
@@ -111,12 +118,12 @@ export class Orchestrator {
    * its own available.
    */
   async *run(conversation: Message[], forcedRole?: AgentRole | null): AsyncIterable<OrchestratorEvent> {
-    const budget = { used: 0 }
+    const state: RunState = { roundsUsed: 0, inputTokens: 0, outputTokens: 0 }
 
     if (forcedRole) {
       const agent = this.agents.get(forcedRole)
       if (!agent) throw new Error(`Unknown agent role "${forcedRole}".`)
-      yield* this.runLoop(agent.systemPrompt, agent.tools, conversation, budget, forcedRole, [], true)
+      yield* this.runLoop(agent.systemPrompt, agent.tools, conversation, state, forcedRole, [], true)
       return
     }
 
@@ -124,7 +131,7 @@ export class Orchestrator {
       this.buildOrchestratorSystemPrompt(),
       this.defaultTools,
       conversation,
-      budget,
+      state,
       undefined,
       this.buildDelegateToolDefinitions(),
       true
@@ -168,7 +175,7 @@ export class Orchestrator {
     systemPrompt: string,
     tools: Tool[],
     conversation: Message[],
-    budget: { used: number },
+    state: RunState,
     agentRole: AgentRole | undefined,
     extraToolDefs: ToolDefinition[] = [],
     isTopLevel = false
@@ -179,13 +186,19 @@ export class Orchestrator {
       ...extraToolDefs
     ]
 
-    while (budget.used < MAX_TOTAL_ROUNDS) {
-      budget.used++
+    while (state.roundsUsed < MAX_TOTAL_ROUNDS) {
+      state.roundsUsed++
 
       let assistantText = ''
       const toolCalls: AccumulatedToolCall[] = []
       const toolCallsById = new Map<string, AccumulatedToolCall>()
       let stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'aborted' = 'end_turn'
+      // Some providers (Anthropic, Gemini) repeat a *cumulative* usage total
+      // across several chunks within one round rather than sending it once —
+      // confirmed live. Keep only the last one seen and report it as this
+      // round's own contribution below, or every consumer downstream would
+      // double/triple-count if they summed the raw events.
+      let roundUsage: { inputTokens: number; outputTokens: number } | undefined
 
       for await (const event of this.provider.stream({
         model: this.model,
@@ -210,10 +223,19 @@ export class Orchestrator {
           if (call) call.inputJson += event.partialInput
         } else if (event.type === 'message_stop') {
           stopReason = event.stopReason
+        } else if (event.type === 'usage') {
+          roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
+          continue
         }
         const outEvent =
           event.type === 'message_stop' ? tagMessageStop(event, agentRole, isTopLevel) : tagEvent(event, agentRole)
         yield { kind: 'stream', event: outEvent }
+      }
+
+      if (roundUsage) {
+        state.inputTokens += roundUsage.inputTokens
+        state.outputTokens += roundUsage.outputTokens
+        yield { kind: 'stream', event: { type: 'usage', ...roundUsage } }
       }
 
       const assistantBlocks: ContentBlock[] = []
@@ -259,7 +281,7 @@ export class Orchestrator {
         let content: string
         let isError: boolean
         if (delegateRole) {
-          const result = yield* this.dispatchDelegate(delegateRole, input, conversationBeforeThisRound, budget)
+          const result = yield* this.dispatchDelegate(delegateRole, input, conversationBeforeThisRound, state)
           content = result.content
           isError = result.isError
         } else {
@@ -324,7 +346,7 @@ export class Orchestrator {
     role: AgentRole,
     input: Record<string, unknown>,
     conversation: Message[],
-    budget: { used: number }
+    state: RunState
   ): AsyncGenerator<OrchestratorEvent, { content: string; isError: boolean }> {
     const agent = this.agents.get(role)
     if (!agent) return { content: `Unknown agent role "${role}".`, isError: true }
@@ -339,7 +361,7 @@ export class Orchestrator {
     ]
 
     try {
-      const result = yield* this.runLoop(agent.systemPrompt, agent.tools, nestedConversation, budget, role)
+      const result = yield* this.runLoop(agent.systemPrompt, agent.tools, nestedConversation, state, role)
       return { content: result.text || '(no response)', isError: result.isError }
     } catch (err) {
       return { content: err instanceof Error ? err.message : String(err), isError: true }

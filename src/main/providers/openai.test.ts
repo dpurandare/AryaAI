@@ -139,4 +139,14 @@ describe('OpenAIProvider', () => {
     const provider = new OpenAIProvider('key')
     expect(await provider.listModels()).toEqual(['gpt-4o', 'gpt-4o-mini'])
   })
+
+  it('counts tokens via a real tiktoken estimate, not a stub', async () => {
+    const provider = new OpenAIProvider('key')
+    const short = await provider.countTokens([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+    const long = await provider.countTokens([
+      { role: 'user', content: [{ type: 'text', text: 'hi '.repeat(200) }] }
+    ])
+    expect(short).toBeGreaterThan(0)
+    expect(long).toBeGreaterThan(short)
+  })
 })

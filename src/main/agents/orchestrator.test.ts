@@ -303,4 +303,54 @@ describe('Orchestrator (integration, mocked provider)', () => {
     const finalStop = streamEvents.at(-1)
     expect(finalStop).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
   })
+
+  it('reports one clean usage event per round, not one per raw provider usage chunk, and aggregates through a delegate', async () => {
+    const registry = buildRegistry()
+    const agents = createAgents(registry)
+
+    const turns: ScriptedTurn[] = [
+      // Round 1 (outer): delegate to coding. The mock yields this round's
+      // usage TWICE (matching real providers' cumulative-repeat behavior) —
+      // a naive sum would double-count it.
+      {
+        toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.txt' } }],
+        usage: { inputTokens: 100, outputTokens: 10 }
+      },
+      // Round 2 (nested, coding): specialist's own reply — its usage must
+      // also count toward the total, it's a real API call too.
+      { text: 'Done.', stopReason: 'end_turn', usage: { inputTokens: 50, outputTokens: 5 } },
+      // Round 3 (outer): orchestrator's final reply.
+      { text: 'The Coding specialist handled it.', stopReason: 'end_turn', usage: { inputTokens: 20, outputTokens: 8 } }
+    ]
+    const provider = new MockProvider(turns)
+    const orchestrator = new Orchestrator(
+      provider,
+      'mock-model',
+      agents,
+      'You are Sachiv.',
+      registry.list(),
+      autoApprove(),
+      ctx
+    )
+
+    const events = await collect(orchestrator, [
+      { role: 'user', content: [{ type: 'text', text: 'Please write hello.txt for me.' }] }
+    ])
+    const usageEvents = events
+      .filter((e) => e.kind === 'stream' && e.event.type === 'usage')
+      .map((e) => (e as { event: { inputTokens: number; outputTokens: number } }).event)
+
+    // Exactly one usage event per round (3 rounds), not 2 per round even
+    // though the mock yielded each round's usage twice.
+    expect(usageEvents).toEqual([
+      { type: 'usage', inputTokens: 100, outputTokens: 10 },
+      { type: 'usage', inputTokens: 50, outputTokens: 5 },
+      { type: 'usage', inputTokens: 20, outputTokens: 8 }
+    ])
+    const total = usageEvents.reduce(
+      (acc, e) => ({ input: acc.input + e.inputTokens, output: acc.output + e.outputTokens }),
+      { input: 0, output: 0 }
+    )
+    expect(total).toEqual({ input: 170, output: 23 })
+  })
 })

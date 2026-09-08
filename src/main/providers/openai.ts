@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
-import { streamOpenAICompatible } from './openai-compatible'
-import type { CompletionRequest, ModelProvider, StreamEvent } from './types'
+import { countTokensApprox, streamOpenAICompatible } from './openai-compatible'
+import type { CompletionRequest, Message, ModelProvider, StreamEvent } from './types'
 
 export class OpenAIProvider implements ModelProvider {
   readonly id = 'openai'
@@ -16,10 +16,8 @@ export class OpenAIProvider implements ModelProvider {
     return page.data.map((model) => model.id)
   }
 
-  async countTokens(): Promise<number> {
-    // OpenAI has no standalone token-counting endpoint; usage is read off
-    // each response's `usage` field instead (see TASKS.md #46).
-    return 0
+  async countTokens(messages: Message[]): Promise<number> {
+    return countTokensApprox(undefined, messages)
   }
 
   stream(request: CompletionRequest): AsyncIterable<StreamEvent> {

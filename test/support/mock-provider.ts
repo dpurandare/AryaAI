@@ -16,6 +16,8 @@ export interface ScriptedTurn {
   text?: string
   toolCalls?: ScriptedToolCall[]
   stopReason?: 'end_turn' | 'tool_use' | 'max_tokens'
+  /** Yielded twice in a row before message_stop, matching real providers (Anthropic, Gemini) that repeat a cumulative usage total across chunks rather than sending it once — see orchestrator.ts's roundUsage handling. */
+  usage?: { inputTokens: number; outputTokens: number }
 }
 
 /**
@@ -65,6 +67,11 @@ export class MockProvider implements ModelProvider {
     for (const call of turn.toolCalls ?? []) {
       yield { type: 'tool_use_start', id: call.id, name: call.name }
       yield { type: 'tool_use_delta', id: call.id, partialInput: call.rawInput ?? JSON.stringify(call.input) }
+    }
+
+    if (turn.usage) {
+      yield { type: 'usage', ...turn.usage }
+      yield { type: 'usage', ...turn.usage }
     }
 
     const stopReason = turn.stopReason ?? (turn.toolCalls?.length ? 'tool_use' : 'end_turn')

@@ -12,6 +12,7 @@ export const IpcChannel = {
   SessionsDelete: 'sessions:delete',
 
   MessagesList: 'messages:list',
+  SessionsGetUsage: 'sessions:get-usage',
 
   ProvidersList: 'providers:list',
   ProvidersSetApiKey: 'providers:set-api-key',
@@ -73,6 +74,11 @@ export interface MessageDto {
   role: 'user' | 'assistant'
   content: ContentBlock[]
   createdAt: number
+}
+
+export interface SessionUsageDto {
+  inputTokens: number
+  outputTokens: number
 }
 
 export interface ChatStreamEventPayload {

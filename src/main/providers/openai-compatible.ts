@@ -1,5 +1,13 @@
 import OpenAI from 'openai'
+import { Tiktoken } from 'js-tiktoken/lite'
+import o200k_base from 'js-tiktoken/ranks/o200k_base'
 import type { CompletionRequest, Message, StreamEvent } from './types'
+
+let encoder: Tiktoken | undefined
+function getEncoder(): Tiktoken {
+  encoder ??= new Tiktoken(o200k_base)
+  return encoder
+}
 
 /**
  * Message/stream translation shared by every provider that speaks the OpenAI
@@ -46,6 +54,19 @@ export function toOpenAIMessages(
     }
   }
   return result
+}
+
+/**
+ * Approximate token count via tiktoken's o200k_base encoding (the current
+ * GPT-4o/5-family tokenizer) — OpenAI exposes no counting endpoint, so a
+ * tiktoken-based estimate is the standard approach. For Ollama specifically
+ * this is an approximation of an approximation, since local models use
+ * their own tokenizers — still far better than a hardcoded 0.
+ */
+export function countTokensApprox(system: string | undefined, messages: Message[]): number {
+  const params = toOpenAIMessages(system, messages)
+  const text = params.map((p) => JSON.stringify(p)).join('\n')
+  return getEncoder().encode(text).length
 }
 
 export async function* streamOpenAICompatible(

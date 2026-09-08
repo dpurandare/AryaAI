@@ -1,5 +1,6 @@
 <script lang="ts">
   import ModelPicker from './ModelPicker.svelte'
+  import ContextMeter from './ContextMeter.svelte'
   import { AGENT_ROLES, AGENT_ROLE_LABELS, type AgentRole } from '@shared/agents'
 
   interface ToolCallDisplay {
@@ -41,7 +42,8 @@
     hasKey,
     onChangeProvider,
     onChangeModel,
-    onNeedKey
+    onNeedKey,
+    sessionUsage
   }: {
     messages: DisplayMessage[]
     statusLine: string
@@ -54,6 +56,7 @@
     onChangeProvider: (id: string) => void
     onChangeModel: (model: string) => void
     onNeedKey: () => void
+    sessionUsage: { inputTokens: number; outputTokens: number }
   } = $props()
 
   let draft = $state('')
@@ -191,6 +194,9 @@
           <span class="dot"></span>
           Agent: {modeLabel(forcedRole)}
         </button>
+        {#if model}
+          <ContextMeter {model} inputTokens={sessionUsage.inputTokens} outputTokens={sessionUsage.outputTokens} />
+        {/if}
       </div>
       <ModelPicker
         {providers}
