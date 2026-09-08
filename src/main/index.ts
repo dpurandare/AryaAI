@@ -2,6 +2,7 @@ import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/register'
+import { setDbPath } from './db'
 
 function createMainWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -47,6 +48,7 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  setDbPath(join(app.getPath('userData'), 'sachiv.db'))
   registerIpcHandlers()
   createMainWindow()
 

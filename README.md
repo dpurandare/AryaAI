@@ -41,12 +41,13 @@ This section will be updated as each Work Order stage lands, so a reviewer alway
 
 ## Continuous integration
 
-Every push to `main` and every PR runs `npm ci`, `typecheck`, and `build` on macOS, Windows, and Linux via GitHub Actions (`.github/workflows/ci.yml`). There's no automated test suite yet (`npm test` is a placeholder — see TASKS.md #57-59), so CI currently catches build/typecheck breakage, not behavioral regressions.
+Every push to `main` and every PR runs `npm ci`, `typecheck`, `build`, and `test` (Vitest) on macOS, Windows, and Linux via GitHub Actions (`.github/workflows/ci.yml`). The test suite mocks providers/SDKs — no live API calls or Electron runtime needed — and includes an integration test that runs a full `Orchestrator` turn (including delegation) against a mocked provider.
 
 ## Other commands
 
 ```bash
 npm run typecheck   # type-check main/preload + renderer (Svelte)
+npm test            # run the Vitest suite (mocked providers, no live API calls)
 npm run build       # production build to out/
 npm run dist:mac    # package a macOS installer (after build)
 npm run dist:win    # package a Windows installer

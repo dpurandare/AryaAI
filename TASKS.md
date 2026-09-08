@@ -98,6 +98,6 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [ ] 56. Context/cost meter component
 
 ## Testing
-- [ ] 57. Mocked-provider test harness (no live API calls in CI)
-- [ ] 58. Unit tests: provider adapters, tools, workspace guard, db repositories
-- [ ] 59. Integration test: full orchestrator run against a mocked provider + tool
+- [x] 57. Mocked-provider test harness (no live API calls in CI)
+- [x] 58. Unit tests: provider adapters, tools, workspace guard, db repositories
+- [x] 59. Integration test: full orchestrator run against a mocked provider + tool
