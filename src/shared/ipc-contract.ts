@@ -10,6 +10,7 @@ export const IpcChannel = {
   SessionsList: 'sessions:list',
   SessionsCreate: 'sessions:create',
   SessionsDelete: 'sessions:delete',
+  SessionsExport: 'sessions:export',
 
   MessagesList: 'messages:list',
   SessionsGetUsage: 'sessions:get-usage',
@@ -67,6 +68,11 @@ export interface SessionDto {
   title: string
   createdAt: number
   updatedAt: number
+}
+
+export interface SessionExportResult {
+  cancelled: boolean
+  path?: string
 }
 
 export interface MessageDto {

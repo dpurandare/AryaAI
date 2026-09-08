@@ -9,13 +9,15 @@
     activeId = '',
     onSelect,
     onNew,
-    onDelete
+    onDelete,
+    onExport
   }: {
     sessions: Session[]
     activeId: string
     onSelect: (id: string) => void
     onNew: () => void
     onDelete: (id: string) => void
+    onExport: (id: string) => void
   } = $props()
 </script>
 
@@ -29,6 +31,7 @@
     {#each sessions as session (session.id)}
       <li class:active={session.id === activeId}>
         <button class="title" onclick={() => onSelect(session.id)}>{session.title}</button>
+        <button class="export" title="Export session" onclick={() => onExport(session.id)}>⇩</button>
         {#if session.id !== activeId}
           <button class="delete" title="Delete session" onclick={() => onDelete(session.id)}>×</button>
         {/if}
@@ -114,7 +117,8 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .delete {
+  .delete,
+  .export {
     background: none;
     border: none;
     color: var(--text-muted);
@@ -122,7 +126,11 @@
     font-size: 1rem;
     padding: 0 0.6rem;
   }
-  .delete:hover {
+  .export {
+    font-size: 0.85rem;
+  }
+  .delete:hover,
+  .export:hover {
     color: var(--text);
   }
 </style>

@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import type { WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
@@ -9,6 +9,7 @@ import {
   type SaveDataConnectionInput,
   type SaveMcpServerInput,
   type ChatStreamEventPayload,
+  type SessionExportResult,
   type ToolConfirmRequestPayload,
   type ToolDescriptor
 } from '@shared/ipc-contract'
@@ -25,6 +26,7 @@ import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/
 import { McpManager } from '../mcp/manager'
 import { createDefaultProviderRegistry } from '../providers/setup'
 import type { Message } from '../providers/types'
+import { exportSession } from '../sessions/export'
 import { createDefaultRegistry, createToolContext, defaultWorkspaceRoot, WORKSPACE_ROOT_SETTING_KEY } from '../tools/setup'
 import type { ToolContext } from '../tools/types'
 import { Orchestrator, type ConfirmDecision, type ToolConfirmRequest } from '../agents/orchestrator'
@@ -76,6 +78,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.SessionsList, () => listSessions())
   ipcMain.handle(IpcChannel.SessionsCreate, (_event, title: string) => createSession(title))
   ipcMain.handle(IpcChannel.SessionsDelete, (_event, id: string) => deleteSession(id))
+  ipcMain.handle(IpcChannel.SessionsExport, (event, sessionId: string): Promise<SessionExportResult> =>
+    exportSession(sessionId, BrowserWindow.fromWebContents(event.sender))
+  )
 
   ipcMain.handle(IpcChannel.MessagesList, (_event, sessionId: string) => listMessages(sessionId))
   ipcMain.handle(IpcChannel.SessionsGetUsage, (_event, sessionId: string) => getUsage(sessionId))

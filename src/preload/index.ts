@@ -13,7 +13,8 @@ import {
   type McpServerDto,
   type SaveMcpServerInput,
   type ToolDescriptor,
-  type SessionUsageDto
+  type SessionUsageDto,
+  type SessionExportResult
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 
@@ -24,6 +25,8 @@ const api = {
   createSession: (title: string): Promise<SessionDto> =>
     ipcRenderer.invoke(IpcChannel.SessionsCreate, title),
   deleteSession: (id: string): Promise<void> => ipcRenderer.invoke(IpcChannel.SessionsDelete, id),
+  exportSession: (id: string): Promise<SessionExportResult> =>
+    ipcRenderer.invoke(IpcChannel.SessionsExport, id),
 
   listMessages: (sessionId: string): Promise<MessageDto[]> =>
     ipcRenderer.invoke(IpcChannel.MessagesList, sessionId),

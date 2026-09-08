@@ -152,6 +152,11 @@
     sessions = sessions.filter((s) => s.id !== id)
   }
 
+  async function exportSession(id: string): Promise<void> {
+    // A cancelled save dialog is a normal, silent outcome — nothing to handle either way.
+    await window.sachiv.exportSession(id)
+  }
+
   /** Appends to the trailing segment if it's the same kind+speaker, else starts a new one — keeps consecutive same-speaker text as one flowing block. */
   function appendTextSegment(msg: DisplayMessage, text: string, agentRole?: AgentRole): void {
     const last = msg.segments[msg.segments.length - 1]
@@ -343,7 +348,14 @@
   style={sidebarCollapsed ? undefined : `grid-template-columns: ${sidebarWidth}px 4px 1fr`}
 >
   <aside>
-    <SessionList {sessions} {activeId} onSelect={selectSession} onNew={newSession} onDelete={removeSession} />
+    <SessionList
+      {sessions}
+      {activeId}
+      onSelect={selectSession}
+      onNew={newSession}
+      onDelete={removeSession}
+      onExport={exportSession}
+    />
     <button class="user-row" onclick={() => (showSettings = true)}>
       <span class="avatar">S</span>
       <span class="user-name">Sachiv</span>

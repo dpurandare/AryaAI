@@ -54,7 +54,7 @@ The order we'll actually build in, referencing item numbers below. Everything st
 ## Persistence & sessions
 - [x] 22. Message CRUD (extend `db/sessions.ts` with a `messages` repository)
 - [x] 23. New-session flow (preserve current, start new)
-- [ ] 24. Session export (to file, e.g. JSON/Markdown)
+- [x] 24. Session export (to file, e.g. JSON/Markdown) — native save dialog, format inferred from the chosen extension
 - [x] 25. Session delete (blocked for the currently active session — enforced in the UI, not a security boundary)
 - [x] 26. Session list panel wired to real data (resizable, scrollable)
 
