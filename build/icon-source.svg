@@ -11,42 +11,34 @@
        full-bleed square the way the squircle-enforcement research implied. -->
   <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#bg)"/>
 
-  <!-- A friendly face wearing a headset — borrows the "operator/secretary"
-       idea (headset = assistant, from a reference the user pointed to)
-       merged with the face concept already settled on, rather than the
-       reference's literal multi-element illustration (person + headset +
-       separate clipboard), which is too detailed to hold up at icon sizes.
-       Eyes sized/spaced to clear the earpieces with a real gap — the first
-       pass had them colliding into one blob. The face (eyes + smile) is
-       shifted right of center, as if the head has turned slightly toward
-       the mic side, and the boom is re-anchored to actually meet the new
-       mouth position (previously it ended well short of the mouth, looking
-       disconnected) rather than just avoiding a collision. -->
+  <!-- A person silhouette (head + shoulders) wearing a headset, directly
+       following the reference "operator" icon's actual composition rather
+       than the cartoon-emoji face tried before (explicit feedback: get away
+       from the emoji look, take the idea from the reference image). All
+       elements are solid white, so the headset is deliberately kept clear
+       of the head/body silhouette by a real gap at every point — same-color
+       shapes touching would just fuse into one blob. -->
   <path
-    d="M 266 420 Q 290 176 512 166 Q 734 176 758 420"
-    fill="none"
-    stroke="#ffffff"
-    stroke-width="44"
-    stroke-linecap="round"
+    d="M 224 1024 L 224 820 C 224 620 350 470 512 470 C 674 470 800 620 800 820 L 800 1024 Z"
+    fill="#ffffff"
   />
-  <circle cx="266" cy="420" r="52" fill="#ffffff"/>
-  <circle cx="758" cy="420" r="52" fill="#ffffff"/>
-  <path
-    d="M 266 420 C 240 500 270 565 395 598"
-    fill="none"
-    stroke="#ffffff"
-    stroke-width="30"
-    stroke-linecap="round"
-  />
-  <circle cx="395" cy="598" r="22" fill="#ffffff"/>
+  <circle cx="512" cy="380" r="118" fill="#ffffff"/>
 
-  <ellipse cx="452" cy="452" rx="40" ry="82" fill="#ffffff"/>
-  <ellipse cx="668" cy="452" rx="40" ry="82" fill="#ffffff"/>
   <path
-    d="M 428 648 Q 560 764 692 648"
+    d="M 320 380 Q 340 150 512 140 Q 684 150 704 380"
     fill="none"
     stroke="#ffffff"
-    stroke-width="54"
+    stroke-width="38"
     stroke-linecap="round"
   />
+  <circle cx="320" cy="380" r="44" fill="#ffffff"/>
+  <circle cx="704" cy="380" r="44" fill="#ffffff"/>
+  <path
+    d="M 320 380 C 296 445 312 485 418 498"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="24"
+    stroke-linecap="round"
+  />
+  <circle cx="418" cy="498" r="18" fill="#ffffff"/>
 </svg>
