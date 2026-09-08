@@ -1,31 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#eb9a6e"/>
-      <stop offset="55%" stop-color="#d97757"/>
+      <stop offset="0%" stop-color="#e2875c"/>
       <stop offset="100%" stop-color="#b8532f"/>
-    </linearGradient>
-    <linearGradient id="glyph" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="100%" stop-color="#fdf3ec"/>
     </linearGradient>
   </defs>
 
-  <!-- Full-bleed, no manual corner rounding — macOS applies its own squircle
-       mask; pre-rounding here causes a visible double-mask mismatch there. -->
-  <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"/>
+  <!-- Rounded-square baked directly into the art rather than relying on the
+       OS to mask it — verified live that macOS didn't visibly round a
+       full-bleed square the way the squircle-enforcement research implied. -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#bg)"/>
 
-  <!-- Subtle top sheen for depth, matching the soft-gradient style of
-       first-party icons (Shortcuts, Mail) rather than a flat fill. -->
-  <rect x="0" y="0" width="1024" height="1024" fill="#ffffff" opacity="0.06"/>
-  <ellipse cx="512" cy="120" rx="620" ry="260" fill="#ffffff" opacity="0.10"/>
-
+  <!-- A simple, friendly face — two eyes and a smile — evoking "Sachiv"
+       (secretary/companion) directly, the way Finder's icon is literally a
+       face, rather than an abstract initial. -->
+  <ellipse cx="382" cy="448" rx="52" ry="92" fill="#ffffff"/>
+  <ellipse cx="642" cy="448" rx="52" ry="92" fill="#ffffff"/>
   <path
-    d="M 668 328 C 668 258 592 218 512 218 C 420 218 338 264 338 348 C 338 442 436 476 512 504 C 614 542 686 580 686 668 C 686 758 600 812 512 812 C 418 812 338 776 338 704"
+    d="M 366 640 Q 512 776 658 640"
     fill="none"
-    stroke="url(#glyph)"
-    stroke-width="94"
+    stroke="#ffffff"
+    stroke-width="58"
     stroke-linecap="round"
-    stroke-linejoin="round"
   />
 </svg>
