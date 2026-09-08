@@ -1,44 +1,40 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#e2875c"/>
       <stop offset="100%" stop-color="#b8532f"/>
     </linearGradient>
   </defs>
 
-  <!-- Rounded-square baked directly into the art rather than relying on the
-       OS to mask it — verified live that macOS didn't visibly round a
-       full-bleed square the way the squircle-enforcement research implied. -->
   <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#bg)"/>
 
-  <!-- A person silhouette (head + shoulders) wearing a headset, directly
-       following the reference "operator" icon's actual composition rather
-       than the cartoon-emoji face tried before (explicit feedback: get away
-       from the emoji look, take the idea from the reference image). All
-       elements are solid white, so the headset is deliberately kept clear
-       of the head/body silhouette by a real gap at every point — same-color
-       shapes touching would just fuse into one blob. -->
+  <!-- Tracing the reference silhouette's actual shape more faithfully this
+       time — a bob-cut head (wider than a plain circle, flaring at ear
+       level, with a notch cut in for the neck/collar) rather than the
+       circle-head abstractions that kept reading as emoji-like. -->
   <path
-    d="M 224 1024 L 224 820 C 224 620 350 470 512 470 C 674 470 800 620 800 820 L 800 1024 Z"
+    d="M 512 120
+       C 650 120 742 218 742 350
+       C 742 428 708 468 646 496
+       C 610 512 572 488 548 462
+       L 512 458
+       L 476 462
+       C 452 488 414 512 378 496
+       C 316 468 282 428 282 350
+       C 282 218 374 120 512 120 Z"
     fill="#ffffff"
   />
-  <circle cx="512" cy="380" r="118" fill="#ffffff"/>
 
   <path
-    d="M 320 380 Q 340 150 512 140 Q 684 150 704 380"
-    fill="none"
-    stroke="#ffffff"
-    stroke-width="38"
-    stroke-linecap="round"
+    d="M 150 1024 L 150 860 C 150 640 260 420 512 420 C 764 420 874 640 874 860 L 874 1024 Z"
+    fill="#ffffff"
   />
-  <circle cx="320" cy="380" r="44" fill="#ffffff"/>
-  <circle cx="704" cy="380" r="44" fill="#ffffff"/>
-  <path
-    d="M 320 380 C 296 445 312 485 418 498"
-    fill="none"
-    stroke="#ffffff"
-    stroke-width="24"
-    stroke-linecap="round"
-  />
-  <circle cx="418" cy="498" r="18" fill="#ffffff"/>
+
+  <!-- Laptop as a solid darker-shade accent, not a background-gradient
+       cutout — the cutout looked like a flat mismatched patch instead of a
+       clean see-through (the gradient reference resolves oddly reused
+       across two very different-sized shapes even with userSpaceOnUse). A
+       deliberate two-tone accent is simpler and more reliable. -->
+  <rect x="366" y="800" width="292" height="156" rx="26" fill="#b8532f"/>
+  <rect x="464" y="900" width="96" height="26" rx="13" fill="#ffffff"/>
 </svg>
