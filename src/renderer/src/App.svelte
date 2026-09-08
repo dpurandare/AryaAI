@@ -344,33 +344,33 @@
     ></div>
   {/if}
   <section>
-    <ChatView
-      {messages}
-      {statusLine}
-      {sending}
-      onSend={sendMessage}
-      {providers}
-      {providerId}
-      model={currentModel}
-      {hasKey}
-      onChangeProvider={changeProvider}
-      onChangeModel={changeModel}
-      onNeedKey={() => (showSettings = true)}
-    />
+    {#if showSettings}
+      <SettingsPanel
+        providerDisplayName={providers.find((p) => p.id === providerId)?.displayName ?? providerId}
+        providerRequiresApiKey={providers.find((p) => p.id === providerId)?.requiresApiKey ?? true}
+        {hasKey}
+        {autoApproveRules}
+        onSave={saveApiKey}
+        onClose={() => (showSettings = false)}
+        onToggleAutoApproveRule={toggleAutoApproveTool}
+      />
+    {:else}
+      <ChatView
+        {messages}
+        {statusLine}
+        {sending}
+        onSend={sendMessage}
+        {providers}
+        {providerId}
+        model={currentModel}
+        {hasKey}
+        onChangeProvider={changeProvider}
+        onChangeModel={changeModel}
+        onNeedKey={() => (showSettings = true)}
+      />
+    {/if}
   </section>
 </main>
-
-{#if showSettings}
-  <SettingsPanel
-    providerDisplayName={providers.find((p) => p.id === providerId)?.displayName ?? providerId}
-    providerRequiresApiKey={providers.find((p) => p.id === providerId)?.requiresApiKey ?? true}
-    {hasKey}
-    {autoApproveRules}
-    onSave={saveApiKey}
-    onClose={() => (showSettings = false)}
-    onToggleAutoApproveRule={toggleAutoApproveTool}
-  />
-{/if}
 
 {#if pendingConfirm}
   <ToolConfirmDialog

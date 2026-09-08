@@ -203,20 +203,22 @@
   loadTools()
 </script>
 
-<div
-  class="overlay"
-  role="presentation"
-  onclick={onClose}
-  onkeydown={(e) => e.key === 'Escape' && onClose()}
->
-  <div
-    class="panel"
-    role="dialog"
-    aria-modal="true"
-    tabindex="-1"
-    onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
-  >
+<div class="settings-view">
+  <div class="settings-header">
+    <button class="back-btn" onclick={onClose}>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path
+          d="M10 3L5 8l5 5"
+          stroke="currentColor"
+          stroke-width="1.4"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
+      Back to chat
+    </button>
+  </div>
+  <div class="settings-body">
     <h2>{providerDisplayName} API key</h2>
     {#if providerRequiresApiKey}
       <p class="status">
@@ -395,25 +397,46 @@
 </div>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+  .settings-view {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--bg);
+  }
+  .settings-header {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
-    justify-content: center;
+    padding: 0.85rem 1.5rem;
+    border-bottom: 1px solid var(--border);
   }
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 1.5rem;
-    width: 380px;
-    max-height: 85vh;
+  .back-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.7rem 0.4rem 0.5rem;
+    border-radius: 6px;
+    border: none;
+    background: none;
+    color: var(--text);
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .back-btn:hover {
+    background: var(--panel-hover);
+  }
+  .settings-body {
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    padding: 1.5rem 2rem 3rem;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    max-width: 640px;
+    width: 100%;
+    box-sizing: border-box;
   }
   h2 {
     margin: 0 0 0.25rem;
