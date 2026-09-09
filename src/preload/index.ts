@@ -17,9 +17,7 @@ import {
   type SessionExportResult,
   type AppUpdateAvailablePayload,
   type SearchHistoryStatusDto,
-  type SessionTitleUpdatedPayload,
-  type SavedQueryDto,
-  type SaveSavedQueryInput
+  type SessionTitleUpdatedPayload
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 
@@ -69,12 +67,6 @@ const api = {
     ipcRenderer.invoke(IpcChannel.DataConnectionsSave, input),
   deleteDataConnection: (id: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.DataConnectionsDelete, id),
-
-  listSavedQueries: (connectionId?: string): Promise<SavedQueryDto[]> =>
-    ipcRenderer.invoke(IpcChannel.SavedQueriesList, connectionId),
-  saveSavedQuery: (input: SaveSavedQueryInput): Promise<SavedQueryDto> =>
-    ipcRenderer.invoke(IpcChannel.SavedQueriesSave, input),
-  deleteSavedQuery: (id: string): Promise<void> => ipcRenderer.invoke(IpcChannel.SavedQueriesDelete, id),
 
   listMcpServers: (): Promise<McpServerDto[]> => ipcRenderer.invoke(IpcChannel.McpServersList),
   saveMcpServer: (input: SaveMcpServerInput): Promise<McpServerDto> =>

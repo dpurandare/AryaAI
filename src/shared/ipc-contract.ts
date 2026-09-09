@@ -28,10 +28,6 @@ export const IpcChannel = {
   DataConnectionsSave: 'data-connections:save',
   DataConnectionsDelete: 'data-connections:delete',
 
-  SavedQueriesList: 'saved-queries:list',
-  SavedQueriesSave: 'saved-queries:save',
-  SavedQueriesDelete: 'saved-queries:delete',
-
   McpServersList: 'mcp-servers:list',
   McpServersSave: 'mcp-servers:save',
   McpServersDelete: 'mcp-servers:delete',
@@ -141,6 +137,42 @@ export interface ToolConfirmRequestPayload {
 
 export type DbEngine = 'sqlite' | 'postgres'
 
+export type SavedQueryParamType = 'string' | 'number'
+
+export interface SavedQueryParam {
+  name: string
+  type: SavedQueryParamType
+}
+
+/**
+ * A curated, parametric SQL template — the point is to let the Data agent
+ * reuse a named, pre-written query instead of re-deriving the same SQL from
+ * scratch on every question that needs it, the same role db_tools.py's
+ * canned KPI helpers play in the reference EnergyAIProto2 app (hardcoded
+ * Python there, since that app's schema is fixed at build time; here the
+ * Data agent authors these itself at runtime instead, via db_save_query,
+ * since a connection's schema isn't known until a user adds one). `sql`
+ * uses `:name` placeholders (see main/tools/db/param-binding.ts); `mutates`
+ * is computed once, from the SQL text, when the query is saved — not per
+ * call, since the SQL shape itself (only the bound values vary) is fixed
+ * once saved.
+ *
+ * Stored *nested inside* its connection (DataConnectionDto.savedQueries)
+ * rather than as an independent collection — deliberately not surfaced in
+ * Settings at all; the Data agent is the only author, via the db_save_query
+ * tool (mutates: true, so a human still approves each one via the normal
+ * confirmation dialog).
+ */
+export interface SavedQueryDto {
+  id: string
+  connectionId: string
+  name: string
+  description: string
+  sql: string
+  params: SavedQueryParam[]
+  mutates: boolean
+}
+
 /** Connection metadata only — never carries a password. */
 export interface DataConnectionDto {
   id: string
@@ -151,6 +183,7 @@ export interface DataConnectionDto {
   port?: number
   database?: string
   username?: string
+  savedQueries: SavedQueryDto[]
 }
 
 /** `id` omitted creates a new connection; `password` omitted on an edit leaves the stored one unchanged. */
@@ -164,32 +197,6 @@ export interface SaveDataConnectionInput {
   database?: string
   username?: string
   password?: string
-}
-
-export type SavedQueryParamType = 'string' | 'number'
-
-export interface SavedQueryParam {
-  name: string
-  type: SavedQueryParamType
-}
-
-/**
- * A curated, parametric SQL template attached to one data connection — the
- * point is to let the Data agent (or a human, from Settings) reuse a named,
- * pre-written query instead of the model re-deriving the same SQL from
- * scratch on every question that needs it. `sql` uses `:name` placeholders
- * (see main/tools/db/param-binding.ts); `mutates` is computed once, from
- * the SQL text, when the query is saved — not per call, since the SQL
- * shape itself (only the bound values vary) is fixed once saved.
- */
-export interface SavedQueryDto {
-  id: string
-  connectionId: string
-  name: string
-  description: string
-  sql: string
-  params: SavedQueryParam[]
-  mutates: boolean
 }
 
 /** `id` omitted creates a new saved query. */

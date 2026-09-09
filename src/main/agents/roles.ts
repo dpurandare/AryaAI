@@ -32,7 +32,8 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     'db_execute_sql',
     'db_list_rows',
     'db_count_rows',
-    'db_find_rows'
+    'db_find_rows',
+    'db_save_query'
   ]
 
   const agents: Agent[] = [
@@ -102,12 +103,15 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'tables/columns before writing queries against it. For a simple, mechanical lookup — list a ' +
         'table\'s rows, count them, or find rows where one column equals a value — prefer db_list_rows/' +
         'db_count_rows/db_find_rows over writing SQL by hand; they need a table/column name, not a query. ' +
-        'You may also see tools named "db_query_..." — those are curated, parametric saved queries a ' +
-        'human set up in Settings for a specific recurring question; if one matches what\'s being asked, ' +
-        'use it directly instead of writing equivalent SQL yourself. Fall back to db_execute_sql only for ' +
-        'anything genuinely needing a WHERE beyond one column, a JOIN, or an aggregation none of the above ' +
-        'cover. If no connection is configured yet, say so and ask the user to add one in Settings rather ' +
-        'than guessing at a schema.',
+        'You may also see tools named "db_query_..." — these are queries you (or an earlier turn) saved ' +
+        'for reuse via db_save_query; if one matches what\'s being asked, call it directly instead of ' +
+        'writing equivalent SQL again. After you write and confirm a working query that answers a ' +
+        'question likely to recur in a similar shape (not a one-off), call db_save_query to keep it as ' +
+        'its own tool for next time — do this proactively, without waiting to be asked, but only for a ' +
+        'query you have actually run and confirmed is correct, never speculatively. Fall back to ' +
+        'db_execute_sql for anything genuinely ad hoc, or needing a WHERE beyond one column, a JOIN, or ' +
+        'an aggregation none of the above cover. If no connection is configured yet, say so and ask the ' +
+        'user to add one in Settings rather than guessing at a schema.',
       // Saved-query tools have model-generated names (db_query_<slug>_<id>,
       // see tools/db/saved-query-tools.ts) — they can't be named in
       // dataToolNames, so they're picked up here by prefix instead, fresh

@@ -10,7 +10,8 @@ import {
   dbListConnectionsTool,
   dbListRowsTool,
   dbCountRowsTool,
-  dbFindRowsTool
+  dbFindRowsTool,
+  dbSaveQueryTool
 } from './db'
 import { listDirectoryTool, readFileTool, writeFileTool } from './file-ops'
 import { gitCloneRepoTool, gitExecTool } from './git'
@@ -57,6 +58,7 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(dbListRowsTool)
   registry.register(dbCountRowsTool)
   registry.register(dbFindRowsTool)
+  registry.register(dbSaveQueryTool)
   registry.register(webSearchTool)
   registry.register(gitExecTool)
   registry.register(gitCloneRepoTool)

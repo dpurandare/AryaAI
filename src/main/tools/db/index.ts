@@ -4,6 +4,7 @@ import { openDriver } from './driver-factory'
 import { isMutatingSql } from './sql-classifier'
 
 export { dbListRowsTool, dbCountRowsTool, dbFindRowsTool } from './crud'
+export { dbSaveQueryTool } from './save-query-tool'
 
 export const dbListConnectionsTool: Tool = {
   name: 'db_list_connections',

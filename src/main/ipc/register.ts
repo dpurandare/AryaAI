@@ -15,8 +15,7 @@ import {
   type ToolConfirmRequestPayload,
   type ToolDescriptor,
   type SearchHistoryStatusDto,
-  type SessionTitleUpdatedPayload,
-  type SaveSavedQueryInput
+  type SessionTitleUpdatedPayload
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 import { createSession, listSessions, deleteSession, getSession, updateSessionTitle, titleFromMessage } from '../db/sessions'
@@ -26,8 +25,7 @@ import { getSetting, setSetting } from '../db/settings'
 import { addUsage, getUsage } from '../db/usage'
 import { setApiKey, getApiKey } from '../security/keychain'
 import { WorkspaceGuard } from '../security/workspace-guard'
-import { deleteConnection, listConnections, saveConnection } from '../data/connections'
-import { deleteSavedQuery, listSavedQueries, saveSavedQuery } from '../data/saved-queries'
+import { deleteConnection, listConnections, listSavedQueries, saveConnection } from '../data/connections'
 import { prepareConversation } from '../context/prepare-context'
 import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/config'
 import { McpManager } from '../mcp/manager'
@@ -143,26 +141,16 @@ export function registerIpcHandlers(): void {
     saveConnection(input)
   )
   ipcMain.handle(IpcChannel.DataConnectionsDelete, (_event, id: string) => {
-    // Saved queries reference a connection by id (data/saved-queries.ts) —
-    // deleting the connection out from under them would leave their tools
-    // registered but permanently failing at execute() time ("connection no
-    // longer exists"), instead of just not existing. Delete them first.
+    // Saved queries live nested inside the connection (data/connections.ts)
+    // and are removed automatically with it — but their *tools* are a
+    // separate live registration this app owns, so those still need an
+    // explicit unregister or they'd keep appearing to work right up until
+    // the next call fails ("connection no longer exists") instead of just
+    // not existing.
     for (const query of listSavedQueries(id)) {
-      deleteSavedQuery(query.id)
       savedQueryManager.unregister(query.id, toolRegistry)
     }
     deleteConnection(id)
-  })
-
-  ipcMain.handle(IpcChannel.SavedQueriesList, (_event, connectionId?: string) => listSavedQueries(connectionId))
-  ipcMain.handle(IpcChannel.SavedQueriesSave, (_event, input: SaveSavedQueryInput) => {
-    const saved = saveSavedQuery(input)
-    savedQueryManager.register(saved, toolRegistry)
-    return saved
-  })
-  ipcMain.handle(IpcChannel.SavedQueriesDelete, (_event, id: string) => {
-    deleteSavedQuery(id)
-    savedQueryManager.unregister(id, toolRegistry)
   })
 
   ipcMain.handle(IpcChannel.McpServersList, () =>
@@ -337,7 +325,11 @@ async function runChat(
     SYSTEM_PROMPT,
     toolRegistry.list(),
     makeConfirmTool(sender, streamId, sessionId),
-    { ...toolContext, currentSessionId: sessionId },
+    {
+      ...toolContext,
+      currentSessionId: sessionId,
+      registerSavedQuery: (query) => savedQueryManager.register(query, toolRegistry)
+    },
     signal
   )
 

@@ -1,5 +1,5 @@
 import type { SavedQueryDto } from '@shared/ipc-contract'
-import { listSavedQueries } from '../../data/saved-queries'
+import { listSavedQueries } from '../../data/connections'
 import type { ToolRegistry } from '../registry'
 import { buildSavedQueryTool, savedQueryToolName } from './saved-query-tools'
 

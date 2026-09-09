@@ -1,9 +1,17 @@
+import type { SavedQueryDto } from '@shared/ipc-contract'
 import type { WorkspaceGuard } from '../security/workspace-guard'
 
 export interface ToolContext {
   workspaceGuard: WorkspaceGuard
   /** The session the current chat turn belongs to — used by search_history to exclude it from its own results (already in context). */
   currentSessionId: string
+  /**
+   * Live-registers a freshly-saved query's tool into the app's own
+   * ToolRegistry (see tools/db/saved-query-manager.ts) — only db_save_query
+   * calls this. Optional/absent in tests, which build a bare ToolRegistry
+   * with no live wiring to a running app.
+   */
+  registerSavedQuery?: (query: SavedQueryDto) => void
 }
 
 /**

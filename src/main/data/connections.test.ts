@@ -20,7 +20,8 @@ vi.mock('electron', () => ({
 }))
 
 const { setDbPath } = await import('../db')
-const { listConnections, saveConnection, deleteConnection, resolveConnection } = await import('./connections')
+const { listConnections, saveConnection, deleteConnection, resolveConnection, listSavedQueries, saveSavedQuery, deleteSavedQuery } =
+  await import('./connections')
 const { getApiKey } = await import('../security/keychain')
 
 describe('data connections', () => {
@@ -121,5 +122,87 @@ describe('data connections', () => {
 
     expect(listConnections()).toEqual([])
     expect(getApiKey(`db:${saved.id}`)).toBeUndefined()
+  })
+
+  it('a new connection starts with an empty savedQueries array', () => {
+    const saved = saveConnection({ name: 'Local', engine: 'sqlite', filePath: '/data/app.db' })
+    expect(saved.savedQueries).toEqual([])
+  })
+
+  it('editing a connection preserves its saved queries — a plain replace would otherwise wipe them', () => {
+    const conn = saveConnection({ name: 'Local', engine: 'sqlite', filePath: '/data/app.db' })
+    const query = saveSavedQuery({
+      connectionId: conn.id,
+      name: 'q1',
+      description: '',
+      sql: 'SELECT 1',
+      params: []
+    })
+
+    saveConnection({ id: conn.id, name: 'Local (renamed)', engine: 'sqlite', filePath: '/data/app2.db' })
+
+    expect(listSavedQueries(conn.id)).toEqual([query])
+  })
+
+  it('deleting a connection removes its saved queries too, with no separate cascade call needed', () => {
+    const conn = saveConnection({ name: 'Local', engine: 'sqlite', filePath: '/data/app.db' })
+    saveSavedQuery({ connectionId: conn.id, name: 'q1', description: '', sql: 'SELECT 1', params: [] })
+
+    deleteConnection(conn.id)
+
+    expect(listSavedQueries()).toEqual([])
+  })
+
+  it('saveSavedQuery computes mutates from the SQL text', () => {
+    const conn = saveConnection({ name: 'Local', engine: 'sqlite', filePath: '/data/app.db' })
+    const read = saveSavedQuery({ connectionId: conn.id, name: 'r', description: '', sql: 'SELECT 1', params: [] })
+    const write = saveSavedQuery({
+      connectionId: conn.id,
+      name: 'w',
+      description: '',
+      sql: 'UPDATE t SET x = 1',
+      params: []
+    })
+    expect(read.mutates).toBe(false)
+    expect(write.mutates).toBe(true)
+  })
+
+  it('saveSavedQuery rejects a query whose SQL references an undeclared placeholder', () => {
+    const conn = saveConnection({ name: 'Local', engine: 'sqlite', filePath: '/data/app.db' })
+    expect(() =>
+      saveSavedQuery({
+        connectionId: conn.id,
+        name: 'bad',
+        description: '',
+        sql: 'SELECT * FROM t WHERE status = :status',
+        params: []
+      })
+    ).toThrow(/:status/)
+  })
+
+  it('saveSavedQuery rejects an unknown connection', () => {
+    expect(() =>
+      saveSavedQuery({ connectionId: 'nope', name: 'q', description: '', sql: 'SELECT 1', params: [] })
+    ).toThrow(/Unknown data connection/)
+  })
+
+  it('listSavedQueries scopes by connection, or lists all with no argument', () => {
+    const a = saveConnection({ name: 'A', engine: 'sqlite', filePath: '/a.db' })
+    const b = saveConnection({ name: 'B', engine: 'sqlite', filePath: '/b.db' })
+    saveSavedQuery({ connectionId: a.id, name: 'qa', description: '', sql: 'SELECT 1', params: [] })
+    saveSavedQuery({ connectionId: b.id, name: 'qb', description: '', sql: 'SELECT 1', params: [] })
+
+    expect(listSavedQueries(a.id).map((q) => q.name)).toEqual(['qa'])
+    expect(listSavedQueries().map((q) => q.name).sort()).toEqual(['qa', 'qb'])
+  })
+
+  it('deleteSavedQuery removes one query without touching others on the same connection', () => {
+    const conn = saveConnection({ name: 'Local', engine: 'sqlite', filePath: '/data/app.db' })
+    const q1 = saveSavedQuery({ connectionId: conn.id, name: 'q1', description: '', sql: 'SELECT 1', params: [] })
+    saveSavedQuery({ connectionId: conn.id, name: 'q2', description: '', sql: 'SELECT 2', params: [] })
+
+    deleteSavedQuery(q1.id)
+
+    expect(listSavedQueries(conn.id).map((q) => q.name)).toEqual(['q2'])
   })
 })
