@@ -440,7 +440,13 @@ describe('Orchestrator (integration, mocked provider)', () => {
     const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
     const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
-    expect(streamEvents).toEqual([{ type: 'message_stop', stopReason: 'aborted' }])
+    // The round's own `status` event (yielded before the provider call that
+    // then throws) still comes through — only the provider call itself is
+    // short-circuited by the already-aborted signal.
+    expect(streamEvents).toEqual([
+      { type: 'status', message: 'Model (mock-model) is thinking…' },
+      { type: 'message_stop', stopReason: 'aborted' }
+    ])
   })
 
   it('a genuine provider error still propagates (not swallowed as an abort) when the signal was never fired', async () => {
@@ -460,6 +466,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
     const iterable = orchestrator.run([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
     const iterator = iterable[Symbol.asyncIterator]()
+    // First value is the round's own `status` event, yielded before the
+    // provider call that then genuinely throws.
+    await expect(iterator.next()).resolves.toMatchObject({ value: { event: { type: 'status' } } })
     await expect(iterator.next()).rejects.toThrow('a real network failure')
   })
 })

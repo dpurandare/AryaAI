@@ -42,3 +42,11 @@ export type StreamEvent =
     }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   | { type: 'error'; message: string }
+  /**
+   * A human-readable "what's happening right now" hint, sent once per round
+   * right before the provider call that produces it — not persisted, purely
+   * a live UI signal (see orchestrator.ts's `runLoop`). `agentRole` set
+   * means it describes a nested specialist's own round, same convention as
+   * every other tagged event here.
+   */
+  | { type: 'status'; message: string; agentRole?: AgentRole }

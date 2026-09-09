@@ -25,6 +25,7 @@
     id: string
     role: 'user' | 'assistant'
     pending?: boolean
+    statusText?: string
     segments: DisplaySegment[]
   }
 
@@ -202,10 +203,22 @@
             {/if}
           {/if}
         {/each}
-        {#if message.pending && message.segments.length === 0}
-          <span class="thinking">Thinking…</span>
-        {:else if message.pending}
-          <span class="text cursor">▌</span>
+        {#if message.pending}
+          {@const last = message.segments[message.segments.length - 1]}
+          {@const lastIsUnresolvedTool = last?.kind === 'tool' && last.toolCall?.result === undefined}
+          {#if last?.kind === 'text'}
+            <!-- Actively streaming text is its own live indicator. -->
+            <span class="text cursor">▌</span>
+          {:else if !lastIsUnresolvedTool}
+            <!-- No segment yet, or the last one already finished (e.g. a
+                 resolved tool result) and the next round hasn't produced
+                 anything visible yet — show the backend's real per-round
+                 status instead of a dead pause. An in-flight tool/delegate
+                 call is skipped here since its own box already carries a
+                 pending label ("Waiting for confirmation...", "Delegating
+                 to X agent…") — this would just duplicate it. -->
+            <span class="thinking">{message.statusText ?? 'Thinking…'}</span>
+          {/if}
         {/if}
       </div>
     {/each}

@@ -38,6 +38,12 @@
     id: string
     role: 'user' | 'assistant'
     pending?: boolean
+    /** Live-only "what's happening" hint from the backend's `status` stream
+     * event (see orchestrator.ts's `roundStatusMessage`) — never persisted,
+     * just shown by ChatView while `pending` and there's no active segment
+     * of its own already reporting progress (a streaming text cursor, or a
+     * tool call's own pending label). */
+    statusText?: string
     segments: DisplaySegment[]
   }
 
@@ -202,7 +208,9 @@
       if (payload.streamId !== streamId) return
       const event = payload.event
       const msg = messages[assistantIdx]
-      if (event.type === 'text_delta') {
+      if (event.type === 'status') {
+        msg.statusText = event.message
+      } else if (event.type === 'text_delta') {
         appendTextSegment(msg, event.text, event.agentRole)
       } else if (event.type === 'tool_use_start') {
         msg.segments.push({

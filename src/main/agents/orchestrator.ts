@@ -52,6 +52,7 @@ function tagEvent(event: StreamEvent, agentRole: AgentRole | undefined): StreamE
   if (!agentRole) return event
   if (event.type === 'text_delta') return { ...event, agentRole }
   if (event.type === 'tool_use_start') return { ...event, agentRole }
+  if (event.type === 'status') return { ...event, agentRole }
   return event
 }
 
@@ -182,6 +183,21 @@ export class Orchestrator {
     )
   }
 
+  /**
+   * A real, honestly-scoped "what's happening" hint for the round about to
+   * start — genuinely distinguishes the very first call of a run/specialist
+   * (nothing to go on yet but the model itself) from a later round that's
+   * actually reacting to a tool result, rather than a generic "Thinking…"
+   * for both. Deliberately doesn't try to describe the model's own
+   * reasoning content — no provider in this app streams that as a separate
+   * signal, so anything more specific than "thinking" / "reviewing tool
+   * results" would be a guess, not a real report.
+   */
+  private roundStatusMessage(agentRole: AgentRole | undefined, localRound: number): string {
+    const activity = localRound === 1 ? 'thinking' : 'reviewing tool results'
+    return agentRole ? `${AGENT_ROLE_LABELS[agentRole]} agent is ${activity}…` : `Model (${this.model}) is ${activity}…`
+  }
+
   private buildDelegateToolDefinitions(): ToolDefinition[] {
     return [...this.agents.values()].map((a) => ({
       name: delegateToolName(a.role),
@@ -216,9 +232,20 @@ export class Orchestrator {
       ...tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
       ...extraToolDefs
     ]
+    // Local to this runLoop call (unlike state.roundsUsed, which is the
+    // shared safety cap across the whole run) — just distinguishes "first
+    // call this specialist/the top level has made" from "continuing after
+    // seeing a tool result," for the status message below.
+    let localRound = 0
 
     while (state.roundsUsed < MAX_TOTAL_ROUNDS) {
       state.roundsUsed++
+      localRound++
+
+      yield {
+        kind: 'stream',
+        event: tagEvent({ type: 'status', message: this.roundStatusMessage(agentRole, localRound) }, agentRole)
+      }
 
       let assistantText = ''
       const toolCalls: AccumulatedToolCall[] = []
