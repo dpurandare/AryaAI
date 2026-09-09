@@ -14,7 +14,13 @@ function pickTools(registry: ToolRegistry, names: string[]): Tool[] {
  * capability it doesn't have.
  */
 export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
-  const codingTools = pickTools(registry, ['read_file', 'list_directory', 'write_file', 'git_exec'])
+  const codingTools = pickTools(registry, [
+    'read_file',
+    'list_directory',
+    'write_file',
+    'git_exec',
+    'git_clone_repo'
+  ])
   const terminalDevopsTools = pickTools(registry, ['shell_execute', 'aws_cli', 'azure_cli', 'gcloud_cli'])
   const dataTools = pickTools(registry, ['db_list_connections', 'db_introspect_schema', 'db_execute_sql'])
   const researchTools = pickTools(registry, ['web_search', 'search_history'])
@@ -53,7 +59,10 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'workspace to implement the requested change. Always explain what you changed and why. Use ' +
         'git_exec for git operations against the workspace repo — read-only inspection (status, diff, ' +
         "log, show, blame, etc.) runs without confirmation; anything that changes repo state (commit, " +
-        'branch, checkout, merge, push, etc.) shows the user a confirmation dialog first.',
+        'branch, checkout, merge, push, etc.) shows the user a confirmation dialog first. To inspect or ' +
+        'analyze a *different* repository the user points you at, use git_clone_repo instead — it clones ' +
+        'into its own fresh, isolated folder (no destination to specify, so it can never collide with ' +
+        'another clone) and tells you the path to read from with read_file/list_directory.',
       tools: codingTools
     },
     {
