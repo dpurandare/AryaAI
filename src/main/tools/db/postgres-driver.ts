@@ -13,6 +13,8 @@ export interface PostgresConfig {
 }
 
 export class PostgresDriver implements DbDriver {
+  readonly engine = 'postgres' as const
+
   private readonly client: Client
   private connected = false
 
@@ -58,9 +60,9 @@ export class PostgresDriver implements DbDriver {
     return tables
   }
 
-  async execute(sql: string): Promise<DbQueryResult> {
+  async execute(sql: string, params: unknown[] = []): Promise<DbQueryResult> {
     await this.ensureConnected()
-    const result = await this.client.query(sql)
+    const result = await this.client.query(sql, params)
     if (result.rows && result.rows.length > 0) {
       return { rows: result.rows.slice(0, MAX_RETURNED_ROWS), rowCount: result.rowCount ?? result.rows.length }
     }

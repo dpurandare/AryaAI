@@ -4,6 +4,8 @@
     McpServerDto,
     McpTransport,
     ProviderDescriptor,
+    SavedQueryDto,
+    SavedQueryParam,
     ToolDescriptor
   } from '@shared/ipc-contract'
 
@@ -91,6 +93,78 @@
   async function removeConnection(id: string): Promise<void> {
     await window.sachiv.deleteDataConnection(id)
     await loadConnections()
+    await loadSavedQueries()
+  }
+
+  // --- Saved queries: curated, parametric SQL a human sets up once so the
+  // Data agent can reuse it instead of writing the same SQL fresh every
+  // time it's asked a recurring question (TASKS.md db-tools optimization).
+  let savedQueries = $state<SavedQueryDto[]>([])
+  let showAddQuery = $state(false)
+  let queryConnectionId = $state('')
+  let queryName = $state('')
+  let queryDescription = $state('')
+  let querySql = $state('')
+  let queryParamsText = $state('')
+  let savingQuery = $state(false)
+  let queryError = $state('')
+
+  async function loadSavedQueries(): Promise<void> {
+    savedQueries = await window.sachiv.listSavedQueries()
+  }
+  loadSavedQueries()
+
+  function connectionName(id: string): string {
+    return connections.find((c) => c.id === id)?.name ?? '(unknown connection)'
+  }
+
+  function resetQueryForm(): void {
+    queryConnectionId = connections[0]?.id ?? ''
+    queryName = ''
+    queryDescription = ''
+    querySql = ''
+    queryParamsText = ''
+    queryError = ''
+    showAddQuery = false
+  }
+
+  /** "status:string, minTotal:number" -> [{name:"status",type:"string"}, ...] — blank entries skipped, an unrecognized type defaults to string rather than rejecting the whole form. */
+  function parseParams(text: string): SavedQueryParam[] {
+    return text
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const [name, type] = entry.split(':').map((s) => s.trim())
+        return { name, type: type === 'number' ? 'number' : 'string' } as SavedQueryParam
+      })
+      .filter((p) => p.name)
+  }
+
+  async function saveQuery(): Promise<void> {
+    if (!queryConnectionId || !queryName.trim() || !querySql.trim()) return
+    savingQuery = true
+    queryError = ''
+    try {
+      await window.sachiv.saveSavedQuery({
+        connectionId: queryConnectionId,
+        name: queryName.trim(),
+        description: queryDescription.trim(),
+        sql: querySql.trim(),
+        params: parseParams(queryParamsText)
+      })
+      resetQueryForm()
+      await loadSavedQueries()
+    } catch (err) {
+      queryError = err instanceof Error ? err.message : String(err)
+    } finally {
+      savingQuery = false
+    }
+  }
+
+  async function removeQuery(id: string): Promise<void> {
+    await window.sachiv.deleteSavedQuery(id)
+    await loadSavedQueries()
   }
 
   // --- MCP servers (TASKS.md #42-45) ---
@@ -378,6 +452,65 @@
       </div>
     {:else}
       <button onclick={() => (showAddConnection = true)}>+ Add connection</button>
+    {/if}
+
+    <h3>Saved queries</h3>
+    <p class="status">
+      Curated, parametric SQL the Data agent can call directly instead of writing the same query fresh
+      every time — each becomes its own tool. Write SQL with <code>:name</code> placeholders and declare
+      matching params below.
+    </p>
+
+    {#if savedQueries.length}
+      <ul class="connection-list">
+        {#each savedQueries as query (query.id)}
+          <li>
+            <span class="conn-name">{query.name}</span>
+            <span class="conn-engine">{connectionName(query.connectionId)}</span>
+            <button class="link-danger" onclick={() => removeQuery(query.id)}>Remove</button>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="status">No saved queries yet.</p>
+    {/if}
+
+    {#if showAddQuery}
+      <div class="add-connection-form">
+        <select bind:value={queryConnectionId}>
+          {#each connections as conn (conn.id)}
+            <option value={conn.id}>{conn.name}</option>
+          {/each}
+        </select>
+        <input placeholder="Name (e.g. orders_by_status)" bind:value={queryName} />
+        <input placeholder="Description (shown to the agent)" bind:value={queryDescription} />
+        <textarea
+          placeholder={'SQL with :name placeholders, e.g.\nSELECT * FROM orders WHERE status = :status'}
+          rows="3"
+          bind:value={querySql}
+        ></textarea>
+        <input placeholder="Params: status:string, minTotal:number" bind:value={queryParamsText} />
+        {#if queryError}
+          <p class="status error">{queryError}</p>
+        {/if}
+        <div class="actions">
+          <button onclick={resetQueryForm}>Cancel</button>
+          <button
+            class="primary"
+            disabled={savingQuery || !queryConnectionId || !queryName.trim() || !querySql.trim()}
+            onclick={saveQuery}
+          >
+            {savingQuery ? 'Saving...' : 'Add saved query'}
+          </button>
+        </div>
+      </div>
+    {:else}
+      <button disabled={!connections.length} onclick={() => ((queryConnectionId = connections[0]?.id ?? ''), (showAddQuery = true))}>
+        + Add saved query
+      </button>
+      {#if !connections.length}
+        <p class="status">Add a data connection first.</p>
+      {/if}
     {/if}
 
     <hr />

@@ -15,7 +15,8 @@ import {
   type ToolConfirmRequestPayload,
   type ToolDescriptor,
   type SearchHistoryStatusDto,
-  type SessionTitleUpdatedPayload
+  type SessionTitleUpdatedPayload,
+  type SaveSavedQueryInput
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 import { createSession, listSessions, deleteSession, getSession, updateSessionTitle, titleFromMessage } from '../db/sessions'
@@ -26,9 +27,11 @@ import { addUsage, getUsage } from '../db/usage'
 import { setApiKey, getApiKey } from '../security/keychain'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import { deleteConnection, listConnections, saveConnection } from '../data/connections'
+import { deleteSavedQuery, listSavedQueries, saveSavedQuery } from '../data/saved-queries'
 import { prepareConversation } from '../context/prepare-context'
 import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/config'
 import { McpManager } from '../mcp/manager'
+import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
 import { createDefaultProviderRegistry } from '../providers/setup'
 import type { Message } from '../providers/types'
 import { exportSession } from '../sessions/export'
@@ -51,6 +54,7 @@ function modelSettingKey(providerId: string): string {
 const toolRegistry = createDefaultRegistry()
 const agents = createAgents(toolRegistry)
 const mcpManager = new McpManager()
+const savedQueryManager = new SavedQueryToolManager()
 let toolContext: ToolContext | undefined
 
 const pendingConfirmations = new Map<string, (decision: ConfirmDecision) => void>()
@@ -70,6 +74,10 @@ export function registerIpcHandlers(): void {
   mcpManager.connectAll(toolRegistry).catch((err: unknown) => {
     console.error('Failed to connect configured MCP servers:', err)
   })
+
+  // Synchronous, unlike MCP connect above — no network/process involved,
+  // saved queries are just settings data, so there's nothing to await.
+  savedQueryManager.syncAll(toolRegistry)
 
   // Fire-and-forget, same reasoning as MCP connect above — catches up any
   // messages missing from the search_history index without blocking startup.
@@ -134,7 +142,28 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.DataConnectionsSave, (_event, input: SaveDataConnectionInput) =>
     saveConnection(input)
   )
-  ipcMain.handle(IpcChannel.DataConnectionsDelete, (_event, id: string) => deleteConnection(id))
+  ipcMain.handle(IpcChannel.DataConnectionsDelete, (_event, id: string) => {
+    // Saved queries reference a connection by id (data/saved-queries.ts) —
+    // deleting the connection out from under them would leave their tools
+    // registered but permanently failing at execute() time ("connection no
+    // longer exists"), instead of just not existing. Delete them first.
+    for (const query of listSavedQueries(id)) {
+      deleteSavedQuery(query.id)
+      savedQueryManager.unregister(query.id, toolRegistry)
+    }
+    deleteConnection(id)
+  })
+
+  ipcMain.handle(IpcChannel.SavedQueriesList, (_event, connectionId?: string) => listSavedQueries(connectionId))
+  ipcMain.handle(IpcChannel.SavedQueriesSave, (_event, input: SaveSavedQueryInput) => {
+    const saved = saveSavedQuery(input)
+    savedQueryManager.register(saved, toolRegistry)
+    return saved
+  })
+  ipcMain.handle(IpcChannel.SavedQueriesDelete, (_event, id: string) => {
+    deleteSavedQuery(id)
+    savedQueryManager.unregister(id, toolRegistry)
+  })
 
   ipcMain.handle(IpcChannel.McpServersList, () =>
     listServerConfigs().map((config) => {

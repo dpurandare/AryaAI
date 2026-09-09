@@ -28,6 +28,10 @@ export const IpcChannel = {
   DataConnectionsSave: 'data-connections:save',
   DataConnectionsDelete: 'data-connections:delete',
 
+  SavedQueriesList: 'saved-queries:list',
+  SavedQueriesSave: 'saved-queries:save',
+  SavedQueriesDelete: 'saved-queries:delete',
+
   McpServersList: 'mcp-servers:list',
   McpServersSave: 'mcp-servers:save',
   McpServersDelete: 'mcp-servers:delete',
@@ -160,6 +164,42 @@ export interface SaveDataConnectionInput {
   database?: string
   username?: string
   password?: string
+}
+
+export type SavedQueryParamType = 'string' | 'number'
+
+export interface SavedQueryParam {
+  name: string
+  type: SavedQueryParamType
+}
+
+/**
+ * A curated, parametric SQL template attached to one data connection — the
+ * point is to let the Data agent (or a human, from Settings) reuse a named,
+ * pre-written query instead of the model re-deriving the same SQL from
+ * scratch on every question that needs it. `sql` uses `:name` placeholders
+ * (see main/tools/db/param-binding.ts); `mutates` is computed once, from
+ * the SQL text, when the query is saved — not per call, since the SQL
+ * shape itself (only the bound values vary) is fixed once saved.
+ */
+export interface SavedQueryDto {
+  id: string
+  connectionId: string
+  name: string
+  description: string
+  sql: string
+  params: SavedQueryParam[]
+  mutates: boolean
+}
+
+/** `id` omitted creates a new saved query. */
+export interface SaveSavedQueryInput {
+  id?: string
+  connectionId: string
+  name: string
+  description: string
+  sql: string
+  params: SavedQueryParam[]
 }
 
 export type McpTransport = 'stdio' | 'http'

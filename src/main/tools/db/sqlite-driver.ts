@@ -1,14 +1,13 @@
 import Database from 'better-sqlite3'
+import { quoteIdentifier } from './identifier'
 import { isMutatingSql } from './sql-classifier'
 import type { DbDriver, DbQueryResult, DbTable } from './types'
 
 const MAX_RETURNED_ROWS = 200
 
-function quoteIdentifier(name: string): string {
-  return `"${name.replace(/"/g, '""')}"`
-}
-
 export class SqliteDriver implements DbDriver {
+  readonly engine = 'sqlite' as const
+
   // better-sqlite3 is synchronous — a slow query blocks the whole Electron
   // main process (which also handles all IPC/window messaging) until it
   // returns. Acceptable for a local-first, single-user desktop app;
@@ -56,13 +55,13 @@ export class SqliteDriver implements DbDriver {
     })
   }
 
-  async execute(sql: string): Promise<DbQueryResult> {
+  async execute(sql: string, params: unknown[] = []): Promise<DbQueryResult> {
     const trimmed = sql.trim()
     if (isMutatingSql(trimmed)) {
-      const info = this.db.prepare(trimmed).run()
+      const info = this.db.prepare(trimmed).run(...params)
       return { rowCount: info.changes }
     }
-    const rows = this.db.prepare(trimmed).all() as Record<string, unknown>[]
+    const rows = this.db.prepare(trimmed).all(...params) as Record<string, unknown>[]
     return { rows: rows.slice(0, MAX_RETURNED_ROWS), rowCount: rows.length }
   }
 

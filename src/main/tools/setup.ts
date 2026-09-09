@@ -4,7 +4,14 @@ import { join } from 'node:path'
 import { getSetting } from '../db/settings'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import { awsCliTool, azureCliTool, gcloudCliTool } from './cloud-cli'
-import { dbExecuteSqlTool, dbIntrospectSchemaTool, dbListConnectionsTool } from './db'
+import {
+  dbExecuteSqlTool,
+  dbIntrospectSchemaTool,
+  dbListConnectionsTool,
+  dbListRowsTool,
+  dbCountRowsTool,
+  dbFindRowsTool
+} from './db'
 import { listDirectoryTool, readFileTool, writeFileTool } from './file-ops'
 import { gitCloneRepoTool, gitExecTool } from './git'
 import { githubCliTool } from './github-cli'
@@ -47,6 +54,9 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(dbListConnectionsTool)
   registry.register(dbIntrospectSchemaTool)
   registry.register(dbExecuteSqlTool)
+  registry.register(dbListRowsTool)
+  registry.register(dbCountRowsTool)
+  registry.register(dbFindRowsTool)
   registry.register(webSearchTool)
   registry.register(gitExecTool)
   registry.register(gitCloneRepoTool)

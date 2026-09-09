@@ -1,18 +1,9 @@
-import { listConnections, resolveConnection } from '../../data/connections'
+import { listConnections } from '../../data/connections'
 import type { Tool } from '../types'
-import { PostgresDriver } from './postgres-driver'
-import { SqliteDriver } from './sqlite-driver'
+import { openDriver } from './driver-factory'
 import { isMutatingSql } from './sql-classifier'
-import type { DbDriver } from './types'
 
-function openDriver(connectionName: string): DbDriver {
-  const conn = resolveConnection(connectionName)
-  if (!conn) {
-    throw new Error(`Unknown data connection "${connectionName}". Call db_list_connections to see what's configured.`)
-  }
-  if (conn.engine === 'sqlite') return new SqliteDriver(conn.filePath)
-  return new PostgresDriver(conn)
-}
+export { dbListRowsTool, dbCountRowsTool, dbFindRowsTool } from './crud'
 
 export const dbListConnectionsTool: Tool = {
   name: 'db_list_connections',

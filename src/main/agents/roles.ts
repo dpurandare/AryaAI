@@ -14,17 +14,26 @@ function pickTools(registry: ToolRegistry, names: string[]): Tool[] {
  * capability it doesn't have.
  */
 export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
-  const codingTools = pickTools(registry, [
-    'read_file',
-    'list_directory',
-    'write_file',
-    'git_exec',
-    'git_clone_repo'
-  ])
-  const terminalDevopsTools = pickTools(registry, ['shell_execute', 'aws_cli', 'azure_cli', 'gcloud_cli'])
-  const dataTools = pickTools(registry, ['db_list_connections', 'db_introspect_schema', 'db_execute_sql'])
-  const researchTools = pickTools(registry, ['web_search', 'search_history'])
-  const distributionTools = pickTools(registry, ['github_cli'])
+  // `get tools()`, not a plain array computed once here — createAgents()
+  // runs a single time at startup, but the registry keeps changing after
+  // that (MCP servers connect, saved-query tools get added/removed from
+  // Settings). A frozen snapshot would make every one of those permanently
+  // invisible to a *delegated* specialist (dispatchDelegate/forced-role
+  // both just read `agent.tools` directly) even though the exact same
+  // tools are already reachable from the top-level orchestrator, which
+  // re-reads `toolRegistry.list()` fresh on every message. Found live:
+  // a saved query added mid-session was usable directly by the top-level
+  // orchestrator but invisible the instant it delegated to Data. A getter
+  // costs a handful of Map lookups per round — irrelevant next to an LLM
+  // call — and closes the gap for every specialist, not just Data.
+  const dataToolNames = [
+    'db_list_connections',
+    'db_introspect_schema',
+    'db_execute_sql',
+    'db_list_rows',
+    'db_count_rows',
+    'db_find_rows'
+  ]
 
   const agents: Agent[] = [
     {
@@ -49,7 +58,9 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'changed over time (a "delta") — it searches the user\'s own past sessions, not the current one. ' +
         "If search_history reports it's unavailable, tell the user plainly rather than silently working " +
         'around it or guessing.',
-      tools: researchTools
+      get tools() {
+        return pickTools(registry, ['web_search', 'search_history'])
+      }
     },
     {
       role: 'coding',
@@ -63,7 +74,9 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'analyze a *different* repository the user points you at, use git_clone_repo instead — it clones ' +
         'into its own fresh, isolated folder (no destination to specify, so it can never collide with ' +
         'another clone) and tells you the path to read from with read_file/list_directory.',
-      tools: codingTools
+      get tools() {
+        return pickTools(registry, ['read_file', 'list_directory', 'write_file', 'git_exec', 'git_clone_repo'])
+      }
     },
     {
       role: 'terminal-devops',
@@ -76,7 +89,9 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'the tool directly to run a command — the app already shows the user a confirmation dialog with ' +
         "the exact command before anything executes, so don't ask for permission in chat first or " +
         'describe what a command would do instead of just running it.',
-      tools: terminalDevopsTools
+      get tools() {
+        return pickTools(registry, ['shell_execute', 'aws_cli', 'azure_cli', 'gcloud_cli'])
+      }
     },
     {
       role: 'data',
@@ -84,10 +99,25 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
       systemPrompt:
         'You are the Data specialist for Sachivji. Use db_list_connections to see what data connections ' +
         'are configured (in Settings > Data sources), db_introspect_schema to see a connection\'s ' +
-        'tables/columns before writing queries against it, and db_execute_sql to run SQL. If no ' +
-        'connection is configured yet, say so and ask the user to add one in Settings rather than ' +
-        'guessing at a schema.',
-      tools: dataTools
+        'tables/columns before writing queries against it. For a simple, mechanical lookup — list a ' +
+        'table\'s rows, count them, or find rows where one column equals a value — prefer db_list_rows/' +
+        'db_count_rows/db_find_rows over writing SQL by hand; they need a table/column name, not a query. ' +
+        'You may also see tools named "db_query_..." — those are curated, parametric saved queries a ' +
+        'human set up in Settings for a specific recurring question; if one matches what\'s being asked, ' +
+        'use it directly instead of writing equivalent SQL yourself. Fall back to db_execute_sql only for ' +
+        'anything genuinely needing a WHERE beyond one column, a JOIN, or an aggregation none of the above ' +
+        'cover. If no connection is configured yet, say so and ask the user to add one in Settings rather ' +
+        'than guessing at a schema.',
+      // Saved-query tools have model-generated names (db_query_<slug>_<id>,
+      // see tools/db/saved-query-tools.ts) — they can't be named in
+      // dataToolNames, so they're picked up here by prefix instead, fresh
+      // on every read, alongside the fixed built-ins.
+      get tools() {
+        return [
+          ...pickTools(registry, dataToolNames),
+          ...registry.list().filter((tool) => tool.name.startsWith('db_query_'))
+        ]
+      }
     },
     {
       role: 'distribution',
@@ -98,7 +128,9 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'authenticated on this machine, and every call shows the user a confirmation dialog with the ' +
         'exact command first. You do not have cloud/deployment CLI access yet — describe what those ' +
         'steps would be rather than claiming to have done them.',
-      tools: distributionTools
+      get tools() {
+        return pickTools(registry, ['github_cli'])
+      }
     }
   ]
 
