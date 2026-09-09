@@ -460,6 +460,16 @@
     font-size: 1rem;
     flex-shrink: 0;
   }
+  /* ToolConfirmDialog's overlay is `position: fixed; inset: 0; z-index: 20`
+     — a normal-flow sibling like this button sits below any positioned,
+     z-indexed element regardless of DOM order, so without this the overlay
+     physically intercepts every click on Stop while a confirmation dialog
+     is open, however visible the button still looks underneath it. Found
+     live: Stop did nothing while waiting on a tool confirmation. */
+  .send.stop {
+    position: relative;
+    z-index: 30;
+  }
   .send:disabled {
     opacity: 0.35;
     cursor: default;

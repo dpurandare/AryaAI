@@ -343,6 +343,30 @@ export class Orchestrator {
     return { text: `Stopped after ${MAX_TOTAL_ROUNDS} agent rounds.`, isError: true }
   }
 
+  /**
+   * `this.confirmTool` only ever resolves via the renderer's Approve/Deny
+   * click (see `makeConfirmTool` in ipc/register.ts) — it has no idea the
+   * signal exists. Found live: clicking Stop while a confirmation dialog is
+   * open did nothing, because `dispatchTool` was awaiting that bare promise
+   * with no path back to the round loop's own abort handling. Racing it
+   * against the signal here treats "stop while waiting on you" the same as
+   * a denial, which lets this round finish immediately; the *next*
+   * `provider.stream()` call then hits the loop's existing `signal.aborted`
+   * check and ends the run with the normal "aborted" message_stop, so no
+   * separate abort-specific stop reason is needed here.
+   */
+  private confirmOrAbort(request: ToolConfirmRequest): Promise<ConfirmDecision> {
+    if (this.signal.aborted) return Promise.resolve({ approved: false })
+    return new Promise((resolve) => {
+      const onAbort = (): void => resolve({ approved: false })
+      this.signal.addEventListener('abort', onAbort, { once: true })
+      this.confirmTool(request).then((decision) => {
+        this.signal.removeEventListener('abort', onAbort)
+        resolve(decision)
+      })
+    })
+  }
+
   /** A specialist's own tool calls (e.g. Coding calling write_file) still go through normal confirmation. */
   private async dispatchTool(
     toolUseId: string,
@@ -357,7 +381,7 @@ export class Orchestrator {
 
     const mutates = typeof tool.mutates === 'function' ? tool.mutates(input) : tool.mutates
     if (mutates) {
-      const decision = await this.confirmTool({
+      const decision = await this.confirmOrAbort({
         toolUseId,
         name: tool.name,
         input,

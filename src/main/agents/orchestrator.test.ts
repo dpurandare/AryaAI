@@ -185,6 +185,61 @@ describe('Orchestrator (integration, mocked provider)', () => {
     await expect(readFile(join(root, 'denied.txt'), 'utf-8')).rejects.toThrow()
   })
 
+  it('a denial inside a delegated (nested) specialist still resolves the whole run, not just its own round', async () => {
+    const registry = buildRegistry()
+    const agents = createAgents(registry)
+    const turns: ScriptedTurn[] = [
+      // Round 1 (outer, agentRole undefined): delegate to coding.
+      { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.txt' } }] },
+      // Round 2 (nested, agentRole coding): call write_file — denied below.
+      {
+        toolCalls: [
+          { id: 'call_write', name: 'write_file', input: { path: 'hello.txt', content: 'hello from test' } }
+        ]
+      },
+      // Round 3 (nested, agentRole coding): specialist sees the denial, wraps up.
+      { text: "Understood, I won't write it.", stopReason: 'end_turn' },
+      // Round 4 (outer, agentRole undefined): orchestrator's final reply.
+      { text: 'The Coding specialist did not write the file, as you denied it.', stopReason: 'end_turn' }
+    ]
+    const provider = new MockProvider(turns)
+    const denyAll: (request: ToolConfirmRequest) => Promise<ConfirmDecision> = async () => ({
+      approved: false
+    })
+
+    const orchestrator = new Orchestrator(
+      provider,
+      'mock-model',
+      agents,
+      'You are Sachivji.',
+      registry.list(),
+      denyAll,
+      ctx,
+      signal
+    )
+
+    const events = await collect(orchestrator, [
+      { role: 'user', content: [{ type: 'text', text: 'Please write hello.txt for me.' }] }
+    ])
+
+    await expect(readFile(join(root, 'hello.txt'), 'utf-8')).rejects.toThrow()
+
+    const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+    const writeResult = streamEvents.find((e) => e.type === 'tool_result' && e.toolUseId === 'call_write')
+    expect(writeResult).toMatchObject({ isError: true, content: 'The user denied this tool call.' })
+
+    // The whole run must still end cleanly — same "exactly one untagged,
+    // non-tool_use message_stop, and it's the very last event" shape as the
+    // successful-delegation test, so App.svelte's sending flag actually
+    // clears instead of the composer staying stuck disabled forever.
+    const stops = streamEvents.filter((e) => e.type === 'message_stop')
+    const finalStops = stops.filter(
+      (e) => e.type === 'message_stop' && e.agentRole === undefined && e.stopReason !== 'tool_use'
+    )
+    expect(finalStops).toHaveLength(1)
+    expect(streamEvents.at(-1)).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
+  })
+
   it('an unknown tool name (including a bogus delegate_to_x) surfaces as an error result, not a crash', async () => {
     const registry = buildRegistry()
     const agents = createAgents(registry)

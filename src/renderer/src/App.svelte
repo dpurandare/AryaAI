@@ -248,6 +248,11 @@
 
   function stopGeneration(): void {
     if (currentStreamId) window.sachiv.cancelChat(currentStreamId)
+    // The backend now treats an abort while awaiting confirmation as a
+    // denial (orchestrator.ts's confirmOrAbort), but that resolution still
+    // has to travel back over IPC — close the dialog immediately here so
+    // Stop feels instant instead of leaving it up until that round-trips.
+    pendingConfirm = null
   }
 
   function approveTool(input: Record<string, unknown>): void {
