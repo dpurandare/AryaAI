@@ -52,4 +52,12 @@ describe('SqliteDriver', () => {
   it('refuses to open a file that does not exist', () => {
     expect(() => new SqliteDriver(join(dir, 'missing.db'))).toThrow()
   })
+
+  it('sets a 5s busy_timeout, so a connection external to this app briefly holding the file does not fail the query outright', async () => {
+    // Regression guard for the value itself (better-sqlite3 already
+    // defaults to this — see sqlite-driver.ts's comment — this just makes
+    // sure nothing here accidentally overrides it to 0/unset).
+    const result = await driver.execute('PRAGMA busy_timeout')
+    expect(result.rows).toEqual([{ timeout: 5000 }])
+  })
 })
