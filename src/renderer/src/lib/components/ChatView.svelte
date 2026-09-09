@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import ModelPicker from './ModelPicker.svelte'
   import ContextMeter from './ContextMeter.svelte'
   import MarkdownText from './MarkdownText.svelte'
@@ -73,6 +74,42 @@
   const PREVIEW_MAX_CHARS = 500
   const PREVIEW_MAX_LINES = 10
 
+  // The `.messages` div never scrolled itself — new content (a sent
+  // message, a streamed reply) just extended past the bottom of the
+  // scrollport with no code anywhere driving scrollTop, so anything past
+  // the first screenful required a manual scroll to see. `stickToBottom`
+  // is true by default (and whenever the user is already near the
+  // bottom or just sent something) so streaming naturally follows the
+  // newest content; it goes false only once the user deliberately
+  // scrolls up to read earlier history, so we don't yank them back down
+  // mid-read.
+  let messagesEl: HTMLDivElement | undefined = $state()
+  let stickToBottom = $state(true)
+  const BOTTOM_THRESHOLD_PX = 48
+
+  function onMessagesScroll(): void {
+    if (!messagesEl) return
+    const distanceFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight
+    stickToBottom = distanceFromBottom < BOTTOM_THRESHOLD_PX
+  }
+
+  $effect(() => {
+    // Deep-read every mutable field so this reruns on each streamed token
+    // (text_delta appends, tool_use_delta/tool_result updates in place),
+    // not just when a whole new message/segment object is pushed.
+    for (const m of messages) {
+      for (const s of m.segments) {
+        void s.text
+        void s.toolCall?.input
+        void s.toolCall?.result
+      }
+    }
+    if (!stickToBottom) return
+    tick().then(() => {
+      if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight
+    })
+  })
+
   /** `null` = Auto (orchestrator decides). Sticky across sends until cycled again. */
   let forcedRole: AgentRole | null = $state(null)
   const MODE_CYCLE: (AgentRole | null)[] = [null, ...AGENT_ROLES]
@@ -90,6 +127,7 @@
     const text = draft.trim()
     if (!text || sending) return
     draft = ''
+    stickToBottom = true
     onSend(text, forcedRole)
   }
 
@@ -109,7 +147,7 @@
 </script>
 
 <div class="chat-view">
-  <div class="messages">
+  <div class="messages" bind:this={messagesEl} onscroll={onMessagesScroll}>
     {#if messages.length === 0}
       <p class="placeholder">Say hello to get started.</p>
     {/if}
