@@ -173,11 +173,16 @@
                   <div class="tool-result pending">Waiting for confirmation...</div>
                 {/if}
               {:else if segment.toolCall.result === undefined}
+                {@const delegateRole = segment.toolCall.name.slice('delegate_to_'.length).replaceAll('_', '-')}
                 <!-- Delegate calls need no confirmation and no result box of their own —
                      the specialist's own attributed segments right below already show the
                      answer; showing it again here (the tool_result content the outer model
-                     needs for its own context) would just duplicate it. -->
-                <div class="tool-result pending">Working...</div>
+                     needs for its own context) would just duplicate it. Naming the actual
+                     target role (not the raw "Working...") is the orchestrator's own routing
+                     decision surfacing as a real, live status instead of another dead pause. -->
+                <div class="tool-result pending">
+                  Delegating to {(AGENT_ROLE_LABELS as Record<string, string>)[delegateRole] ?? delegateRole} agent…
+                </div>
               {/if}
             </div>
           {:else if segment.kind === 'text'}
@@ -197,7 +202,11 @@
             {/if}
           {/if}
         {/each}
-        {#if message.pending}<span class="text cursor">▌</span>{/if}
+        {#if message.pending && message.segments.length === 0}
+          <span class="thinking">Thinking…</span>
+        {:else if message.pending}
+          <span class="text cursor">▌</span>
+        {/if}
       </div>
     {/each}
   </div>
@@ -404,6 +413,28 @@
   }
   .cursor {
     color: var(--text-muted);
+  }
+  /* Shown only before the first segment of a reply arrives — otherwise the
+     bubble is just an empty box with a lone blinking cursor in it, with no
+     indication anything is happening (the default local model has a long
+     silent "thinking" phase before its first token). Once real content
+     (text or a tool call) starts, this is replaced by that content plus
+     the normal trailing .cursor, not shown alongside it. */
+  .thinking {
+    display: inline-block;
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 0.9rem;
+    animation: thinking-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes thinking-pulse {
+    0%,
+    100% {
+      opacity: 0.4;
+    }
+    50% {
+      opacity: 1;
+    }
   }
   .expand-toggle {
     display: block;
