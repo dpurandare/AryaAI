@@ -7,6 +7,7 @@
   let {
     sessions = [],
     activeId = '',
+    activity = {},
     onSelect,
     onNew,
     onDelete,
@@ -14,6 +15,8 @@
   }: {
     sessions: Session[]
     activeId: string
+    /** Which non-obvious background sessions are doing something right now — see App.svelte's `sessionActivity`. */
+    activity?: Record<string, 'generating' | 'needs-confirmation'>
     onSelect: (id: string) => void
     onNew: () => void
     onDelete: (id: string) => void
@@ -31,8 +34,16 @@
     {#each sessions as session (session.id)}
       <li class:active={session.id === activeId}>
         <button class="title" onclick={() => onSelect(session.id)}>{session.title}</button>
+        {#if activity[session.id]}
+          <span
+            class="activity-dot {activity[session.id]}"
+            title={activity[session.id] === 'generating'
+              ? 'Generating a response…'
+              : 'Waiting for your confirmation'}
+          ></span>
+        {/if}
         <button class="export" title="Export session" onclick={() => onExport(session.id)}>⇩</button>
-        {#if session.id !== activeId}
+        {#if session.id !== activeId && activity[session.id] !== 'generating'}
           <button class="delete" title="Delete session" onclick={() => onDelete(session.id)}>×</button>
         {/if}
       </li>
@@ -116,6 +127,29 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .activity-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-right: 0.4rem;
+  }
+  .activity-dot.generating {
+    background: var(--accent);
+    animation: activity-pulse 1.2s ease-in-out infinite;
+  }
+  .activity-dot.needs-confirmation {
+    background: #e0a24a;
+  }
+  @keyframes activity-pulse {
+    0%,
+    100% {
+      opacity: 0.35;
+    }
+    50% {
+      opacity: 1;
+    }
   }
   .delete,
   .export {

@@ -47,11 +47,45 @@
     segments: DisplaySegment[]
   }
 
+  /**
+   * Everything about one session that changes while a turn runs, kept
+   * per-session (not the single set of top-level variables this used to
+   * be) so multiple sessions can generate at once: switching `activeId`
+   * only changes which of these is *shown* — it never touches the others,
+   * and a session's own event listener (set up in `sendMessage`) always
+   * closes over its own runtime object, never the currently-active one.
+   * Found live, before this existed: switching sessions mid-stream pointed
+   * a stale array index at a message in the *new* session's freshly
+   * reloaded array (or past its end), throwing on every subsequent event
+   * for the abandoned stream, and the single global `sending`/
+   * `currentStreamId` left whatever session you switched to looking
+   * permanently "busy" until the invisible original stream finished.
+   */
+  interface SessionRuntime {
+    messages: DisplayMessage[]
+    sending: boolean
+    currentStreamId: string
+    sessionUsage: { inputTokens: number; outputTokens: number }
+    pendingConfirm: ToolConfirmRequestPayload | null
+    /** Whether `messages`/`sessionUsage` have been fetched from the DB at least once — after that, a session's own live event stream is the source of truth, not another DB read, or a background reply already written into `messages` would be clobbered by a stale reload the moment you switch back to it. */
+    loaded: boolean
+  }
+
+  function emptyRuntime(): SessionRuntime {
+    return {
+      messages: [],
+      sending: false,
+      currentStreamId: '',
+      sessionUsage: { inputTokens: 0, outputTokens: 0 },
+      pendingConfirm: null,
+      loaded: false
+    }
+  }
+
   let statusLine = $state('Connecting...')
   let sessions = $state<SessionDto[]>([])
   let activeId = $state('')
-  let messages = $state<DisplayMessage[]>([])
-  let sending = $state(false)
+  let runtimes = $state<Record<string, SessionRuntime>>({})
   let showSettings = $state(false)
   let providers = $state<ProviderDescriptor[]>([])
   let providerId = $state('openai')
@@ -62,6 +96,24 @@
   let isMac = $state(false)
   let userName = $state('')
   let updateAvailable = $state<{ version: string; releaseUrl: string } | null>(null)
+
+  function ensureRuntime(id: string): SessionRuntime {
+    if (!runtimes[id]) runtimes[id] = emptyRuntime()
+    return runtimes[id]
+  }
+
+  /** What's shown right now — always the *active* session's own runtime, never a copy. */
+  let activeRuntime = $derived(runtimes[activeId] ?? emptyRuntime())
+
+  /** Drives the sidebar's per-session activity dot (SessionList.svelte) — the only visible hint that a session you're not looking at is doing something. */
+  let sessionActivity = $derived.by(() => {
+    const result: Record<string, 'generating' | 'needs-confirmation'> = {}
+    for (const [id, runtime] of Object.entries(runtimes)) {
+      if (runtime.pendingConfirm) result[id] = 'needs-confirmation'
+      else if (runtime.sending) result[id] = 'generating'
+    }
+    return result
+  })
 
   const SIDEBAR_MIN_WIDTH = 180
   const SIDEBAR_MAX_WIDTH = 480
@@ -83,11 +135,7 @@
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }
-  let pendingConfirm = $state<ToolConfirmRequestPayload | null>(null)
   let autoApproveTools = $state(false)
-  let sessionUsage = $state({ inputTokens: 0, outputTokens: 0 })
-  /** The in-flight turn's stream id, for the Stop button — not reactive UI state, just bookkeeping read by stopGeneration(). */
-  let currentStreamId = ''
   // Persisted per-tool rules (TASKS.md #40) — additive to the session-only
   // blanket toggle above, not a replacement for it. A plain object, not
   // $state(new Set()) — see feedback_svelte5-runes-gotchas memory.
@@ -134,9 +182,17 @@
 
   async function selectSession(id: string): Promise<void> {
     activeId = id
+    const runtime = ensureRuntime(id)
+    // Once loaded, a session's own event listener (if it's generating) is
+    // the source of truth for `messages`/`sessionUsage`, not another DB
+    // read — this is exactly what lets switching back to a session show
+    // whatever it produced while you were elsewhere, live-updated or
+    // already finished, instead of re-fetching and losing that.
+    if (runtime.loaded) return
     const records = await window.sachiv.listMessages(id)
-    messages = mapMessagesToDisplay(records)
-    sessionUsage = await window.sachiv.getSessionUsage(id)
+    runtime.messages = mapMessagesToDisplay(records)
+    runtime.sessionUsage = await window.sachiv.getSessionUsage(id)
+    runtime.loaded = true
   }
 
   async function loadSessions(): Promise<void> {
@@ -155,9 +211,15 @@
   }
 
   async function removeSession(id: string): Promise<void> {
-    if (id === activeId) return
+    // Refuses a session that's actively generating too, not just the
+    // active one — now that a background session can genuinely be
+    // mid-turn, deleting it out from under `runChat` would violate the
+    // FK constraint on its next insert (messages.session_id -> sessions.id
+    // ON DELETE CASCADE) partway through, not just leave a dangling ref.
+    if (id === activeId || runtimes[id]?.sending) return
     await window.sachiv.deleteSession(id)
     sessions = sessions.filter((s) => s.id !== id)
+    delete runtimes[id]
   }
 
   async function exportSession(id: string): Promise<void> {
@@ -175,13 +237,22 @@
     }
   }
 
+  /**
+   * `sessionId` is captured once, up front — the whole point is that this
+   * keeps running correctly (writing into that session's own runtime, only
+   * that session's own `sending`/`currentStreamId`) no matter what the
+   * user does with `activeId` afterward, including sending a *second*
+   * message in some other session before this one finishes.
+   */
   async function sendMessage(text: string, forcedRole?: AgentRole | null): Promise<void> {
-    if (sending) return
+    const sessionId = activeId
+    const runtime = ensureRuntime(sessionId)
+    if (runtime.sending) return
     if (!hasKey) {
       showSettings = true
       return
     }
-    sending = true
+    runtime.sending = true
 
     const userMsg: DisplayMessage = {
       id: crypto.randomUUID(),
@@ -194,20 +265,21 @@
       segments: [],
       pending: true
     }
-    messages.push(userMsg, assistantMsg)
-    // messages is $state, and push() deep-proxies the pushed objects — mutate the
-    // in-place proxy via this index, not the pre-proxy `assistantMsg` reference,
-    // or Svelte's reactive graph never sees the updates (verified live: without
-    // this, the pending spinner freezes forever even though the stream completes).
-    const assistantIdx = messages.length - 1
+    runtime.messages.push(userMsg, assistantMsg)
+    // runtime.messages is $state, and push() deep-proxies the pushed objects —
+    // mutate the in-place proxy via this index, not the pre-proxy `assistantMsg`
+    // reference, or Svelte's reactive graph never sees the updates (verified
+    // live: without this, the pending spinner freezes forever even though the
+    // stream completes).
+    const assistantIdx = runtime.messages.length - 1
 
-    const { streamId } = await window.sachiv.sendChatMessage(activeId, text, forcedRole)
-    currentStreamId = streamId
+    const { streamId } = await window.sachiv.sendChatMessage(sessionId, text, forcedRole)
+    runtime.currentStreamId = streamId
 
     const unsubscribe = window.sachiv.onChatStreamEvent((payload) => {
       if (payload.streamId !== streamId) return
       const event = payload.event
-      const msg = messages[assistantIdx]
+      const msg = runtime.messages[assistantIdx]
       if (event.type === 'status') {
         msg.statusText = event.message
       } else if (event.type === 'text_delta') {
@@ -233,14 +305,14 @@
         // Safe to sum: the orchestrator emits exactly one clean usage event
         // per round (see orchestrator.ts's roundUsage handling), not the raw
         // per-chunk events some providers repeat as a cumulative total.
-        sessionUsage = {
-          inputTokens: sessionUsage.inputTokens + event.inputTokens,
-          outputTokens: sessionUsage.outputTokens + event.outputTokens
+        runtime.sessionUsage = {
+          inputTokens: runtime.sessionUsage.inputTokens + event.inputTokens,
+          outputTokens: runtime.sessionUsage.outputTokens + event.outputTokens
         }
       } else if (event.type === 'error') {
         appendTextSegment(msg, `Error: ${event.message}`)
         msg.pending = false
-        sending = false
+        runtime.sending = false
         unsubscribe()
       } else if (event.type === 'message_stop') {
         // A tagged stop is a nested specialist's own round ending, not the whole
@@ -248,31 +320,36 @@
         if (event.stopReason === 'tool_use' || event.agentRole) return
         if (event.stopReason === 'aborted') appendTextSegment(msg, '\n\n⏹ Stopped.')
         msg.pending = false
-        sending = false
+        runtime.sending = false
         unsubscribe()
       }
     })
   }
 
+  /** Always scoped to whichever session is currently shown — never an invisible background one, since each session now has its own `currentStreamId`. */
   function stopGeneration(): void {
-    if (currentStreamId) window.sachiv.cancelChat(currentStreamId)
+    const runtime = runtimes[activeId]
+    if (!runtime) return
+    if (runtime.currentStreamId) window.sachiv.cancelChat(runtime.currentStreamId)
     // The backend now treats an abort while awaiting confirmation as a
     // denial (orchestrator.ts's confirmOrAbort), but that resolution still
     // has to travel back over IPC — close the dialog immediately here so
     // Stop feels instant instead of leaving it up until that round-trips.
-    pendingConfirm = null
+    runtime.pendingConfirm = null
   }
 
   function approveTool(input: Record<string, unknown>): void {
-    if (!pendingConfirm) return
-    window.sachiv.respondToolConfirm(pendingConfirm.toolUseId, true, input)
-    pendingConfirm = null
+    const confirm = activeRuntime.pendingConfirm
+    if (!confirm) return
+    window.sachiv.respondToolConfirm(confirm.toolUseId, true, input)
+    activeRuntime.pendingConfirm = null
   }
 
   function denyTool(): void {
-    if (!pendingConfirm) return
-    window.sachiv.respondToolConfirm(pendingConfirm.toolUseId, false)
-    pendingConfirm = null
+    const confirm = activeRuntime.pendingConfirm
+    if (!confirm) return
+    window.sachiv.respondToolConfirm(confirm.toolUseId, false)
+    activeRuntime.pendingConfirm = null
   }
 
   function toggleAutoApproveTool(name: string, value: boolean): void {
@@ -329,7 +406,11 @@
       window.sachiv.respondToolConfirm(payload.toolUseId, true, payload.input)
       return
     }
-    pendingConfirm = payload
+    // Routed to that session's own runtime, not a single global slot — a
+    // confirmation from a session you're not currently looking at waits
+    // there quietly (surfaced only via the sidebar's activity dot) instead
+    // of popping a dialog over whatever you're actually doing.
+    ensureRuntime(payload.sessionId).pendingConfirm = payload
   })
 
   window.sachiv.getSetting('sidebarWidth').then((stored) => {
@@ -378,6 +459,7 @@
     <SessionList
       {sessions}
       {activeId}
+      activity={sessionActivity}
       onSelect={selectSession}
       onNew={newSession}
       onDelete={removeSession}
@@ -414,9 +496,9 @@
       />
     {:else}
       <ChatView
-        {messages}
+        messages={activeRuntime.messages}
         {statusLine}
-        {sending}
+        sending={activeRuntime.sending}
         onSend={sendMessage}
         onStop={stopGeneration}
         {providers}
@@ -426,23 +508,24 @@
         onChangeProvider={changeProvider}
         onChangeModel={changeModel}
         onNeedKey={() => (showSettings = true)}
-        {sessionUsage}
+        sessionUsage={activeRuntime.sessionUsage}
       />
     {/if}
   </section>
 </main>
 
-{#if pendingConfirm}
+{#if activeRuntime.pendingConfirm}
+  {@const confirm = activeRuntime.pendingConfirm}
   <ToolConfirmDialog
-    name={pendingConfirm.name}
-    description={pendingConfirm.description}
-    input={pendingConfirm.input}
+    name={confirm.name}
+    description={confirm.description}
+    input={confirm.input}
     autoApprove={autoApproveTools}
-    autoApproveTool={Boolean(autoApproveRules[pendingConfirm.name])}
+    autoApproveTool={Boolean(autoApproveRules[confirm.name])}
     onApprove={approveTool}
     onDeny={denyTool}
     onToggleAutoApprove={(value) => (autoApproveTools = value)}
-    onToggleAutoApproveTool={(value) => pendingConfirm && toggleAutoApproveTool(pendingConfirm.name, value)}
+    onToggleAutoApproveTool={(value) => toggleAutoApproveTool(confirm.name, value)}
   />
 {/if}
 
