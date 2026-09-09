@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { getDb, setDbPath } from './index'
-import { createSession, deleteSession, listSessions } from './sessions'
+import { createSession, deleteSession, getSession, listSessions, titleFromMessage, updateSessionTitle } from './sessions'
 
 function toVectorBuffer(values: number[]): Buffer {
   return Buffer.from(new Float32Array(values).buffer)
@@ -79,5 +79,51 @@ describe('sessions repository', () => {
 
   it('starts with no sessions', () => {
     expect(listSessions()).toEqual([])
+  })
+
+  it('gets a single session by id, or undefined if it does not exist', () => {
+    const session = createSession('New Chat')
+    expect(getSession(session.id)).toEqual(session)
+    expect(getSession('does-not-exist')).toBeUndefined()
+  })
+
+  it('updates a session title in place', () => {
+    const session = createSession('New Chat')
+    updateSessionTitle(session.id, 'Renamed')
+    expect(getSession(session.id)?.title).toBe('Renamed')
+    expect(listSessions()).toHaveLength(1)
+  })
+})
+
+describe('titleFromMessage', () => {
+  it('uses a short message as-is', () => {
+    expect(titleFromMessage('What is 12 times 12?')).toBe('What is 12 times 12?')
+  })
+
+  it('collapses internal newlines/whitespace to single spaces', () => {
+    expect(titleFromMessage('line one\n\nline   two')).toBe('line one line two')
+  })
+
+  it('trims surrounding whitespace', () => {
+    expect(titleFromMessage('   hello there   ')).toBe('hello there')
+  })
+
+  it('truncates a long message at a word boundary with an ellipsis', () => {
+    const long =
+      'I have a mathematical question: a person jumps from a 12 floor building, each floor is 15 feet high.'
+    const title = titleFromMessage(long)
+    expect(title.length).toBeLessThanOrEqual(51) // 50 chars + the ellipsis char
+    expect(title.endsWith('…')).toBe(true)
+    expect(title.endsWith(' …')).toBe(false) // no dangling space before the ellipsis
+  })
+
+  it('hard-truncates a long message with no early word boundary instead of losing most of the budget', () => {
+    const long = 'a'.repeat(20) + ' ' + 'b'.repeat(60)
+    const title = titleFromMessage(long)
+    expect(title).toBe('a'.repeat(20) + ' ' + 'b'.repeat(29) + '…')
+  })
+
+  it('falls back to the default title for whitespace-only input', () => {
+    expect(titleFromMessage('   \n\t  ')).toBe('New Chat')
   })
 })

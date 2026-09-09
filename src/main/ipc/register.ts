@@ -6,6 +6,7 @@ import { isAbsolute } from 'node:path'
 import { userInfo } from 'node:os'
 import {
   IpcChannel,
+  DEFAULT_SESSION_TITLE,
   type AppInfo,
   type SaveDataConnectionInput,
   type SaveMcpServerInput,
@@ -13,10 +14,11 @@ import {
   type SessionExportResult,
   type ToolConfirmRequestPayload,
   type ToolDescriptor,
-  type SearchHistoryStatusDto
+  type SearchHistoryStatusDto,
+  type SessionTitleUpdatedPayload
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
-import { createSession, listSessions, deleteSession } from '../db/sessions'
+import { createSession, listSessions, deleteSession, getSession, updateSessionTitle, titleFromMessage } from '../db/sessions'
 import { insertMessage, listMessages } from '../db/messages'
 import { enqueueMessage, getEmbeddingConfig, getIndexState, rebuildIndex, runBackfill } from '../search-history/indexer'
 import { getSetting, setSetting } from '../db/settings'
@@ -281,6 +283,14 @@ async function runChat(
 
   const provider = descriptor.create(apiKey)
 
+  // Read once, up front, and acted on only after the turn actually
+  // completes (below) — checking the session's *current title*, not a
+  // message count, so a first attempt that errors out mid-turn (thrown
+  // before reaching the rename) still leaves the next successful attempt
+  // able to auto-title, rather than a message-count check silently
+  // consuming the "first turn" opportunity on a failed one.
+  const sessionBeforeTurn = getSession(sessionId)
+
   const history = listMessages(sessionId)
   const priorTurns: Message[] = history.map((m) => ({ role: m.role, content: m.content }))
   // Trims oversized tool results and drops the oldest turns once the loaded
@@ -312,5 +322,16 @@ async function runChat(
       const record = insertMessage(sessionId, orchestratorEvent.role, orchestratorEvent.content)
       enqueueMessage(record.id, sessionId, record.content)
     }
+  }
+
+  // "Asked and answered" — only once, only from a session's actual first
+  // exchange (the title guard above), and only once the turn has genuinely
+  // finished (success or a clean abort both reach here; a thrown error does
+  // not, leaving the opportunity open for the next attempt).
+  if (sessionBeforeTurn?.title === DEFAULT_SESSION_TITLE) {
+    const title = titleFromMessage(text)
+    updateSessionTitle(sessionId, title)
+    const payload: SessionTitleUpdatedPayload = { sessionId, title }
+    sender.send(IpcChannel.SessionTitleUpdated, payload)
   }
 }

@@ -46,8 +46,13 @@ export const IpcChannel = {
   ToolConfirmRespond: 'tools:confirm-respond',
 
   SearchHistoryStatus: 'search-history:status',
-  SearchHistoryRebuildIndex: 'search-history:rebuild-index'
+  SearchHistoryRebuildIndex: 'search-history:rebuild-index',
+
+  SessionTitleUpdated: 'sessions:title-updated'
 } as const
+
+/** What every new session starts as — shared so the renderer (creating sessions) and the main process (deciding whether it's still safe to auto-title one) agree on the exact string. */
+export const DEFAULT_SESSION_TITLE = 'New Chat'
 
 /**
  * A provider's public shape, as seen over IPC — the main-process registry
@@ -94,6 +99,12 @@ export interface SessionDto {
 export interface SessionExportResult {
   cancelled: boolean
   path?: string
+}
+
+/** Pushed from main to renderer once a session's title is auto-generated from its first message — see db/sessions.ts's titleFromMessage. */
+export interface SessionTitleUpdatedPayload {
+  sessionId: string
+  title: string
 }
 
 export interface MessageDto {

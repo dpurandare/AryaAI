@@ -16,7 +16,8 @@ import {
   type SessionUsageDto,
   type SessionExportResult,
   type AppUpdateAvailablePayload,
-  type SearchHistoryStatusDto
+  type SearchHistoryStatusDto,
+  type SessionTitleUpdatedPayload
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 
@@ -33,6 +34,12 @@ const api = {
   createSession: (title: string): Promise<SessionDto> =>
     ipcRenderer.invoke(IpcChannel.SessionsCreate, title),
   deleteSession: (id: string): Promise<void> => ipcRenderer.invoke(IpcChannel.SessionsDelete, id),
+  onSessionTitleUpdated: (callback: (payload: SessionTitleUpdatedPayload) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, payload: SessionTitleUpdatedPayload): void =>
+      callback(payload)
+    ipcRenderer.on(IpcChannel.SessionTitleUpdated, listener)
+    return () => ipcRenderer.removeListener(IpcChannel.SessionTitleUpdated, listener)
+  },
   exportSession: (id: string): Promise<SessionExportResult> =>
     ipcRenderer.invoke(IpcChannel.SessionsExport, id),
 

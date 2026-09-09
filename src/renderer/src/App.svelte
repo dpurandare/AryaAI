@@ -4,6 +4,7 @@
   import SettingsPanel from './lib/components/SettingsPanel.svelte'
   import ToolConfirmDialog from './lib/components/ToolConfirmDialog.svelte'
   import {
+    DEFAULT_SESSION_TITLE,
     type SessionDto,
     type MessageDto,
     type ToolConfirmRequestPayload,
@@ -198,14 +199,14 @@
   async function loadSessions(): Promise<void> {
     let list = await window.sachiv.listSessions()
     if (list.length === 0) {
-      list = [await window.sachiv.createSession('New Chat')]
+      list = [await window.sachiv.createSession(DEFAULT_SESSION_TITLE)]
     }
     sessions = list
     await selectSession(list[0].id)
   }
 
   async function newSession(): Promise<void> {
-    const created = await window.sachiv.createSession('New Chat')
+    const created = await window.sachiv.createSession(DEFAULT_SESSION_TITLE)
     sessions = [created, ...sessions]
     await selectSession(created.id)
   }
@@ -399,6 +400,11 @@
 
   window.sachiv.onUpdateAvailable((payload) => {
     updateAvailable = payload
+  })
+
+  window.sachiv.onSessionTitleUpdated((payload) => {
+    const session = sessions.find((s) => s.id === payload.sessionId)
+    if (session) session.title = payload.title
   })
 
   window.sachiv.onToolConfirmRequest((payload) => {
