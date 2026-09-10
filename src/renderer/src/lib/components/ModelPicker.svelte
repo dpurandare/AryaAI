@@ -184,7 +184,7 @@
     color: var(--text-muted);
   }
   .hint.error {
-    color: #e0a24a;
+    color: var(--warn);
   }
   .link {
     background: none;

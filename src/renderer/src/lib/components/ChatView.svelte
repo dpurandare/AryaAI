@@ -502,7 +502,7 @@
     font-style: italic;
   }
   .tool-result.error {
-    color: #e0a24a;
+    color: var(--warn);
   }
   .composer-area {
     padding: 0.75rem 1.25rem 0.6rem;

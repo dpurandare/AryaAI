@@ -140,7 +140,7 @@
     animation: activity-pulse 1.2s ease-in-out infinite;
   }
   .activity-dot.needs-confirmation {
-    background: #e0a24a;
+    background: var(--warn);
   }
   @keyframes activity-pulse {
     0%,

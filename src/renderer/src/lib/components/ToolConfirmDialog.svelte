@@ -114,7 +114,7 @@
   .error {
     margin: 0;
     font-size: 0.78rem;
-    color: #e0a24a;
+    color: var(--warn);
   }
   .auto-approve {
     display: flex;

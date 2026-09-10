@@ -11,6 +11,7 @@
     type ProviderDescriptor
   } from '@shared/ipc-contract'
   import type { AgentRole } from '@shared/agents'
+  import { getThemeMode, setThemeMode, type ThemeMode } from './lib/theme'
 
   interface ToolCallDisplay {
     id: string
@@ -97,6 +98,14 @@
   let isMac = $state(false)
   let userName = $state('')
   let updateAvailable = $state<{ version: string; releaseUrl: string } | null>(null)
+  // initTheme() already resolved (main.ts awaits it before mount), so this
+  // reflects the real persisted/resolved mode from the very first render.
+  let themeMode = $state<ThemeMode>(getThemeMode())
+
+  function changeThemeMode(mode: ThemeMode): void {
+    themeMode = mode
+    setThemeMode(mode)
+  }
 
   function ensureRuntime(id: string): SessionRuntime {
     if (!runtimes[id]) runtimes[id] = emptyRuntime()
@@ -496,9 +505,11 @@
         {hasKey}
         {autoApproveRules}
         {providers}
+        {themeMode}
         onSave={saveApiKey}
         onClose={() => (showSettings = false)}
         onToggleAutoApproveRule={toggleAutoApproveTool}
+        onChangeTheme={changeThemeMode}
       />
     {:else}
       <ChatView
@@ -546,6 +557,24 @@
     --text-muted: #8e8e8c;
     --accent: #d97757;
     --user-bubble: #2b2b29;
+    --warn: #e0a24a;
+    --danger: #e0654a;
+  }
+  /* Light palette — not a dark-mode invert, tuned separately (e.g. --accent,
+     --warn, --danger are darkened from their dark-mode values so text set in
+     those colors still holds ~4.5:1 contrast against a white/cream --bg). */
+  :global(:root[data-theme='light']) {
+    --bg: #ffffff;
+    --sidebar-bg: #f7f6f2;
+    --panel: #f0efe9;
+    --panel-hover: #e7e5dd;
+    --border: #ddd9d0;
+    --text: #23221f;
+    --text-muted: #6b6a66;
+    --accent: #c1502e;
+    --user-bubble: #f0efe9;
+    --warn: #9c6b1f;
+    --danger: #b3402a;
   }
   :global(html, body) {
     height: 100%;

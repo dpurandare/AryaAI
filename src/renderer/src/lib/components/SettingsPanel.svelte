@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { DataConnectionDto, McpServerDto, McpTransport, ProviderDescriptor, ToolDescriptor } from '@shared/ipc-contract'
+  import type { ThemeMode } from '../theme'
 
   let {
     providerDisplayName,
@@ -7,18 +8,22 @@
     hasKey,
     autoApproveRules,
     providers,
+    themeMode,
     onSave,
     onClose,
-    onToggleAutoApproveRule
+    onToggleAutoApproveRule,
+    onChangeTheme
   }: {
     providerDisplayName: string
     providerRequiresApiKey?: boolean
     hasKey: boolean
     autoApproveRules: Record<string, boolean>
     providers: ProviderDescriptor[]
+    themeMode: ThemeMode
     onSave: (apiKey: string) => void | Promise<void>
     onClose: () => void
     onToggleAutoApproveRule: (name: string, value: boolean) => void
+    onChangeTheme: (mode: ThemeMode) => void
   } = $props()
 
   let apiKey = $state('')
@@ -312,6 +317,24 @@
     </button>
   </div>
   <div class="settings-body">
+    <h2>Appearance</h2>
+    <p class="status">Choose a light or dark look, or follow your system setting.</p>
+    <div class="theme-toggle" role="radiogroup" aria-label="Theme">
+      {#each [['light', 'Light'], ['dark', 'Dark'], ['system', 'System']] as [mode, label] (mode)}
+        <button
+          type="button"
+          role="radio"
+          aria-checked={themeMode === mode}
+          class:active={themeMode === mode}
+          onclick={() => onChangeTheme(mode as ThemeMode)}
+        >
+          {label}
+        </button>
+      {/each}
+    </div>
+
+    <hr />
+
     <h2>{providerDisplayName} API key</h2>
     {#if providerRequiresApiKey}
       <p class="status">
@@ -604,7 +627,21 @@
     resize: vertical;
   }
   .status.error {
-    color: #e0654a;
+    color: var(--danger);
+  }
+  .theme-toggle {
+    display: flex;
+    gap: 0.4rem;
+  }
+  .theme-toggle button {
+    flex: 1;
+    background: var(--bg);
+  }
+  .theme-toggle button.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #1a1a1a;
+    font-weight: 600;
   }
   .mcp-status {
     display: block;
@@ -613,7 +650,7 @@
     color: var(--text-muted);
   }
   .mcp-status.error {
-    color: #e0654a;
+    color: var(--danger);
   }
   .connection-list {
     list-style: none;
@@ -654,7 +691,7 @@
   .link-danger {
     background: none;
     border: none;
-    color: #e0a24a;
+    color: var(--warn);
     padding: 0;
     font-size: 0.75rem;
     cursor: pointer;

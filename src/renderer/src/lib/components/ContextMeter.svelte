@@ -44,8 +44,8 @@
     border-radius: 999px;
   }
   .context-meter.warning {
-    color: #e0a24a;
-    border-color: #e0a24a;
+    color: var(--warn);
+    border-color: var(--warn);
   }
   .dot {
     width: 6px;
@@ -55,6 +55,6 @@
     flex-shrink: 0;
   }
   .context-meter.warning .dot {
-    background: #e0a24a;
+    background: var(--warn);
   }
 </style>
