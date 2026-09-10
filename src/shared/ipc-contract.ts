@@ -173,6 +173,23 @@ export interface SavedQueryDto {
   mutates: boolean
 }
 
+/**
+ * A cheap, table-names-only hint of what's inside a connection — NOT a
+ * substitute for db_introspect_schema (no columns, and this can be stale).
+ * Its only job is letting the Data agent pick the right connection out of
+ * several via db_list_connections' own output, with zero extra tool calls,
+ * instead of introspecting every configured connection just to find out
+ * which one has the relevant tables. Populated once when the connection is
+ * added/edited, refreshed opportunistically whenever db_introspect_schema
+ * is actually called against it later — see tools/db/schema-summary.ts.
+ */
+export interface DataConnectionSchemaSummary {
+  tables: string[]
+  /** True if `tables` was capped — the connection has more tables than are listed. */
+  truncated: boolean
+  updatedAt: number
+}
+
 /** Connection metadata only — never carries a password. */
 export interface DataConnectionDto {
   id: string
@@ -184,6 +201,7 @@ export interface DataConnectionDto {
   database?: string
   username?: string
   savedQueries: SavedQueryDto[]
+  schemaSummary?: DataConnectionSchemaSummary
 }
 
 /** `id` omitted creates a new connection; `password` omitted on an edit leaves the stored one unchanged. */

@@ -16,7 +16,7 @@ vi.mock('electron', () => ({
 }))
 
 const { setDbPath } = await import('../../db')
-const { saveConnection } = await import('../../data/connections')
+const { saveConnection, getConnection } = await import('../../data/connections')
 const { dbListConnectionsTool, dbIntrospectSchemaTool, dbExecuteSqlTool } = await import('./index')
 const { WorkspaceGuard } = await import('../../security/workspace-guard')
 
@@ -50,15 +50,31 @@ describe('db_* tools', () => {
     expect(await dbListConnectionsTool.execute({}, ctx)).toMatch(/No data connections configured/)
   })
 
-  it('db_list_connections lists a configured connection', async () => {
+  it('db_list_connections lists a configured connection with no schema hint yet', async () => {
     saveConnection({ name: 'Local', engine: 'sqlite', filePath: dbPath })
-    expect(await dbListConnectionsTool.execute({}, ctx)).toBe('- Local (sqlite)')
+    expect(await dbListConnectionsTool.execute({}, ctx)).toBe('- Local (sqlite): (schema not yet known)')
+  })
+
+  it('db_list_connections shows the cached table-name hint once one exists', async () => {
+    const conn = saveConnection({ name: 'Local', engine: 'sqlite', filePath: dbPath })
+    const { updateConnectionSchemaSummary } = await import('../../data/connections')
+    updateConnectionSchemaSummary(conn.id, { tables: ['users', 'orders'], truncated: false, updatedAt: 0 })
+    expect(await dbListConnectionsTool.execute({}, ctx)).toBe('- Local (sqlite): users, orders')
   })
 
   it('db_introspect_schema describes tables and columns', async () => {
     saveConnection({ name: 'Local', engine: 'sqlite', filePath: dbPath })
     const result = await dbIntrospectSchemaTool.execute({ connection: 'Local' }, ctx)
     expect(result).toContain('users(id: INTEGER, name: TEXT)')
+  })
+
+  it('db_introspect_schema opportunistically caches a table-name summary for db_list_connections to use later', async () => {
+    const conn = saveConnection({ name: 'Local', engine: 'sqlite', filePath: dbPath })
+    expect(getConnection(conn.id)?.schemaSummary).toBeUndefined()
+
+    await dbIntrospectSchemaTool.execute({ connection: 'Local' }, ctx)
+
+    expect(getConnection(conn.id)?.schemaSummary?.tables).toEqual(['users'])
   })
 
   it('db_introspect_schema errors clearly for an unknown connection', async () => {

@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import type { DataConnectionDto, SaveDataConnectionInput, SavedQueryDto, SaveSavedQueryInput } from '@shared/ipc-contract'
+import type {
+  DataConnectionDto,
+  DataConnectionSchemaSummary,
+  SaveDataConnectionInput,
+  SavedQueryDto,
+  SaveSavedQueryInput
+} from '@shared/ipc-contract'
 import { getSetting, setSetting } from '../db/settings'
 import { deleteApiKey, getApiKey, setApiKey } from '../security/keychain'
 import { namedParamsIn } from '../tools/db/param-binding'
@@ -62,18 +68,33 @@ export function listConnections(): DataConnectionDto[] {
   return readList()
 }
 
+export function getConnection(id: string): DataConnectionDto | undefined {
+  return readList().find((c) => c.id === id)
+}
+
 export function saveConnection(input: SaveDataConnectionInput): DataConnectionDto {
   const list = readList()
   const id = input.id ?? randomUUID()
-  // Preserve saved queries across an edit — a plain "replace the DTO"
-  // would otherwise silently wipe them, since SaveDataConnectionInput has
-  // no savedQueries field of its own (queries are only ever written via
-  // saveSavedQuery below).
-  const existingQueries = list.find((c) => c.id === id)?.savedQueries ?? []
+  // Preserve saved queries AND any cached schema summary across an edit —
+  // a plain "replace the DTO" would otherwise silently wipe them, since
+  // SaveDataConnectionInput has neither field of its own (queries are only
+  // ever written via saveSavedQuery below; the summary only via
+  // updateConnectionSchemaSummary, called right after this by whoever
+  // re-probes the connection post-save — ipc/register.ts).
+  const existing = list.find((c) => c.id === id)
+  const existingQueries = existing?.savedQueries ?? []
+  const existingSummary = existing?.schemaSummary
 
   const dto: DataConnectionDto =
     input.engine === 'sqlite'
-      ? { id, name: input.name, engine: 'sqlite', filePath: input.filePath ?? '', savedQueries: existingQueries }
+      ? {
+          id,
+          name: input.name,
+          engine: 'sqlite',
+          filePath: input.filePath ?? '',
+          savedQueries: existingQueries,
+          schemaSummary: existingSummary
+        }
       : {
           id,
           name: input.name,
@@ -82,7 +103,8 @@ export function saveConnection(input: SaveDataConnectionInput): DataConnectionDt
           port: input.port ?? 5432,
           database: input.database ?? '',
           username: input.username ?? '',
-          savedQueries: existingQueries
+          savedQueries: existingQueries,
+          schemaSummary: existingSummary
         }
 
   if (input.engine === 'postgres' && input.password) {
@@ -91,6 +113,15 @@ export function saveConnection(input: SaveDataConnectionInput): DataConnectionDt
 
   writeList([...list.filter((c) => c.id !== id), dto])
   return dto
+}
+
+/** Called once right after a connection is saved (add or edit) and again opportunistically whenever db_introspect_schema actually runs against it later — see tools/db/schema-summary.ts. Never called for a connection that doesn't exist; a no-op in that case rather than an error, since a probe racing a delete is a benign, uninteresting outcome. */
+export function updateConnectionSchemaSummary(id: string, summary: DataConnectionSchemaSummary): void {
+  const list = readList()
+  const idx = list.findIndex((c) => c.id === id)
+  if (idx === -1) return
+  list[idx] = { ...list[idx], schemaSummary: summary }
+  writeList(list)
 }
 
 export function deleteConnection(id: string): void {

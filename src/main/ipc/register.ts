@@ -25,10 +25,19 @@ import { getSetting, setSetting } from '../db/settings'
 import { addUsage, getUsage } from '../db/usage'
 import { setApiKey, getApiKey } from '../security/keychain'
 import { WorkspaceGuard } from '../security/workspace-guard'
-import { deleteConnection, listConnections, listSavedQueries, saveConnection } from '../data/connections'
+import {
+  deleteConnection,
+  getConnection,
+  listConnections,
+  listSavedQueries,
+  saveConnection,
+  updateConnectionSchemaSummary
+} from '../data/connections'
 import { prepareConversation } from '../context/prepare-context'
 import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/config'
 import { McpManager } from '../mcp/manager'
+import { openDriver } from '../tools/db/driver-factory'
+import { buildSchemaSummary } from '../tools/db/schema-summary'
 import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
 import { createDefaultProviderRegistry } from '../providers/setup'
 import type { Message } from '../providers/types'
@@ -137,9 +146,26 @@ export function registerIpcHandlers(): void {
   )
 
   ipcMain.handle(IpcChannel.DataConnectionsList, () => listConnections())
-  ipcMain.handle(IpcChannel.DataConnectionsSave, (_event, input: SaveDataConnectionInput) =>
-    saveConnection(input)
-  )
+  ipcMain.handle(IpcChannel.DataConnectionsSave, async (_event, input: SaveDataConnectionInput) => {
+    const saved = saveConnection(input)
+    // Warm the schema-summary cache right away (db_list_connections then
+    // has something real to show immediately) instead of waiting for the
+    // Data agent to stumble into it — best-effort: a bad path/host at add
+    // time just leaves no cached summary yet, surfaced as a real,
+    // immediate error the first time the connection is actually queried,
+    // same as it always has been. Never blocks/fails the save itself.
+    try {
+      const driver = openDriver(saved.id)
+      try {
+        updateConnectionSchemaSummary(saved.id, buildSchemaSummary(await driver.introspectSchema()))
+      } finally {
+        await driver.close()
+      }
+    } catch {
+      // Left uncached — see comment above.
+    }
+    return getConnection(saved.id) ?? saved
+  })
   ipcMain.handle(IpcChannel.DataConnectionsDelete, (_event, id: string) => {
     // Saved queries live nested inside the connection (data/connections.ts)
     // and are removed automatically with it — but their *tools* are a

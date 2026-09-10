@@ -1,6 +1,7 @@
-import { listConnections } from '../../data/connections'
+import { listConnections, updateConnectionSchemaSummary } from '../../data/connections'
 import type { Tool } from '../types'
 import { openDriver } from './driver-factory'
+import { buildSchemaSummary, formatSchemaSummary } from './schema-summary'
 import { isMutatingSql } from './sql-classifier'
 
 export { dbListRowsTool, dbCountRowsTool, dbFindRowsTool } from './crud'
@@ -8,7 +9,11 @@ export { dbSaveQueryTool } from './save-query-tool'
 
 export const dbListConnectionsTool: Tool = {
   name: 'db_list_connections',
-  description: 'List the data connections configured in Settings > Data sources, by name and engine (no credentials).',
+  description:
+    'List the data connections configured in Settings > Data sources, by name, engine, and a quick ' +
+    'table-name hint (no credentials) — use the hint to pick the right connection when there are ' +
+    'several, before calling db_introspect_schema on the one you choose (this hint has no columns and ' +
+    'can be stale).',
   inputSchema: { type: 'object', properties: {} },
   mutates: false,
   async execute() {
@@ -16,7 +21,9 @@ export const dbListConnectionsTool: Tool = {
     if (!connections.length) {
       return 'No data connections configured yet. Ask the user to add one in Settings > Data sources.'
     }
-    return connections.map((c) => `- ${c.name} (${c.engine})`).join('\n')
+    return connections
+      .map((c) => `- ${c.name} (${c.engine}): ${formatSchemaSummary(c.schemaSummary)}`)
+      .join('\n')
   }
 }
 
@@ -32,9 +39,16 @@ export const dbIntrospectSchemaTool: Tool = {
   },
   mutates: false,
   async execute(input) {
-    const driver = openDriver(String(input.connection ?? ''))
+    const connectionNameOrId = String(input.connection ?? '')
+    const driver = openDriver(connectionNameOrId)
     try {
       const tables = await driver.introspectSchema()
+      // Opportunistic refresh — keeps db_list_connections' routing hint from
+      // going stale forever, at zero extra query cost, piggybacked on
+      // introspection the agent was already doing for its own reasons.
+      const dto = listConnections().find((c) => c.id === connectionNameOrId || c.name === connectionNameOrId)
+      if (dto) updateConnectionSchemaSummary(dto.id, buildSchemaSummary(tables))
+
       if (!tables.length) return '(no tables found)'
       return tables
         .map((t) => `${t.name}(${t.columns.map((c) => `${c.name}: ${c.type}`).join(', ')})`)

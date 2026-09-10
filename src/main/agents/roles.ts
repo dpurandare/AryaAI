@@ -99,8 +99,12 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
       summary: 'Introspects and queries configured database connections.',
       systemPrompt:
         'You are the Data specialist for Sachivji. Use db_list_connections to see what data connections ' +
-        'are configured (in Settings > Data sources), db_introspect_schema to see a connection\'s ' +
-        'tables/columns before writing queries against it. For a simple, mechanical lookup — list a ' +
+        'are configured (in Settings > Data sources) — its output includes a quick table-name hint per ' +
+        'connection, so if there are several, use that to pick the one that actually matches the ' +
+        'question before doing anything else, rather than guessing from the connection name alone. That ' +
+        'hint has no columns and can be stale, so still call db_introspect_schema on the connection you ' +
+        'picked to see its real, current tables/columns before writing queries against it. For a simple, ' +
+        'mechanical lookup — list a ' +
         'table\'s rows, count them, or find rows where one column equals a value — prefer db_list_rows/' +
         'db_count_rows/db_find_rows over writing SQL by hand; they need a table/column name, not a query. ' +
         'You may also see tools named "db_query_..." — these are queries you (or an earlier turn) saved ' +

@@ -20,8 +20,17 @@ vi.mock('electron', () => ({
 }))
 
 const { setDbPath } = await import('../db')
-const { listConnections, saveConnection, deleteConnection, resolveConnection, listSavedQueries, saveSavedQuery, deleteSavedQuery } =
-  await import('./connections')
+const {
+  listConnections,
+  saveConnection,
+  deleteConnection,
+  resolveConnection,
+  listSavedQueries,
+  saveSavedQuery,
+  deleteSavedQuery,
+  getConnection,
+  updateConnectionSchemaSummary
+} = await import('./connections')
 const { getApiKey } = await import('../security/keychain')
 
 describe('data connections', () => {
@@ -204,5 +213,36 @@ describe('data connections', () => {
     deleteSavedQuery(q1.id)
 
     expect(listSavedQueries(conn.id).map((q) => q.name)).toEqual(['q2'])
+  })
+
+  it('getConnection finds by id, or undefined if unknown', () => {
+    const conn = saveConnection({ name: 'Local', engine: 'sqlite', filePath: '/data/app.db' })
+    expect(getConnection(conn.id)).toEqual(conn)
+    expect(getConnection('nope')).toBeUndefined()
+  })
+
+  it('updateConnectionSchemaSummary sets the summary without touching the rest of the connection', () => {
+    const conn = saveConnection({ name: 'Local', engine: 'sqlite', filePath: '/data/app.db' })
+    const summary = { tables: ['users', 'orders'], truncated: false, updatedAt: 123 }
+
+    updateConnectionSchemaSummary(conn.id, summary)
+
+    expect(getConnection(conn.id)).toMatchObject({ name: 'Local', schemaSummary: summary })
+  })
+
+  it('updateConnectionSchemaSummary is a safe no-op for an unknown connection', () => {
+    expect(() =>
+      updateConnectionSchemaSummary('nope', { tables: [], truncated: false, updatedAt: 0 })
+    ).not.toThrow()
+  })
+
+  it('editing a connection preserves its cached schema summary, the same way it preserves saved queries', () => {
+    const conn = saveConnection({ name: 'Local', engine: 'sqlite', filePath: '/data/app.db' })
+    const summary = { tables: ['users'], truncated: false, updatedAt: 1 }
+    updateConnectionSchemaSummary(conn.id, summary)
+
+    saveConnection({ id: conn.id, name: 'Local (renamed)', engine: 'sqlite', filePath: '/data/app.db' })
+
+    expect(getConnection(conn.id)?.schemaSummary).toEqual(summary)
   })
 })
