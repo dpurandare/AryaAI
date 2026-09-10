@@ -547,43 +547,9 @@
 {/if}
 
 <style>
-  :global(:root) {
-    --bg: #191919;
-    --sidebar-bg: #171717;
-    --panel: #262624;
-    --panel-hover: #2f2f2d;
-    --border: #333331;
-    --text: #ececea;
-    --text-muted: #8e8e8c;
-    --accent: #d97757;
-    --user-bubble: #2b2b29;
-    --warn: #e0a24a;
-    --danger: #e0654a;
-  }
-  /* Light palette — not a dark-mode invert, tuned separately (e.g. --accent,
-     --warn, --danger are darkened from their dark-mode values so text set in
-     those colors still holds ~4.5:1 contrast against a white/cream --bg). */
-  :global(:root[data-theme='light']) {
-    --bg: #ffffff;
-    --sidebar-bg: #f7f6f2;
-    --panel: #f0efe9;
-    --panel-hover: #e7e5dd;
-    --border: #ddd9d0;
-    --text: #23221f;
-    --text-muted: #6b6a66;
-    --accent: #c1502e;
-    --user-bubble: #f0efe9;
-    --warn: #9c6b1f;
-    --danger: #b3402a;
-  }
-  :global(html, body) {
-    height: 100%;
-  }
+  /* Base palette + font/color resets live in theme.css, shared with
+     print-main.ts — this component only owns its own app-shell layout. */
   :global(body) {
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: var(--bg);
-    color: var(--text);
     overflow: hidden;
   }
   :global(#app) {

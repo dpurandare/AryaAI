@@ -1,9 +1,11 @@
-import { dialog } from 'electron'
-import type { BrowserWindow } from 'electron'
+import { dialog, ipcMain, BrowserWindow } from 'electron'
+import type { IpcMainEvent } from 'electron'
 import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { is } from '@electron-toolkit/utils'
 import { AGENT_ROLE_LABELS } from '@shared/agents'
 import type { ContentBlock } from '@shared/protocol'
-import type { SessionExportResult } from '@shared/ipc-contract'
+import { IpcChannel, type SessionExportResult } from '@shared/ipc-contract'
 import { listMessages, type MessageRecord } from '../db/messages'
 import { listSessions, type SessionRecord } from '../db/sessions'
 
@@ -49,7 +51,54 @@ function sanitizeFilename(title: string): string {
   return title.replace(/[/\\:*?"<>|]/g, '_').trim() || 'session'
 }
 
-/** Prompts the user with a native save dialog and writes the session as Markdown or JSON depending on the extension they chose. */
+// Guards against a print page that never signals readiness (e.g. a JS error
+// before it gets to notifyPrintReady) — export still completes instead of
+// leaving the "Save as" action hung forever.
+const PRINT_READY_TIMEOUT_MS = 10_000
+
+/**
+ * Renders a session's transcript as PDF via Electron's own
+ * `webContents.printToPDF()` — no PDF library dependency, and it reuses the
+ * exact same (already sanitized) markdown/KaTeX rendering the live chat
+ * view uses, off a hidden window loading the app's own print.html page
+ * (src/renderer/src/lib/components/PrintView.svelte).
+ */
+async function renderSessionToPdf(sessionId: string): Promise<Buffer> {
+  const printWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  })
+
+  try {
+    const ready = new Promise<void>((resolve) => {
+      const handler = (event: IpcMainEvent): void => {
+        if (event.sender !== printWindow.webContents) return
+        ipcMain.off(IpcChannel.PrintReady, handler)
+        resolve()
+      }
+      ipcMain.on(IpcChannel.PrintReady, handler)
+    })
+
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      await printWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/print.html?sessionId=${encodeURIComponent(sessionId)}`)
+    } else {
+      await printWindow.loadFile(join(__dirname, '../renderer/print.html'), { query: { sessionId } })
+    }
+
+    await Promise.race([ready, new Promise<void>((resolve) => setTimeout(resolve, PRINT_READY_TIMEOUT_MS))])
+
+    return await printWindow.webContents.printToPDF({ printBackground: true })
+  } finally {
+    printWindow.destroy()
+  }
+}
+
+/** Prompts the user with a native save dialog and writes the session as Markdown, JSON, or PDF depending on the extension they chose. */
 export async function exportSession(
   sessionId: string,
   window: BrowserWindow | null
@@ -64,7 +113,8 @@ export async function exportSession(
     defaultPath: `${sanitizeFilename(session.title)}.md`,
     filters: [
       { name: 'Markdown', extensions: ['md'] },
-      { name: 'JSON', extensions: ['json'] }
+      { name: 'JSON', extensions: ['json'] },
+      { name: 'PDF', extensions: ['pdf'] }
     ]
   }
   const { canceled, filePath } = window
@@ -72,6 +122,12 @@ export async function exportSession(
     : await dialog.showSaveDialog(dialogOptions)
   if (canceled || !filePath) {
     return { cancelled: true }
+  }
+
+  if (filePath.toLowerCase().endsWith('.pdf')) {
+    const pdf = await renderSessionToPdf(sessionId)
+    await writeFile(filePath, pdf)
+    return { cancelled: false, path: filePath }
   }
 
   const content = filePath.toLowerCase().endsWith('.json')

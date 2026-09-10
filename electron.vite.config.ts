@@ -37,6 +37,18 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
+    // Two pages sharing one bundle: `index.html` is the normal app window;
+    // `print.html` is a hidden window used only to render a session's
+    // transcript for PDF export (see sessions/export.ts) before Electron's
+    // webContents.printToPDF() runs against it.
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/renderer/index.html'),
+          print: resolve('src/renderer/print.html')
+        }
+      }
+    },
     plugins: [svelte()]
   }
 })

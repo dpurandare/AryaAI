@@ -1,0 +1,44 @@
+/* Shared by both renderer entry points (main.ts and print-main.ts) — the
+   base color palette plus the couple of resets every page needs. Anything
+   specific to the app-shell's single-viewport layout (overflow:hidden,
+   #app's flex column, 100vh) stays local to App.svelte instead, since the
+   print page is a normal paginated document, not a fixed viewport. */
+:root {
+  --bg: #191919;
+  --sidebar-bg: #171717;
+  --panel: #262624;
+  --panel-hover: #2f2f2d;
+  --border: #333331;
+  --text: #ececea;
+  --text-muted: #8e8e8c;
+  --accent: #d97757;
+  --user-bubble: #2b2b29;
+  --warn: #e0a24a;
+  --danger: #e0654a;
+}
+/* Light palette — not a dark-mode invert, tuned separately (e.g. --accent,
+   --warn, --danger are darkened from their dark-mode values so text set in
+   those colors still holds ~4.5:1 contrast against a white/cream --bg). */
+:root[data-theme='light'] {
+  --bg: #ffffff;
+  --sidebar-bg: #f7f6f2;
+  --panel: #f0efe9;
+  --panel-hover: #e7e5dd;
+  --border: #ddd9d0;
+  --text: #23221f;
+  --text-muted: #6b6a66;
+  --accent: #c1502e;
+  --user-bubble: #f0efe9;
+  --warn: #9c6b1f;
+  --danger: #b3402a;
+}
+html,
+body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}

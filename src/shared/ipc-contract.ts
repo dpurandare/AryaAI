@@ -48,7 +48,10 @@ export const IpcChannel = {
   SearchHistoryStatus: 'search-history:status',
   SearchHistoryRebuildIndex: 'search-history:rebuild-index',
 
-  SessionTitleUpdated: 'sessions:title-updated'
+  SessionTitleUpdated: 'sessions:title-updated',
+
+  /** One-way, renderer -> main: the hidden print window (see sessions/export.ts's PDF path) sends this once the transcript has actually finished rendering (DOM settled, fonts loaded) — the signal main waits on before calling printToPDF. */
+  PrintReady: 'print:ready'
 } as const
 
 /** What every new session starts as — shared so the renderer (creating sessions) and the main process (deciding whether it's still safe to auto-title one) agree on the exact string. */

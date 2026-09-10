@@ -110,7 +110,10 @@ const api = {
     toolUseId: string,
     approved: boolean,
     input?: Record<string, unknown>
-  ): Promise<void> => ipcRenderer.invoke(IpcChannel.ToolConfirmRespond, toolUseId, approved, input)
+  ): Promise<void> => ipcRenderer.invoke(IpcChannel.ToolConfirmRespond, toolUseId, approved, input),
+
+  /** Print-page-only: tells the hidden window's caller (see sessions/export.ts) the transcript has actually finished rendering and it's safe to call printToPDF. */
+  notifyPrintReady: (): void => ipcRenderer.send(IpcChannel.PrintReady)
 }
 
 export type SachivApi = typeof api
