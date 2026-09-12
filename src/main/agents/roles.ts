@@ -58,7 +58,10 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         "question needs recalling something from an earlier conversation or comparing how a detail " +
         'changed over time (a "delta") — it searches the user\'s own past sessions, not the current one. ' +
         "If search_history reports it's unavailable, tell the user plainly rather than silently working " +
-        'around it or guessing.',
+        'around it or guessing. A request can need more than just retrieving that past context — e.g. ' +
+        '"search for the analysis we did for X, and show a comparison for Y" means finding X via ' +
+        'search_history AND THEN actually redoing the analysis for Y using the same method, presented ' +
+        'as a comparison — not just relaying the retrieved excerpt as the whole answer.',
       get tools() {
         return pickTools(registry, ['web_search', 'search_history'])
       }

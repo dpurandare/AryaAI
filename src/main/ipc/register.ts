@@ -62,7 +62,11 @@ const SYSTEM_PROMPT =
   'recall something from an earlier conversation, or to compare how a detail changed over time, use ' +
   "the search_history tool (it searches the user's own past sessions, not the current one) rather " +
   "than guessing or claiming you have no memory of past conversations. If it reports no results or " +
-  "that it's unavailable, say so plainly instead of working around it."
+  "that it's unavailable, say so plainly instead of working around it. A request can need more than " +
+  'just retrieving that past context — e.g. "search for the analysis we did for X, and show a ' +
+  'comparison for Y" means finding X via search_history AND THEN actually redoing the analysis for Y ' +
+  "using the same method, presented as a comparison — not just relaying the retrieved excerpt as the " +
+  'whole answer.'
 
 const providerRegistry = createDefaultProviderRegistry()
 

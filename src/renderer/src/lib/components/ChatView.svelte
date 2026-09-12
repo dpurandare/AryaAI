@@ -4,6 +4,7 @@
   import ContextMeter from './ContextMeter.svelte'
   import MarkdownText from './MarkdownText.svelte'
   import { AGENT_ROLES, AGENT_ROLE_LABELS, type AgentRole } from '@shared/agents'
+  import { parseSearchHistoryResult } from '../search-history-result'
 
   interface ToolCallDisplay {
     id: string
@@ -169,7 +170,24 @@
               </div>
               {#if !isDelegate}
                 {#if segment.toolCall.result !== undefined}
-                  <div class="tool-result" class:error={segment.toolCall.isError}>{segment.toolCall.result}</div>
+                  {@const historicalResults =
+                    segment.toolCall.name === 'search_history' && !segment.toolCall.isError
+                      ? parseSearchHistoryResult(segment.toolCall.result)
+                      : null}
+                  {#if historicalResults}
+                    <div class="tool-result historical-results">
+                      {#each historicalResults as hit, i (i)}
+                        <div class="historical-result">
+                          <div class="historical-result-meta">
+                            {hit.session} · {hit.date} · relevance {hit.relevance}
+                          </div>
+                          <MarkdownText text={hit.text} />
+                        </div>
+                      {/each}
+                    </div>
+                  {:else}
+                    <div class="tool-result" class:error={segment.toolCall.isError}>{segment.toolCall.result}</div>
+                  {/if}
                 {:else}
                   <div class="tool-result pending">Waiting for confirmation...</div>
                 {/if}
@@ -408,6 +426,34 @@
   }
   .tool-result.error {
     color: var(--warn);
+  }
+  .historical-results {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .historical-result {
+    padding-top: 0.4rem;
+    border-top: 1px solid var(--border);
+  }
+  .historical-result:first-child {
+    padding-top: 0;
+    border-top: none;
+  }
+  .historical-result-meta {
+    font-family: ui-monospace, monospace;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    margin-bottom: 0.25rem;
+  }
+  /* search_history's excerpts are real markdown/KaTeX content, not raw
+     tool output — override the monospace/pre-wrap/muted styling `.tool-result`
+     sets above (this container also carries that class, for the shared card
+     background/padding) back to normal prose. */
+  .historical-result :global(.markdown-body) {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: var(--text);
+    white-space: normal;
   }
   .composer-area {
     padding: 0.75rem 1.25rem 0.6rem;
