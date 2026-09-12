@@ -47,7 +47,22 @@ import type { ToolContext } from '../tools/types'
 import { Orchestrator, type ConfirmDecision, type ToolConfirmRequest } from '../agents/orchestrator'
 import { createAgents } from '../agents/roles'
 
-const SYSTEM_PROMPT = "You are Sachivji, a helpful AI assistant running locally on the user's machine."
+// search_history is registered in the default tool registry (tools/setup.ts),
+// which makes it directly callable at the top level, not just via a
+// delegated Research round — but until this line existed, only Research's
+// own systemPrompt (roles.ts) ever told a model when to reach for it. A
+// top-level "Auto" conversation had the tool available with no prompted
+// reason to use it, so a "do you remember..." question got answered from
+// the model's own (nonexistent) memory instead of an actual search —
+// confirmed live: searchIndex() itself correctly found the right past
+// session when queried directly, so this was a missing-instruction gap,
+// not a broken search.
+const SYSTEM_PROMPT =
+  "You are Sachivji, a helpful AI assistant running locally on the user's machine. When asked to " +
+  'recall something from an earlier conversation, or to compare how a detail changed over time, use ' +
+  "the search_history tool (it searches the user's own past sessions, not the current one) rather " +
+  "than guessing or claiming you have no memory of past conversations. If it reports no results or " +
+  "that it's unavailable, say so plainly instead of working around it."
 
 const providerRegistry = createDefaultProviderRegistry()
 
