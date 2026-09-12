@@ -13,6 +13,15 @@ describe('contextWindowFor', () => {
     expect(result.isEstimate).toBe(true)
     expect(result.tokens).toBeGreaterThan(0)
   })
+
+  it('uses a conservative 4096 fallback for a local model with no live reading, not a generous guess', () => {
+    // Deliberately small, not the unrecognized-cloud-model fallback (8192) —
+    // see model-metadata.ts's DEFAULT_LOCAL_CONTEXT_WINDOW comment. A larger
+    // guess here previously let a prompt reach Ollama's real, smaller
+    // runtime limit and get silently truncated mid-turn with zero output.
+    expect(contextWindowFor('gpt-oss:20b')).toEqual({ tokens: 4_096, isEstimate: true })
+    expect(contextWindowFor('qwen3.6:latest')).toEqual({ tokens: 4_096, isEstimate: true })
+  })
 })
 
 describe('pricePerMillionTokens', () => {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamEvent } from './types'
 
 const mockCreate = vi.fn()
@@ -73,5 +73,57 @@ describe('OllamaProvider', () => {
     mockList.mockResolvedValue({ data: [{ id: 'gpt-oss:20b' }, { id: 'gemma4:latest' }] })
     const provider = new OllamaProvider()
     expect(await provider.listModels()).toEqual(['gpt-oss:20b', 'gemma4:latest'])
+  })
+
+  describe('loadedContextWindow', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it('returns the real runtime context for a currently-loaded model, not its architectural max', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            models: [
+              { model: 'gpt-oss:20b', context_length: 4096 },
+              { model: 'nomic-embed-text:latest', context_length: 2048 }
+            ]
+          })
+        })
+      )
+      const provider = new OllamaProvider()
+      expect(await provider.loadedContextWindow('gpt-oss:20b')).toBe(4096)
+    })
+
+    it('queries the native /api/ps endpoint, not the OpenAI-compat /v1 path', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ models: [] }) })
+      vi.stubGlobal('fetch', fetchMock)
+      const provider = new OllamaProvider('http://example.internal:11434/v1')
+      await provider.loadedContextWindow('gpt-oss:20b')
+      expect(fetchMock).toHaveBeenCalledWith('http://example.internal:11434/api/ps')
+    })
+
+    it('returns undefined when the model is not currently loaded', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: async () => ({ models: [{ model: 'gemma4:latest', context_length: 131072 }] }) })
+      )
+      const provider = new OllamaProvider()
+      expect(await provider.loadedContextWindow('gpt-oss:20b')).toBeUndefined()
+    })
+
+    it('returns undefined on a non-ok response instead of throwing', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
+      const provider = new OllamaProvider()
+      expect(await provider.loadedContextWindow('gpt-oss:20b')).toBeUndefined()
+    })
+
+    it('returns undefined when the server is unreachable instead of throwing', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')))
+      const provider = new OllamaProvider()
+      expect(await provider.loadedContextWindow('gpt-oss:20b')).toBeUndefined()
+    })
   })
 })

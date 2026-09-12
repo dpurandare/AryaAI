@@ -339,7 +339,16 @@ async function runChat(
   // Trims oversized tool results and drops the oldest turns once the loaded
   // history is getting close to the model's context window — operates only
   // on what's about to be sent, never on what's persisted/displayed.
-  const conversation = await prepareConversation(priorTurns, model, provider)
+  const conversation = await prepareConversation(priorTurns, model, provider, {
+    system: SYSTEM_PROMPT,
+    // The top-level round's real tool list — matches what's actually about
+    // to be sent alongside this conversation (built just below via the
+    // same toolRegistry.list()). Doesn't include the delegate_to_<role>
+    // synthetic tools the Orchestrator adds internally per specialist —
+    // those are few and small next to the full registry, and not known
+    // until the Orchestrator itself is constructed a few lines down.
+    tools: toolRegistry.list()
+  })
   conversation.push({ role: 'user', content: [{ type: 'text', text }] })
   const userMessage = insertMessage(sessionId, 'user', [{ type: 'text', text }])
   enqueueMessage(userMessage.id, sessionId, userMessage.content)

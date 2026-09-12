@@ -28,6 +28,22 @@ export interface ModelProvider {
   listModels(): Promise<string[]>
   stream(request: CompletionRequest): AsyncIterable<StreamEvent>
   countTokens(messages: Message[], model: string): Promise<number>
+  /**
+   * The real context window a provider is *currently* running a model with,
+   * if that can differ from its static, hand-maintained entry in
+   * model-metadata.ts and is worth checking live. Only Ollama implements
+   * this today — a local model's loaded context is set at load time by the
+   * Ollama server (independently of the model's own architectural max) and
+   * can be smaller than model-metadata.ts's generic local-model estimate,
+   * which under-trims the conversation and risks the exact failure this
+   * was added for: a prompt silently truncated by the server mid-turn,
+   * producing zero visible output (see prepare-context.ts's use of this).
+   * Cloud providers (Anthropic/OpenAI/Google) have no such live variance —
+   * their context window is a fixed, known property of the model id — so
+   * this stays optional rather than forcing every provider to implement a
+   * no-op.
+   */
+  loadedContextWindow?(model: string): Promise<number | undefined>
 }
 
 /**

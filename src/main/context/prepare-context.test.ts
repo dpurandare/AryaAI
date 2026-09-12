@@ -1,14 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import type { Message, ModelProvider } from '../providers/types'
-import { applySlidingWindow, prepareConversation, trimToolResults } from './prepare-context'
+import { applySlidingWindow, prepareConversation, trimToolResults, type TurnOverhead } from './prepare-context'
 
-function fakeProvider(countTokens: (messages: Message[]) => number): ModelProvider {
+const OVERHEAD_MARKER = 'SYS-PROMPT-MARKER'
+
+/** Distinguishes the overhead-probe call (a single synthetic message carrying the marker) from a real history-count call, for a fakeProvider's countTokens callback. */
+function isOverheadProbe(messages: Message[]): boolean {
+  const block = messages[0]?.content[0]
+  return messages.length === 1 && block?.type === 'text' && block.text.includes(OVERHEAD_MARKER)
+}
+
+function fakeProvider(
+  countTokens: (messages: Message[]) => number,
+  loadedContextWindow?: (model: string) => Promise<number | undefined>
+): ModelProvider {
   return {
     id: 'fake',
     displayName: 'Fake',
     listModels: async () => [],
     stream: async function* () {},
-    countTokens: async (messages) => countTokens(messages)
+    countTokens: async (messages) => countTokens(messages),
+    loadedContextWindow
   }
 }
 
@@ -89,6 +101,72 @@ describe('applySlidingWindow', () => {
     const messages = [userTurn('only turn, huge')]
     const provider = fakeProvider(() => 999_999_999)
     expect(await applySlidingWindow(messages, 'claude-sonnet-5', provider)).toEqual(messages)
+  })
+
+  it("budgets against a provider's own live context window over the static model-metadata estimate", async () => {
+    // "gpt-oss:20b" is local-model-shaped, so model-metadata.ts's generic
+    // fallback would give it 8192 tokens (budget 5734) — plenty of room for
+    // a 6000-token turn. A live loadedContextWindow of 4096 (Ollama's real
+    // runtime load, independent of the model's own larger architectural
+    // max) drops the budget to 2867, which the oldest turn must be dropped
+    // to fit under — reproducing, and fixing, the exact under-trimming bug
+    // found live (a prompt that reached Ollama's true, smaller limit and
+    // was silently truncated mid-turn with zero output).
+    const messages = [userTurn('oldest'), userTurn('newest')]
+    const provider = fakeProvider(
+      (msgs) => msgs.length * 6000,
+      async () => 4096
+    )
+    const result = await applySlidingWindow(messages, 'gpt-oss:20b', provider)
+    expect(result).toEqual([userTurn('newest')])
+  })
+
+  it('falls back to the static estimate when the provider has no live figure (e.g. the model is not currently loaded)', async () => {
+    const messages = [userTurn('oldest'), userTurn('newest')]
+    // Both turns together cost 2000 tokens — comfortably under gpt-oss:20b's
+    // static 4096*0.7=2867 fallback budget, so nothing gets dropped, unlike
+    // the live-figure test above where an even smaller live reading forced
+    // a drop. Confirms the fallback path itself runs (not just "some" budget).
+    const provider = fakeProvider(
+      (msgs) => msgs.length * 1000,
+      async () => undefined
+    )
+    const result = await applySlidingWindow(messages, 'gpt-oss:20b', provider)
+    expect(result).toEqual(messages)
+  })
+
+  describe('with a TurnOverhead (system prompt + tool schemas)', () => {
+    const overhead: TurnOverhead = { system: OVERHEAD_MARKER, tools: [] }
+
+    it('reserves the overhead\'s own token cost against the budget, forcing a trim that pure history-counting alone would not', async () => {
+      // gpt-oss:20b's static fallback budget is floor(4096*0.7)=2867. Both
+      // turns' real history costs 2000 — comfortably under 2867 on its own
+      // (proven by the sibling "no overhead" case below) — but the system
+      // prompt + tool schemas here cost 2000 too, leaving only 867 for
+      // history, which forces the oldest turn to be dropped. This is the
+      // exact gap found live: a 4096-token local model where the reserved
+      // margin alone wasn't enough for this app's real system prompt plus
+      // its ~15+ tool schemas plus a tool round-trip.
+      const messages = [userTurn('oldest'), userTurn('newest')]
+      const provider = fakeProvider((msgs) => (isOverheadProbe(msgs) ? 2000 : msgs.length * 1000))
+
+      expect(await applySlidingWindow(messages, 'gpt-oss:20b', provider, overhead)).toEqual([userTurn('newest')])
+      // Without the same overhead, the identical 2000-token history fits budget 2867 untrimmed.
+      expect(await applySlidingWindow(messages, 'gpt-oss:20b', provider)).toEqual(messages)
+    })
+
+    it('clamps the reserved budget to zero (never negative) when the overhead alone exceeds it, still keeping the most recent turn', async () => {
+      const messages = [userTurn('only turn')]
+      const provider = fakeProvider((msgs) => (isOverheadProbe(msgs) ? 999_999 : 10))
+      expect(await applySlidingWindow(messages, 'gpt-oss:20b', provider, overhead)).toEqual(messages)
+    })
+
+    it('prepareConversation threads the overhead through to applySlidingWindow', async () => {
+      const messages = [userTurn('oldest'), userTurn('newest')]
+      const provider = fakeProvider((msgs) => (isOverheadProbe(msgs) ? 2000 : msgs.length * 1000))
+      const result = await prepareConversation(messages, 'gpt-oss:20b', provider, overhead)
+      expect(result).toEqual([userTurn('newest')])
+    })
   })
 })
 

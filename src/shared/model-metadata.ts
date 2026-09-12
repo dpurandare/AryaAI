@@ -27,17 +27,33 @@ const CONTEXT_WINDOWS: ContextWindowEntry[] = [
   { prefix: 'o3', tokens: 128_000 }
 ]
 
-/** Generic fallback for anything unrecognized — every local Ollama model lands here. */
+/**
+ * Every local Ollama model lands here when no live reading is available
+ * (see providers/ollama.ts's `loadedContextWindow` — main/context/
+ * prepare-context.ts prefers that whenever the model is currently loaded,
+ * and only falls back to this static guess for a cold model). Deliberately
+ * conservative — Ollama's own most commonly observed runtime default when
+ * a model doesn't set `num_ctx` explicitly (confirmed live: gpt-oss:20b,
+ * which advertises a 131072-token architectural max, was actually loaded
+ * at exactly this). Erring small here is the safe direction: an
+ * *underestimate* just trims a bit more history than strictly necessary;
+ * an *overestimate* is what let a prompt reach the server's real, smaller
+ * limit and get silently truncated mid-turn with zero visible output —
+ * the exact bug this constant exists to avoid repeating.
+ */
+const DEFAULT_LOCAL_CONTEXT_WINDOW = 4_096
+
+/** Generic fallback for an unrecognized *cloud* model id only — real cloud context windows are typically far larger than a local model's, so this stays a separate, more generous constant rather than sharing one with the local fallback above. */
 const DEFAULT_CONTEXT_WINDOW = 8_192
 
 export interface ContextWindowInfo {
   tokens: number
-  /** True when this came from the generic fallback, not a real per-model entry. */
+  /** True when this came from a fallback, not a real per-model entry. */
   isEstimate: boolean
 }
 
 export function contextWindowFor(model: string): ContextWindowInfo {
-  if (isLocalModelId(model)) return { tokens: DEFAULT_CONTEXT_WINDOW, isEstimate: true }
+  if (isLocalModelId(model)) return { tokens: DEFAULT_LOCAL_CONTEXT_WINDOW, isEstimate: true }
   const match = CONTEXT_WINDOWS.find((entry) => model.startsWith(entry.prefix))
   return match ? { tokens: match.tokens, isEstimate: false } : { tokens: DEFAULT_CONTEXT_WINDOW, isEstimate: true }
 }
