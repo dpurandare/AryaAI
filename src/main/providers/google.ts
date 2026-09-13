@@ -14,29 +14,36 @@ import type { CompletionRequest, EmbeddingProvider, Message, ModelProvider, Stre
 function toGeminiContents(messages: Message[]): Content[] {
   const toolNames = new Map<string, string>()
 
-  return messages.map((m) => {
-    const parts: Part[] = m.content.map((block) => {
-      if (block.type === 'text') return { text: block.text }
-      if (block.type === 'tool_use') {
-        toolNames.set(block.id, block.name)
-        return {
-          functionCall: { id: block.id, name: block.name, args: block.input },
-          // Required by Gemini on the next turn's functionCall part, or it
-          // 400s ("Function call is missing a thought_signature") — confirmed
-          // live. See https://ai.google.dev/gemini-api/docs/thought-signatures.
-          thoughtSignature: block.thoughtSignature
-        }
-      }
-      return {
-        functionResponse: {
-          id: block.toolUseId,
-          name: toolNames.get(block.toolUseId) ?? '',
-          response: block.isError ? { error: block.content } : { output: block.content }
-        }
-      }
+  return messages
+    .map((m) => {
+      const parts: Part[] = m.content
+        .map((block): Part | null => {
+          if (block.type === 'text') return { text: block.text }
+          if (block.type === 'tool_use') {
+            toolNames.set(block.id, block.name)
+            return {
+              functionCall: { id: block.id, name: block.name, args: block.input },
+              // Required by Gemini on the next turn's functionCall part, or it
+              // 400s ("Function call is missing a thought_signature") — confirmed
+              // live. See https://ai.google.dev/gemini-api/docs/thought-signatures.
+              thoughtSignature: block.thoughtSignature
+            }
+          }
+          if (block.type === 'tool_result') {
+            return {
+              functionResponse: {
+                id: block.toolUseId,
+                name: toolNames.get(block.toolUseId) ?? '',
+                response: block.isError ? { error: block.content } : { output: block.content }
+              }
+            }
+          }
+          return null // 'warning' — a human-facing notice, never sent back to the model
+        })
+        .filter((p): p is Part => p !== null)
+      return { role: m.role === 'assistant' ? ('model' as const) : ('user' as const), parts }
     })
-    return { role: m.role === 'assistant' ? 'model' : 'user', parts }
-  })
+    .filter((c) => c.parts.length > 0)
 }
 
 export class GoogleProvider implements ModelProvider, EmbeddingProvider {

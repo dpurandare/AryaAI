@@ -16,8 +16,9 @@
 
   interface DisplaySegment {
     id: string
-    kind: 'text' | 'tool'
+    kind: 'text' | 'tool' | 'warning'
     agentRole?: AgentRole
+    /** Holds the plain message for both 'text' and 'warning' kinds. */
     text?: string
     toolCall?: ToolCallDisplay
   }
@@ -27,6 +28,7 @@
     role: 'user' | 'assistant'
     pending?: boolean
     statusText?: string
+    plan?: { steps: { role: AgentRole; description: string }[]; stepStatus: ('pending' | 'running' | 'done' | 'error')[] }
     segments: DisplaySegment[]
   }
 
@@ -155,6 +157,20 @@
     {/if}
     {#each messages as message (message.id)}
       <div class="bubble {message.role}">
+        {#if message.plan}
+          <div class="plan-checklist">
+            {#each message.plan.steps as step, i (i)}
+              {@const status = message.plan.stepStatus[i]}
+              <div class="plan-step" class:done={status === 'done'} class:error={status === 'error'}>
+                <span class="plan-step-icon"
+                  >{status === 'done' ? '✓' : status === 'error' ? '✗' : status === 'running' ? '⋯' : '○'}</span
+                >
+                <span class="plan-step-role">{AGENT_ROLE_LABELS[step.role]}</span>
+                <span class="plan-step-desc">{step.description}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
         {#each message.segments as segment, i (segment.id)}
           {@const prevRole = i > 0 ? message.segments[i - 1].agentRole : undefined}
           {#if segment.agentRole && segment.agentRole !== prevRole}
@@ -219,6 +235,8 @@
             {:else}
               <MarkdownText text={segment.text ?? ''} />
             {/if}
+          {:else if segment.kind === 'warning'}
+            <div class="warning-note">⚠️ {segment.text}</div>
           {/if}
         {/each}
         {#if message.pending}
@@ -426,6 +444,52 @@
   }
   .tool-result.error {
     color: var(--warn);
+  }
+  .warning-note {
+    margin-bottom: 0.4rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--warn);
+    border-radius: 8px;
+    color: var(--warn);
+    font-size: 0.82rem;
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+  }
+  .plan-checklist {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.65rem;
+    margin-bottom: 0.4rem;
+    font-size: 0.78rem;
+  }
+  .plan-step {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    color: var(--text-muted);
+  }
+  .plan-step.done {
+    color: var(--text);
+  }
+  .plan-step.error {
+    color: var(--warn);
+  }
+  .plan-step-icon {
+    color: var(--accent);
+    width: 1em;
+  }
+  .plan-step-role {
+    flex-shrink: 0;
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .plan-step-desc {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .historical-results {
     display: flex;

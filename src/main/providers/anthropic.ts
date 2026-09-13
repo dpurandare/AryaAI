@@ -2,21 +2,23 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { CompletionRequest, ContentBlock, Message, ModelProvider, StreamEvent } from './types'
 
 function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
-  return messages.map((m) => ({
-    role: m.role,
-    content: m.content.map((block): Anthropic.ContentBlockParam => {
-      if (block.type === 'text') return { type: 'text', text: block.text }
-      if (block.type === 'tool_use') {
-        return { type: 'tool_use', id: block.id, name: block.name, input: block.input }
-      }
-      return {
-        type: 'tool_result',
-        tool_use_id: block.toolUseId,
-        content: block.content,
-        is_error: block.isError
-      }
-    })
-  }))
+  return messages
+    .map((m) => ({
+      role: m.role,
+      content: m.content
+        .map((block): Anthropic.ContentBlockParam | null => {
+          if (block.type === 'text') return { type: 'text', text: block.text }
+          if (block.type === 'tool_use') {
+            return { type: 'tool_use', id: block.id, name: block.name, input: block.input }
+          }
+          if (block.type === 'tool_result') {
+            return { type: 'tool_result', tool_use_id: block.toolUseId, content: block.content, is_error: block.isError }
+          }
+          return null // 'warning' — a human-facing notice, never sent back to the model
+        })
+        .filter((b): b is Anthropic.ContentBlockParam => b !== null)
+    }))
+    .filter((m) => m.content.length > 0)
 }
 
 export class AnthropicProvider implements ModelProvider {

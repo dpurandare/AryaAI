@@ -23,6 +23,9 @@ function blockToMarkdown(block: ContentBlock): string {
     const prefix = block.agentRole ? `*${AGENT_ROLE_LABELS[block.agentRole]} agent* ` : ''
     return `> ${prefix}🔧 **${block.name}**(${JSON.stringify(block.input)})`
   }
+  if (block.type === 'warning') {
+    return `> ⚠️ ${block.message}`
+  }
   const label = block.isError ? '⚠️ Error' : '→ Result'
   return `> ${label}: ${block.content}`
 }

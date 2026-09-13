@@ -9,10 +9,12 @@
     autoApproveRules,
     providers,
     themeMode,
+    planningEnabled,
     onSave,
     onClose,
     onToggleAutoApproveRule,
-    onChangeTheme
+    onChangeTheme,
+    onChangePlanningEnabled
   }: {
     providerDisplayName: string
     providerRequiresApiKey?: boolean
@@ -20,10 +22,12 @@
     autoApproveRules: Record<string, boolean>
     providers: ProviderDescriptor[]
     themeMode: ThemeMode
+    planningEnabled: boolean
     onSave: (apiKey: string) => void | Promise<void>
     onClose: () => void
     onToggleAutoApproveRule: (name: string, value: boolean) => void
     onChangeTheme: (mode: ThemeMode) => void
+    onChangePlanningEnabled: (value: boolean) => void
   } = $props()
 
   let apiKey = $state('')
@@ -332,6 +336,24 @@
         </button>
       {/each}
     </div>
+
+    <hr />
+
+    <h2>Orchestrator</h2>
+    <p class="status">
+      Plan complex requests before acting — classifies each message and, for a genuinely multi-part
+      request, builds an ordered step list before running it, instead of deciding step-by-step as it
+      goes. Adds one extra round-trip per message; turn off if your local model's per-round latency makes
+      that too slow.
+    </p>
+    <label class="tool-rule">
+      <input
+        type="checkbox"
+        checked={planningEnabled}
+        onchange={(e) => onChangePlanningEnabled((e.target as HTMLInputElement).checked)}
+      />
+      <span class="conn-name">Plan complex requests before acting</span>
+    </label>
 
     <hr />
 

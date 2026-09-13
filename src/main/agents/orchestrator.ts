@@ -1,6 +1,7 @@
 import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
 import type { AgentRole } from '@shared/agents'
-import { AGENT_ROLE_LABELS } from '@shared/agents'
+import { AGENT_ROLE_LABELS, AGENT_ROLES } from '@shared/agents'
+import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
 import type { ModelProvider, ToolDefinition } from '../providers/types'
 import type { Tool, ToolContext } from '../tools/types'
 
@@ -47,12 +48,13 @@ function roleFromDelegateName(name: string, agents: Map<AgentRole, Agent>): Agen
   return agents.has(slug) ? slug : undefined
 }
 
-/** Tags text/tool_use events for UI attribution (the "X agent" chip) — safe at any nesting level, including the top level in forced-role mode. */
+/** Tags text/tool_use/warning events for UI attribution (the "X agent" chip) — safe at any nesting level, including the top level in forced-role mode. */
 function tagEvent(event: StreamEvent, agentRole: AgentRole | undefined): StreamEvent {
   if (!agentRole) return event
   if (event.type === 'text_delta') return { ...event, agentRole }
   if (event.type === 'tool_use_start') return { ...event, agentRole }
   if (event.type === 'status') return { ...event, agentRole }
+  if (event.type === 'warning') return { ...event, agentRole }
   return event
 }
 
@@ -83,11 +85,55 @@ interface AccumulatedToolCall {
   thoughtSignature?: string
 }
 
-/** Shared across every nesting level of one `run()` call — the round cap and cumulative token usage both need to span top-level + every delegate. */
+/** Shared across every nesting level of one `run()` call — the round cap, cumulative token usage, and per-round output budget all need to span top-level + every delegate. */
 interface RunState {
   roundsUsed: number
   inputTokens: number
   outputTokens: number
+  maxOutputTokens: number
+}
+
+const MIN_MAX_OUTPUT_TOKENS = 4096 // today's original flat value — kept as the floor, not the ceiling
+const OUTPUT_TOKENS_FRACTION = 0.5 // leave room for at least one more similarly-sized round within the same turn
+
+export interface PlanStep {
+  role: AgentRole
+  description: string
+}
+
+interface Plan {
+  complexity: 'simple' | 'compound'
+  steps: PlanStep[]
+}
+
+/** A sub-task's own result folded back into the shared conversation is capped
+ * before being added — otherwise plan execution could reintroduce the exact
+ * context-bloat failure it exists to prevent (a large `search_history` step
+ * result was what triggered the original hallucinated-tool-call bug). */
+const STEP_RESULT_CONTEXT_CAP = 2000
+
+const VALID_STEP_ROLES = new Set<string>(AGENT_ROLES)
+
+/** Fails open to `undefined` (treated as "simple" by the caller) on any parse/shape problem — a broken classifier response must never block the turn it's meant to help. */
+function parsePlan(text: string): Plan | undefined {
+  try {
+    const stripped = text
+      .trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/```\s*$/, '')
+    const parsed = JSON.parse(stripped)
+    if (parsed.complexity !== 'simple' && parsed.complexity !== 'compound') return undefined
+    if (!Array.isArray(parsed.steps)) return undefined
+    const steps: PlanStep[] = []
+    for (const s of parsed.steps) {
+      if (typeof s?.description !== 'string' || !s.description.trim()) return undefined
+      if (typeof s?.role !== 'string' || !VALID_STEP_ROLES.has(s.role)) return undefined
+      steps.push({ role: s.role as AgentRole, description: s.description })
+    }
+    return { complexity: parsed.complexity, steps }
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -110,17 +156,31 @@ export class Orchestrator {
     private readonly defaultTools: Tool[],
     private readonly confirmTool: (request: ToolConfirmRequest) => Promise<ConfirmDecision>,
     private readonly toolContext: ToolContext,
-    private readonly signal: AbortSignal
+    private readonly signal: AbortSignal,
+    /**
+     * Defaults to disabled so existing/unit-test callers that construct an
+     * Orchestrator directly without scripting an extra classify turn keep
+     * working unchanged — the real app (ipc/register.ts) always passes this
+     * explicitly, computed from the persisted `planningEnabled` setting
+     * (default on there, not here).
+     */
+    private readonly options: { planningEnabled: boolean } = { planningEnabled: false }
   ) {}
 
   /**
    * Runs one user turn. If `forcedRole` is set (manual override — see
    * TASKS.md orchestrator plan), skips the orchestrator's own routing
    * entirely and runs that specialist directly, with no delegate tools of
-   * its own available.
+   * its own available. Otherwise (Auto mode), optionally runs a
+   * classify-and-plan pass first (see `classifyAndPlan`) — a genuinely
+   * compound result routes through `executePlan`'s structured step
+   * execution instead of pure round-by-round improvisation; anything else
+   * (simple, planning disabled, or a failed/malformed classification) falls
+   * straight through to the same behavior this always had.
    */
   async *run(conversation: Message[], forcedRole?: AgentRole | null): AsyncIterable<OrchestratorEvent> {
-    const state: RunState = { roundsUsed: 0, inputTokens: 0, outputTokens: 0 }
+    const maxOutputTokens = await this.resolveMaxOutputTokens(conversation)
+    const state: RunState = { roundsUsed: 0, inputTokens: 0, outputTokens: 0, maxOutputTokens }
 
     if (forcedRole) {
       const agent = this.agents.get(forcedRole)
@@ -128,6 +188,161 @@ export class Orchestrator {
       const systemPrompt = agent.systemPrompt + this.buildForcedModeNotice(forcedRole)
       yield* this.runLoop(systemPrompt, agent.tools, conversation, state, forcedRole, [], true)
       return
+    }
+
+    const plan = this.options.planningEnabled ? yield* this.classifyAndPlan(conversation, state) : undefined
+
+    if (!plan || plan.steps.length <= 1) {
+      yield* this.runLoop(
+        this.buildOrchestratorSystemPrompt(),
+        this.defaultTools,
+        conversation,
+        state,
+        undefined,
+        this.buildDelegateToolDefinitions(),
+        true
+      )
+      return
+    }
+
+    yield* this.executePlan(plan, conversation, state)
+  }
+
+  /**
+   * The per-round output-token ceiling. Was a single flat `4096` forever,
+   * for every provider/model/round, unrelated to any real capacity — found
+   * live that this starved `gpt-oss` into an empty response
+   * (`finish_reason: "length"`, zero visible output; its hidden
+   * chain-of-thought reasoning counts against `maxTokens` before any
+   * visible output is produced), and separately, confirmed against each
+   * provider's own current docs that ordinary cloud replies had been capped
+   * to a fraction of their real ceiling the whole time (e.g. Claude Sonnet
+   * 5/Opus 5 really allow 128,000).
+   *
+   * Now: `maxOutputTokensFor(this.model)` (model-metadata.ts) gives the
+   * real, provider-enforced ceiling — this is a hard clamp, never exceeded,
+   * so a cloud model never gets asked for more than it actually accepts (a
+   * new class of hard API error otherwise). The *budget* within that
+   * ceiling scales off how much of the model's context window is actually
+   * free: a live reading when a provider can give one (today, Ollama's
+   * `loadedContextWindow`, a real `/api/ps` read of what's actually
+   * loaded), else the same static estimate `prepare-context.ts` already
+   * uses for input-side trimming. `countTokens` is a real network call for
+   * Anthropic/Google, but only once per turn (see `run()`), matching the
+   * cost this app already pays during history trimming before the
+   * Orchestrator is even constructed.
+   */
+  private async resolveMaxOutputTokens(conversation: Message[]): Promise<number> {
+    const ceiling = maxOutputTokensFor(this.model).tokens
+    const loaded = await this.provider.loadedContextWindow?.(this.model)
+    const windowTokens = loaded ?? contextWindowFor(this.model).tokens
+    const used = await this.provider.countTokens(conversation, this.model)
+    const remaining = Math.max(0, windowTokens - used)
+    const budget = Math.floor(remaining * OUTPUT_TOKENS_FRACTION)
+    return Math.min(ceiling, Math.max(MIN_MAX_OUTPUT_TOKENS, budget))
+  }
+
+  /**
+   * One dedicated, tool-free call ahead of the normal round loop — asks the
+   * model to judge whether the request needs more than one distinct
+   * sub-task and, if so, produce an ordered step list up front. Found live:
+   * a genuinely compound request could wander into an irrelevant,
+   * hallucinated tool call once retrieved context grew large mid-turn —
+   * this replaces that per-round discretion with a structural, upfront
+   * gate. Counts against the same shared `state.roundsUsed` cap as every
+   * other round. A genuine provider failure rethrows (surfaced like any
+   * other error, same as `runLoop`); an aborted signal returns `undefined`
+   * quietly, since the very next `runLoop`/`dispatchDelegate` call will hit
+   * the same aborted signal and produce the real "aborted" stop event.
+   */
+  private async *classifyAndPlan(
+    conversation: Message[],
+    state: RunState
+  ): AsyncGenerator<OrchestratorEvent, Plan | undefined> {
+    state.roundsUsed++
+    let text = ''
+    let stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'aborted' = 'end_turn'
+    let roundUsage: { inputTokens: number; outputTokens: number } | undefined
+
+    try {
+      for await (const event of this.provider.stream({
+        model: this.model,
+        system: this.buildClassifySystemPrompt(),
+        messages: conversation,
+        // Shares the same real, scaled-when-possible budget as every other
+        // round (see resolveMaxOutputTokens) — a flat small value here
+        // starved gpt-oss's hidden reasoning into an empty response before
+        // this existed (finish_reason:"length", 0 visible chars).
+        maxTokens: state.maxOutputTokens,
+        signal: this.signal
+      })) {
+        if (event.type === 'text_delta') text += event.text
+        else if (event.type === 'usage') roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
+        else if (event.type === 'message_stop') stopReason = event.stopReason
+      }
+    } catch (err) {
+      if (!this.signal.aborted) throw err
+      return undefined
+    }
+
+    if (roundUsage) {
+      state.inputTokens += roundUsage.inputTokens
+      state.outputTokens += roundUsage.outputTokens
+      yield { kind: 'stream', event: { type: 'usage', ...roundUsage } }
+    }
+
+    const plan = parsePlan(text)
+    if (!plan) {
+      // Report it, don't just quietly fall open — the fail-open behavior
+      // (proceed as if the request were simple) is still correct, but
+      // silently doing so hid exactly the failure mode this whole feature
+      // was built to catch (found live: an empty response from hitting the
+      // output-token limit, previously indistinguishable from "the model
+      // just said nothing needed planning").
+      const cause =
+        stopReason === 'max_tokens'
+          ? 'the classification response was cut off before it could finish (hit the output-token limit)'
+          : 'the classification response was not valid JSON'
+      const message = `Couldn't tell whether this request is simple or compound (${cause}) — treating it as a normal request instead.`
+      yield { kind: 'stream', event: { type: 'warning', message } }
+      yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message }] }
+    }
+    return plan
+  }
+
+  /**
+   * Walks a compound plan's steps in order, each one dispatched exactly
+   * like today's single delegate call, then runs one final top-level round
+   * so the model can synthesize everything the steps produced into the
+   * actual answer. `plan`/`plan_step_start`/`plan_step_done` are live-only
+   * UI signal — the real content of each step is already a normal
+   * persisted message via the same `dispatchDelegate` machinery every other
+   * delegated round already uses, so a reloaded session still shows the
+   * full text even though the live checklist animation doesn't replay.
+   */
+  private async *executePlan(plan: Plan, conversation: Message[], state: RunState): AsyncIterable<OrchestratorEvent> {
+    yield { kind: 'stream', event: { type: 'plan', steps: plan.steps } }
+
+    for (const [index, step] of plan.steps.entries()) {
+      yield { kind: 'stream', event: { type: 'plan_step_start', index } }
+      const result = yield* this.dispatchDelegate(step.role, { task: step.description }, conversation, state)
+      yield { kind: 'stream', event: { type: 'plan_step_done', index, isError: result.isError } }
+
+      const trimmed =
+        result.content.length > STEP_RESULT_CONTEXT_CAP
+          ? result.content.slice(0, STEP_RESULT_CONTEXT_CAP) + '\n[...truncated for context budget...]'
+          : result.content
+      const stepMessage: Message = {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `[Plan step ${index + 1} — ${AGENT_ROLE_LABELS[step.role]}]: ${step.description}\n\nResult:\n${trimmed}`
+          }
+        ]
+      }
+      yield { kind: 'message', role: 'user', content: stepMessage.content }
+      conversation.push(stepMessage)
     }
 
     yield* this.runLoop(
@@ -138,6 +353,38 @@ export class Orchestrator {
       undefined,
       this.buildDelegateToolDefinitions(),
       true
+    )
+  }
+
+  /**
+   * Built from `this.agents`' own `summary` strings — the same source
+   * `buildOrchestratorSystemPrompt` already uses — rather than a bare role
+   * enum. Found live: given only role names, the classifier sometimes
+   * assigned a lookup step to Planning (reasoning-only, no tools at all)
+   * instead of Research, which actually has `search_history`/`web_search`.
+   * The run self-corrected in the final synthesis round (which still has
+   * every tool available), but a plan step should be routed to a role that
+   * can actually do it.
+   */
+  private buildClassifySystemPrompt(): string {
+    const specialists = [...this.agents.values()]
+      .map((a) => `- ${a.role}: ${a.summary}${a.tools.length === 0 ? ' (no tools of its own — reasoning/text only)' : ''}`)
+      .join('\n')
+    return (
+      "Before anything else, classify the user's latest request and, only if it genuinely needs more " +
+      'than one distinct sub-task, build a short ordered plan for it. Respond with ONLY a single JSON ' +
+      'object, no markdown fence, no other text:\n' +
+      '{"complexity": "simple" | "compound", "steps": [{"role": "<one of the role ids below>", ' +
+      '"description": "..."}]}\n' +
+      '- "simple": answerable directly, or with at most one tool call or delegation. Use an empty steps ' +
+      'array or a single entry.\n' +
+      '- "compound": genuinely separate sub-tasks (e.g. two independent lookups, or a lookup followed by ' +
+      "a separate calculation) that each need a specialist's tools. List each as its own ordered step, " +
+      "tagging the role whose tools can actually do it — don't route a step needing a tool to a role " +
+      "with no tools. If a sub-part needs no tool at all (pure reasoning, or combining results already " +
+      "gathered), don't give it its own step — it belongs in the final answer instead.\n" +
+      "Keep the step count small and don't over-decompose a genuinely simple request into multiple " +
+      `trivial steps just to look thorough.\n\nRoles:\n${specialists}`
     )
   }
 
@@ -263,7 +510,7 @@ export class Orchestrator {
           model: this.model,
           system: systemPrompt,
           messages: conversation,
-          maxTokens: 4096,
+          maxTokens: state.maxOutputTokens,
           tools: toolDefs.length ? toolDefs : undefined,
           signal: this.signal
         })) {
@@ -310,6 +557,16 @@ export class Orchestrator {
 
       const assistantBlocks: ContentBlock[] = []
       if (assistantText) assistantBlocks.push({ type: 'text', text: assistantText, agentRole })
+      if (stopReason === 'max_tokens') {
+        // Found live against gpt-oss (empty response) before this existed —
+        // don't silently treat a truncated round as a normal, complete one.
+        // Whatever text/tool calls DID make it through above are kept, not
+        // discarded; this just tells the user/caller the round was cut off
+        // before it necessarily finished.
+        const message = `This response was cut off after reaching the ${state.maxOutputTokens}-token output limit for this round — it may be incomplete.`
+        assistantBlocks.push({ type: 'warning', message, agentRole })
+        yield { kind: 'stream', event: tagEvent({ type: 'warning', message }, agentRole) }
+      }
       const inputByCallId = new Map<string, Record<string, unknown>>()
       for (const call of toolCalls) {
         let input: Record<string, unknown> = {}
@@ -340,7 +597,7 @@ export class Orchestrator {
       conversation.push({ role: 'assistant', content: assistantBlocks })
 
       if (stopReason !== 'tool_use' || toolCalls.length === 0) {
-        return { text: assistantText, isError: false }
+        return { text: assistantText, isError: stopReason === 'max_tokens' }
       }
 
       const resultBlocks: ContentBlock[] = []

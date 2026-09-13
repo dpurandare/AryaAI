@@ -22,6 +22,13 @@ export interface ScriptedTurn {
   throwError?: string
 }
 
+export interface MockProviderOptions {
+  /** When set, the mock implements `loadedContextWindow` returning this value — exercises Orchestrator.resolveMaxOutputTokens's scaled path. Omitted (the default) means no `loadedContextWindow` method at all, matching every cloud-provider adapter and exercising the unchanged flat-4096 fallback path every existing test relies on. */
+  loadedContextWindow?: number
+  /** `countTokens()`'s return value — defaults to 0, preserving every existing test's behavior. */
+  tokensUsed?: number
+}
+
 /**
  * A ModelProvider driven by a scripted, ordered list of turns instead of a
  * real API. Orchestrator.run() calls provider.stream() exactly once per
@@ -39,9 +46,21 @@ export class MockProvider implements ModelProvider {
 
   private readonly turns: ScriptedTurn[]
   private nextTurnIndex = 0
+  private readonly tokensUsed: number
+  /**
+   * A value here vs. `undefined` here behaves identically to the calling
+   * code's `provider.loadedContextWindow?.(model)` as a real cloud provider
+   * adapter not implementing the method at all — optional chaining short-
+   * circuits on either shape. Simpler than conditionally defining/omitting
+   * the method itself, with no class-field-initializer-ordering risk.
+   */
+  readonly loadedContextWindow?: (model: string) => Promise<number | undefined>
 
-  constructor(turns: ScriptedTurn[]) {
+  constructor(turns: ScriptedTurn[], options: MockProviderOptions = {}) {
     this.turns = turns
+    this.tokensUsed = options.tokensUsed ?? 0
+    const contextWindow = options.loadedContextWindow
+    this.loadedContextWindow = contextWindow === undefined ? undefined : async () => contextWindow
   }
 
   async listModels(): Promise<string[]> {
@@ -49,7 +68,7 @@ export class MockProvider implements ModelProvider {
   }
 
   async countTokens(): Promise<number> {
-    return 0
+    return this.tokensUsed
   }
 
   async *stream(request: CompletionRequest): AsyncIterable<StreamEvent> {

@@ -42,7 +42,13 @@ import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
 import { createDefaultProviderRegistry } from '../providers/setup'
 import type { Message } from '../providers/types'
 import { exportSession } from '../sessions/export'
-import { createDefaultRegistry, createToolContext, defaultWorkspaceRoot, WORKSPACE_ROOT_SETTING_KEY } from '../tools/setup'
+import {
+  createDefaultRegistry,
+  createToolContext,
+  defaultWorkspaceRoot,
+  PLANNING_ENABLED_SETTING_KEY,
+  WORKSPACE_ROOT_SETTING_KEY
+} from '../tools/setup'
 import type { ToolContext } from '../tools/types'
 import { Orchestrator, type ConfirmDecision, type ToolConfirmRequest } from '../agents/orchestrator'
 import { createAgents } from '../agents/roles'
@@ -384,7 +390,9 @@ async function runChat(
       currentSessionId: sessionId,
       registerSavedQuery: (query) => savedQueryManager.register(query, toolRegistry)
     },
-    signal
+    signal,
+    // Missing/unset reads as enabled — default on (see PLANNING_ENABLED_SETTING_KEY's own doc comment).
+    { planningEnabled: getSetting(PLANNING_ENABLED_SETTING_KEY) !== 'false' }
   )
 
   for await (const orchestratorEvent of orchestrator.run(conversation, forcedRole)) {

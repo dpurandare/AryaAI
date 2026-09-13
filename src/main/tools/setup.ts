@@ -25,6 +25,9 @@ import { searchHistoryTool } from '../search-history/tool'
 /** Settings key the persisted, user-configurable workspace root is stored under (TASKS.md #41). */
 export const WORKSPACE_ROOT_SETTING_KEY = 'workspaceRoot'
 
+/** Settings key for the classify-and-plan pre-pass toggle (see agents/orchestrator.ts's `classifyAndPlan`). Missing/unset reads as enabled — default on. */
+export const PLANNING_ENABLED_SETTING_KEY = 'planningEnabled'
+
 /** Fallback when the user hasn't configured a workspace root yet — a dedicated folder under Documents. */
 export function defaultWorkspaceRoot(): string {
   return join(app.getPath('documents'), 'Sachiv Workspace')

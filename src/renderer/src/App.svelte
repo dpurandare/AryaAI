@@ -30,8 +30,9 @@
    */
   interface DisplaySegment {
     id: string
-    kind: 'text' | 'tool'
+    kind: 'text' | 'tool' | 'warning'
     agentRole?: AgentRole
+    /** Holds the plain message for both 'text' and 'warning' kinds. */
     text?: string
     toolCall?: ToolCallDisplay
   }
@@ -46,6 +47,12 @@
      * of its own already reporting progress (a streaming text cursor, or a
      * tool call's own pending label). */
     statusText?: string
+    /** Live-only checklist for a compound request's classify-and-plan pass
+     * (see orchestrator.ts's `executePlan`) — never persisted; each step's
+     * actual result already arrives as an ordinary segment via the same
+     * delegation machinery normal delegation uses, so reloading a session
+     * shows the full text even without this overlay. */
+    plan?: { steps: { role: AgentRole; description: string }[]; stepStatus: ('pending' | 'running' | 'done' | 'error')[] }
     segments: DisplaySegment[]
   }
 
@@ -150,6 +157,12 @@
   // blanket toggle above, not a replacement for it. A plain object, not
   // $state(new Set()) — see feedback_svelte5-runes-gotchas memory.
   let autoApproveRules = $state<Record<string, boolean>>({})
+  // Gates the orchestrator's classify-and-plan pre-pass (main/agents/
+  // orchestrator.ts's `classifyAndPlan`) — an extra round-trip per message,
+  // default on, but worth an escape hatch given local models' documented
+  // long per-round "thinking" phase. Mirrors this app's default-on-missing
+  // settings convention (see main/ipc/register.ts's own read of this key).
+  let planningEnabled = $state(true)
 
   function mapMessagesToDisplay(records: MessageDto[]): DisplayMessage[] {
     const result: DisplayMessage[] = []
@@ -174,6 +187,8 @@
       for (const b of m.content) {
         if (b.type === 'text') {
           segments.push({ id: crypto.randomUUID(), kind: 'text', agentRole: b.agentRole, text: b.text })
+        } else if (b.type === 'warning') {
+          segments.push({ id: crypto.randomUUID(), kind: 'warning', agentRole: b.agentRole, text: b.message })
         } else if (b.type === 'tool_use') {
           const seg: DisplaySegment = {
             id: crypto.randomUUID(),
@@ -319,6 +334,19 @@
           inputTokens: runtime.sessionUsage.inputTokens + event.inputTokens,
           outputTokens: runtime.sessionUsage.outputTokens + event.outputTokens
         }
+      } else if (event.type === 'warning') {
+        msg.segments.push({
+          id: crypto.randomUUID(),
+          kind: 'warning',
+          agentRole: event.agentRole,
+          text: event.message
+        })
+      } else if (event.type === 'plan') {
+        msg.plan = { steps: event.steps, stepStatus: event.steps.map(() => 'pending') }
+      } else if (event.type === 'plan_step_start') {
+        if (msg.plan) msg.plan.stepStatus[event.index] = 'running'
+      } else if (event.type === 'plan_step_done') {
+        if (msg.plan) msg.plan.stepStatus[event.index] = event.isError ? 'error' : 'done'
       } else if (event.type === 'error') {
         appendTextSegment(msg, `Error: ${event.message}`)
         msg.pending = false
@@ -365,6 +393,11 @@
   function toggleAutoApproveTool(name: string, value: boolean): void {
     autoApproveRules = { ...autoApproveRules, [name]: value }
     window.sachiv.setSetting('autoApproveToolRules', JSON.stringify(autoApproveRules))
+  }
+
+  function changePlanningEnabled(value: boolean): void {
+    planningEnabled = value
+    window.sachiv.setSetting('planningEnabled', String(value))
   }
 
   async function loadProviderState(id: string): Promise<void> {
@@ -442,6 +475,10 @@
     }
   })
 
+  window.sachiv.getSetting('planningEnabled').then((stored) => {
+    if (stored !== null && stored !== undefined) planningEnabled = stored !== 'false'
+  })
+
   initProvider()
   loadSessions()
 </script>
@@ -506,10 +543,12 @@
         {autoApproveRules}
         {providers}
         {themeMode}
+        {planningEnabled}
         onSave={saveApiKey}
         onClose={() => (showSettings = false)}
         onToggleAutoApproveRule={toggleAutoApproveTool}
         onChangeTheme={changeThemeMode}
+        onChangePlanningEnabled={changePlanningEnabled}
       />
     {:else}
       <ChatView

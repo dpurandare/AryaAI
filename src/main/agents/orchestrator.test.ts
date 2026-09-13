@@ -471,4 +471,409 @@ describe('Orchestrator (integration, mocked provider)', () => {
     await expect(iterator.next()).resolves.toMatchObject({ value: { event: { type: 'status' } } })
     await expect(iterator.next()).rejects.toThrow('a real network failure')
   })
+
+  describe('classify-and-plan (planningEnabled)', () => {
+    it('a simple request costs one extra classify call but otherwise behaves exactly as before', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Hello! How can I help?', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(provider.requests).toHaveLength(2) // the classify call, then the one normal round
+      expect(streamEvents.some((e) => e.type === 'plan')).toBe(false)
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hello! How can I help?' })
+    })
+
+    it('a compound plan dispatches each step to its tagged specialist in order, then synthesizes a final answer', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        // Classify call: two steps, two different specialists.
+        {
+          text: '{"complexity": "compound", "steps": [{"role": "research", "description": "find X"}, {"role": "data", "description": "find Y"}]}',
+          stopReason: 'end_turn'
+        },
+        // Step 1 (nested, research): its own single-round reply.
+        { text: 'X is 5.', stopReason: 'end_turn' },
+        // Step 2 (nested, data): its own single-round reply.
+        { text: 'Y is 10.', stopReason: 'end_turn' },
+        // Final synthesis round (outer, untagged).
+        { text: 'X is 5 and Y is 10.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }
+      ])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(streamEvents).toContainEqual({
+        type: 'plan',
+        steps: [
+          { role: 'research', description: 'find X' },
+          { role: 'data', description: 'find Y' }
+        ]
+      })
+      expect(streamEvents).toContainEqual({ type: 'plan_step_start', index: 0 })
+      expect(streamEvents).toContainEqual({ type: 'plan_step_done', index: 0, isError: false })
+      expect(streamEvents).toContainEqual({ type: 'plan_step_start', index: 1 })
+      expect(streamEvents).toContainEqual({ type: 'plan_step_done', index: 1, isError: false })
+
+      // Each step's result was folded into the shared conversation as a real,
+      // persisted message (same visibility a normal delegation result gets) —
+      // not just a live-only UI signal.
+      const userMessages = events.filter((e) => e.kind === 'message' && e.role === 'user')
+      expect(
+        userMessages.some(
+          (e) =>
+            e.kind === 'message' &&
+            e.content.some((c) => c.type === 'text' && c.text.includes('[Plan step 1 — Research]') && c.text.includes('X is 5.'))
+        )
+      ).toBe(true)
+      expect(
+        userMessages.some(
+          (e) =>
+            e.kind === 'message' &&
+            e.content.some((c) => c.type === 'text' && c.text.includes('[Plan step 2 — Data]') && c.text.includes('Y is 10.'))
+        )
+      ).toBe(true)
+
+      // The final synthesis round is the true end of the run — same untagged,
+      // non-tool_use, last-event shape every other test in this file checks.
+      expect(streamEvents.at(-1)).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'X is 5 and Y is 10.' })
+    })
+
+    it('malformed classifier JSON fails open to normal behavior instead of crashing the turn', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: 'not valid json at all', stopReason: 'end_turn' },
+        { text: 'Hi there!', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(streamEvents.some((e) => e.type === 'plan')).toBe(false)
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hi there!' })
+    })
+
+    it('planningEnabled: false skips the classify call entirely', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      // Only one scripted turn — if the classify call fired anyway, this
+      // turn would be consumed by it instead and the real reply would throw
+      // "MockProvider ran out of scripted turns".
+      const provider = new MockProvider([{ text: 'Hi!', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(provider.requests).toHaveLength(1)
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hi!' })
+    })
+  })
+
+  describe('resolveMaxOutputTokens (scaling per-round maxTokens off a real model ceiling + context budget)', () => {
+    it('scales maxTokens up well past the flat default for a local model with a large, mostly-free live context window', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      // 131072 (a real gpt-oss:20b live reading) with only 1000 tokens
+      // already used: remaining=130072, budget=floor(130072*0.5)=65036,
+      // clamped to the local-model ceiling (32768 — Ollama has no real
+      // per-call rejection risk, unlike a cloud provider's registered max).
+      const provider = new MockProvider([{ text: 'Hello!', stopReason: 'end_turn' }], {
+        loadedContextWindow: 131072,
+        tokensUsed: 1000
+      })
+      const orchestrator = new Orchestrator(
+        provider,
+        'gpt-oss:20b', // local-shaped id ("name:tag") — see model-metadata.ts's isLocalModelId
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      expect(provider.requests).toHaveLength(1)
+      expect(provider.requests[0].maxTokens).toBe(32768)
+    })
+
+    it('never drops below the 4096 floor even when the live context window is nearly exhausted', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      // remaining = max(0, 5000 - 4900) = 100 tokens — far below any sane
+      // floor; the clamp must still guarantee a usable budget.
+      const provider = new MockProvider([{ text: 'Hello!', stopReason: 'end_turn' }], {
+        loadedContextWindow: 5000,
+        tokensUsed: 4900
+      })
+      const orchestrator = new Orchestrator(
+        provider,
+        'gpt-oss:20b',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      expect(provider.requests[0].maxTokens).toBe(4096)
+    })
+
+    it('falls back to the static context-window estimate when there is no live reading, still floors at 4096 for an unrecognized model id', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      // No loadedContextWindow option — matches every cloud-provider adapter
+      // exactly. 'mock-model' matches no known prefix, so both the window
+      // estimate (8192, model-metadata.ts's DEFAULT_CONTEXT_WINDOW) and the
+      // output ceiling (4096, DEFAULT_MAX_OUTPUT_TOKENS) are generic
+      // fallbacks — remaining=8192, budget=4096, clamped to ceiling 4096.
+      // The two independent fallbacks agreeing on 4096 here is coincidence,
+      // not a special "no scaling" path — see the two tests below for a
+      // *recognized* cloud model actually scaling up and getting clamped.
+      const provider = new MockProvider([{ text: 'Hello!', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      expect(provider.requests[0].maxTokens).toBe(4096)
+    })
+
+    it('scales a recognized cloud model up dramatically past the old flat 4096, with no live reading needed', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      // 'claude-sonnet-5': static context window 200,000 (CONTEXT_WINDOWS),
+      // real output ceiling 128,000 (MAX_OUTPUT_TOKENS) — remaining=200000,
+      // budget=floor(200000*0.5)=100000, under the 128000 ceiling so it's
+      // not clamped. This is the concrete fix for ordinary Claude replies
+      // having been capped to ~4096 (3% of their real ceiling) forever.
+      const provider = new MockProvider([{ text: 'Hello!', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(
+        provider,
+        'claude-sonnet-5',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      expect(provider.requests[0].maxTokens).toBe(100_000)
+    })
+
+    it('clamps to the real per-model ceiling even when the computed budget would exceed it', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      // 'gpt-4o': static context window 128,000 (the 'gpt-' CONTEXT_WINDOWS
+      // entry), budget=floor(128000*0.5)=64000 — but GPT-4o's real output
+      // ceiling is only 16,384, so the clamp must win, not the budget math.
+      // Getting this wrong risks a real hard API rejection for exceeding
+      // the model's actual max_tokens, exactly the failure mode this
+      // design was built to avoid.
+      const provider = new MockProvider([{ text: 'Hello!', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(
+        provider,
+        'gpt-4o',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      expect(provider.requests[0].maxTokens).toBe(16_384)
+    })
+  })
+
+  describe('truncation reporting (not silently swallowing a hit output-token limit)', () => {
+    it('a round ending with stopReason "max_tokens" reports a warning, keeps the partial text, and marks the result as an error', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ text: 'This got cut', stopReason: 'max_tokens' }])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      const warning = streamEvents.find((e) => e.type === 'warning')
+      expect(warning).toMatchObject({ type: 'warning' })
+      expect((warning as { message: string }).message).toMatch(/cut off/i)
+      // Partial text is kept, not discarded.
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'This got cut' })
+
+      const messages = events.filter((e) => e.kind === 'message')
+      const persistedWarning = messages.find(
+        (e) => e.kind === 'message' && e.content.some((c) => c.type === 'warning')
+      )
+      expect(persistedWarning).toBeDefined()
+    })
+
+    it('a delegate whose own round hits the output-token limit surfaces isError on its tool_result, not a silent success', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_research', input: { task: 'look something up' } }] },
+        { text: 'Partial finding', stopReason: 'max_tokens' },
+        { text: 'The Research specialist only got a partial result.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'look something up' }] }
+      ])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      const toolResult = streamEvents.find((e) => e.type === 'tool_result')
+      expect(toolResult).toMatchObject({ isError: true })
+      expect(streamEvents.some((e) => e.type === 'warning' && e.agentRole === 'research')).toBe(true)
+    })
+
+    it('a classify-and-plan call that hits the output-token limit reports why, instead of silently falling open unremarked', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        // Empty content + stopReason max_tokens — the exact real shape
+        // confirmed live against gpt-oss with too small a budget.
+        { text: '', stopReason: 'max_tokens' },
+        { text: 'Hello! How can I help?', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      const warning = streamEvents.find((e) => e.type === 'warning')
+      expect(warning).toBeDefined()
+      expect((warning as { message: string }).message).toMatch(/output-token limit/i)
+      // Still falls open to normal behavior — the real reply still happens.
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hello! How can I help?' })
+    })
+
+    it('a classify-and-plan call returning genuinely malformed (non-truncated) JSON reports a different, non-truncation reason', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: 'not json at all', stopReason: 'end_turn' },
+        { text: 'Hi there!', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      const warning = streamEvents.find((e) => e.type === 'warning')
+      expect(warning).toBeDefined()
+      expect((warning as { message: string }).message).toMatch(/not valid JSON/i)
+    })
+  })
 })
