@@ -17,7 +17,10 @@ const VECTORS: Record<string, number[]> = {
   'revenue was 4.2 million': [1, 0, 0, 0],
   'revenue is now 5.1 million': [0.95, 0.1, 0, 0], // close to the above
   'the weather today is sunny': [0, 0, 1, 0], // unrelated
-  query: [1, 0, 0, 0] // matches the first vector closely
+  query: [1, 0, 0, 0], // matches the first vector closely
+  'Tallest mountain discussed:\nMount Everest is the tallest mountain.': [0, 1, 0, 0],
+  'Horizontal speed for landing:\nYou need 15 ft/s to land 50 feet away.': [0, 0, 0, 1],
+  'mountain question': [0, 1, 0, 0] // matches only the mountain half above
 }
 
 vi.mock('../providers/setup', () => ({
@@ -90,24 +93,66 @@ describe('search-history indexer', () => {
     expect(getIndexState()).toEqual({ kind: 'ready', indexed: 2, total: 2 })
   })
 
-  it('searchIndex finds the nearest match and excludes the current session', async () => {
+  it('searchIndex finds the nearest match, ranked correctly, including a match from the calling session itself', async () => {
     const sessionA = createSession('Session A')
     const sessionB = createSession('Session B')
     const sessionC = createSession('Session C (current)')
     insertMessage(sessionA.id, 'assistant', [{ type: 'text', text: 'revenue was 4.2 million' }])
     insertMessage(sessionB.id, 'assistant', [{ type: 'text', text: 'the weather today is sunny' }])
-    // A near-duplicate in the *current* session should never come back.
+    // No longer excluded (see indexer.ts's searchIndex doc comment) — a
+    // long session's own sliding window can drop this exact message from
+    // the model's live context, so it needs to be findable here too.
     insertMessage(sessionC.id, 'assistant', [{ type: 'text', text: 'revenue is now 5.1 million' }])
 
     await runBackfill()
 
-    // Two other-session candidates exist, so both come back (KNN has no
-    // relevance threshold — that judgment is left to the model via the
-    // `relevance` score) — but the closer one must rank first, and the
-    // current session's near-duplicate must never appear at all.
-    const hits = await searchIndex('query', sessionC.id, 5)
-    expect(hits.map((h) => h.sessionId)).not.toContain(sessionC.id)
+    // Three candidates exist (KNN has no relevance threshold — that
+    // judgment is left to the model via the `relevance` score); the
+    // closest must rank first, and the current session's own message must
+    // still appear somewhere in the results, not be silently dropped.
+    const hits = await searchIndex('query', 5)
+    expect(hits.map((h) => h.sessionId)).toContain(sessionC.id)
     expect(hits[0].sessionId).toBe(sessionA.id)
+    expect(hits[0].text).toBe('revenue was 4.2 million')
+  })
+
+  it('a query matching only one topic of a composite two-topic message returns just that segment, not the whole message', async () => {
+    // Found live: a genuinely-authored reply answering a compound question
+    // ("tallest mountain discussed" + "horizontal speed for a landing")
+    // was stored and embedded as one message — a later query matching only
+    // the mountain half returned the landing-speed half too, since
+    // retrieval operated at message granularity. Chunking on the blank
+    // line between the two topics (chunk-text.ts) gives each its own
+    // vector, so only the actually-relevant one comes back.
+    const session = createSession('Compound answer')
+    insertMessage(session.id, 'assistant', [
+      {
+        type: 'text',
+        text:
+          'Tallest mountain discussed:\nMount Everest is the tallest mountain.\n\n' +
+          'Horizontal speed for landing:\nYou need 15 ft/s to land 50 feet away.'
+      }
+    ])
+    await runBackfill()
+
+    // limit=1: with the old one-vector-per-message scheme, this exact
+    // message (however it happened to embed as a whole) was the only
+    // candidate and always came back complete, landing-speed section
+    // included. Chunking gives the two topics independent vectors, so the
+    // closest (and only, at limit=1) result is exactly the relevant
+    // segment — the unrelated topic doesn't ride along.
+    const hits = await searchIndex('mountain question', 1)
+    expect(hits).toHaveLength(1)
+    expect(hits[0].text).toBe('Tallest mountain discussed:\nMount Everest is the tallest mountain.')
+    expect(hits[0].text).not.toContain('Horizontal speed')
+  })
+
+  it('a single-topic message (no blank lines) is still indexed and returned in full, unchanged', async () => {
+    const session = createSession('S1')
+    insertMessage(session.id, 'assistant', [{ type: 'text', text: 'revenue was 4.2 million' }])
+    await runBackfill()
+
+    const hits = await searchIndex('query', 5)
     expect(hits[0].text).toBe('revenue was 4.2 million')
   })
 

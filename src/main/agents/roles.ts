@@ -56,7 +56,9 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'or niche queries. When it does, fall back to your own knowledge and say plainly that a real ' +
         'web search was not available for that query rather than guessing. Use search_history when a ' +
         "question needs recalling something from an earlier conversation or comparing how a detail " +
-        'changed over time (a "delta") — it searches the user\'s own past sessions, not the current one. ' +
+        'changed over time (a "delta") — it searches the user\'s own past sessions, including this ' +
+        'one (useful if this conversation has grown long enough that something earlier is no longer ' +
+        'visible to you). ' +
         "If search_history reports it's unavailable, tell the user plainly rather than silently working " +
         'around it or guessing. A request can need more than just retrieving that past context — e.g. ' +
         '"search for the analysis we did for X, and show a comparison for Y" means finding X via ' +

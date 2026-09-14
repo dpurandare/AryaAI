@@ -3,6 +3,7 @@ import { getSetting } from '../db/settings'
 import { getApiKey } from '../security/keychain'
 import { getEmbeddingProvider } from '../providers/setup'
 import { extractSearchableText } from './extract-text'
+import { chunkText } from './chunk-text'
 import type { ContentBlock } from '@shared/protocol'
 
 export const EMBEDDING_PROVIDER_SETTING_KEY = 'embeddingProviderId'
@@ -69,20 +70,26 @@ function vectorToBuffer(vector: number[]): Buffer {
 }
 
 /** vec0 tables need their rowid passed as a BigInt via better-sqlite3, not a plain number — confirmed empirically. */
-function ensureVectorTable(dimension: number): void {
+function ensureChunkVectorTable(dimension: number): void {
   getDb().exec(
-    `CREATE VIRTUAL TABLE IF NOT EXISTS message_vectors USING vec0(embedding float[${dimension}] distance_metric=cosine)`
+    `CREATE VIRTUAL TABLE IF NOT EXISTS message_chunk_vectors USING vec0(embedding float[${dimension}] distance_metric=cosine)`
   )
 }
 
 /**
- * Embeds one message's text and stores it, only if the resulting (provider,
- * model) matches the index's existing config (or this is the very first
- * embed, which sets that config). Returns false, without throwing, if a
- * mismatch means this message can't be indexed right now — the caller
- * (backfill) just leaves it for after a rebuild.
+ * Chunks one message's text (chunk-text.ts) and embeds+stores each chunk
+ * separately, only if the resulting (provider, model) matches the index's
+ * existing config (or this is the very first embed, which sets that
+ * config). Returns false, without throwing, if a mismatch means this
+ * message can't be indexed right now — the caller (backfill) just leaves
+ * it for after a rebuild.
+ *
+ * Embeds *before* the bookkeeping insert, same ordering as the original
+ * single-vector version — a thrown error here must leave no bookkeeping
+ * row, so the next backfill pass retries the message, rather than
+ * incorrectly marking it "handled" with nothing actually indexed.
  */
-async function embedAndStore(
+async function embedAndStoreChunks(
   messageId: string,
   sessionId: string,
   text: string,
@@ -94,18 +101,27 @@ async function embedAndStore(
     return false
   }
 
+  const db = getDb()
+  // Cheap pre-check, not itself the idempotency guarantee (a real
+  // concurrent race between live indexing and backfill is still resolved
+  // by the ON CONFLICT below — see drainQueue's doc comment) — just avoids
+  // wasting an embed call on a message another in-flight job already
+  // fully processed.
+  if (db.prepare('SELECT 1 FROM message_embeddings WHERE message_id = ?').get(messageId)) {
+    return true
+  }
+
+  const chunks = chunkText(text)
   const apiKey = getApiKey(providerId)
   const provider = getEmbeddingProvider(providerId, apiKey)
-  const [vector] = await provider.embed([text], model)
+  const vectors = await provider.embed(chunks, model)
 
-  const db = getDb()
   const now = Date.now()
-
   if (!meta) {
-    ensureVectorTable(vector.length)
+    ensureChunkVectorTable(vectors[0].length)
     db.prepare(
       'INSERT INTO embedding_index_meta (id, provider_id, model, dimension, created_at) VALUES (1, ?, ?, ?, ?)'
-    ).run(providerId, model, vector.length, now)
+    ).run(providerId, model, vectors[0].length, now)
   }
 
   const insertEmbedding = db.prepare(
@@ -113,12 +129,16 @@ async function embedAndStore(
       'ON CONFLICT(message_id) DO NOTHING'
   )
   const result = insertEmbedding.run(messageId, sessionId, model, now)
-  if (result.changes === 0) return true // already indexed (idempotent re-run)
+  if (result.changes === 0) return true // lost a race to another job — don't double-insert chunks
 
-  db.prepare('INSERT INTO message_vectors(rowid, embedding) VALUES (?, ?)').run(
-    BigInt(result.lastInsertRowid),
-    vectorToBuffer(vector)
+  const insertChunk = db.prepare(
+    'INSERT INTO message_chunks (message_id, session_id, chunk_text, created_at) VALUES (?, ?, ?, ?)'
   )
+  const insertVector = db.prepare('INSERT INTO message_chunk_vectors(rowid, embedding) VALUES (?, ?)')
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkResult = insertChunk.run(messageId, sessionId, chunks[i], now)
+    insertVector.run(BigInt(chunkResult.lastInsertRowid), vectorToBuffer(vectors[i]))
+  }
   return true
 }
 
@@ -137,7 +157,7 @@ export function enqueueMessage(messageId: string, sessionId: string, content: Co
   pendingJobs.push(async () => {
     const config = getEmbeddingConfig()
     try {
-      await embedAndStore(messageId, sessionId, text, config.providerId, config.model)
+      await embedAndStoreChunks(messageId, sessionId, text, config.providerId, config.model)
     } catch (err) {
       console.error(`search_history: failed to index message ${messageId}:`, err)
     }
@@ -209,7 +229,7 @@ export async function runBackfill(): Promise<void> {
           continue
         }
         try {
-          const ok = await embedAndStore(row.id, row.session_id, text, config.providerId, config.model)
+          const ok = await embedAndStoreChunks(row.id, row.session_id, text, config.providerId, config.model)
           if (!ok) return // config changed mid-backfill — stop, needs rebuild
         } catch (err) {
           console.error(`search_history: backfill failed for message ${row.id}:`, err)
@@ -226,7 +246,12 @@ export async function runBackfill(): Promise<void> {
 
 export async function rebuildIndex(): Promise<void> {
   const db = getDb()
+  // message_vectors is the pre-chunking table — nothing reads it anymore,
+  // this just cleans up the now-vestigial artifact for anyone who rebuilds
+  // (a fresh install never creates it at all).
   db.exec('DROP TABLE IF EXISTS message_vectors')
+  db.exec('DROP TABLE IF EXISTS message_chunk_vectors')
+  db.exec('DELETE FROM message_chunks')
   db.exec('DELETE FROM message_embeddings')
   db.exec('DELETE FROM embedding_index_meta')
   await runBackfill()
@@ -248,11 +273,28 @@ interface SearchRow {
   session_id: string
   title: string
   created_at: number
-  content: string
+  chunk_text: string
   distance: number
 }
 
-export async function searchIndex(query: string, excludeSessionId: string, limit: number): Promise<SearchHit[]> {
+/**
+ * No longer excludes the calling session (see tool.ts's doc comment for
+ * why) — a message from the current session can legitimately be the right
+ * hit now that context/prepare-context.ts's sliding window can drop old
+ * turns from a long-running session's own live context, leaving the model
+ * with no other way back to them. The minor cost (an already-in-context
+ * message occasionally also showing up in results) is harmless — the model
+ * just sees something it already knows twice, not something wrong.
+ *
+ * Queries at chunk granularity (message_chunk_vectors/message_chunks), not
+ * whole-message — `chunk_text` is stored directly on the chunk row, so a
+ * hit is exactly the matched segment, not the whole original message
+ * re-derived via extractSearchableText. Found live: a genuinely-authored
+ * reply answering two unrelated topics in one message (e.g. "tallest
+ * mountain discussed" + "horizontal speed for a landing") used to come
+ * back in full for a query matching only one of them.
+ */
+export async function searchIndex(query: string, limit: number): Promise<SearchHit[]> {
   const config = getEmbeddingConfig()
   const apiKey = getApiKey(config.providerId)
   const provider = getEmbeddingProvider(config.providerId, apiKey)
@@ -262,19 +304,17 @@ export async function searchIndex(query: string, excludeSessionId: string, limit
   const rows = getDb()
     .prepare(
       `WITH knn AS (
-         SELECT rowid, distance FROM message_vectors
+         SELECT rowid, distance FROM message_chunk_vectors
          WHERE embedding MATCH ? AND k = ?
        )
-       SELECT me.message_id, me.session_id, s.title, m.created_at, m.content, knn.distance
+       SELECT mc.message_id, mc.session_id, s.title, mc.created_at, mc.chunk_text, knn.distance
        FROM knn
-       JOIN message_embeddings me ON me.id = knn.rowid
-       JOIN messages m ON m.id = me.message_id
-       JOIN sessions s ON s.id = me.session_id
-       WHERE me.session_id != ?
+       JOIN message_chunks mc ON mc.id = knn.rowid
+       JOIN sessions s ON s.id = mc.session_id
        ORDER BY knn.distance ASC
        LIMIT ?`
     )
-    .all(vectorToBuffer(queryVector), overFetch, excludeSessionId, limit) as SearchRow[]
+    .all(vectorToBuffer(queryVector), overFetch, limit) as SearchRow[]
 
   return rows.map((row) => ({
     messageId: row.message_id,
@@ -282,6 +322,6 @@ export async function searchIndex(query: string, excludeSessionId: string, limit
     sessionTitle: row.title,
     createdAt: row.created_at,
     distance: row.distance,
-    text: extractSearchableText(JSON.parse(row.content) as ContentBlock[])
+    text: row.chunk_text
   }))
 }

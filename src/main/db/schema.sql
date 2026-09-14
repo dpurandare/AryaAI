@@ -27,10 +27,11 @@ CREATE TABLE IF NOT EXISTS session_usage (
 );
 
 -- search_history: which (provider, model) — and the dimension it produced —
--- the current message_vectors index was built with. A single row (id=1).
--- message_vectors (a sqlite-vec vec0 table) can't be declared here since its
--- vector dimension isn't known until an embedding model actually runs once;
--- it's created lazily in code, keyed to this row. See src/main/search-history/indexer.ts.
+-- the current message_chunk_vectors index was built with. A single row
+-- (id=1). message_chunk_vectors (a sqlite-vec vec0 table) can't be declared
+-- here since its vector dimension isn't known until an embedding model
+-- actually runs once; it's created lazily in code, keyed to this row. See
+-- src/main/search-history/indexer.ts.
 CREATE TABLE IF NOT EXISTS embedding_index_meta (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   provider_id TEXT NOT NULL,
@@ -39,12 +40,30 @@ CREATE TABLE IF NOT EXISTS embedding_index_meta (
   created_at INTEGER NOT NULL
 );
 
--- Maps a message to its embedding. `id` doubles as the rowid in the
--- message_vectors vec0 table (sqlite-vec's documented pairing idiom).
+-- Bookkeeping only: has this message been run through the indexer at all
+-- (embedded-with-chunks, or intentionally empty)? The actual searchable
+-- vectors live in message_chunks/message_chunk_vectors below, not here —
+-- `id` no longer doubles as any vec0 table's rowid.
 CREATE TABLE IF NOT EXISTS message_embeddings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   message_id TEXT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   model TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+-- Chunk-level companion to message_embeddings: a message's searchable text
+-- is split into paragraph-sized chunks (search-history/chunk-text.ts) so a
+-- query matching one part of a multi-topic message doesn't drag the rest
+-- along as an excerpt. `id` doubles as the rowid in message_chunk_vectors
+-- (a vec0 table, created lazily in code once an embedding model's real
+-- dimension is known), same pairing idiom message_embeddings used to have.
+-- Added as a new table, not an ALTER TABLE on message_embeddings — this
+-- file has no migration mechanism.
+CREATE TABLE IF NOT EXISTS message_chunks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  chunk_text TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );

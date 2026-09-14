@@ -66,8 +66,9 @@ import { createAgents } from '../agents/roles'
 const SYSTEM_PROMPT =
   "You are Sachivji, a helpful AI assistant running locally on the user's machine. When asked to " +
   'recall something from an earlier conversation, or to compare how a detail changed over time, use ' +
-  "the search_history tool (it searches the user's own past sessions, not the current one) rather " +
-  "than guessing or claiming you have no memory of past conversations. If it reports no results or " +
+  "the search_history tool (it searches the user's own past sessions, including this one — useful " +
+  'if this conversation has grown long enough that something earlier may no longer be visible to ' +
+  "you) rather than guessing or claiming you have no memory of past conversations. If it reports no results or " +
   "that it's unavailable, say so plainly instead of working around it. A request can need more than " +
   'just retrieving that past context — e.g. "search for the analysis we did for X, and show a ' +
   'comparison for Y" means finding X via search_history AND THEN actually redoing the analysis for Y ' +
@@ -364,7 +365,7 @@ async function runChat(
   // Trims oversized tool results and drops the oldest turns once the loaded
   // history is getting close to the model's context window — operates only
   // on what's about to be sent, never on what's persisted/displayed.
-  const conversation = await prepareConversation(priorTurns, model, provider, {
+  const { messages: conversation, droppedTurns } = await prepareConversation(priorTurns, model, provider, {
     system: SYSTEM_PROMPT,
     // The top-level round's real tool list — matches what's actually about
     // to be sent alongside this conversation (built just below via the
@@ -374,6 +375,24 @@ async function runChat(
     // until the Orchestrator itself is constructed a few lines down.
     tools: toolRegistry.list()
   })
+  // Found live: dropping old turns from context was completely silent —
+  // indistinguishable, from the user's side, from the model simply having
+  // a worse memory. The turns are still safe (SQLite + the UI transcript
+  // are untouched by trimming), but the *model* genuinely loses access to
+  // them for the rest of this conversation, so say so — and since
+  // search_history no longer excludes the current session (see
+  // search-history/tool.ts), this is now also genuinely actionable, not
+  // just an FYI.
+  if (droppedTurns.length > 0) {
+    const message =
+      `This conversation has grown long enough that ${droppedTurns.length} earlier turn` +
+      `${droppedTurns.length === 1 ? '' : 's'} were dropped from what I can see, to fit the ` +
+      "model's context window. They're still saved and visible above — ask me to search this " +
+      "conversation's own history if you need something from them."
+    emit(sender, { streamId, sessionId, event: { type: 'warning', message } })
+    const warningRecord = insertMessage(sessionId, 'assistant', [{ type: 'warning', message }])
+    enqueueMessage(warningRecord.id, sessionId, warningRecord.content)
+  }
   conversation.push({ role: 'user', content: [{ type: 'text', text }] })
   const userMessage = insertMessage(sessionId, 'user', [{ type: 'text', text }])
   enqueueMessage(userMessage.id, sessionId, userMessage.content)

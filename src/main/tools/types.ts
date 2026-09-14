@@ -3,7 +3,7 @@ import type { WorkspaceGuard } from '../security/workspace-guard'
 
 export interface ToolContext {
   workspaceGuard: WorkspaceGuard
-  /** The session the current chat turn belongs to — used by search_history to exclude it from its own results (already in context). */
+  /** The session the current chat turn belongs to. No current tool reads this (search_history stopped excluding the active session — see its own doc comment), but it's real per-turn context a future tool may reasonably need. */
   currentSessionId: string
   /**
    * Live-registers a freshly-saved query's tool into the app's own

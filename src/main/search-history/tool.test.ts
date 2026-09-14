@@ -71,7 +71,7 @@ describe('search_history tool', () => {
     expect(result).toContain('rebuilt')
   })
 
-  it('returns tagged results excluding the current session', async () => {
+  it('returns tagged results from another session', async () => {
     const other = createSession('Q2 numbers')
     const current = createSession('S current')
     insertMessage(other.id, 'assistant', [{ type: 'text', text: 'revenue was 4.2 million' }])
@@ -83,13 +83,18 @@ describe('search_history tool', () => {
     expect(result).toContain('revenue was 4.2 million')
   })
 
-  it('reports no results found when the only match is in the current session', async () => {
+  it('also finds a match in the current session, not just other sessions', async () => {
+    // Deliberately does NOT exclude the calling session anymore — a long
+    // session's own sliding window can drop old turns from the model's
+    // live context (context/prepare-context.ts), and this is the only way
+    // back to them for the rest of that same conversation.
     const current = createSession('S current')
     insertMessage(current.id, 'assistant', [{ type: 'text', text: 'revenue was 4.2 million' }])
     await runBackfill()
 
     const result = await searchHistoryTool.execute({ query: 'query' }, ctxFor(current.id))
-    expect(result).toBe('(no relevant past conversations found for that query.)')
+    expect(result).toContain('<historical_result')
+    expect(result).toContain('revenue was 4.2 million')
   })
 
   it('throws on an empty query', async () => {

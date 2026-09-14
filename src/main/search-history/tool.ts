@@ -1,7 +1,7 @@
 import { getEmbeddingConfig, getIndexState, searchIndex } from './indexer'
 import { getEmbeddingProvider } from '../providers/setup'
 import { getApiKey } from '../security/keychain'
-import type { Tool, ToolContext } from '../tools/types'
+import type { Tool } from '../tools/types'
 
 const SEARCH_HISTORY_EXCERPT_MAX_CHARS = 800
 const DEFAULT_LIMIT = 5
@@ -27,9 +27,10 @@ function notReachableMessage(err: unknown): string {
 export const searchHistoryTool: Tool = {
   name: 'search_history',
   description:
-    "Search the user's own past conversations across ALL sessions (not the active one, which " +
-    'is already in context) for relevant excerpts — useful for recalling something discussed ' +
-    'earlier or comparing how a qualitative/quantitative detail changed over time (a "delta"). ' +
+    "Search the user's own past conversations — including this one — for relevant excerpts. " +
+    'Useful for recalling something discussed earlier, comparing how a qualitative/quantitative ' +
+    'detail changed over time (a "delta"), or recovering something from earlier in THIS ' +
+    'conversation that may have aged out of your own visible context if it has grown long. ' +
     'Returns tagged excerpts with session and date so you can reason about recency/provenance. ' +
     "If it reports it's unavailable, tell the user plainly rather than silently working around " +
     'it or guessing.',
@@ -42,7 +43,7 @@ export const searchHistoryTool: Tool = {
     required: ['query']
   },
   mutates: false,
-  async execute(input, ctx: ToolContext) {
+  async execute(input) {
     const query = String(input.query ?? '').trim()
     if (!query) throw new Error('No query given.')
     const limit = Math.min(MAX_LIMIT, Math.max(1, Number(input.limit) || DEFAULT_LIMIT))
@@ -66,7 +67,7 @@ export const searchHistoryTool: Tool = {
 
     let hits
     try {
-      hits = await searchIndex(query, ctx.currentSessionId, limit)
+      hits = await searchIndex(query, limit)
     } catch (err) {
       return notReachableMessage(err)
     }

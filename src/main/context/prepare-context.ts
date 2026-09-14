@@ -90,6 +90,24 @@ async function resolveContextWindowTokens(model: string, provider: ModelProvider
   return loaded ?? contextWindowFor(model).tokens
 }
 
+export interface SlidingWindowResult {
+  messages: Message[]
+  /**
+   * Turns actually dropped to fit budget, oldest first, kept as real
+   * content rather than just a count — nothing is lost from SQLite or the
+   * UI transcript either way (this only ever affects what's sent to the
+   * provider), but a dropped turn does become invisible to the *model*
+   * for the rest of this conversation. Callers currently just check
+   * `.length` to report that a drop happened (see ipc/register.ts) — kept
+   * as full `Message[][]` on purpose so a future rolling-summarization
+   * pass (TASKS.md #49, deliberately not built yet) can consume the real
+   * dropped content directly instead of needing to re-derive it, or
+   * inject a summary here in place of a bare drop, without changing this
+   * return shape again.
+   */
+  droppedTurns: Message[][]
+}
+
 /**
  * Drops the oldest complete turns until the conversation fits the model's
  * context budget, always keeping at least the most recent turn. Re-counts
@@ -103,7 +121,7 @@ export async function applySlidingWindow(
   model: string,
   provider: ModelProvider,
   overhead?: TurnOverhead
-): Promise<Message[]> {
+): Promise<SlidingWindowResult> {
   const windowTokens = await resolveContextWindowTokens(model, provider)
   const reserved = overhead ? await overheadTokens(overhead, model, provider) : 0
   // Never negative — an overhead estimate that alone exceeds the whole
@@ -111,15 +129,17 @@ export async function applySlidingWindow(
   // below already handles the case where even that isn't enough).
   const budget = Math.max(0, Math.floor(windowTokens * CONTEXT_BUDGET_FRACTION) - reserved)
   const turns = splitIntoTurns(messages)
+  const droppedTurns: Message[][] = []
 
   while (turns.length > 1) {
     const flat = turns.flat()
     const count = await provider.countTokens(flat, model)
     if (count <= budget) break
-    turns.shift()
+    const dropped = turns.shift()
+    if (dropped) droppedTurns.push(dropped)
   }
 
-  return turns.flat()
+  return { messages: turns.flat(), droppedTurns }
 }
 
 export async function prepareConversation(
@@ -127,6 +147,6 @@ export async function prepareConversation(
   model: string,
   provider: ModelProvider,
   overhead?: TurnOverhead
-): Promise<Message[]> {
+): Promise<SlidingWindowResult> {
   return applySlidingWindow(trimToolResults(messages), model, provider, overhead)
 }

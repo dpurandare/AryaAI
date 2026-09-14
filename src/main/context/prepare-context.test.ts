@@ -58,19 +58,25 @@ describe('trimToolResults', () => {
 })
 
 describe('applySlidingWindow', () => {
-  it('keeps everything when already under budget', async () => {
+  it('keeps everything when already under budget, reporting nothing dropped', async () => {
     const messages = [userTurn('one'), userTurn('two')]
     const provider = fakeProvider(() => 10)
-    expect(await applySlidingWindow(messages, 'claude-sonnet-5', provider)).toEqual(messages)
+    const result = await applySlidingWindow(messages, 'claude-sonnet-5', provider)
+    expect(result.messages).toEqual(messages)
+    expect(result.droppedTurns).toEqual([])
   })
 
-  it('drops the oldest complete turns first when over budget', async () => {
+  it('drops the oldest complete turns first when over budget, reporting exactly what was dropped', async () => {
     const messages = [userTurn('oldest'), userTurn('middle'), userTurn('newest')]
     // Pretend every turn costs 100k tokens; claude-sonnet-5's window (200k) * 0.7 budget = 140k,
     // so only the single most recent turn should survive.
     const provider = fakeProvider((msgs) => msgs.length * 100_000)
     const result = await applySlidingWindow(messages, 'claude-sonnet-5', provider)
-    expect(result).toEqual([userTurn('newest')])
+    expect(result.messages).toEqual([userTurn('newest')])
+    // Reported oldest-first, as real content (not just a count) — see
+    // SlidingWindowResult's doc comment: a future summarization pass needs
+    // the actual dropped turns, not just to know how many there were.
+    expect(result.droppedTurns).toEqual([[userTurn('oldest')], [userTurn('middle')]])
   })
 
   it('never drops a tool_use/tool_result pair mid-turn', async () => {
@@ -92,15 +98,18 @@ describe('applySlidingWindow', () => {
       return calls === 1 ? 999_999 : 0
     })
     const result = await applySlidingWindow(messages, 'claude-sonnet-5', provider)
-    expect(result).toEqual(newTurn)
+    expect(result.messages).toEqual(newTurn)
+    expect(result.droppedTurns).toEqual([oldTurn])
     // No leftover tool_result with no preceding tool_use.
-    expect(result.some((m) => m.content.some((b) => b.type === 'tool_result'))).toBe(false)
+    expect(result.messages.some((m) => m.content.some((b) => b.type === 'tool_result'))).toBe(false)
   })
 
   it('always keeps at least the most recent turn even if it alone is over budget', async () => {
     const messages = [userTurn('only turn, huge')]
     const provider = fakeProvider(() => 999_999_999)
-    expect(await applySlidingWindow(messages, 'claude-sonnet-5', provider)).toEqual(messages)
+    const result = await applySlidingWindow(messages, 'claude-sonnet-5', provider)
+    expect(result.messages).toEqual(messages)
+    expect(result.droppedTurns).toEqual([])
   })
 
   it("budgets against a provider's own live context window over the static model-metadata estimate", async () => {
@@ -118,7 +127,7 @@ describe('applySlidingWindow', () => {
       async () => 4096
     )
     const result = await applySlidingWindow(messages, 'gpt-oss:20b', provider)
-    expect(result).toEqual([userTurn('newest')])
+    expect(result.messages).toEqual([userTurn('newest')])
   })
 
   it('falls back to the static estimate when the provider has no live figure (e.g. the model is not currently loaded)', async () => {
@@ -132,7 +141,7 @@ describe('applySlidingWindow', () => {
       async () => undefined
     )
     const result = await applySlidingWindow(messages, 'gpt-oss:20b', provider)
-    expect(result).toEqual(messages)
+    expect(result.messages).toEqual(messages)
   })
 
   describe('with a TurnOverhead (system prompt + tool schemas)', () => {
@@ -150,22 +159,25 @@ describe('applySlidingWindow', () => {
       const messages = [userTurn('oldest'), userTurn('newest')]
       const provider = fakeProvider((msgs) => (isOverheadProbe(msgs) ? 2000 : msgs.length * 1000))
 
-      expect(await applySlidingWindow(messages, 'gpt-oss:20b', provider, overhead)).toEqual([userTurn('newest')])
+      const trimmed = await applySlidingWindow(messages, 'gpt-oss:20b', provider, overhead)
+      expect(trimmed.messages).toEqual([userTurn('newest')])
       // Without the same overhead, the identical 2000-token history fits budget 2867 untrimmed.
-      expect(await applySlidingWindow(messages, 'gpt-oss:20b', provider)).toEqual(messages)
+      const untrimmed = await applySlidingWindow(messages, 'gpt-oss:20b', provider)
+      expect(untrimmed.messages).toEqual(messages)
     })
 
     it('clamps the reserved budget to zero (never negative) when the overhead alone exceeds it, still keeping the most recent turn', async () => {
       const messages = [userTurn('only turn')]
       const provider = fakeProvider((msgs) => (isOverheadProbe(msgs) ? 999_999 : 10))
-      expect(await applySlidingWindow(messages, 'gpt-oss:20b', provider, overhead)).toEqual(messages)
+      const result = await applySlidingWindow(messages, 'gpt-oss:20b', provider, overhead)
+      expect(result.messages).toEqual(messages)
     })
 
     it('prepareConversation threads the overhead through to applySlidingWindow', async () => {
       const messages = [userTurn('oldest'), userTurn('newest')]
       const provider = fakeProvider((msgs) => (isOverheadProbe(msgs) ? 2000 : msgs.length * 1000))
       const result = await prepareConversation(messages, 'gpt-oss:20b', provider, overhead)
-      expect(result).toEqual([userTurn('newest')])
+      expect(result.messages).toEqual([userTurn('newest')])
     })
   })
 })
@@ -180,8 +192,9 @@ describe('prepareConversation', () => {
     ]
     const provider = fakeProvider(() => 0) // always under budget -> only trimming should apply
     const result = await prepareConversation(messages, 'claude-sonnet-5', provider)
-    expect(result).toHaveLength(3)
-    const toolResult = result[1].content[0]
+    expect(result.messages).toHaveLength(3)
+    expect(result.droppedTurns).toEqual([])
+    const toolResult = result.messages[1].content[0]
     expect(toolResult.type).toBe('tool_result')
     if (toolResult.type !== 'tool_result') throw new Error('unreachable')
     expect(toolResult.content.length).toBeLessThan(big.length)

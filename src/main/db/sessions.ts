@@ -84,9 +84,15 @@ export function titleFromMessage(text: string): string {
  * vec0 table before writing this); no JS-supplied integer parameter
  * crosses the boundary here at all.
  *
- * `message_vectors` may not exist yet (fresh install, nothing embedded
- * ever) — guarded rather than assumed, since search-history/indexer.ts
- * only creates it lazily on the first real embed.
+ * `message_vectors`/`message_chunk_vectors` may not exist yet (fresh
+ * install, nothing embedded ever) — guarded rather than assumed, since
+ * search-history/indexer.ts only creates them lazily on the first real
+ * embed. `message_vectors` itself is the pre-chunking table (nothing reads
+ * it anymore — see indexer.ts's rebuildIndex) but may still hold real rows
+ * from before that change, so its cleanup stays here too. `message_chunks`
+ * has a real FK (`ON DELETE CASCADE`) so it cleans up automatically when
+ * the session row goes; only the vec0 side (no real FK support) needs the
+ * explicit delete, same reasoning as `message_vectors` above.
  */
 export function deleteSession(id: string): void {
   const db = getDb()
@@ -97,6 +103,14 @@ export function deleteSession(id: string): void {
     if (vectorTableExists) {
       db.prepare(
         'DELETE FROM message_vectors WHERE rowid IN (SELECT id FROM message_embeddings WHERE session_id = ?)'
+      ).run(sessionId)
+    }
+    const chunkVectorTableExists = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'message_chunk_vectors'")
+      .get()
+    if (chunkVectorTableExists) {
+      db.prepare(
+        'DELETE FROM message_chunk_vectors WHERE rowid IN (SELECT id FROM message_chunks WHERE session_id = ?)'
       ).run(sessionId)
     }
     db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId)
