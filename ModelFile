@@ -8,4 +8,4 @@ PARAMETER num_ctx 131072
 # PARAMETER num_parallel 2
 
 # run this afterwords.
-# ollama create gpt-oss-custom -f ./Modelfile
+# ollama create gpt-oss-custom -f ./ModelFile
