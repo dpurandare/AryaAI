@@ -40,6 +40,14 @@ export function toOpenAIMessages(
         .map((b) => b.text)
         .join('')
       const toolCalls = m.content.filter((b) => b.type === 'tool_use')
+      // A warning-only (or otherwise empty) assistant message has neither
+      // real text nor a tool call — sending {content: null, tool_calls:
+      // undefined} produced a real 400 from Ollama's OpenAI-compat layer
+      // ("invalid message content type"), confirmed live. A warning is a
+      // human-facing notice, never something the model itself said —
+      // reflecting it back as an empty assistant turn was always wrong,
+      // not just wire-format-invalid; omit the message entirely.
+      if (!text && toolCalls.length === 0) continue
       result.push({
         role: 'assistant',
         content: text || null,
