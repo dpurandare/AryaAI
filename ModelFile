@@ -1,0 +1,11 @@
+# Pull the base gpt-oss model
+FROM gpt-oss:20b
+
+# Set the context size (e.g., 32768, 65536, or 131072 for full 128k)
+PARAMETER num_ctx 131072
+
+# Optional: Set the number of parallel requests allowed (reduces max context per request)
+# PARAMETER num_parallel 2
+
+# run this afterwords.
+# ollama create gpt-oss-custom -f ./Modelfile
