@@ -20,7 +20,18 @@ const VECTORS: Record<string, number[]> = {
   query: [1, 0, 0, 0], // matches the first vector closely
   'Tallest mountain discussed:\nMount Everest is the tallest mountain.': [0, 1, 0, 0],
   'Horizontal speed for landing:\nYou need 15 ft/s to land 50 feet away.': [0, 0, 0, 1],
-  'mountain question': [0, 1, 0, 0] // matches only the mountain half above
+  'mountain question': [0, 1, 0, 0], // matches only the mountain half above
+  // Reproduces the real observed gap: genuinely relevant hits scored
+  // 0.67-0.89 relevance, unrelated content that still got returned (limit
+  // wasn't exhausted by good matches) scored only 0.42-0.48. cos_sim([1,0],
+  // [1,0])=1 (distance 0) and cos_sim([1,0],[1,0.3])≈0.958 (distance
+  // ≈0.042) both land well inside the "relevant" band; cos_sim([1,0],
+  // [1,2])≈0.447 (distance ≈0.553) lands just past the 0.5 floor, matching
+  // the real irrelevant score almost exactly.
+  'mountain query': [1, 0],
+  'Mount Everest is the tallest mountain.': [1, 0],
+  'The second-tallest mountain is K2.': [1, 0.3],
+  'Vertical component at 45 degrees for a jump.': [1, 2]
 }
 
 vi.mock('../providers/setup', () => ({
@@ -154,6 +165,28 @@ describe('search-history indexer', () => {
 
     const hits = await searchIndex('query', 5)
     expect(hits[0].text).toBe('revenue was 4.2 million')
+  })
+
+  it('excludes a weakly-relevant match below the distance floor even when limit is not otherwise exhausted', async () => {
+    // Found live, repeatedly: with no floor at all, KNN pads out to
+    // `limit` with whatever's next-closest once genuinely relevant hits
+    // run out, however weak — a "tallest mountain" query kept returning
+    // unrelated jump/landing-speed content at 0.42-0.48 relevance. Here,
+    // asking for limit=5 with only 2 genuinely relevant candidates and 1
+    // weak one must return exactly the 2 relevant ones, not pad with the
+    // third.
+    const session = createSession('Mixed relevance')
+    insertMessage(session.id, 'assistant', [{ type: 'text', text: 'Mount Everest is the tallest mountain.' }])
+    insertMessage(session.id, 'assistant', [{ type: 'text', text: 'The second-tallest mountain is K2.' }])
+    insertMessage(session.id, 'assistant', [{ type: 'text', text: 'Vertical component at 45 degrees for a jump.' }])
+    await runBackfill()
+
+    const hits = await searchIndex('mountain query', 5)
+    expect(hits).toHaveLength(2)
+    expect(hits.map((h) => h.text)).toEqual(
+      expect.arrayContaining(['Mount Everest is the tallest mountain.', 'The second-tallest mountain is K2.'])
+    )
+    expect(hits.some((h) => h.text.includes('jump'))).toBe(false)
   })
 
   it('reports needs-rebuild when the configured model no longer matches the built index', async () => {

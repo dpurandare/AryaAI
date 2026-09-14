@@ -278,6 +278,22 @@ interface SearchRow {
 }
 
 /**
+ * Cosine distance floor below which a chunk is treated as noise, not a real
+ * match — KNN with no floor always pads out to `limit` with whatever's
+ * next-closest once genuinely relevant chunks run out, however weak.
+ * Found live, repeatedly, against the real default embedding model
+ * (nomic-embed-text): a "tallest mountain" query's genuinely relevant hits
+ * scored 0.67-0.89 (relevance = 1 - distance), while unrelated jump/
+ * landing-speed content that still got returned (because `limit` wasn't
+ * exhausted by good matches) scored only 0.42-0.48 — a clean, real gap.
+ * 0.5 sits in that gap. Calibrated against this app's actual default
+ * embedding model; may need retuning if a different one is configured and
+ * produces a different score distribution — there's no cross-model
+ * absolute-similarity standard to rely on instead.
+ */
+const MAX_DISTANCE = 0.5
+
+/**
  * No longer excludes the calling session (see tool.ts's doc comment for
  * why) — a message from the current session can legitimately be the right
  * hit now that context/prepare-context.ts's sliding window can drop old
@@ -293,6 +309,11 @@ interface SearchRow {
  * reply answering two unrelated topics in one message (e.g. "tallest
  * mountain discussed" + "horizontal speed for a landing") used to come
  * back in full for a query matching only one of them.
+ *
+ * Also applies MAX_DISTANCE (above) so a request for `limit` results
+ * doesn't get padded with genuinely irrelevant chunks just because
+ * `limit` wasn't otherwise satisfied — fewer, better results beat a full
+ * quota diluted with noise.
  */
 export async function searchIndex(query: string, limit: number): Promise<SearchHit[]> {
   const config = getEmbeddingConfig()
@@ -311,10 +332,11 @@ export async function searchIndex(query: string, limit: number): Promise<SearchH
        FROM knn
        JOIN message_chunks mc ON mc.id = knn.rowid
        JOIN sessions s ON s.id = mc.session_id
+       WHERE knn.distance <= ?
        ORDER BY knn.distance ASC
        LIMIT ?`
     )
-    .all(vectorToBuffer(queryVector), overFetch, limit) as SearchRow[]
+    .all(vectorToBuffer(queryVector), overFetch, MAX_DISTANCE, limit) as SearchRow[]
 
   return rows.map((row) => ({
     messageId: row.message_id,
