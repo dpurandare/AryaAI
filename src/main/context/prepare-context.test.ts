@@ -12,7 +12,8 @@ function isOverheadProbe(messages: Message[]): boolean {
 
 function fakeProvider(
   countTokens: (messages: Message[]) => number,
-  loadedContextWindow?: (model: string) => Promise<number | undefined>
+  loadedContextWindow?: (model: string) => Promise<number | undefined>,
+  configuredContextWindow?: (model: string) => Promise<number | undefined>
 ): ModelProvider {
   return {
     id: 'fake',
@@ -20,7 +21,8 @@ function fakeProvider(
     listModels: async () => [],
     stream: async function* () {},
     countTokens: async (messages) => countTokens(messages),
-    loadedContextWindow
+    loadedContextWindow,
+    configuredContextWindow
   }
 }
 
@@ -128,6 +130,9 @@ describe('applySlidingWindow', () => {
     )
     const result = await applySlidingWindow(messages, 'gpt-oss:20b', provider)
     expect(result.messages).toEqual([userTurn('newest')])
+    // A live reading is a real, confirmed number — never itself an "estimate",
+    // regardless of how it compares to the model's own static fallback.
+    expect(result.contextWindow).toEqual({ tokens: 4096, isEstimate: false })
   })
 
   it('falls back to the static estimate when the provider has no live figure (e.g. the model is not currently loaded)', async () => {
@@ -142,6 +147,41 @@ describe('applySlidingWindow', () => {
     )
     const result = await applySlidingWindow(messages, 'gpt-oss:20b', provider)
     expect(result.messages).toEqual(messages)
+    expect(result.contextWindow).toEqual({ tokens: 4096, isEstimate: true })
+  })
+
+  it("prefers a live reading over a configured one when both are available", async () => {
+    const messages = [userTurn('only turn')]
+    const provider = fakeProvider(
+      () => 10,
+      async () => 4096, // live: model is loaded at a smaller runtime context than configured
+      async () => 131072 // configured: the Modelfile's own declared num_ctx
+    )
+    const result = await applySlidingWindow(messages, 'gpt-oss-custom:latest', provider)
+    expect(result.contextWindow).toEqual({ tokens: 4096, isEstimate: false })
+  })
+
+  it("falls back to a configured (Modelfile num_ctx) reading when there is no live one — the common case of a model idled cold between messages", async () => {
+    const messages = [userTurn('only turn')]
+    const provider = fakeProvider(
+      () => 10,
+      async () => undefined, // cold — Ollama's default idle-unload behavior
+      async () => 131072
+    )
+    const result = await applySlidingWindow(messages, 'gpt-oss-custom:latest', provider)
+    // A configured reading is a real, confirmed number — never itself an "estimate".
+    expect(result.contextWindow).toEqual({ tokens: 131072, isEstimate: false })
+  })
+
+  it("reports a matched static cloud-model entry as a real number, not an estimate, when the provider has no live reading at all", async () => {
+    const messages = [userTurn('only turn')]
+    // claude-* has no loadedContextWindow on any real provider adapter —
+    // this exercises the same "no live reading" path as the local-model
+    // fallback test above, but against a recognized cloud model id, where
+    // the static table entry itself is a real, not-a-guess number.
+    const provider = fakeProvider((msgs) => msgs.length * 10)
+    const result = await applySlidingWindow(messages, 'claude-sonnet-5', provider)
+    expect(result.contextWindow).toEqual({ tokens: 200_000, isEstimate: false })
   })
 
   describe('with a TurnOverhead (system prompt + tool schemas)', () => {

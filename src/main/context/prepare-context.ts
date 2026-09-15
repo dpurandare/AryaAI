@@ -1,4 +1,4 @@
-import { contextWindowFor } from '@shared/model-metadata'
+import { contextWindowFor, type ContextWindowInfo } from '@shared/model-metadata'
 import type { ContentBlock, Message, ModelProvider } from '../providers/types'
 
 const TOOL_RESULT_MAX_CHARS = 4000
@@ -74,20 +74,32 @@ function splitIntoTurns(messages: Message[]): Message[][] {
 }
 
 /**
- * The context window to budget against: a provider's own live figure (today
- * only Ollama's, via `loadedContextWindow` — see providers/types.ts) when it
- * has one, else the static model-metadata.ts estimate. Matters specifically
- * for local models: Ollama loads a model with a server-side context that can
- * be far smaller than the model's architectural max (confirmed live:
- * gpt-oss:20b advertises 131072 but was actually running with 4096), and
- * model-metadata.ts's generic local-model fallback (8192) doesn't know
- * that — trusting it under-trims the conversation, letting a prompt reach
- * the server's real, smaller limit and get silently truncated mid-turn with
- * zero visible output.
+ * The context window to budget against, tried in order: (1) a provider's
+ * own *live* figure (today only Ollama's `loadedContextWindow` — the
+ * actual runtime-loaded context, which can differ from the model's
+ * architectural max); (2) a provider's *configured* figure (today only
+ * Ollama's `configuredContextWindow` — the Modelfile's own declared
+ * `num_ctx`, available even while the model is currently idled out of
+ * VRAM, which is Ollama's default behavior and so the *common* state of a
+ * real chat session sitting between messages, not an edge case); (3) the
+ * static model-metadata.ts estimate, as a last resort. Confirmed live, all
+ * three states in one session: gpt-oss:20b advertises 131072 but was
+ * actually loaded at 4096 (case 1 catches this); a custom 128K-context
+ * Modelfile variant, idled cold, was still silently reported as the flat
+ * 4096 local-model fallback because nothing before this checked its
+ * *configured* value, only its live-loaded one (case 2 exists specifically
+ * to fix this — found from a real user report that the UI meter was still
+ * showing 4.1K on a plain app restart, no message sent yet). A live or
+ * configured reading is never itself an "estimate" — both are real numbers
+ * the server actually reported; `isEstimate` only means neither was
+ * available and the static table's own fallback got used.
  */
-async function resolveContextWindowTokens(model: string, provider: ModelProvider): Promise<number> {
+export async function resolveContextWindow(model: string, provider: ModelProvider): Promise<ContextWindowInfo> {
   const loaded = await provider.loadedContextWindow?.(model)
-  return loaded ?? contextWindowFor(model).tokens
+  if (loaded !== undefined) return { tokens: loaded, isEstimate: false }
+  const configured = await provider.configuredContextWindow?.(model)
+  if (configured !== undefined) return { tokens: configured, isEstimate: false }
+  return contextWindowFor(model)
 }
 
 export interface SlidingWindowResult {
@@ -106,6 +118,8 @@ export interface SlidingWindowResult {
    * return shape again.
    */
   droppedTurns: Message[][]
+  /** The real context window this turn was budgeted against — see `resolveContextWindow`. Surfaced to the renderer via a `context_window` stream event so its meter can use the real figure instead of its own static guess. */
+  contextWindow: ContextWindowInfo
 }
 
 /**
@@ -122,12 +136,12 @@ export async function applySlidingWindow(
   provider: ModelProvider,
   overhead?: TurnOverhead
 ): Promise<SlidingWindowResult> {
-  const windowTokens = await resolveContextWindowTokens(model, provider)
+  const contextWindow = await resolveContextWindow(model, provider)
   const reserved = overhead ? await overheadTokens(overhead, model, provider) : 0
   // Never negative — an overhead estimate that alone exceeds the whole
   // budget still leaves *some* room (the "always keep the last turn" floor
   // below already handles the case where even that isn't enough).
-  const budget = Math.max(0, Math.floor(windowTokens * CONTEXT_BUDGET_FRACTION) - reserved)
+  const budget = Math.max(0, Math.floor(contextWindow.tokens * CONTEXT_BUDGET_FRACTION) - reserved)
   const turns = splitIntoTurns(messages)
   const droppedTurns: Message[][] = []
 
@@ -139,7 +153,7 @@ export async function applySlidingWindow(
     if (dropped) droppedTurns.push(dropped)
   }
 
-  return { messages: turns.flat(), droppedTurns }
+  return { messages: turns.flat(), droppedTurns, contextWindow }
 }
 
 export async function prepareConversation(

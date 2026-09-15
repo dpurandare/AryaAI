@@ -62,4 +62,32 @@ export class OllamaProvider implements ModelProvider, EmbeddingProvider {
       return undefined
     }
   }
+
+  /**
+   * `/api/show`'s `parameters` field is a plain, whitespace-aligned
+   * `key value` block (not structured JSON — confirmed live, e.g.
+   * `"num_ctx                        131072\ntemperature                    1"`),
+   * present whenever the Modelfile sets `PARAMETER num_ctx ...` explicitly,
+   * empty/absent otherwise. Works for both a loaded and a cold model, since
+   * it reflects the model's saved configuration, not its current runtime
+   * state — see the doc comment on ModelProvider.configuredContextWindow
+   * for why this matters (Ollama idles a model out of VRAM by default,
+   * which is most of the time a real chat session is just sitting between
+   * messages).
+   */
+  async configuredContextWindow(model: string): Promise<number | undefined> {
+    try {
+      const res = await fetch(`${this.rootURL}/api/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model })
+      })
+      if (!res.ok) return undefined
+      const data = (await res.json()) as { parameters?: string }
+      const match = data.parameters?.match(/^num_ctx\s+(\d+)\s*$/m)
+      return match ? Number(match[1]) : undefined
+    } catch {
+      return undefined
+    }
+  }
 }

@@ -100,6 +100,8 @@
   let providerId = $state('openai')
   let hasKey = $state(false)
   let currentModel = $state('')
+  /** The real context window for the currently selected provider/model — model-scoped, not per-session, so it lives here rather than in SessionRuntime. Refreshed whenever the model loads/changes (loadProviderState/changeModel below) and, as a fresher confirmation, by the context_window stream event mid-turn. Null until the first successful refresh (e.g. before any provider/model is configured), in which case ContextMeter falls back to its own static guess. */
+  let contextWindow = $state<{ tokens: number; isEstimate: boolean } | null>(null)
   let sidebarCollapsed = $state(false)
   let sidebarWidth = $state(260)
   let isMac = $state(false)
@@ -334,6 +336,8 @@
           inputTokens: runtime.sessionUsage.inputTokens + event.inputTokens,
           outputTokens: runtime.sessionUsage.outputTokens + event.outputTokens
         }
+      } else if (event.type === 'context_window') {
+        contextWindow = { tokens: event.tokens, isEstimate: event.isEstimate }
       } else if (event.type === 'warning') {
         msg.segments.push({
           id: crypto.randomUUID(),
@@ -400,10 +404,16 @@
     window.sachiv.setSetting('planningEnabled', String(value))
   }
 
+  /** Best-effort — a fresh install with nothing configured yet just leaves contextWindow null, which ContextMeter already treats as "use my own static guess." */
+  async function refreshContextWindow(): Promise<void> {
+    contextWindow = await window.sachiv.getContextWindow()
+  }
+
   async function loadProviderState(id: string): Promise<void> {
     const descriptor = providers.find((p) => p.id === id)
     hasKey = descriptor?.requiresApiKey === false ? true : await window.sachiv.hasApiKey(id)
     currentModel = (await window.sachiv.getSetting(`model:${id}`)) ?? ''
+    await refreshContextWindow()
   }
 
   async function changeProvider(id: string): Promise<void> {
@@ -415,6 +425,7 @@
   async function changeModel(model: string): Promise<void> {
     await window.sachiv.setSetting(`model:${providerId}`, model)
     currentModel = model
+    await refreshContextWindow()
   }
 
   async function saveApiKey(apiKey: string): Promise<void> {
@@ -565,6 +576,7 @@
         onChangeModel={changeModel}
         onNeedKey={() => (showSettings = true)}
         sessionUsage={activeRuntime.sessionUsage}
+        {contextWindow}
       />
     {/if}
   </section>

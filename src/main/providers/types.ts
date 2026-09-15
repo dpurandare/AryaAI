@@ -44,6 +44,23 @@ export interface ModelProvider {
    * no-op.
    */
   loadedContextWindow?(model: string): Promise<number | undefined>
+  /**
+   * The context window a model is *configured* to load with (its
+   * Modelfile's own `num_ctx`, when one is set), available even while the
+   * model is currently unloaded/cold — unlike `loadedContextWindow`, which
+   * only reports a *currently running* model's actual runtime context and
+   * returns undefined otherwise. A real, confirmed number either way (not
+   * a guess) since it's what the server will actually load the model with
+   * next; `prepare-context.ts`'s `resolveContextWindow` prefers a live
+   * reading when one exists, then this, then finally model-metadata.ts's
+   * generic static fallback. Found needed live: a custom 128K-context
+   * Modelfile still showed the flat 4096-token local-model fallback
+   * whenever Ollama had idled the model out of VRAM (its default
+   * behavior), which most of the time a real session is just sitting
+   * between messages — `loadedContextWindow` alone left the UI meter wrong
+   * far more often than not for exactly this common case.
+   */
+  configuredContextWindow?(model: string): Promise<number | undefined>
 }
 
 /**

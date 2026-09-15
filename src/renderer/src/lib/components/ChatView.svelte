@@ -50,7 +50,8 @@
     onChangeProvider,
     onChangeModel,
     onNeedKey,
-    sessionUsage
+    sessionUsage,
+    contextWindow
   }: {
     messages: DisplayMessage[]
     statusLine: string
@@ -65,6 +66,7 @@
     onChangeModel: (model: string) => void
     onNeedKey: () => void
     sessionUsage: { inputTokens: number; outputTokens: number }
+    contextWindow: { tokens: number; isEstimate: boolean } | null
   } = $props()
 
   let draft = $state('')
@@ -301,7 +303,12 @@
           Agent: {modeLabel(forcedRole)}
         </button>
         {#if model}
-          <ContextMeter {model} inputTokens={sessionUsage.inputTokens} outputTokens={sessionUsage.outputTokens} />
+          <ContextMeter
+            {model}
+            inputTokens={sessionUsage.inputTokens}
+            outputTokens={sessionUsage.outputTokens}
+            {contextWindow}
+          />
         {/if}
       </div>
       <ModelPicker

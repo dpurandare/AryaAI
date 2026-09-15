@@ -35,14 +35,14 @@ import {
   updateConnectionSchemaSummary
 } from '../data/connections'
 import { deleteApiConnection, listApiConnections, saveApiConnection } from '../data/api-connections'
-import { prepareConversation } from '../context/prepare-context'
+import { prepareConversation, resolveContextWindow } from '../context/prepare-context'
 import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/config'
 import { McpManager } from '../mcp/manager'
 import { openDriver } from '../tools/db/driver-factory'
 import { buildSchemaSummary } from '../tools/db/schema-summary'
 import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
 import { createDefaultProviderRegistry } from '../providers/setup'
-import type { Message } from '../providers/types'
+import type { Message, ModelProvider } from '../providers/types'
 import { exportSession } from '../sessions/export'
 import {
   createDefaultRegistry,
@@ -259,6 +259,21 @@ export function registerIpcHandlers(): void {
       }))
   )
 
+  // Pull-based counterpart to the context_window *stream* event runChat
+  // emits mid-turn — that one only refreshes once a message is actually
+  // sent in a session; the context window depends on the current
+  // provider/model choice, not the session, so the renderer also calls
+  // this proactively (app startup, provider/model change) to avoid ever
+  // showing a stale/static guess for a session nobody has messaged in yet
+  // during this process's lifetime. Returns null rather than throwing when
+  // nothing is configured (a fresh install, no key set) — this is a
+  // background query, not a chat send the user is blocked on.
+  ipcMain.handle(IpcChannel.ContextWindowGet, async () => {
+    const resolved = tryResolveActiveProvider()
+    if (!resolved) return null
+    return resolveContextWindow(resolved.model, resolved.provider)
+  })
+
   ipcMain.handle(IpcChannel.SearchHistoryStatus, (): SearchHistoryStatusDto => {
     const config = getEmbeddingConfig()
     const state = getIndexState()
@@ -330,6 +345,29 @@ function makeConfirmTool(
     })
 }
 
+/**
+ * A tolerant mirror of runChat's own provider/model lookup below — returns
+ * undefined instead of throwing when nothing is configured yet (fresh
+ * install, no key set, no model chosen), since the only caller
+ * (ContextWindowGet) is a background query the renderer polls
+ * proactively, not a chat send the user is waiting on and would need a
+ * real error surfaced for. Deliberately kept separate from runChat's own
+ * checks rather than factored to share one implementation — runChat's
+ * error messages are user-facing and specific ("No API key configured for
+ * X. Add one in Settings."); collapsing both call sites onto one shared
+ * helper would mean either this one starts throwing (wrong for a
+ * best-effort background query) or runChat loses its specific messages.
+ */
+function tryResolveActiveProvider(): { provider: ModelProvider; model: string } | undefined {
+  const providerId = getSetting(ACTIVE_PROVIDER_KEY) ?? DEFAULT_PROVIDER_ID
+  const model = getSetting(modelSettingKey(providerId))
+  const descriptor = providerRegistry.get(providerId)
+  if (!descriptor || !model) return undefined
+  const apiKey = getApiKey(providerId)
+  if (descriptor.requiresApiKey && !apiKey) return undefined
+  return { provider: descriptor.create(apiKey), model }
+}
+
 async function runChat(
   sessionId: string,
   text: string,
@@ -371,7 +409,7 @@ async function runChat(
   // Trims oversized tool results and drops the oldest turns once the loaded
   // history is getting close to the model's context window — operates only
   // on what's about to be sent, never on what's persisted/displayed.
-  const { messages: conversation, droppedTurns } = await prepareConversation(priorTurns, model, provider, {
+  const { messages: conversation, droppedTurns, contextWindow } = await prepareConversation(priorTurns, model, provider, {
     system: SYSTEM_PROMPT,
     // The top-level round's real tool list — matches what's actually about
     // to be sent alongside this conversation (built just below via the
@@ -380,6 +418,16 @@ async function runChat(
     // those are few and small next to the full registry, and not known
     // until the Orchestrator itself is constructed a few lines down.
     tools: toolRegistry.list()
+  })
+  // Once per turn, not per round — tells the renderer's context meter the
+  // real window this turn was budgeted against (a live Ollama reading when
+  // available) instead of it falling back to its own static guess, which
+  // for a local model can be badly wrong in either direction. See
+  // shared/protocol.ts's context_window doc comment.
+  emit(sender, {
+    streamId,
+    sessionId,
+    event: { type: 'context_window', tokens: contextWindow.tokens, isEstimate: contextWindow.isEstimate }
   })
   // Found live: dropping old turns from context was completely silent —
   // indistinguishable, from the user's side, from the model simply having

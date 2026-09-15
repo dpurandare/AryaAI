@@ -126,4 +126,65 @@ describe('OllamaProvider', () => {
       expect(await provider.loadedContextWindow('gpt-oss:20b')).toBeUndefined()
     })
   })
+
+  describe('configuredContextWindow', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it("parses num_ctx out of /api/show's plain whitespace-aligned parameters block", async () => {
+      // Real shape confirmed live against a custom Modelfile, not guessed —
+      // `parameters` is plain text, not structured JSON.
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({ parameters: 'num_ctx                        131072\ntemperature                    1' })
+        })
+      )
+      const provider = new OllamaProvider()
+      expect(await provider.configuredContextWindow('gpt-oss-custom:latest')).toBe(131072)
+    })
+
+    it('works for a model with no other parameters set', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ parameters: 'num_ctx    4096' }) }))
+      const provider = new OllamaProvider()
+      expect(await provider.configuredContextWindow('x')).toBe(4096)
+    })
+
+    it('returns undefined when the Modelfile sets no num_ctx at all', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ parameters: 'temperature   1' }) }))
+      const provider = new OllamaProvider()
+      expect(await provider.configuredContextWindow('x')).toBeUndefined()
+    })
+
+    it('returns undefined when parameters is absent entirely', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }))
+      const provider = new OllamaProvider()
+      expect(await provider.configuredContextWindow('x')).toBeUndefined()
+    })
+
+    it('queries the native /api/show endpoint with the model in the POST body', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ parameters: 'num_ctx 4096' }) })
+      vi.stubGlobal('fetch', fetchMock)
+      const provider = new OllamaProvider('http://example.internal:11434/v1')
+      await provider.configuredContextWindow('gpt-oss-custom:latest')
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://example.internal:11434/api/show',
+        expect.objectContaining({ method: 'POST', body: JSON.stringify({ model: 'gpt-oss-custom:latest' }) })
+      )
+    })
+
+    it('returns undefined on a non-ok response instead of throwing', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
+      const provider = new OllamaProvider()
+      expect(await provider.configuredContextWindow('x')).toBeUndefined()
+    })
+
+    it('returns undefined when the server is unreachable instead of throwing', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')))
+      const provider = new OllamaProvider()
+      expect(await provider.configuredContextWindow('x')).toBeUndefined()
+    })
+  })
 })

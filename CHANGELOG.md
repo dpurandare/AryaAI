@@ -31,6 +31,7 @@ version is still `0`.
 - Reasoning models (gpt-oss, o1/o3-style) silently producing empty replies by starving on a flat 4096-token output cap — real per-model ceilings now apply.
 - The local classify-and-plan call producing invalid JSON once a conversation already had a prior tool-use turn, by isolating it to the latest message only.
 - Dock hover-tooltip showing "Electron" instead of "Sachivji" in dev mode (root cause: the `.app` bundle folder's own filename, not any Info.plist key) — and, in the same pass, reverted an earlier attempted fix for this that had silently broken `npm run dev`'s live renderer (an executable-file rename tripped Electron's own hardcoded `app.isPackaged` check, so dev launches silently served a stale prebuilt bundle instead of the live Vite dev server with no error anywhere).
+- The context meter's window figure for a local model was wrong far more often than not: it was tied to sending a new message rather than the current provider/model choice (so simply opening an existing session kept showing a stale guess), and had no fallback for the common case of Ollama having idled the model out of VRAM between messages. Now refreshes proactively on load/model-change and falls back to the model's *configured* context (its Modelfile's own `num_ctx`) before the generic static guess.
 
 ## [0.1.0] - 2026-09-08
 

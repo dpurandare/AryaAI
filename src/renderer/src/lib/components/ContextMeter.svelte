@@ -4,15 +4,18 @@
   let {
     model,
     inputTokens,
-    outputTokens
+    outputTokens,
+    contextWindow: liveContextWindow = null
   }: {
     model: string
     inputTokens: number
     outputTokens: number
+    /** The real per-turn value from a `context_window` stream event, once at least one message has been sent this session — see App.svelte's SessionRuntime. Null before that, in which case this falls back to the same static guess it always used. */
+    contextWindow?: { tokens: number; isEstimate: boolean } | null
   } = $props()
 
   const totalTokens = $derived(inputTokens + outputTokens)
-  const contextWindow = $derived(contextWindowFor(model))
+  const contextWindow = $derived(liveContextWindow ?? contextWindowFor(model))
   const usedFraction = $derived(contextWindow.tokens > 0 ? totalTokens / contextWindow.tokens : 0)
   const warning = $derived(usedFraction >= 0.8)
   const cost = $derived(estimateCost(model, inputTokens, outputTokens))

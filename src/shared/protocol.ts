@@ -51,6 +51,20 @@ export type StreamEvent =
       agentRole?: AgentRole
     }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
+  /**
+   * Emitted once per user turn (not per round), right after context prep
+   * resolves the model's real context window for this turn — see
+   * `context/prepare-context.ts`'s `resolveContextWindow`. `isEstimate`
+   * false means a confirmed real number (a live Ollama `/api/ps` reading,
+   * or a matched static entry for a recognized cloud model); true means
+   * there was nothing better than a conservative guess (a cold/unrecognized
+   * local model, or an unrecognized cloud model id). Lets the renderer's
+   * context meter use the real figure instead of its own static guess,
+   * which — for a local model especially — can differ hugely from what's
+   * actually loaded (confirmed live: a 128K-capable custom Modelfile still
+   * showed a hardcoded 4096-token fallback before this existed).
+   */
+  | { type: 'context_window'; tokens: number; isEstimate: boolean }
   | { type: 'error'; message: string }
   /** Live counterpart of `ContentBlock`'s `warning` — see its doc comment. Streamed immediately and also included in the `kind: 'message'` event that gets persisted, exactly like `tool_use`/`text`. */
   | { type: 'warning'; message: string; agentRole?: AgentRole }

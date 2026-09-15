@@ -11,6 +11,7 @@ import {
   type SaveDataConnectionInput,
   type ApiConnectionDto,
   type SaveApiConnectionInput,
+  type ContextWindowInfo,
   type ProviderDescriptor,
   type McpServerDto,
   type SaveMcpServerInput,
@@ -92,6 +93,8 @@ const api = {
   rebuildSearchHistoryIndex: (): Promise<void> => ipcRenderer.invoke(IpcChannel.SearchHistoryRebuildIndex),
 
   listTools: (): Promise<ToolDescriptor[]> => ipcRenderer.invoke(IpcChannel.ToolsList),
+
+  getContextWindow: (): Promise<ContextWindowInfo | null> => ipcRenderer.invoke(IpcChannel.ContextWindowGet),
 
   sendChatMessage: (
     sessionId: string,

@@ -1,4 +1,7 @@
 import type { ContentBlock, StreamEvent } from './protocol'
+import type { ContextWindowInfo } from './model-metadata'
+
+export type { ContextWindowInfo }
 
 /**
  * Single source of truth for the channel names and payload types crossing
@@ -41,6 +44,8 @@ export const IpcChannel = {
   WorkspaceSetRoot: 'workspace:set-root',
 
   ToolsList: 'tools:list',
+
+  ContextWindowGet: 'context-window:get',
 
   ChatSend: 'chat:send',
   ChatCancel: 'chat:cancel',
