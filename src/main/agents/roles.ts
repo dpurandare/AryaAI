@@ -74,7 +74,11 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'status + id in the body) use api_check_status to poll it rather than assuming it finished. ' +
         'Prefer parse_html over reading a fetched page\'s raw HTML yourself — it extracts clean ' +
         'article text (reader-mode style) and can fetch a URL directly itself, so the raw markup never ' +
-        'has to enter your own context at all.',
+        'has to enter your own context at all. It also lists the real links found on the page — when ' +
+        'you need a specific article from a listing/topic/search page, call parse_html again with one ' +
+        'of those real links. Never construct or guess an article URL yourself from a headline or ' +
+        "title text, even if the pattern looks plausible — it will not exist and the fetch will 404. " +
+        "If no real link is available for what you need, say so plainly rather than guessing.",
       get tools() {
         return pickTools(registry, [
           'web_search',

@@ -87,4 +87,103 @@ describe('parse_html', () => {
     const result = await parseHtmlTool.execute({ text: longHtml }, ctx)
     expect(result).toContain('(truncated,')
   })
+
+  describe('link extraction', () => {
+    // Readability's article-selection heuristic is already covered by the
+    // tests above — mocking its return value here isolates extractLinks'
+    // own logic (resolution/filtering/dedup) from that separate, fuzzier
+    // question of which HTML shape it decides is "the article".
+    async function withMockedArticle(content: string, run: () => Promise<string>): Promise<string> {
+      const { Readability } = await import('@mozilla/readability')
+      const spy = vi.spyOn(Readability.prototype, 'parse').mockReturnValue({
+        title: 'Topic Page',
+        textContent: 'A listing of real headlines.',
+        content,
+        byline: null,
+        dir: null,
+        lang: null,
+        excerpt: '',
+        length: 10,
+        siteName: null,
+        publishedTime: null
+      })
+      try {
+        return await run()
+      } finally {
+        spy.mockRestore()
+      }
+    }
+
+    it('lists real links found within the article content — the actual motivation: a listing/topic page is mostly links, and Readability strips them from plain text', async () => {
+      const content =
+        '<div>' +
+        '<a href="/city/mumbai/some-real-article/articleshow/12345.cms">Real headline one</a>' +
+        '<a href="https://example.com/other-real-article">Real headline two</a>' +
+        '</div>'
+      const result = await withMockedArticle(content, () => parseHtmlTool.execute({ text: '<html></html>' }, ctx))
+
+      expect(result).toContain('Links on this page:')
+      expect(result).toContain('- Real headline one: http://localhost/city/mumbai/some-real-article/articleshow/12345.cms')
+      expect(result).toContain('- Real headline two: https://example.com/other-real-article')
+    })
+
+    it('resolves a relative href against the real source URL, not a placeholder', async () => {
+      const content = '<a href="/articleshow/12345.cms">Headline</a>'
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html></html>', { status: 200 })))
+      const result = await withMockedArticle(content, () =>
+        parseHtmlTool.execute({ url: 'https://timesofindia.indiatimes.com/topic/x' }, ctx)
+      )
+      vi.unstubAllGlobals()
+
+      expect(result).toContain('https://timesofindia.indiatimes.com/articleshow/12345.cms')
+    })
+
+    it('excludes a link with no anchor text — nothing useful to offer for it', async () => {
+      const content = '<a href="/no-text.cms"></a><a href="/real.cms">Real headline</a>'
+      const result = await withMockedArticle(content, () => parseHtmlTool.execute({ text: '<html></html>' }, ctx))
+
+      expect(result).not.toContain('no-text.cms')
+      expect(result).toContain('real.cms')
+    })
+
+    it('excludes a non-http(s) link (e.g. mailto:, javascript:)', async () => {
+      const content = '<a href="mailto:x@example.com">Email us</a><a href="javascript:void(0)">Click</a>'
+      const result = await withMockedArticle(content, () => parseHtmlTool.execute({ text: '<html></html>' }, ctx))
+
+      expect(result).not.toContain('Links on this page:')
+    })
+
+    it('dedupes a link that appears more than once', async () => {
+      const content = '<a href="/x.cms">First mention</a><a href="/x.cms">Second mention, same link</a>'
+      const result = await withMockedArticle(content, () => parseHtmlTool.execute({ text: '<html></html>' }, ctx))
+
+      expect(result.match(/x\.cms/g)).toHaveLength(1)
+    })
+
+    it('caps the number of links listed', async () => {
+      const content = Array.from({ length: 50 }, (_, i) => `<a href="/article-${i}.cms">Headline ${i}</a>`).join('')
+      const result = await withMockedArticle(content, () => parseHtmlTool.execute({ text: '<html></html>' }, ctx))
+
+      const linkLines = result.split('\n').filter((line) => line.startsWith('- '))
+      expect(linkLines.length).toBeLessThanOrEqual(30)
+    })
+
+    it('extracts links on the Readability-null fallback path too', async () => {
+      const { Readability } = await import('@mozilla/readability')
+      const spy = vi.spyOn(Readability.prototype, 'parse').mockReturnValue(null)
+      const html = '<html><body><span>Loading...</span><a href="/real.cms">A real link</a></body></html>'
+      const result = await parseHtmlTool.execute({ text: html }, ctx)
+      spy.mockRestore()
+
+      expect(result).toContain('Links on this page:')
+      expect(result).toContain('real.cms')
+    })
+
+    it('omits the links section entirely when there are none', async () => {
+      const result = await withMockedArticle('<div>no links here</div>', () =>
+        parseHtmlTool.execute({ text: '<html></html>' }, ctx)
+      )
+      expect(result).not.toContain('Links on this page:')
+    })
+  })
 })

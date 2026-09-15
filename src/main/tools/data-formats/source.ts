@@ -17,14 +17,26 @@ export interface ResolvedSource {
   writeBackPath?: string
 }
 
+/**
+ * A model that fills in every schema property rather than omitting unused
+ * optional ones (confirmed live: gpt-oss passed url alongside filePath: ""
+ * and text: "" in the same call) shouldn't get a confusing "3 given"
+ * rejection for what is, in intent, a single real argument — an empty
+ * string counts the same as not provided at all, here and in every branch
+ * below that checks a specific field.
+ */
+function isGiven(value: unknown): boolean {
+  return value !== undefined && value !== ''
+}
+
 /** Shared by every data-format tool (parse_html/parse_csv/parse_json/parse_xml): exactly one of `url` (tool fetches it directly, so the raw content never has to pass through the model's own context first), `filePath` (workspace-relative), or `text` (inline, for content already small enough to be in context). */
 export async function resolveSource(input: SourceInput, ctx: ToolContext): Promise<ResolvedSource> {
-  const given = ['url', 'filePath', 'text'].filter((k) => input[k as keyof SourceInput] !== undefined)
+  const given = (['url', 'filePath', 'text'] as const).filter((k) => isGiven(input[k]))
   if (given.length !== 1) {
     throw new Error(`Provide exactly one of url, filePath, or text (got ${given.length ? given.join(', ') : 'none'}).`)
   }
 
-  if (input.url !== undefined) {
+  if (isGiven(input.url)) {
     const url = String(input.url)
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
@@ -42,7 +54,7 @@ export async function resolveSource(input: SourceInput, ctx: ToolContext): Promi
     }
   }
 
-  if (input.filePath !== undefined) {
+  if (isGiven(input.filePath)) {
     const path = ctx.workspaceGuard.assertWithinWorkspace(String(input.filePath))
     const buf = await readFile(path)
     if (buf.byteLength > MAX_SOURCE_BYTES) {

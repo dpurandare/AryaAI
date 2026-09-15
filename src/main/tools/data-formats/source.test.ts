@@ -27,6 +27,24 @@ describe('resolveSource', () => {
     await expect(resolveSource({ url: 'https://x', text: 'y' }, ctx)).rejects.toThrow(/exactly one of/)
   })
 
+  it('treats an empty string the same as not provided — a model that fills in every schema field rather than omitting unused ones should not get a confusing rejection', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('fetched body', { status: 200 })))
+    // Real shape confirmed live: gpt-oss passed url alongside filePath: "" and text: "" in one call.
+    const result = await resolveSource({ url: 'https://example.com/x', filePath: '', text: '' }, ctx)
+    expect(result).toEqual({ text: 'fetched body' })
+    vi.unstubAllGlobals()
+  })
+
+  it('still rejects when the only non-empty field is missing and the rest are blank', async () => {
+    await expect(resolveSource({ url: '', filePath: '', text: '' }, ctx)).rejects.toThrow(/exactly one of/)
+  })
+
+  it('uses the one genuinely non-empty field even when it is not url (ordering safety)', async () => {
+    await writeFile(join(root, 'data.txt'), 'from disk', 'utf-8')
+    const result = await resolveSource({ url: '', filePath: 'data.txt', text: '' }, ctx)
+    expect(result.text).toBe('from disk')
+  })
+
   it('reads inline text as-is, with no writeBackPath', async () => {
     const result = await resolveSource({ text: 'hello' }, ctx)
     expect(result).toEqual({ text: 'hello' })
