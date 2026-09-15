@@ -5,6 +5,7 @@ import { getSetting } from '../db/settings'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import { apiCallTool, apiCheckStatusTool, apiIntrospectTool, apiListConnectionsTool } from './api'
 import { awsCliTool, azureCliTool, gcloudCliTool } from './cloud-cli'
+import { parseCsvTool, parseHtmlTool, parseJsonTool, parseXmlTool } from './data-formats'
 import {
   dbExecuteSqlTool,
   dbIntrospectSchemaTool,
@@ -72,5 +73,9 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(apiIntrospectTool)
   registry.register(apiCallTool)
   registry.register(apiCheckStatusTool)
+  registry.register(parseHtmlTool)
+  registry.register(parseCsvTool)
+  registry.register(parseJsonTool)
+  registry.register(parseXmlTool)
   return registry
 }

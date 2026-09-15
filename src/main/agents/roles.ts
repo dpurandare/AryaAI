@@ -33,7 +33,10 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     'db_list_rows',
     'db_count_rows',
     'db_find_rows',
-    'db_save_query'
+    'db_save_query',
+    'parse_csv',
+    'parse_json',
+    'parse_xml'
   ]
 
   const agents: Agent[] = [
@@ -68,7 +71,10 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         "exists, api_introspect on the one you need if you don't already know its endpoints, then " +
         'api_call to actually call it — set paginate:true on a list-style call instead of hand-driving ' +
         'each page yourself, and if a call comes back looking like an async job (202, or a pending ' +
-        'status + id in the body) use api_check_status to poll it rather than assuming it finished.',
+        'status + id in the body) use api_check_status to poll it rather than assuming it finished. ' +
+        'Prefer parse_html over reading a fetched page\'s raw HTML yourself — it extracts clean ' +
+        'article text (reader-mode style) and can fetch a URL directly itself, so the raw markup never ' +
+        'has to enter your own context at all.',
       get tools() {
         return pickTools(registry, [
           'web_search',
@@ -76,7 +82,8 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
           'api_list_connections',
           'api_introspect',
           'api_call',
-          'api_check_status'
+          'api_check_status',
+          'parse_html'
         ])
       }
     },
@@ -132,7 +139,12 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'query you have actually run and confirmed is correct, never speculatively. Fall back to ' +
         'db_execute_sql for anything genuinely ad hoc, or needing a WHERE beyond one column, a JOIN, or ' +
         'an aggregation none of the above cover. If no connection is configured yet, say so and ask the ' +
-        'user to add one in Settings rather than guessing at a schema.',
+        'user to add one in Settings rather than guessing at a schema. For a CSV/JSON/XML file (or a ' +
+        'URL serving one), use parse_csv/parse_json/parse_xml instead of reading it as plain text — ' +
+        'each defaults to a condensed structure summary, supports a query action to pull out just what ' +
+        "you need, and (CSV/JSON only) an append action to add one new record; none of them support " +
+        'updating or deleting existing data. Preferring these over read_file+reasoning-by-eye matters ' +
+        'most for a genuinely large file, where the raw content would otherwise eat your whole context.',
       // Saved-query tools have model-generated names (db_query_<slug>_<id>,
       // see tools/db/saved-query-tools.ts) — they can't be named in
       // dataToolNames, so they're picked up here by prefix instead, fresh

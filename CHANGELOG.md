@@ -21,6 +21,7 @@ version is still `0`.
 - Session auto-titling from the first message; PDF added alongside Markdown/JSON session export.
 - Light/dark/system theme setting, tracking the OS preference live.
 - Markdown and LaTeX math rendering for assistant messages, sanitized against untrusted content.
+- Structured data-processing tools for HTML/CSV/JSON/XML, so an agent processes a large or raw document itself instead of pulling it into its own context.
 
 ### Fixed
 
