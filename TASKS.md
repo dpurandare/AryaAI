@@ -23,6 +23,7 @@ The order we'll actually build in, referencing item numbers below. Everything st
 15. Cancellation & steering — **29**, **30**
 16. Session lifecycle extras — **24**, **25**
 17. Ship readiness (branding, versioning, signing, auto-update, release validation) — **7**, **8**, **9**, **11**, **12**, **13**
+18. Generic API access tool (introspection, authenticated calls, pagination, async job-status polling) — **70**
 
 ## Scaffolding & tooling
 - [x] 1. Electron + TypeScript + Svelte 5 project scaffold (electron-vite)
@@ -63,6 +64,7 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [x] 24. Session export (to file, e.g. JSON/Markdown) — native save dialog, format inferred from the chosen extension
 - [x] 25. Session delete (blocked for the currently active session — enforced in the UI, not a security boundary)
 - [x] 26. Session list panel wired to real data (resizable, scrollable)
+- [x] 69. Auto-title a session from its first message — replaces the generic "New Chat" placeholder exactly once (`db/sessions.ts`'s `titleFromMessage`), pushed live to the renderer via `SessionTitleUpdated` so an already-open session list updates without a reload.
 
 ## Multi-agent system
 - [x] 27. Implement `Orchestrator.run` (routing step -> agent handoff -> result; tool-call loop below moves here once it lands)
@@ -75,7 +77,7 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [x] 32. Web search tool
 - [x] 33. Shell execution tool (through workspace guard)
 - [x] 34. File operations tool (through workspace guard): `read_file`, `list_directory`, `write_file`
-- [x] 35. Database access tool (schema introspection + generated SQL execution; writes require confirmation)
+- [x] 35. Database access tool (schema introspection + generated SQL execution; writes require confirmation) — since extended with mechanical CRUD tools (`db_list_rows`/`db_count_rows`/`db_find_rows`, no SQL needed for a simple per-table lookup), agent-authored parametric saved queries (`db_save_query` — the Data agent itself writes and confirms a reusable named query once a question is likely to recur, exposed afterward as its own directly-callable `db_query_<slug>_<id>` tool; no human-facing Settings UI for these on purpose, since a connection's schema isn't known until the agent has actually introspected it), and a cached per-connection table-name hint (`schemaSummary`, refreshed opportunistically on `db_introspect_schema`) so `db_list_connections` can help pick the right connection among several with zero extra tool calls.
 - [x] 36. AWS tool (shells out to configured AWS CLI)
 - [x] 37. Azure tool (shells out to configured Azure CLI)
 - [x] 38. GCP tool (shells out to configured gcloud CLI)
@@ -84,6 +86,7 @@ The order we'll actually build in, referencing item numbers below. Everything st
 - [x] 41. Workspace boundary configuration UI
 - [x] 60. Git operations tool (status/diff/log/branch/commit/etc., through workspace guard; mutating operations require confirmation)
 - [x] 61. GitHub CLI tool (shells out to a configured `gh` — issues, PRs, repo operations, same pattern as the AWS/Azure/GCP CLI tools)
+- [x] 70. Generic API access tool (Research role) — connections configured in Settings > External APIs (name, base URL, auth: none/API key header/bearer/basic, optional OpenAPI/Swagger spec URL), same keychain-backed secret storage as data connections/MCP tokens. `api_list_connections` (cheap routing hint), `api_introspect` (fetches and parses an OpenAPI/Swagger spec — the configured specUrl, or a probe of common well-known paths — into a condensed endpoint/parameter list, caching a summary), `api_call` (method/path/query/headers/body, `mutates` computed per call from the HTTP method — GET/HEAD/OPTIONS run immediately, anything else needs confirmation; `paginate:true` follows a Link `rel="next"` header or a common "next"-style JSON field across pages up to a capped `maxPages`), `api_check_status` (bounded polling of an async job — a 202 response or a pending-status-plus-id body — within one call; still-pending returns the same statusUrl to retry on a later turn rather than blocking indefinitely). Live-verified against a real public API (JSONPlaceholder): the Research agent called `api_call` for real and correctly reported real response data; pagination/async-job detection/introspection are covered by mocked unit tests only, not a second live network round-trip.
 
 ## MCP
 - [x] 42. stdio MCP client (child process + JSON-RPC)

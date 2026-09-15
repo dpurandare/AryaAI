@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DataConnectionDto, McpServerDto, McpTransport, ProviderDescriptor, ToolDescriptor } from '@shared/ipc-contract'
+  import type { ApiAuthType, ApiConnectionDto, DataConnectionDto, McpServerDto, McpTransport, ProviderDescriptor, ToolDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
 
   let {
@@ -187,6 +187,59 @@
     if (server.status === 'connecting') return 'Connecting...'
     if (server.status === 'error') return `Error: ${server.error ?? 'unknown'}`
     return `Connected · ${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`
+  }
+
+  // --- External APIs (api_* tools' connections) ---
+  let apiConnections = $state<ApiConnectionDto[]>([])
+  let showAddApiConnection = $state(false)
+  let apiName = $state('')
+  let apiBaseUrl = $state('')
+  let apiAuthType = $state<ApiAuthType>('none')
+  let apiKeyHeader = $state('X-API-Key')
+  let apiUsername = $state('')
+  let apiSecret = $state('')
+  let apiSpecUrl = $state('')
+  let savingApiConnection = $state(false)
+
+  async function loadApiConnections(): Promise<void> {
+    apiConnections = await window.sachiv.listApiConnections()
+  }
+  loadApiConnections()
+
+  function resetApiConnectionForm(): void {
+    apiName = ''
+    apiBaseUrl = ''
+    apiAuthType = 'none'
+    apiKeyHeader = 'X-API-Key'
+    apiUsername = ''
+    apiSecret = ''
+    apiSpecUrl = ''
+    showAddApiConnection = false
+  }
+
+  async function saveApiConnection(): Promise<void> {
+    if (!apiName.trim() || !apiBaseUrl.trim()) return
+    savingApiConnection = true
+    try {
+      await window.sachiv.saveApiConnection({
+        name: apiName.trim(),
+        baseUrl: apiBaseUrl.trim(),
+        authType: apiAuthType,
+        apiKeyHeader: apiAuthType === 'apiKey' ? apiKeyHeader.trim() : undefined,
+        username: apiAuthType === 'basic' ? apiUsername.trim() : undefined,
+        secret: apiAuthType !== 'none' && apiSecret ? apiSecret : undefined,
+        specUrl: apiSpecUrl.trim() || undefined
+      })
+      resetApiConnectionForm()
+      await loadApiConnections()
+    } finally {
+      savingApiConnection = false
+    }
+  }
+
+  async function removeApiConnection(id: string): Promise<void> {
+    await window.sachiv.deleteApiConnection(id)
+    await loadApiConnections()
   }
 
   // --- Workspace boundary (TASKS.md #41) ---
@@ -521,6 +574,64 @@
       </div>
     {:else}
       <button onclick={() => (showAddMcpServer = true)}>+ Add MCP server</button>
+    {/if}
+
+    <hr />
+
+    <h2>External APIs</h2>
+    <p class="status">
+      Third-party REST APIs the agent can introspect and call (api_list_connections/api_introspect/
+      api_call/api_check_status). GET/HEAD/OPTIONS run immediately; anything else needs confirmation
+      first, same as every other mutating tool.
+    </p>
+
+    {#if apiConnections.length}
+      <ul class="connection-list">
+        {#each apiConnections as conn (conn.id)}
+          <li>
+            <span class="conn-name">{conn.name}</span>
+            <span class="conn-engine">{conn.authType}</span>
+            <button class="link-danger" onclick={() => removeApiConnection(conn.id)}>Remove</button>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="status">No API connections yet.</p>
+    {/if}
+
+    {#if showAddApiConnection}
+      <div class="add-connection-form">
+        <input placeholder="Connection name" bind:value={apiName} />
+        <input placeholder="Base URL, e.g. https://api.example.com/v1" bind:value={apiBaseUrl} />
+        <select bind:value={apiAuthType}>
+          <option value="none">No auth</option>
+          <option value="apiKey">API key header</option>
+          <option value="bearer">Bearer token</option>
+          <option value="basic">Basic auth</option>
+        </select>
+        {#if apiAuthType === 'apiKey'}
+          <input placeholder="Header name, e.g. X-API-Key" bind:value={apiKeyHeader} />
+          <input placeholder="API key" type="password" bind:value={apiSecret} />
+        {:else if apiAuthType === 'bearer'}
+          <input placeholder="Bearer token" type="password" bind:value={apiSecret} />
+        {:else if apiAuthType === 'basic'}
+          <input placeholder="Username" bind:value={apiUsername} />
+          <input placeholder="Password" type="password" bind:value={apiSecret} />
+        {/if}
+        <input placeholder="OpenAPI/Swagger spec URL (optional)" bind:value={apiSpecUrl} />
+        <div class="actions">
+          <button onclick={resetApiConnectionForm}>Cancel</button>
+          <button
+            class="primary"
+            disabled={savingApiConnection || !apiName.trim() || !apiBaseUrl.trim()}
+            onclick={saveApiConnection}
+          >
+            {savingApiConnection ? 'Saving...' : 'Add connection'}
+          </button>
+        </div>
+      </div>
+    {:else}
+      <button onclick={() => (showAddApiConnection = true)}>+ Add API connection</button>
     {/if}
 
     <hr />

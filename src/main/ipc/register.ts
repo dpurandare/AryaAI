@@ -8,6 +8,7 @@ import {
   IpcChannel,
   DEFAULT_SESSION_TITLE,
   type AppInfo,
+  type SaveApiConnectionInput,
   type SaveDataConnectionInput,
   type SaveMcpServerInput,
   type ChatStreamEventPayload,
@@ -33,6 +34,7 @@ import {
   saveConnection,
   updateConnectionSchemaSummary
 } from '../data/connections'
+import { deleteApiConnection, listApiConnections, saveApiConnection } from '../data/api-connections'
 import { prepareConversation } from '../context/prepare-context'
 import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/config'
 import { McpManager } from '../mcp/manager'
@@ -204,6 +206,10 @@ export function registerIpcHandlers(): void {
     }
     deleteConnection(id)
   })
+
+  ipcMain.handle(IpcChannel.ApiConnectionsList, () => listApiConnections())
+  ipcMain.handle(IpcChannel.ApiConnectionsSave, (_event, input: SaveApiConnectionInput) => saveApiConnection(input))
+  ipcMain.handle(IpcChannel.ApiConnectionsDelete, (_event, id: string) => deleteApiConnection(id))
 
   ipcMain.handle(IpcChannel.McpServersList, () =>
     listServerConfigs().map((config) => {

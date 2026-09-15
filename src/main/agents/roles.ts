@@ -63,9 +63,21 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'around it or guessing. A request can need more than just retrieving that past context — e.g. ' +
         '"search for the analysis we did for X, and show a comparison for Y" means finding X via ' +
         'search_history AND THEN actually redoing the analysis for Y using the same method, presented ' +
-        'as a comparison — not just relaying the retrieved excerpt as the whole answer.',
+        'as a comparison — not just relaying the retrieved excerpt as the whole answer. For a ' +
+        'configured third-party API (Settings > External APIs), use api_list_connections to see what ' +
+        "exists, api_introspect on the one you need if you don't already know its endpoints, then " +
+        'api_call to actually call it — set paginate:true on a list-style call instead of hand-driving ' +
+        'each page yourself, and if a call comes back looking like an async job (202, or a pending ' +
+        'status + id in the body) use api_check_status to poll it rather than assuming it finished.',
       get tools() {
-        return pickTools(registry, ['web_search', 'search_history'])
+        return pickTools(registry, [
+          'web_search',
+          'search_history',
+          'api_list_connections',
+          'api_introspect',
+          'api_call',
+          'api_check_status'
+        ])
       }
     },
     {

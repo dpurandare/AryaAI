@@ -9,6 +9,8 @@ import {
   type ToolConfirmRequestPayload,
   type DataConnectionDto,
   type SaveDataConnectionInput,
+  type ApiConnectionDto,
+  type SaveApiConnectionInput,
   type ProviderDescriptor,
   type McpServerDto,
   type SaveMcpServerInput,
@@ -67,6 +69,12 @@ const api = {
     ipcRenderer.invoke(IpcChannel.DataConnectionsSave, input),
   deleteDataConnection: (id: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.DataConnectionsDelete, id),
+
+  listApiConnections: (): Promise<ApiConnectionDto[]> => ipcRenderer.invoke(IpcChannel.ApiConnectionsList),
+  saveApiConnection: (input: SaveApiConnectionInput): Promise<ApiConnectionDto> =>
+    ipcRenderer.invoke(IpcChannel.ApiConnectionsSave, input),
+  deleteApiConnection: (id: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.ApiConnectionsDelete, id),
 
   listMcpServers: (): Promise<McpServerDto[]> => ipcRenderer.invoke(IpcChannel.McpServersList),
   saveMcpServer: (input: SaveMcpServerInput): Promise<McpServerDto> =>

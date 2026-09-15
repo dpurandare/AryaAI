@@ -28,6 +28,10 @@ export const IpcChannel = {
   DataConnectionsSave: 'data-connections:save',
   DataConnectionsDelete: 'data-connections:delete',
 
+  ApiConnectionsList: 'api-connections:list',
+  ApiConnectionsSave: 'api-connections:save',
+  ApiConnectionsDelete: 'api-connections:delete',
+
   McpServersList: 'mcp-servers:list',
   McpServersSave: 'mcp-servers:save',
   McpServersDelete: 'mcp-servers:delete',
@@ -228,6 +232,54 @@ export interface SaveSavedQueryInput {
   description: string
   sql: string
   params: SavedQueryParam[]
+}
+
+export type ApiAuthType = 'none' | 'apiKey' | 'bearer' | 'basic'
+
+/**
+ * A cheap, endpoint-count-only hint of what a connection's API exposes —
+ * NOT a substitute for api_introspect (no parameters, and this can be
+ * stale). Plays the same routing-hint role for api_list_connections that
+ * DataConnectionSchemaSummary plays for db_list_connections. Populated only
+ * when api_introspect actually runs against the connection — unlike a data
+ * connection's schema summary, this is never warmed automatically on save,
+ * since most APIs have no discoverable spec at all and probing every
+ * connection on every save would mean real network latency/noise for the
+ * common case of "no spec here."
+ */
+export interface ApiConnectionSpecSummary {
+  endpointCount: number
+  /** A handful of "METHOD /path" samples, capped — enough for api_list_connections to hint at what's available. */
+  sample: string[]
+  updatedAt: number
+}
+
+/** Connection metadata only — never carries the actual secret (API key / bearer token / basic password). */
+export interface ApiConnectionDto {
+  id: string
+  name: string
+  baseUrl: string
+  authType: ApiAuthType
+  /** apiKey auth only — the header name the key is sent in, e.g. "X-API-Key". */
+  apiKeyHeader?: string
+  /** basic auth only. */
+  username?: string
+  hasSecret: boolean
+  /** Optional explicit OpenAPI/Swagger spec URL; when absent, api_introspect probes a handful of common well-known paths under baseUrl instead. */
+  specUrl?: string
+  specSummary?: ApiConnectionSpecSummary
+}
+
+/** `id` omitted creates a new connection; `secret` omitted on an edit leaves the stored one unchanged. */
+export interface SaveApiConnectionInput {
+  id?: string
+  name: string
+  baseUrl: string
+  authType: ApiAuthType
+  apiKeyHeader?: string
+  username?: string
+  secret?: string
+  specUrl?: string
 }
 
 export type McpTransport = 'stdio' | 'http'

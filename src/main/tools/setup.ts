@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { getSetting } from '../db/settings'
 import { WorkspaceGuard } from '../security/workspace-guard'
+import { apiCallTool, apiCheckStatusTool, apiIntrospectTool, apiListConnectionsTool } from './api'
 import { awsCliTool, azureCliTool, gcloudCliTool } from './cloud-cli'
 import {
   dbExecuteSqlTool,
@@ -67,5 +68,9 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(gitCloneRepoTool)
   registry.register(githubCliTool)
   registry.register(searchHistoryTool)
+  registry.register(apiListConnectionsTool)
+  registry.register(apiIntrospectTool)
+  registry.register(apiCallTool)
+  registry.register(apiCheckStatusTool)
   return registry
 }

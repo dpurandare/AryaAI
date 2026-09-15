@@ -8,6 +8,30 @@ version is still `0`.
 
 ## [Unreleased]
 
+### Added
+
+- Rebranded from "Sachiv" to "Sachivji" everywhere user-facing, including the dev-mode Electron process/Dock identity (packaged builds were already correctly named).
+- Real app icon (gear + person silhouette + capability badges), replacing the placeholder monogram.
+- Widened providers: Google (Gemini) and Ollama (local, no key needed) adapters, behind a provider registry so adding one needs no renderer changes.
+- Widened tools: `git_exec`/`git_clone_repo`, `github_cli`, MCP client (stdio + HTTP/SSE, live tool-registry merge), `search_history` (cross-session semantic recall), mechanical DB CRUD tools (`db_list_rows`/`db_count_rows`/`db_find_rows`) and agent-authored parametric saved queries (`db_save_query`), and a generic external-API access tool (`api_list_connections`/`api_introspect`/`api_call`/`api_check_status` — introspection via OpenAPI/Swagger, authenticated calls, automatic pagination, async job-status polling).
+- Real per-provider token counting and cost estimation, a context/cost meter in the UI, sliding-window context retention, and tool-output trimming.
+- Cancellation (Stop button, including mid-confirmation) and mid-run steering (edit a pending tool call before approving it).
+- Multi-session concurrency — sessions can generate in the background independently; switching sessions or opening Settings no longer interrupts anything.
+- A classify-and-plan pre-pass that detects a compound request up front and shows a live step checklist.
+- Session auto-titling from the first message; PDF added alongside Markdown/JSON session export.
+- Light/dark/system theme setting, tracking the OS preference live.
+- Markdown and LaTeX math rendering for assistant messages, sanitized against untrusted content.
+
+### Fixed
+
+- A real launch-blocking bug in the first-ever packaged build: `sqlite-vec`'s native binary couldn't load from inside the asar archive.
+- `electron-updater`'s ESM/CJS interop crash in a packaged build.
+- `message_vectors` orphans left behind on session deletion.
+- Three rounds of `search_history` relevance bugs (own-result reindexing, whole-message-granularity retrieval, no relevance floor on results).
+- Reasoning models (gpt-oss, o1/o3-style) silently producing empty replies by starving on a flat 4096-token output cap — real per-model ceilings now apply.
+- The local classify-and-plan call producing invalid JSON once a conversation already had a prior tool-use turn, by isolating it to the latest message only.
+- Dock hover-tooltip showing "Electron" instead of "Sachivji" in dev mode (root cause: the `.app` bundle folder's own filename, not any Info.plist key) — and, in the same pass, reverted an earlier attempted fix for this that had silently broken `npm run dev`'s live renderer (an executable-file rename tripped Electron's own hardcoded `app.isPackaged` check, so dev launches silently served a stale prebuilt bundle instead of the live Vite dev server with no error anywhere).
+
 ## [0.1.0] - 2026-09-08
 
 ### Added
