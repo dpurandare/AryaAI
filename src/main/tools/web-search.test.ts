@@ -50,12 +50,12 @@ describe('web_search', () => {
     expect(result).toMatch(/no instant answer found/)
   })
 
-  it('includes related topics when present', async () => {
+  it('includes related topics by text, but never their FirstURL — a DuckDuckGo internal category page, not a real fetchable source', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(
         JSON.stringify({
           Abstract: '',
-          RelatedTopics: [{ Text: 'Related thing', FirstURL: 'https://example.com' }]
+          RelatedTopics: [{ Text: 'Related thing', FirstURL: 'https://duckduckgo.com/c/Related_thing' }]
         }),
         { status: 200 }
       )
@@ -63,7 +63,70 @@ describe('web_search', () => {
 
     const result = await webSearchTool.execute({ query: 'something' }, ctx)
     expect(result).toContain('Related thing')
-    expect(result).toContain('https://example.com')
+    expect(result).not.toContain('duckduckgo.com/c/')
+    expect(result).toContain('not fetchable')
+  })
+
+  it('flattens a disambiguation-style grouped RelatedTopics shape ({Name, Topics: [...]}) instead of missing it', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          Abstract: '',
+          RelatedTopics: [
+            { Name: 'Group A', Topics: [{ Text: 'Nested topic one', FirstURL: 'https://duckduckgo.com/c/A' }] },
+            { Text: 'Flat topic', FirstURL: 'https://duckduckgo.com/c/B' }
+          ]
+        }),
+        { status: 200 }
+      )
+    )
+
+    const result = await webSearchTool.execute({ query: 'something' }, ctx)
+    expect(result).toContain('Nested topic one')
+    expect(result).toContain('Flat topic')
+  })
+
+  it('caps related topics at a reasonable count', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          Abstract: '',
+          RelatedTopics: Array.from({ length: 20 }, (_, i) => ({ Text: `Topic ${i}`, FirstURL: `https://duckduckgo.com/c/${i}` }))
+        }),
+        { status: 200 }
+      )
+    )
+
+    const result = await webSearchTool.execute({ query: 'something' }, ctx)
+    const bulletLines = result.split('\n').filter((line) => line.startsWith('- '))
+    expect(bulletLines.length).toBeLessThanOrEqual(8)
+  })
+
+  it('surfaces the matched Heading so the model can judge relevance — DuckDuckGo can confidently match the wrong sense of a query', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ Heading: 'PYTHON', Abstract: 'A Cold War-era UK nuclear programme.' }), { status: 200 })
+    )
+
+    const result = await webSearchTool.execute({ query: 'python' }, ctx)
+    expect(result).toContain('Matched topic: PYTHON')
+  })
+
+  it('returns a Definition + DefinitionURL when present', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          Definition: 'A pleasant surprise.',
+          DefinitionURL: 'https://www.merriam-webster.com/dictionary/serendipity',
+          DefinitionSource: 'Merriam-Webster'
+        }),
+        { status: 200 }
+      )
+    )
+
+    const result = await webSearchTool.execute({ query: 'serendipity' }, ctx)
+    expect(result).toContain('A pleasant surprise.')
+    expect(result).toContain('https://www.merriam-webster.com/dictionary/serendipity')
+    expect(result).toContain('Merriam-Webster')
   })
 
   it('throws a clear error on a non-OK response', async () => {
