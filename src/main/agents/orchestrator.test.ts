@@ -500,6 +500,42 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hello! How can I help?' })
     })
 
+    it('sends only the latest message to the classify call, not the full conversation', async () => {
+      // Found live, repeatedly, against the real default model: given the
+      // full history (which past the first turn always includes an earlier
+      // tool_use/tool_result exchange and a natural-language reply), it
+      // drifted into just answering the user's question directly, ignoring
+      // the classify instruction entirely — confirmed directly against the
+      // real server across several trials (~0% valid-JSON rate with full
+      // history vs. ~85% with just the latest message). The full history
+      // is never needed for judging structural complexity and actively
+      // hurts reliability by giving the model a "just chat" pattern to
+      // fall back into.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Sure, here you go.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      const priorTurn: Message = { role: 'assistant', content: [{ type: 'text', text: 'An earlier reply.' }] }
+      const latest: Message = { role: 'user', content: [{ type: 'text', text: 'latest question' }] }
+      await collect(orchestrator, [priorTurn, latest])
+
+      expect(provider.requests[0].messages).toEqual([latest])
+    })
+
     it('a compound plan dispatches each step to its tagged specialist in order, then synthesizes a final answer', async () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)

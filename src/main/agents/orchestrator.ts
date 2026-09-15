@@ -254,6 +254,19 @@ export class Orchestrator {
    * other error, same as `runLoop`); an aborted signal returns `undefined`
    * quietly, since the very next `runLoop`/`dispatchDelegate` call will hit
    * the same aborted signal and produce the real "aborted" stop event.
+   *
+   * Sends only the latest message, not the full conversation — found live,
+   * repeatedly, against the real default model (gpt-oss): given the full
+   * history (which, past the first turn, always includes an earlier
+   * tool_use/tool_result exchange and a natural-language assistant reply),
+   * it would drift into just answering the user's question directly,
+   * completely ignoring the classify instruction — confirmed directly
+   * against the real server across several trials, ~0% valid-JSON rate
+   * with full history vs. ~85% with just the latest message alone. The
+   * classify task only needs the current request's own phrasing to judge
+   * structural complexity; the full history actively hurts reliability
+   * here by giving the model an established "just chat" pattern to fall
+   * back into instead of the structured-output task.
    */
   private async *classifyAndPlan(
     conversation: Message[],
@@ -263,12 +276,13 @@ export class Orchestrator {
     let text = ''
     let stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'aborted' = 'end_turn'
     let roundUsage: { inputTokens: number; outputTokens: number } | undefined
+    const latestMessage = conversation[conversation.length - 1]
 
     try {
       for await (const event of this.provider.stream({
         model: this.model,
         system: this.buildClassifySystemPrompt(),
-        messages: conversation,
+        messages: latestMessage ? [latestMessage] : conversation,
         // Shares the same real, scaled-when-possible budget as every other
         // round (see resolveMaxOutputTokens) — a flat small value here
         // starved gpt-oss's hidden reasoning into an empty response before
@@ -372,8 +386,9 @@ export class Orchestrator {
       .join('\n')
     return (
       "Before anything else, classify the user's latest request and, only if it genuinely needs more " +
-      'than one distinct sub-task, build a short ordered plan for it. Respond with ONLY a single JSON ' +
-      'object, no markdown fence, no other text:\n' +
+      'than one distinct sub-task, build a short ordered plan for it. You have no tools available for ' +
+      'this — do not attempt to call one. Respond with ONLY a single JSON object, no markdown fence, ' +
+      'no other text, and do not answer the request itself here:\n' +
       '{"complexity": "simple" | "compound", "steps": [{"role": "<one of the role ids below>", ' +
       '"description": "..."}]}\n' +
       '- "simple": answerable directly, or with at most one tool call or delegation. Use an empty steps ' +
