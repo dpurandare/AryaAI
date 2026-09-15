@@ -21,14 +21,35 @@
 // the bundle folder left as "Electron.app" but re-signed with a custom
 // identifier still showed "Electron". So the tooltip reads the bundle
 // folder's own filename on disk — nothing else. This renames that folder
-// itself (Electron.app -> Sachivji.app), not just the binary inside it,
-// and keeps node_modules/electron/path.txt (which `require('electron')`
-// reads to find the binary to spawn — used by both
-// node_modules/.bin/electron and electron-vite) pointed at the new path.
+// itself (Electron.app -> Sachivji.app) and keeps
+// node_modules/electron/path.txt (which `require('electron')` reads to
+// find the binary to spawn — used by both node_modules/.bin/electron and
+// electron-vite) pointed at the new path.
 //
-// This re-brands the local dev copy of Electron.app in place. A fresh
-// `npm install` restores the stock Electron.app, so it's wired into
-// `postinstall` and `predev`/`prestart` to reapply automatically.
+// The actual executable file at Contents/MacOS and CFBundleExecutable are
+// deliberately left as the stock "Electron" — an EARLIER version of this
+// script renamed those too (to fix the Dock's process-name display, a
+// separate thing from the tooltip), which turned out to be a real,
+// serious regression found and reverted the same day: Electron's own
+// `app.isPackaged` getter (lib/browser/api/app.ts upstream) is computed as
+// `path.basename(process.execPath).toLowerCase() !== 'electron'` — a
+// literal, hardcoded string comparison against the executable's filename,
+// nothing configurable. Renaming that file made `app.isPackaged` (and so
+// `is.dev` from @electron-toolkit/utils, `!app.isPackaged`) evaluate
+// `true` even for this raw unpackaged dev binary, which silently broke
+// `npm run dev`'s renderer routing: `src/main/index.ts` only calls
+// `loadURL(ELECTRON_RENDERER_URL)` (the live Vite dev server, with HMR)
+// when `is.dev` is true, so every dev launch fell through to
+// `loadFile(...out/renderer/index.html)` instead — a real but *stale*
+// prebuilt bundle, so the app still looked and mostly worked fine, while
+// silently never reflecting any renderer source change, with no error
+// anywhere. Confirmed by checking the live process's own environment
+// (`ELECTRON_RENDERER_URL` was correctly set — the bug was `is.dev` being
+// wrong, not the dev server) and by checking @electron-toolkit/utils'
+// compiled source directly. If `npm run dev` ever again seems to ignore
+// renderer changes with zero errors, check this exact thing first:
+// `path.basename(process.execPath)` must still read literally "Electron"
+// for an unpackaged dev run, whatever the Dock/bundle-folder branding is.
 import { existsSync, copyFileSync, renameSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -47,9 +68,6 @@ const contents = join(appDir, 'Contents')
 const plist = join(contents, 'Info.plist')
 const icon = join(contents, 'Resources/electron.icns')
 const sourceIcon = join(root, 'build/icon.icns')
-const macosDir = join(contents, 'MacOS')
-const stockExecutable = join(macosDir, 'Electron')
-const renamedExecutable = join(macosDir, APP_NAME)
 const pathFile = join(electronPkgDir, 'path.txt')
 
 // Electron may not be installed yet (e.g. this runs from `postinstall`
@@ -59,14 +77,14 @@ if (!existsSync(stockAppDir) && !existsSync(appDir)) process.exit(0)
 
 // Idempotent: only rename if still the stock bundle folder (a second run
 // after this already applied would otherwise fail trying to rename a
-// folder/file that no longer exists under its original name).
+// folder that no longer exists under its original name).
 if (existsSync(stockAppDir)) renameSync(stockAppDir, appDir)
-if (existsSync(stockExecutable)) renameSync(stockExecutable, renamedExecutable)
-writeFileSync(pathFile, `${APP_NAME}.app/Contents/MacOS/${APP_NAME}`)
+// The executable's own filename inside the bundle never changes (see the
+// app.isPackaged comment above) — only where the bundle folder lives.
+writeFileSync(pathFile, `${APP_NAME}.app/Contents/MacOS/Electron`)
 
 execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :CFBundleName ${APP_NAME}`, plist])
 execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :CFBundleDisplayName ${APP_NAME}`, plist])
-execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :CFBundleExecutable ${APP_NAME}`, plist])
 if (existsSync(sourceIcon)) copyFileSync(sourceIcon, icon)
 
 // The bundle folder's own name/path is what LaunchServices indexes for
