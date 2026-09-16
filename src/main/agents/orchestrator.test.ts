@@ -885,7 +885,13 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hello! How can I help?' })
     })
 
-    it('a classify-and-plan call returning genuinely malformed (non-truncated) JSON reports a different, non-truncation reason', async () => {
+    it('a classify-and-plan call returning genuinely malformed (non-truncated) JSON falls open silently — no chat-visible warning, unlike the output-token-limit case above', async () => {
+      // Reported directly: a local model (gpt-oss especially) not returning
+      // valid JSON for this structured-output probe is the expected,
+      // routine case, not a real problem — a persisted chat warning for it
+      // had no actionable next step and just read as noise. Distinct from
+      // the output-token-limit case above, which stays surfaced since it's
+      // a genuine correctness concern (an empty/cut-off response).
       const registry = buildRegistry()
       const agents = createAgents(registry)
       const provider = new MockProvider([
@@ -907,9 +913,10 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
       const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
-      const warning = streamEvents.find((e) => e.type === 'warning')
-      expect(warning).toBeDefined()
-      expect((warning as { message: string }).message).toMatch(/not valid JSON/i)
+      expect(streamEvents.find((e) => e.type === 'warning')).toBeUndefined()
+      expect(events.some((e) => e.kind === 'message' && e.content.some((c) => c.type === 'warning'))).toBe(false)
+      // Still falls open to normal behavior — the real reply still happens.
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hi there!' })
     })
   })
 })

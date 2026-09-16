@@ -307,19 +307,27 @@ export class Orchestrator {
 
     const plan = parsePlan(text)
     if (!plan) {
-      // Report it, don't just quietly fall open — the fail-open behavior
-      // (proceed as if the request were simple) is still correct, but
-      // silently doing so hid exactly the failure mode this whole feature
-      // was built to catch (found live: an empty response from hitting the
-      // output-token limit, previously indistinguishable from "the model
-      // just said nothing needed planning").
-      const cause =
-        stopReason === 'max_tokens'
-          ? 'the classification response was cut off before it could finish (hit the output-token limit)'
-          : 'the classification response was not valid JSON'
-      const message = `Couldn't tell whether this request is simple or compound (${cause}) — treating it as a normal request instead.`
-      yield { kind: 'stream', event: { type: 'warning', message } }
-      yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message }] }
+      if (stopReason === 'max_tokens') {
+        // Surfaced to the user, not just logged — this is the one real
+        // correctness concern the classify pass can hit: a genuinely
+        // empty/cut-off response (hit the output-token limit) used to be
+        // silently indistinguishable from "the model decided nothing
+        // needed planning," hiding a real bug. Fail-open (proceed as a
+        // normal request) is still the right recovery either way.
+        const message =
+          "Couldn't tell whether this request is simple or compound (the classification response was cut off " +
+          'before it could finish, hitting the output-token limit) — treating it as a normal request instead.'
+        yield { kind: 'stream', event: { type: 'warning', message } }
+        yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message }] }
+      } else {
+        // A local model (gpt-oss especially) not returning valid JSON for
+        // this structured-output probe is the *expected*, routine case, not
+        // a real problem — fail-open the same way, but only to the console,
+        // not the chat transcript. Reported directly: a persisted warning
+        // here had no actionable next step for the user and just read as
+        // noise on every turn it happened to fire.
+        console.error('orchestrator: classify-and-plan response was not valid JSON, treating as a normal request')
+      }
     }
     return plan
   }
