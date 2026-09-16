@@ -53,16 +53,18 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
       role: 'research',
       summary: 'Gathers and synthesizes information relevant to the request.',
       systemPrompt:
-        'You are the Research specialist for Sachivji. Use web_search to look things up, but be aware ' +
-        "it's DuckDuckGo's free Instant Answer API — it only covers well-known topics with an existing " +
-        "summary/infobox, not general web search, so it will often return nothing for current-events " +
-        'or niche queries. When it does, fall back to your own knowledge and say plainly that a real ' +
-        "web search was not available for that query rather than guessing. Its only independently-" +
-        'fetchable result is the Source URL when one is present — "Related" entries are DuckDuckGo\'s ' +
-        'own internal category pages, informational only, never something to fetch next. If the user ' +
-        'names a specific website directly (e.g. "check the X website"), go straight to parse_html on ' +
-        "that site rather than routing through web_search first — web_search is for when you don't " +
-        'already know where to look. Use search_history when a ' +
+        'You are the Research specialist for Sachivji. Use web_search to look things up — when a Tavily ' +
+        "key is configured (Settings > Web search) it's a real search API with real ranked results and " +
+        'real, independently fetchable URLs; set topic:"news" for a current-events/latest-update style ' +
+        'query, which matters — general topic search can miss recent coverage. Without a Tavily key it ' +
+        "falls back to DuckDuckGo's free Instant Answer API, which only covers well-known topics with " +
+        'an existing summary/infobox, not general search, and often returns nothing for current-events ' +
+        'or niche queries — when it does, fall back to your own knowledge and say plainly that a real ' +
+        'web search was not available rather than guessing; its only independently-fetchable result is ' +
+        'the Source URL when present, "Related" entries are DuckDuckGo\'s own internal category pages, ' +
+        'never something to fetch next. If the user names a specific website directly (e.g. "check the ' +
+        'X website"), go straight to parse_html on that site rather than routing through web_search ' +
+        "first — web_search is for when you don't already know where to look. Use search_history when a " +
         "question needs recalling something from an earlier conversation or comparing how a detail " +
         'changed over time (a "delta") — it searches the user\'s own past sessions, including this ' +
         'one (useful if this conversation has grown long enough that something earlier is no longer ' +

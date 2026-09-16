@@ -319,6 +319,33 @@
     await loadSearchHistoryStatus()
   }
 
+  // --- Web search (Tavily — TASKS.md #32 follow-up) ---
+  // Reuses the generic setApiKey/hasApiKey IPC channels exactly like every
+  // provider/embedding key above — they're not restricted to registered
+  // LLM providers, just a plain keychain-backed key-value store, so a
+  // second, unrelated credential ("tavily") needs no new IPC surface.
+  const TAVILY_KEY_ID = 'tavily'
+  let tavilyHasKey = $state(false)
+  let tavilyApiKey = $state('')
+  let savingTavilyKey = $state(false)
+
+  async function loadTavilyHasKey(): Promise<void> {
+    tavilyHasKey = await window.sachiv.hasApiKey(TAVILY_KEY_ID)
+  }
+  loadTavilyHasKey()
+
+  async function saveTavilyKey(): Promise<void> {
+    if (!tavilyApiKey.trim()) return
+    savingTavilyKey = true
+    try {
+      await window.sachiv.setApiKey(TAVILY_KEY_ID, tavilyApiKey.trim())
+      tavilyApiKey = ''
+      await loadTavilyHasKey()
+    } finally {
+      savingTavilyKey = false
+    }
+  }
+
   async function saveEmbeddingKey(): Promise<void> {
     if (!embeddingApiKey.trim()) return
     savingEmbeddingKey = true
@@ -521,6 +548,29 @@
     <div class="actions">
       <button disabled={rebuildingIndex} onclick={rebuildSearchHistoryIndex}>
         {rebuildingIndex ? 'Rebuilding...' : 'Rebuild index'}
+      </button>
+    </div>
+
+    <hr />
+
+    <h2>Web search</h2>
+    <p class="status">
+      web_search uses Tavily (a real search API built for AI agents) when a key is set here — real
+      ranked results with real URLs, not just DuckDuckGo's narrow Instant Answer API. Falls back to
+      DuckDuckGo automatically when no key is configured.
+    </p>
+    <p class="status">
+      {tavilyHasKey ? 'A Tavily key is currently configured.' : 'No Tavily key configured — falling back to DuckDuckGo.'}
+    </p>
+    <input
+      type="password"
+      placeholder="Paste your Tavily API key"
+      bind:value={tavilyApiKey}
+      onkeydown={(e) => e.key === 'Enter' && saveTavilyKey()}
+    />
+    <div class="actions">
+      <button class="primary" disabled={savingTavilyKey || !tavilyApiKey.trim()} onclick={saveTavilyKey}>
+        {savingTavilyKey ? 'Saving...' : 'Save key'}
       </button>
     </div>
 
