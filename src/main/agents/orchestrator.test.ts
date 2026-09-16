@@ -444,7 +444,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     // then throws) still comes through — only the provider call itself is
     // short-circuited by the already-aborted signal.
     expect(streamEvents).toEqual([
-      { type: 'status', message: 'Model (mock-model) is thinking…' },
+      { type: 'status', message: 'Model (mock-model) is thinking… (round 1/12)' },
       { type: 'message_stop', stopReason: 'aborted' }
     ])
   })
@@ -917,6 +917,210 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(events.some((e) => e.kind === 'message' && e.content.some((c) => c.type === 'warning'))).toBe(false)
       // Still falls open to normal behavior — the real reply still happens.
       expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hi there!' })
+    })
+  })
+
+  describe('exhausting the MAX_TOTAL_ROUNDS budget (previously untested — a real bug found live)', () => {
+    it('synthesizes a real answer from what was actually gathered instead of a bare "stopped" stub', async () => {
+      // Reported directly: real, on-topic content had already been found
+      // via tool calls across many rounds, but the user got nothing but a
+      // bare "Stopped after 12 agent rounds" message — everything gathered
+      // was discarded. This scripts exactly that: 12 rounds of a real tool
+      // call (never finishing on its own), then one final text-only turn
+      // the fix's wrap-up call should reach.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      await writeFileTool.execute({ path: 'note.txt', content: 'real gathered content' }, ctx)
+
+      const toolCallTurn: ScriptedTurn = {
+        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
+        stopReason: 'tool_use'
+      }
+      const turns: ScriptedTurn[] = Array.from({ length: 12 }, () => toolCallTurn)
+      turns.push({ text: 'Based on everything gathered above, here is the real synthesized answer.', stopReason: 'end_turn' })
+
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'keep going' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(streamEvents).toContainEqual({
+        type: 'text_delta',
+        text: 'Based on everything gathered above, here is the real synthesized answer.'
+      })
+      expect(provider.requests).toHaveLength(13) // 12 real rounds + 1 wrap-up
+      const wrapUpRequest = provider.requests[12]
+      expect(wrapUpRequest.tools).toBeUndefined() // forces a text-only reply — genuinely cannot loop further
+      expect(wrapUpRequest.system).toMatch(/used all 12 rounds/i)
+
+      // The renderer's "is this turn actually finished" detection depends on
+      // a real message_stop for this wrap-up round specifically, not just
+      // the earlier per-round ones — an earlier draft of this fix silently
+      // dropped it, which would have left the composer looking stuck even
+      // with a real answer already delivered.
+      const finalStop = streamEvents.find((e) => e.type === 'message_stop' && e.stopReason !== 'tool_use')
+      expect(finalStop).toBeDefined()
+    })
+
+    it('falls back to the honest "stopped" stub, still visible to the user, only if the wrap-up call itself produces nothing', async () => {
+      // Goes through real delegation (delegate_to_coding), not a plain
+      // top-level call — matching exactly how the real bug manifested
+      // (a plan-step's delegate call exhausting the shared round budget).
+      // dispatchDelegate wraps runLoop's returned text into a real
+      // tool_result unconditionally, so the stub is genuinely visible
+      // either way; a plain top-level exhaustion's return value is never
+      // wrapped into a message at all, which isn't what this is checking.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      await writeFileTool.execute({ path: 'note.txt', content: 'x' }, ctx)
+
+      const toolCallTurn: ScriptedTurn = {
+        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
+        stopReason: 'tool_use'
+      }
+      const turns: ScriptedTurn[] = [
+        // Round 1 (top-level): delegate to Coding.
+        { toolCalls: [{ id: 'd1', name: 'delegate_to_coding', input: { task: 'keep reading' } }], stopReason: 'tool_use' },
+        // Rounds 2-12 (nested, 11 of them): real tool calls, never finishing on their own.
+        ...Array.from({ length: 11 }, () => toolCallTurn),
+        // Nested wrap-up (round budget now exhausted): produces nothing.
+        { stopReason: 'end_turn' },
+        // Top-level's own wrap-up, cascading from the same exhausted counter.
+        { text: 'The Coding specialist ran out of rounds without finishing.', stopReason: 'end_turn' }
+      ]
+
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'keep going' }] }])
+      const toolResults = events
+        .filter((e) => e.kind === 'stream' && e.event.type === 'tool_result')
+        .map((e) => (e.kind === 'stream' && e.event.type === 'tool_result' ? e.event.content : ''))
+
+      expect(toolResults).toContainEqual('Stopped after 12 agent rounds.')
+    })
+  })
+
+  describe('capping repeated same-tool results within a single turn (context-bloat fix)', () => {
+    it('collapses all but the most recent 3 results for a repeatedly-called read-only tool in what is sent to the provider', async () => {
+      // Reported directly: a real complex request made 9 separate
+      // web_search calls in one turn, most of them refinements that hadn't
+      // found what was needed yet — every one of those stayed fully
+      // expanded in every later round's request, since nothing trims
+      // *within* a turn (prepareConversation only runs once, before the
+      // turn starts). Scripts 5 read_file calls (read_file is registered
+      // as mutates:false, same as web_search) to the same effect, cheaper
+      // to set up than a real web_search mock.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      for (let i = 1; i <= 5; i++) {
+        await writeFileTool.execute({ path: `file${i}.txt`, content: `content-${i}` }, ctx)
+      }
+
+      const turns: ScriptedTurn[] = [
+        ...Array.from({ length: 5 }, (_, i) => ({
+          toolCalls: [{ id: `call${i + 1}`, name: 'read_file', input: { path: `file${i + 1}.txt` } }],
+          stopReason: 'tool_use' as const
+        })),
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'read all 5 files' }] }])
+
+      // The final round's request reflects every earlier round's accumulated
+      // conversation — the real regression surface (a request growing
+      // unboundedly across rounds within one turn).
+      const finalRequest = provider.requests[provider.requests.length - 1]
+      const toolResultContents = finalRequest.messages
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result')
+        .map((b) => b.content)
+
+      expect(toolResultContents).toHaveLength(5)
+      // Oldest 2 (5 calls - MAX_KEPT_RESULTS_PER_TOOL of 3) collapsed to the marker.
+      expect(toolResultContents[0]).toMatch(/omitted to save context/)
+      expect(toolResultContents[1]).toMatch(/omitted to save context/)
+      // Most recent 3 stay real, untouched content.
+      expect(toolResultContents[2]).toBe('content-3')
+      expect(toolResultContents[3]).toBe('content-4')
+      expect(toolResultContents[4]).toBe('content-5')
+
+      // Never affects what's actually persisted/shown — the live
+      // tool_result stream events (what the UI/DB actually get, and what
+      // register.ts persists to SQLite) carry the real, full content
+      // regardless of what capRepeatedToolResults sent to the provider.
+      const liveToolResults = events
+        .filter((e) => e.kind === 'stream' && e.event.type === 'tool_result')
+        .map((e) => (e.kind === 'stream' && e.event.type === 'tool_result' ? e.event.content : ''))
+      expect(liveToolResults).toEqual(['content-1', 'content-2', 'content-3', 'content-4', 'content-5'])
+    })
+
+    it('never collapses a mutating tool\'s result, even called repeatedly', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+
+      const turns: ScriptedTurn[] = [
+        ...Array.from({ length: 5 }, (_, i) => ({
+          toolCalls: [{ id: `write${i + 1}`, name: 'write_file', input: { path: `f${i + 1}.txt`, content: `v${i + 1}` } }],
+          stopReason: 'tool_use' as const
+        })),
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'write 5 files' }] }])
+
+      const finalRequest = provider.requests[provider.requests.length - 1]
+      const toolResultContents = finalRequest.messages
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result')
+        .map((b) => b.content)
+
+      expect(toolResultContents.every((c) => !c.includes('omitted to save context'))).toBe(true)
     })
   })
 })

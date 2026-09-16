@@ -38,6 +38,66 @@ export type OrchestratorEvent =
 const MAX_TOTAL_ROUNDS = 12
 const DELEGATE_PREFIX = 'delegate_to_'
 
+/** See `capRepeatedToolResults` below. */
+const MAX_KEPT_RESULTS_PER_TOOL = 3
+
+/**
+ * Repeated calls to the same read-only tool within a single turn — a
+ * research agent refining a `web_search` query several times being the
+ * concrete case this was built for — each stayed fully expanded in
+ * `conversation` for every later round, since nothing else trims *within*
+ * a turn: `prepareConversation` (ipc/register.ts) only runs once, before
+ * the turn starts, against prior history, and `trimToolResults` only caps
+ * a single oversized result, not the sum of many modest ones. Found live:
+ * a real complex request made 9 separate `web_search` calls in one turn,
+ * most refinements of a query that hadn't found what was needed yet, and
+ * every one of those stayed in full for every subsequent round.
+ *
+ * Keeps only the most recent `MAX_KEPT_RESULTS_PER_TOOL` results for each
+ * tool name in what's actually sent to the provider; older ones collapse
+ * to a one-line marker (the original tool_use input block is untouched and
+ * still cheap, so the model can still see *what* it already tried, just
+ * not the full result again). Only applies to a tool whose `mutates` is
+ * statically `false` — a completed write/mutating call represents a real
+ * side effect worth remembering in full for as long as it's in context;
+ * a stale read is safely re-fetchable if actually still needed. Never
+ * mutates `conversation` itself (returns a fresh array only when there's
+ * something to collapse) — this only ever affects what's sent to the
+ * provider on this and later rounds, never what's persisted to SQLite or
+ * shown in the live/reloaded UI transcript, same as every other trimming
+ * pass in this codebase.
+ */
+function capRepeatedToolResults(conversation: Message[], toolByName: ReadonlyMap<string, Tool>): Message[] {
+  const idsByName = new Map<string, string[]>()
+  for (const m of conversation) {
+    for (const b of m.content) {
+      if (b.type !== 'tool_use') continue
+      const tool = toolByName.get(b.name)
+      if (!tool || tool.mutates !== false) continue
+      const ids = idsByName.get(b.name) ?? []
+      ids.push(b.id)
+      idsByName.set(b.name, ids)
+    }
+  }
+  const staleIds = new Set<string>()
+  for (const ids of idsByName.values()) {
+    if (ids.length <= MAX_KEPT_RESULTS_PER_TOOL) continue
+    for (const id of ids.slice(0, ids.length - MAX_KEPT_RESULTS_PER_TOOL)) staleIds.add(id)
+  }
+  if (staleIds.size === 0) return conversation
+
+  return conversation.map((m) => ({
+    ...m,
+    content: m.content.map((b): ContentBlock => {
+      if (b.type !== 'tool_result' || !staleIds.has(b.toolUseId)) return b
+      return {
+        ...b,
+        content: '[Earlier result omitted to save context — this tool was called again later in the same turn. See the tool_use input above for what was tried.]'
+      }
+    })
+  }))
+}
+
 function delegateToolName(role: AgentRole): string {
   return DELEGATE_PREFIX + role.replace(/-/g, '_')
 }
@@ -462,10 +522,20 @@ export class Orchestrator {
    * reasoning content — no provider in this app streams that as a separate
    * signal, so anything more specific than "thinking" / "reviewing tool
    * results" would be a guess, not a real report.
+   *
+   * Includes the shared round budget (`state.roundsUsed`/MAX_TOTAL_ROUNDS)
+   * — reported directly: with only a static "Thinking…" to look at, a long
+   * multi-round turn (this app's own real round-cap investigation involved
+   * exactly this) reads as stuck/unresponsive even while genuinely
+   * progressing. A real "round 3/12" counter is honest, cheap progress
+   * signal the renderer already has everything it needs to show.
    */
-  private roundStatusMessage(agentRole: AgentRole | undefined, localRound: number): string {
+  private roundStatusMessage(agentRole: AgentRole | undefined, localRound: number, state: RunState): string {
     const activity = localRound === 1 ? 'thinking' : 'reviewing tool results'
-    return agentRole ? `${AGENT_ROLE_LABELS[agentRole]} agent is ${activity}…` : `Model (${this.model}) is ${activity}…`
+    const progress = `(round ${state.roundsUsed}/${MAX_TOTAL_ROUNDS})`
+    return agentRole
+      ? `${AGENT_ROLE_LABELS[agentRole]} agent is ${activity}… ${progress}`
+      : `Model (${this.model}) is ${activity}… ${progress}`
   }
 
   private buildDelegateToolDefinitions(): ToolDefinition[] {
@@ -514,7 +584,7 @@ export class Orchestrator {
 
       yield {
         kind: 'stream',
-        event: tagEvent({ type: 'status', message: this.roundStatusMessage(agentRole, localRound) }, agentRole)
+        event: tagEvent({ type: 'status', message: this.roundStatusMessage(agentRole, localRound, state) }, agentRole)
       }
 
       let assistantText = ''
@@ -532,7 +602,7 @@ export class Orchestrator {
         for await (const event of this.provider.stream({
           model: this.model,
           system: systemPrompt,
-          messages: conversation,
+          messages: capRepeatedToolResults(conversation, toolByName),
           maxTokens: state.maxOutputTokens,
           tools: toolDefs.length ? toolDefs : undefined,
           signal: this.signal
@@ -645,6 +715,63 @@ export class Orchestrator {
       }
       yield { kind: 'message', role: 'user', content: resultBlocks }
       conversation.push({ role: 'user', content: resultBlocks })
+    }
+
+    // Round budget exhausted — rather than discarding everything gathered
+    // so far and returning a bare "ran out of rounds" stub, make one final,
+    // tools-disabled call asking the model to synthesize a real answer
+    // from what's already in `conversation`. Found live, and worse than it
+    // first looked: `state.roundsUsed` is shared across the *entire* run,
+    // not scoped per delegate call — so once a nested plan-step delegate
+    // exhausted the budget, executePlan's own top-level synthesis call
+    // (whose whole job is weaving plan-step results into a real final
+    // answer) hit the identical exhausted counter and fell through to this
+    // same stub too, immediately, without running a single round. The
+    // user's real question had already turned up a genuinely relevant,
+    // on-topic result (a real news article) sitting untouched in
+    // `conversation` when this used to just discard it all. This wrap-up
+    // call runs unconditionally here regardless of how far over budget
+    // `state.roundsUsed` already is — every call site that hits this path
+    // gets exactly one real chance to summarize instead of stub out.
+    let wrapUpText = ''
+    try {
+      for await (const event of this.provider.stream({
+        model: this.model,
+        system:
+          `${systemPrompt}\n\nYou have used all ${MAX_TOTAL_ROUNDS} rounds available for this turn — no ` +
+          'more tool calls are possible. Answer now using only what has already been found above: ' +
+          "summarize the real information gathered so far, and say plainly if it's incomplete, rather " +
+          'than attempting anything further.',
+        messages: capRepeatedToolResults(conversation, toolByName),
+        maxTokens: state.maxOutputTokens,
+        signal: this.signal
+        // No `tools` — forces a text-only reply, so this genuinely cannot loop further.
+      })) {
+        if (event.type === 'text_delta') wrapUpText += event.text
+        if (event.type === 'usage') {
+          state.inputTokens += event.inputTokens
+          state.outputTokens += event.outputTokens
+        }
+        // Every event forwarded the same way the main loop above does,
+        // message_stop included — found live in review, not yet in
+        // production: an earlier draft of this wrap-up only forwarded
+        // text_delta/usage, silently dropping message_stop. The renderer's
+        // "is this turn actually finished" detection depends on seeing a
+        // real (correctly tagged) message_stop; without one, this fix
+        // would have traded a visible-but-unhelpful stub for a genuinely
+        // stuck-looking composer — the exact symptom being fixed.
+        const outEvent =
+          event.type === 'message_stop' ? tagMessageStop(event, agentRole, isTopLevel) : tagEvent(event, agentRole)
+        yield { kind: 'stream', event: outEvent }
+      }
+    } catch (err) {
+      if (!this.signal.aborted) throw err
+      return { text: wrapUpText, isError: true }
+    }
+
+    if (wrapUpText) {
+      yield { kind: 'message', role: 'assistant', content: [{ type: 'text', text: wrapUpText, agentRole }] }
+      return { text: wrapUpText, isError: false }
     }
 
     return { text: `Stopped after ${MAX_TOTAL_ROUNDS} agent rounds.`, isError: true }
