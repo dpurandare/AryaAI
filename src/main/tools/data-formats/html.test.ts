@@ -30,13 +30,19 @@ const ARTICLE_HTML = `<!DOCTYPE html><html><head><title>Ignored</title></head><b
 // the fallback path below.
 const EMPTY_HTML = `<html><body></body></html>`
 
+let sessionCounter = 0
+
 describe('parse_html', () => {
   let root: string
   let ctx: ToolContext
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'sachiv-parse-html-'))
-    ctx = { workspaceGuard: new WorkspaceGuard(root), currentSessionId: 'test-session' }
+    // Unique per test — link-registry.ts's registry is session-scoped but
+    // process-lifetime (not reset between tests), so a fixed shared id here
+    // would let one test's recorded links leak into another's enforcement.
+    sessionCounter++
+    ctx = { workspaceGuard: new WorkspaceGuard(root), currentSessionId: `test-session-${sessionCounter}` }
   })
 
   afterEach(async () => {
@@ -184,6 +190,77 @@ describe('parse_html', () => {
         parseHtmlTool.execute({ text: '<html></html>' }, ctx)
       )
       expect(result).not.toContain('Links on this page:')
+    })
+  })
+
+  describe('real-link reuse enforcement (link-registry.ts)', () => {
+    // A real, Readability-recognizable article containing one real link —
+    // reused across these tests as "the page that establishes real links
+    // for an origin" before testing what happens on the follow-up fetch.
+    const LISTING_HTML = `<!DOCTYPE html><html><body><article>
+      <h1>A Real Listing Page</h1>
+      <p>${'Enough real body text for Readability to treat this as the article. '.repeat(4)}</p>
+      <a href="/real-article-123.cms">A real headline</a>
+    </article></body></html>`
+
+    it('allows the very first fetch to a brand-new origin, path and all — cold start can\'t be told apart from a user-given URL', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(LISTING_HTML, { status: 200 })))
+      const result = await parseHtmlTool.execute({ url: 'https://news.example.com/some/path' }, ctx)
+      vi.unstubAllGlobals()
+      expect(result).toContain('A Real Listing Page')
+    })
+
+    it('rejects a fabricated follow-up path once a real link is on file for that origin', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(LISTING_HTML, { status: 200 })))
+      await parseHtmlTool.execute({ url: 'https://news.example.com/topic/x' }, ctx)
+      vi.unstubAllGlobals()
+
+      await expect(
+        parseHtmlTool.execute({ url: 'https://news.example.com/a-completely-invented-article-999.cms' }, ctx)
+      ).rejects.toThrow(/never guess or construct a path/)
+    })
+
+    it('allows a follow-up fetch that uses one of the real extracted links', async () => {
+      const fetchMock = vi.fn().mockImplementation(async () => new Response(LISTING_HTML, { status: 200 }))
+      vi.stubGlobal('fetch', fetchMock)
+      await parseHtmlTool.execute({ url: 'https://news.example.com/topic/x' }, ctx)
+
+      // The extracted link resolves relative to the topic page's own URL —
+      // confirm we're using exactly that resolved form, not a guess.
+      const result = await parseHtmlTool.execute({ url: 'https://news.example.com/real-article-123.cms' }, ctx)
+      vi.unstubAllGlobals()
+      expect(result).toContain('A Real Listing Page')
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('always allows re-fetching the bare origin root, even after real links are known', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response(LISTING_HTML, { status: 200 })))
+      await parseHtmlTool.execute({ url: 'https://news.example.com/topic/x' }, ctx)
+      const result = await parseHtmlTool.execute({ url: 'https://news.example.com/' }, ctx)
+      vi.unstubAllGlobals()
+      expect(result).toContain('A Real Listing Page')
+    })
+
+    it('does not let a rejected guess reach the real fetch at all', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(LISTING_HTML, { status: 200 }))
+      vi.stubGlobal('fetch', fetchMock)
+      await parseHtmlTool.execute({ url: 'https://news.example.com/topic/x' }, ctx)
+      fetchMock.mockClear()
+
+      await expect(parseHtmlTool.execute({ url: 'https://news.example.com/invented.cms' }, ctx)).rejects.toThrow()
+      expect(fetchMock).not.toHaveBeenCalled()
+      vi.unstubAllGlobals()
+    })
+
+    it('scopes enforcement per session — a different conversation is not restricted by this one\'s known links', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response(LISTING_HTML, { status: 200 })))
+      await parseHtmlTool.execute({ url: 'https://news.example.com/topic/x' }, ctx)
+
+      const otherCtx: ToolContext = { workspaceGuard: ctx.workspaceGuard, currentSessionId: 'a-completely-different-session' }
+      // Cold start in the other session — allowed, not rejected by ctx's history.
+      const result = await parseHtmlTool.execute({ url: 'https://news.example.com/some/other/guessed/path' }, otherCtx)
+      vi.unstubAllGlobals()
+      expect(result).toContain('A Real Listing Page')
     })
   })
 })

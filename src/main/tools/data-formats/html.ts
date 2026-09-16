@@ -1,6 +1,7 @@
 import { Readability } from '@mozilla/readability'
 import { JSDOM } from 'jsdom'
 import type { Tool } from '../types'
+import { checkUrlAllowed, recordKnownUrl } from './link-registry'
 import { resolveSource } from './source'
 
 const MAX_TEXT_CHARS = 10_000
@@ -63,6 +64,12 @@ function formatLinks(links: PageLink[]): string {
   return `\n\nLinks on this page:\n${links.map((l) => `- ${l.text}: ${l.href}`).join('\n')}`
 }
 
+/** Files the fetched page itself, plus every real link extracted from it, as "known real" for this session — see link-registry.ts. Called regardless of source (url/filePath/text): a link discovered inside an inline/local HTML blob is just as real as one fetched live, and worth trusting for a later url fetch to that same origin. */
+function recordDiscoveredLinks(sessionId: string, sourceUrl: string, links: PageLink[], isRealFetch: boolean): void {
+  if (isRealFetch) recordKnownUrl(sessionId, sourceUrl)
+  for (const link of links) recordKnownUrl(sessionId, link.href)
+}
+
 export const parseHtmlTool: Tool = {
   name: 'parse_html',
   description:
@@ -70,12 +77,14 @@ export const parseHtmlTool: Tool = {
     'ads, and script/style boilerplate — instead of you having to wade through raw HTML yourself. Also ' +
     'lists the real links found on the page (text + absolute URL, capped), which matters most for a ' +
     'listing/topic/search-results page — use one of THOSE real links for a follow-up parse_html call ' +
-    "when you need a specific article; never construct/guess an article URL from a headline or its " +
-    "title text, even if the pattern looks plausible — it will not exist. Provide exactly one of url " +
-    "(fetches it directly — prefer this over shell_execute/curl for reading a web page, since the raw " +
-    'HTML never has to pass through your own context), filePath (an HTML file already in the workspace), ' +
-    "or text (inline HTML you already have). Falls back to a plain stripped-text dump when the page isn't " +
-    'recognizable as an article (e.g. an app shell or listing page), and says so.',
+    'when you need a specific article. This is enforced, not just advised: once a real link has been ' +
+    'seen for a site, a follow-up url that is not the site root and does not exactly match one of those ' +
+    'real links is rejected outright, telling you to use a real one instead — constructing/guessing a ' +
+    "path yourself will not work. Provide exactly one of url (fetches it directly — prefer this over " +
+    'shell_execute/curl for reading a web page, since the raw HTML never has to pass through your own ' +
+    'context), filePath (an HTML file already in the workspace), or text (inline HTML you already have). ' +
+    "Falls back to a plain stripped-text dump when the page isn't recognizable as an article (e.g. an " +
+    'app shell or listing page), and says so.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -86,8 +95,14 @@ export const parseHtmlTool: Tool = {
   },
   mutates: false,
   async execute(input, ctx) {
+    const isRealFetch = typeof input.url === 'string' && input.url !== ''
+    if (isRealFetch) {
+      const check = checkUrlAllowed(ctx.currentSessionId, input.url as string)
+      if (!check.allowed) throw new Error(check.reason)
+    }
+
     const { text: html } = await resolveSource(input, ctx)
-    const sourceUrl = typeof input.url === 'string' && input.url ? input.url : 'http://localhost/'
+    const sourceUrl = isRealFetch ? (input.url as string) : 'http://localhost/'
 
     const dom = new JSDOM(html, { url: sourceUrl })
     const article = new Readability(dom.window.document).parse()
@@ -97,6 +112,7 @@ export const parseHtmlTool: Tool = {
       if (articleText) {
         const title = article.title ? `${article.title}\n\n` : ''
         const links = extractLinks(article.content ?? html, sourceUrl)
+        recordDiscoveredLinks(ctx.currentSessionId, sourceUrl, links, isRealFetch)
         return title + truncate(articleText) + formatLinks(links)
       }
     }
@@ -104,6 +120,7 @@ export const parseHtmlTool: Tool = {
     const fallback = stripBoilerplateText(html)
     if (!fallback) return '(no readable text found on this page)'
     const links = extractLinks(html, sourceUrl)
+    recordDiscoveredLinks(ctx.currentSessionId, sourceUrl, links, isRealFetch)
     return (
       "(Readability couldn't identify article content on this page — showing raw extracted text " +
       'instead, which may include navigation/boilerplate.)\n\n' +

@@ -82,8 +82,13 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'has to enter your own context at all. It also lists the real links found on the page — when ' +
         'you need a specific article from a listing/topic/search page, call parse_html again with one ' +
         'of those real links. Never construct or guess an article URL yourself from a headline or ' +
-        "title text, even if the pattern looks plausible — it will not exist and the fetch will 404. " +
-        "If no real link is available for what you need, say so plainly rather than guessing.",
+        'title text, even if the pattern looks plausible — this is enforced, not just advised: once a ' +
+        'real link has been seen for a site, a guessed url that is not the site root and does not exactly ' +
+        'match one of those real links is rejected outright. If you have no real link yet for a site at ' +
+        'all (nothing fetched from it so far this conversation), fetch the bare domain root first (e.g. ' +
+        '"https://example.com/") to discover its real links, rather than guessing a specific path — the ' +
+        "root is always a safe starting point. If still no real link is available for what you need, say " +
+        'so plainly rather than guessing.',
       get tools() {
         return pickTools(registry, [
           'web_search',
