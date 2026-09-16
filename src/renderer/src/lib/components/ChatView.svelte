@@ -51,7 +51,10 @@
     onChangeModel,
     onNeedKey,
     sessionUsage,
-    contextWindow
+    contextWindow,
+    toolDetailsExpanded,
+    onToggleToolDetails,
+    isMac
   }: {
     messages: DisplayMessage[]
     statusLine: string
@@ -67,6 +70,11 @@
     onNeedKey: () => void
     sessionUsage: { inputTokens: number; outputTokens: number }
     contextWindow: { tokens: number; isEstimate: boolean } | null
+    /** Global "show full tool output" toggle (Cmd/Ctrl+O, owned by App.svelte so the hotkey works regardless of what has focus) — see the .tool-call rendering below. */
+    toolDetailsExpanded: boolean
+    onToggleToolDetails: () => void
+    /** For the tool-output toggle's tooltip label only — the real Cmd/Ctrl+O handling lives in App.svelte. */
+    isMac: boolean
   } = $props()
 
   let draft = $state('')
@@ -180,31 +188,45 @@
           {/if}
           {#if segment.kind === 'tool' && segment.toolCall}
             {@const isDelegate = segment.toolCall.name.startsWith('delegate_to_')}
-            <div class="tool-call">
+            {@const isResolved = segment.toolCall.result !== undefined}
+            <div class="tool-call" class:collapsed={!toolDetailsExpanded}>
               <div class="tool-call-head">
                 <span class="tool-icon">⚙</span>
                 <code>{segment.toolCall.name}</code>
                 <span class="tool-input">{segment.toolCall.input}</span>
+                {#if !toolDetailsExpanded && !isDelegate && isResolved}
+                  <!-- Collapsed + already resolved: a one-glyph result indicator
+                       instead of the full body below — full detail is one
+                       Cmd/Ctrl+O away, not lost, just not filling the transcript
+                       by default. Reported directly: full tool output shown for
+                       every call by default made the chat look broken/noisy
+                       even when the app was working correctly. -->
+                  <span class="tool-status" class:error={segment.toolCall.isError} title={segment.toolCall.isError ? 'Error — Cmd/Ctrl+O for details' : 'Done — Cmd/Ctrl+O for details'}>
+                    {segment.toolCall.isError ? '✗' : '✓'}
+                  </span>
+                {/if}
               </div>
               {#if !isDelegate}
-                {#if segment.toolCall.result !== undefined}
-                  {@const historicalResults =
-                    segment.toolCall.name === 'search_history' && !segment.toolCall.isError
-                      ? parseSearchHistoryResult(segment.toolCall.result)
-                      : null}
-                  {#if historicalResults}
-                    <div class="tool-result historical-results">
-                      {#each historicalResults as hit, i (i)}
-                        <div class="historical-result">
-                          <div class="historical-result-meta">
-                            {hit.session} · {hit.date} · relevance {hit.relevance}
+                {#if isResolved}
+                  {#if toolDetailsExpanded}
+                    {@const historicalResults =
+                      segment.toolCall.name === 'search_history' && !segment.toolCall.isError
+                        ? parseSearchHistoryResult(segment.toolCall.result ?? '')
+                        : null}
+                    {#if historicalResults}
+                      <div class="tool-result historical-results">
+                        {#each historicalResults as hit, i (i)}
+                          <div class="historical-result">
+                            <div class="historical-result-meta">
+                              {hit.session} · {hit.date} · relevance {hit.relevance}
+                            </div>
+                            <MarkdownText text={hit.text} />
                           </div>
-                          <MarkdownText text={hit.text} />
-                        </div>
-                      {/each}
-                    </div>
-                  {:else}
-                    <div class="tool-result" class:error={segment.toolCall.isError}>{segment.toolCall.result}</div>
+                        {/each}
+                      </div>
+                    {:else}
+                      <div class="tool-result" class:error={segment.toolCall.isError}>{segment.toolCall.result}</div>
+                    {/if}
                   {/if}
                 {:else}
                   <div class="tool-result pending">Waiting for confirmation...</div>
@@ -311,15 +333,26 @@
           />
         {/if}
       </div>
-      <ModelPicker
-        {providers}
-        {providerId}
-        {model}
-        {hasKey}
-        {onChangeProvider}
-        {onChangeModel}
-        {onNeedKey}
-      />
+      <div class="status-right">
+        <button
+          class="tool-details-toggle"
+          class:on={toolDetailsExpanded}
+          type="button"
+          onclick={onToggleToolDetails}
+          title={`${toolDetailsExpanded ? 'Hide' : 'Show'} full tool output (${isMac ? 'Cmd' : 'Ctrl'}+O)`}
+        >
+          {toolDetailsExpanded ? 'Tool output: shown' : 'Tool output: hidden'}
+        </button>
+        <ModelPicker
+          {providers}
+          {providerId}
+          {model}
+          {hasKey}
+          {onChangeProvider}
+          {onChangeModel}
+          {onNeedKey}
+        />
+      </div>
     </div>
   </div>
 </div>
@@ -343,7 +376,6 @@
     font-size: 0.9rem;
   }
   .bubble {
-    max-width: 70%;
     padding: 0.55rem 0.8rem;
     border-radius: 12px;
     white-space: pre-wrap;
@@ -352,10 +384,15 @@
   }
   .bubble.user {
     align-self: flex-end;
+    max-width: 70%;
     background: var(--user-bubble);
   }
   .bubble.assistant {
     align-self: flex-start;
+    /* Wider than the user bubble — assistant replies (agent narration, tool
+       summaries, longer answers) wrap far more than short user prompts do,
+       so the same 70% cap left a lot of unused horizontal space. */
+    max-width: 92%;
     background: var(--panel);
   }
   .agent-chip {
@@ -450,6 +487,17 @@
     font-style: italic;
   }
   .tool-result.error {
+    color: var(--warn);
+  }
+  .tool-call.collapsed {
+    padding-bottom: 0.5rem;
+  }
+  .tool-status {
+    margin-left: auto;
+    font-family: ui-monospace, monospace;
+    color: var(--text-muted);
+  }
+  .tool-status.error {
     color: var(--warn);
   }
   .warning-note {
@@ -588,6 +636,28 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
+  }
+  .status-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .tool-details-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    cursor: pointer;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+  }
+  .tool-details-toggle:hover {
+    background: var(--panel-hover);
+    color: var(--text);
+  }
+  .tool-details-toggle.on {
+    color: var(--accent);
+    border-color: var(--accent);
   }
   .status-text {
     font-size: 0.72rem;

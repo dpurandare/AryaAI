@@ -165,6 +165,8 @@
   // long per-round "thinking" phase. Mirrors this app's default-on-missing
   // settings convention (see main/ipc/register.ts's own read of this key).
   let planningEnabled = $state(true)
+  /** Global, not per-tool-call — matches Claude Code's own Cmd/Ctrl+O convention this was explicitly modeled on: one toggle for "how much tool detail is on screen," not a per-block expand state. Defaults to collapsed (false) — reported directly: full tool_result dumps in the transcript by default made the chat "look" broken/noisy even when the app was working correctly. */
+  let toolDetailsExpanded = $state(false)
 
   function mapMessagesToDisplay(records: MessageDto[]): DisplayMessage[] {
     const result: DisplayMessage[] = []
@@ -404,6 +406,20 @@
     window.sachiv.setSetting('planningEnabled', String(value))
   }
 
+  function toggleToolDetails(): void {
+    toolDetailsExpanded = !toolDetailsExpanded
+    window.sachiv.setSetting('toolDetailsExpanded', String(toolDetailsExpanded))
+  }
+
+  /** Cmd+O on macOS, Ctrl+O elsewhere — same cross-platform split already used for the mode-picker's Ctrl+Tab (see ChatView.svelte), and the exact convention this feature was explicitly modeled on (Claude Code's own tool-output toggle). Global (window-level), not scoped to the composer, so it works regardless of what has focus — matching how a real app-wide view toggle should behave. */
+  function onWindowKeydown(e: KeyboardEvent): void {
+    const modifierHeld = isMac ? e.metaKey : e.ctrlKey
+    if (modifierHeld && e.key.toLowerCase() === 'o') {
+      e.preventDefault()
+      toggleToolDetails()
+    }
+  }
+
   /** Best-effort — a fresh install with nothing configured yet just leaves contextWindow null, which ContextMeter already treats as "use my own static guess." */
   async function refreshContextWindow(): Promise<void> {
     contextWindow = await window.sachiv.getContextWindow()
@@ -490,9 +506,15 @@
     if (stored !== null && stored !== undefined) planningEnabled = stored !== 'false'
   })
 
+  window.sachiv.getSetting('toolDetailsExpanded').then((stored) => {
+    if (stored !== null && stored !== undefined) toolDetailsExpanded = stored === 'true'
+  })
+
   initProvider()
   loadSessions()
 </script>
+
+<svelte:window onkeydown={onWindowKeydown} />
 
 <div class="titlebar" class:mac={isMac}>
   <button
@@ -577,6 +599,9 @@
         onNeedKey={() => (showSettings = true)}
         sessionUsage={activeRuntime.sessionUsage}
         {contextWindow}
+        {toolDetailsExpanded}
+        onToggleToolDetails={toggleToolDetails}
+        {isMac}
       />
     {/if}
   </section>
