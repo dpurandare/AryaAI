@@ -205,6 +205,7 @@ export async function runBackfill(): Promise<void> {
         .prepare(
           `SELECT m.id, m.session_id, m.content FROM messages m
            LEFT JOIN message_embeddings me ON me.message_id = m.id
+           JOIN sessions s ON s.id = m.session_id
            WHERE me.id IS NULL
            ORDER BY m.created_at ASC
            LIMIT ?`
@@ -220,12 +221,22 @@ export async function runBackfill(): Promise<void> {
           // Nothing to embed (e.g. all tool_use) — mark as "indexed" with no
           // vector so backfill doesn't retry it forever. A message with no
           // searchable text can never usefully match a search anyway.
-          getDb()
-            .prepare(
-              'INSERT INTO message_embeddings (message_id, session_id, model, created_at) VALUES (?, ?, ?, ?) ' +
-                'ON CONFLICT(message_id) DO NOTHING'
-            )
-            .run(row.id, row.session_id, config.model, Date.now())
+          // Wrapped like the real embed path below (not left bare like it
+          // used to be) — a real, live failure here (FOREIGN KEY constraint
+          // failed, from a handful of orphaned messages left over from an
+          // abnormal multi-process race, not normal operation) crashed the
+          // *entire* backfill loop on every single app start, since nothing
+          // caught it before it propagated out of runBackfill entirely.
+          try {
+            getDb()
+              .prepare(
+                'INSERT INTO message_embeddings (message_id, session_id, model, created_at) VALUES (?, ?, ?, ?) ' +
+                  'ON CONFLICT(message_id) DO NOTHING'
+              )
+              .run(row.id, row.session_id, config.model, Date.now())
+          } catch (err) {
+            console.error(`search_history: backfill failed for message ${row.id}:`, err)
+          }
           continue
         }
         try {

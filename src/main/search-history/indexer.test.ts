@@ -41,7 +41,7 @@ vi.mock('../providers/setup', () => ({
   }))
 }))
 
-const { setDbPath } = await import('../db')
+const { setDbPath, getDb } = await import('../db')
 const { setSetting } = await import('../db/settings')
 const { createSession } = await import('../db/sessions')
 const { insertMessage } = await import('../db/messages')
@@ -102,6 +102,27 @@ describe('search-history indexer', () => {
 
     await runBackfill() // second pass must not duplicate
     expect(getIndexState()).toEqual({ kind: 'ready', indexed: 2, total: 2 })
+  })
+
+  it("runBackfill skips a message whose session no longer exists, instead of crashing the whole pass — a real live bug: an orphaned message (session deleted without its FK cascade having applied, e.g. a cross-process race) crashed runBackfill on every single app start with a FOREIGN KEY constraint error, since nothing caught it before it propagated out", async () => {
+    const liveSession = createSession('S1')
+    insertMessage(liveSession.id, 'user', [{ type: 'text', text: 'revenue was 4.2 million' }])
+    const doomedSession = createSession('S2 (about to be orphaned)')
+    const orphan = insertMessage(doomedSession.id, 'assistant', [{ type: 'text', text: 'orphaned content' }])
+
+    // Constructs the exact real-world state directly — a normal
+    // deleteSession() call, with FK cascade honored within one connection,
+    // would just clean this message up for real, not reproduce the bug.
+    const db = getDb()
+    db.pragma('foreign_keys = OFF')
+    db.prepare('DELETE FROM sessions WHERE id = ?').run(doomedSession.id)
+    db.pragma('foreign_keys = ON')
+
+    await expect(runBackfill()).resolves.not.toThrow()
+    // The real, non-orphaned message still gets indexed — the orphan is
+    // skipped, not fatal to the whole batch.
+    expect(getIndexState()).toEqual({ kind: 'ready', indexed: 1, total: 2 })
+    expect(db.prepare('SELECT 1 FROM message_embeddings WHERE message_id = ?').get(orphan.id)).toBeUndefined()
   })
 
   it('searchIndex finds the nearest match, ranked correctly, including a match from the calling session itself', async () => {
