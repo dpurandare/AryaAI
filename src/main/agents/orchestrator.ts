@@ -98,6 +98,75 @@ function capRepeatedToolResults(conversation: Message[], toolByName: ReadonlyMap
   }))
 }
 
+const DUPLICATE_URL_OVERLAP_THRESHOLD = 0.7
+
+/** Every http(s) URL literally present in a string — deliberately generic (not web_search-specific) so it also catches e.g. parse_html's link listing. */
+function extractUrls(text: string): Set<string> {
+  return new Set(text.match(/https?:\/\/\S+/g) ?? [])
+}
+
+/**
+ * Collapses a read-only tool's result when it returns (almost) the same
+ * URLs an earlier call to the *same* tool already returned earlier in this
+ * turn — found live: chasing a document that wasn't findable, a research
+ * agent kept rewording its `web_search` query, and each reworded attempt
+ * surfaced the same handful of articles again, ballooning context with
+ * duplicate coverage instead of new information (confirmed against a real
+ * session: 9 near-identical queries for a "Disha Salian FIR pdf" that
+ * doesn't exist as a directly-searchable document, all returning mostly
+ * the same sources). Detected by literal URL overlap, not semantic
+ * similarity, so a genuinely different result — even for a
+ * superficially-similar-looking query — is left untouched. A tool's first
+ * appearance in the turn is never collapsed (nothing to compare against
+ * yet); only overlap with *prior* calls of the same tool counts. Runs
+ * before, and independently of, `capRepeatedToolResults`' pure recency cap
+ * below — that one still applies afterward as a hard backstop even when no
+ * duplicate is detected here (e.g. many genuinely distinct searches).
+ */
+function collapseDuplicateToolResults(conversation: Message[], toolByName: ReadonlyMap<string, Tool>): Message[] {
+  const toolNameByUseId = new Map<string, string>()
+  for (const m of conversation) {
+    for (const b of m.content) {
+      if (b.type !== 'tool_use') continue
+      const tool = toolByName.get(b.name)
+      if (tool && tool.mutates === false) toolNameByUseId.set(b.id, b.name)
+    }
+  }
+
+  const seenUrlsByTool = new Map<string, Set<string>>()
+  const duplicateIds = new Set<string>()
+  for (const m of conversation) {
+    for (const b of m.content) {
+      if (b.type !== 'tool_result') continue
+      const toolName = toolNameByUseId.get(b.toolUseId)
+      if (!toolName) continue
+      const urls = extractUrls(b.content)
+      if (urls.size === 0) continue
+      const seen = seenUrlsByTool.get(toolName)
+      if (seen) {
+        const overlap = [...urls].filter((u) => seen.has(u)).length / urls.size
+        if (overlap >= DUPLICATE_URL_OVERLAP_THRESHOLD) duplicateIds.add(b.toolUseId)
+      }
+      const union = seen ?? new Set<string>()
+      for (const u of urls) union.add(u)
+      seenUrlsByTool.set(toolName, union)
+    }
+  }
+  if (duplicateIds.size === 0) return conversation
+
+  return conversation.map((m) => ({
+    ...m,
+    content: m.content.map((b): ContentBlock => {
+      if (b.type !== 'tool_result' || !duplicateIds.has(b.toolUseId)) return b
+      return {
+        ...b,
+        content:
+          '[Result omitted — its sources substantially overlap an earlier search this turn. Rewording the query again is unlikely to surface anything new; try a different approach, or tell the user this could not be found.]'
+      }
+    })
+  }))
+}
+
 function delegateToolName(role: AgentRole): string {
   return DELEGATE_PREFIX + role.replace(/-/g, '_')
 }
@@ -602,7 +671,7 @@ export class Orchestrator {
         for await (const event of this.provider.stream({
           model: this.model,
           system: systemPrompt,
-          messages: capRepeatedToolResults(conversation, toolByName),
+          messages: capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
           maxTokens: state.maxOutputTokens,
           tools: toolDefs.length ? toolDefs : undefined,
           signal: this.signal
@@ -742,7 +811,7 @@ export class Orchestrator {
           'more tool calls are possible. Answer now using only what has already been found above: ' +
           "summarize the real information gathered so far, and say plainly if it's incomplete, rather " +
           'than attempting anything further.',
-        messages: capRepeatedToolResults(conversation, toolByName),
+        messages: capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
         maxTokens: state.maxOutputTokens,
         signal: this.signal
         // No `tools` — forces a text-only reply, so this genuinely cannot loop further.

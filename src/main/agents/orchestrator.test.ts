@@ -1123,4 +1123,152 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(toolResultContents.every((c) => !c.includes('omitted to save context'))).toBe(true)
     })
   })
+
+  describe('collapsing near-duplicate tool results by URL overlap (context-bloat fix)', () => {
+    // Both scripts stay at 3 calls (== MAX_KEPT_RESULTS_PER_TOOL), so the
+    // separate pure-recency cap (capRepeatedToolResults, tested above) never
+    // fires — isolates this detector's own overlap-based behavior.
+    it('collapses a result whose URLs substantially overlap an earlier same-tool result, but leaves a genuinely different one untouched', async () => {
+      // Mirrors a real session: several reworded web_search-style queries in
+      // one turn, most surfacing the same handful of sources. read_file
+      // stands in for web_search (also mutates: false) — cheaper to script,
+      // and the detector is generic (keys off literal URLs in the content,
+      // not the tool).
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      await writeFileTool.execute(
+        { path: 'r1.txt', content: 'https://a.com https://b.com https://c.com' },
+        ctx
+      )
+      // Exact same 3 sources as r1 — should collapse.
+      await writeFileTool.execute(
+        { path: 'r2.txt', content: 'https://a.com https://b.com https://c.com' },
+        ctx
+      )
+      // Completely different sources — should NOT collapse.
+      await writeFileTool.execute({ path: 'r3.txt', content: 'https://x.com https://y.com' }, ctx)
+
+      const turns: ScriptedTurn[] = [
+        ...['r1.txt', 'r2.txt', 'r3.txt'].map((path, i) => ({
+          toolCalls: [{ id: `call${i + 1}`, name: 'read_file', input: { path } }],
+          stopReason: 'tool_use' as const
+        })),
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'search around' }] }])
+
+      const finalRequest = provider.requests[provider.requests.length - 1]
+      const toolResultContents = finalRequest.messages
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result')
+        .map((b) => b.content)
+
+      expect(toolResultContents).toHaveLength(3)
+      expect(toolResultContents[0]).toBe('https://a.com https://b.com https://c.com') // r1: first appearance, kept
+      expect(toolResultContents[1]).toMatch(/substantially overlap/) // r2: exact duplicate of r1, collapsed
+      expect(toolResultContents[2]).toBe('https://x.com https://y.com') // r3: genuinely new, kept
+    })
+
+    it('leaves a result untouched when its URL overlap with earlier results is below the threshold', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      await writeFileTool.execute(
+        { path: 'r1.txt', content: 'https://a.com https://b.com https://c.com' },
+        ctx
+      )
+      // Only 1 of 3 URLs (a) already seen — 33% overlap, well below the 70%
+      // threshold — a genuinely different result, not a reworded retry.
+      await writeFileTool.execute(
+        { path: 'r2.txt', content: 'https://a.com https://x.com https://z.com' },
+        ctx
+      )
+
+      const turns: ScriptedTurn[] = [
+        ...['r1.txt', 'r2.txt'].map((path, i) => ({
+          toolCalls: [{ id: `call${i + 1}`, name: 'read_file', input: { path } }],
+          stopReason: 'tool_use' as const
+        })),
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'search around' }] }])
+
+      const finalRequest = provider.requests[provider.requests.length - 1]
+      const toolResultContents = finalRequest.messages
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result')
+        .map((b) => b.content)
+
+      expect(toolResultContents).toEqual([
+        'https://a.com https://b.com https://c.com',
+        'https://a.com https://x.com https://z.com'
+      ])
+    })
+
+    it('never collapses a mutating tool\'s result even when its URLs repeat', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+
+      const turns: ScriptedTurn[] = [
+        ...Array.from({ length: 3 }, (_, i) => ({
+          toolCalls: [
+            {
+              id: `write${i + 1}`,
+              name: 'write_file',
+              input: { path: `w${i + 1}.txt`, content: 'https://a.com https://b.com' }
+            }
+          ],
+          stopReason: 'tool_use' as const
+        })),
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'write 3 files' }] }])
+
+      const finalRequest = provider.requests[provider.requests.length - 1]
+      const toolResultContents = finalRequest.messages
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result')
+        .map((b) => b.content)
+
+      expect(toolResultContents.every((c) => !c.includes('substantially overlap'))).toBe(true)
+    })
+  })
 })
