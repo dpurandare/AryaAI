@@ -613,10 +613,13 @@
     name={confirm.name}
     description={confirm.description}
     input={confirm.input}
+    secretFields={confirm.secretFields ?? []}
+    hasValidation={confirm.hasValidation ?? false}
     autoApprove={autoApproveTools}
     autoApproveTool={Boolean(autoApproveRules[confirm.name])}
     onApprove={approveTool}
     onDeny={denyTool}
+    onValidate={(input) => window.sachiv.validateToolInput(confirm.name, input)}
     onToggleAutoApprove={(value) => (autoApproveTools = value)}
     onToggleAutoApproveTool={(value) => toggleAutoApproveTool(confirm.name, value)}
   />

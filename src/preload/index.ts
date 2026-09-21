@@ -20,7 +20,8 @@ import {
   type SessionExportResult,
   type AppUpdateAvailablePayload,
   type SearchHistoryStatusDto,
-  type SessionTitleUpdatedPayload
+  type SessionTitleUpdatedPayload,
+  type ToolValidateResult
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
 
@@ -122,6 +123,8 @@ const api = {
     approved: boolean,
     input?: Record<string, unknown>
   ): Promise<void> => ipcRenderer.invoke(IpcChannel.ToolConfirmRespond, toolUseId, approved, input),
+  validateToolInput: (name: string, input: Record<string, unknown>): Promise<ToolValidateResult> =>
+    ipcRenderer.invoke(IpcChannel.ToolValidateInput, name, input),
 
   /** Print-page-only: tells the hidden window's caller (see sessions/export.ts) the transcript has actually finished rendering and it's safe to call printToPDF. */
   notifyPrintReady: (): void => ipcRenderer.send(IpcChannel.PrintReady)

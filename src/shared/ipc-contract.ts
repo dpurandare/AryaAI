@@ -53,6 +53,7 @@ export const IpcChannel = {
 
   ToolConfirmRequest: 'tools:confirm-request',
   ToolConfirmRespond: 'tools:confirm-respond',
+  ToolValidateInput: 'tools:validate-input',
 
   SearchHistoryStatus: 'search-history:status',
   SearchHistoryRebuildIndex: 'search-history:rebuild-index',
@@ -145,6 +146,15 @@ export interface ToolConfirmRequestPayload {
   name: string
   input: Record<string, unknown>
   description: string
+  /** Field names (e.g. "password") the confirmation dialog must render as real password inputs, kept out of the editable JSON textarea and never persisted into the tool_use content block — see #74's config-generator tools. */
+  secretFields?: string[]
+  /** True when the dialog should call ToolValidateInput before approving, so a bad connection is caught and can be corrected in the same dialog instead of round-tripping through a fresh tool call. */
+  hasValidation?: boolean
+}
+
+export interface ToolValidateResult {
+  ok: boolean
+  error?: string
 }
 
 export type DbEngine = 'sqlite' | 'postgres'

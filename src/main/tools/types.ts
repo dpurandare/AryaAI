@@ -12,6 +12,8 @@ export interface ToolContext {
    * with no live wiring to a running app.
    */
   registerSavedQuery?: (query: SavedQueryDto) => void
+  /** Live-reconnects a freshly-saved MCP server (see mcp_create_connection in tools/config-gen/mcp.ts) so its tools appear immediately — same call the Settings > MCP servers save flow already makes. Optional/absent in tests, same reasoning as registerSavedQuery. */
+  connectMcpServer?: (id: string) => Promise<void>
 }
 
 /**
@@ -27,5 +29,16 @@ export interface Tool {
   mutates: boolean | ((input: Record<string, unknown>) => boolean)
   /** Human-readable summary shown in the confirmation dialog. Defaults to the raw input JSON. */
   describe?(input: Record<string, unknown>): string
+  /** Input field names the confirmation dialog must render as real password inputs (kept out of the editable JSON textarea, never persisted into the tool_use content block) — see #74's config-generator tools. */
+  secretFields?: string[]
+  /**
+   * Optional eager pre-flight check the confirmation dialog can call
+   * repeatedly (same call, corrected input) before committing via
+   * `execute` — lets a bad connection (wrong password, unreachable host)
+   * be caught and retried in the same dialog instead of round-tripping
+   * through a fresh model tool call. Throws with a user-facing message on
+   * failure; must not persist anything (that's still `execute`'s job).
+   */
+  validate?(input: Record<string, unknown>, ctx: ToolContext): Promise<void>
   execute(input: Record<string, unknown>, ctx: ToolContext): Promise<string>
 }

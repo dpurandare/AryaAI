@@ -34,6 +34,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     'db_count_rows',
     'db_find_rows',
     'db_save_query',
+    'db_create_connection',
     'parse_csv',
     'parse_json',
     'parse_xml'
@@ -78,7 +79,10 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         "exists, api_introspect on the one you need if you don't already know its endpoints, then " +
         'api_call to actually call it — set paginate:true on a list-style call instead of hand-driving ' +
         'each page yourself, and if a call comes back looking like an async job (202, or a pending ' +
-        'status + id in the body) use api_check_status to poll it rather than assuming it finished. ' +
+        'status + id in the body) use api_check_status to poll it rather than assuming it finished. If ' +
+        "no matching connection is configured yet, offer to create one with api_create_connection from " +
+        "details the user gives you in chat — never ask them to type a secret into chat, the " +
+        'confirmation dialog has its own real password field for that. ' +
         'Prefer parse_html over reading a fetched page\'s raw HTML yourself — it extracts clean ' +
         'article text (reader-mode style) and can fetch a URL directly itself, so the raw markup never ' +
         'has to enter your own context at all. It also lists the real links found on the page — when ' +
@@ -99,6 +103,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
           'api_introspect',
           'api_call',
           'api_check_status',
+          'api_create_connection',
           'parse_html'
         ])
       }
@@ -175,8 +180,9 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'its own tool for next time — do this proactively, without waiting to be asked, but only for a ' +
         'query you have actually run and confirmed is correct, never speculatively. Fall back to ' +
         'db_execute_sql for anything genuinely ad hoc, or needing a WHERE beyond one column, a JOIN, or ' +
-        'an aggregation none of the above cover. If no connection is configured yet, say so and ask the ' +
-        'user to add one in Settings rather than guessing at a schema. For a CSV/JSON/XML file (or a ' +
+        'an aggregation none of the above cover. If no connection is configured yet, offer to create one ' +
+        "with db_create_connection from details the user gives you in chat — never ask them to type a " +
+        'password into chat, the confirmation dialog has its own real password field for that. For a CSV/JSON/XML file (or a ' +
         'URL serving one), use parse_csv/parse_json/parse_xml instead of reading it as plain text — ' +
         'each defaults to a condensed structure summary, supports a query action to pull out just what ' +
         "you need, and (CSV/JSON only) an append action to add one new record; none of them support " +

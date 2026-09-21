@@ -5,6 +5,7 @@ import { getSetting } from '../db/settings'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import { apiCallTool, apiCheckStatusTool, apiIntrospectTool, apiListConnectionsTool } from './api'
 import { awsCliTool, azureCliTool, gcloudCliTool } from './cloud-cli'
+import { apiCreateConnectionTool, dbCreateConnectionTool, mcpCreateConnectionTool } from './config-gen'
 import { parseCsvTool, parseHtmlTool, parseJsonTool, parseXmlTool } from './data-formats'
 import {
   dbExecuteSqlTool,
@@ -89,5 +90,8 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(officeFillTemplateTool)
   registry.register(xlsxReadTool)
   registry.register(xlsxWriteTool)
+  registry.register(dbCreateConnectionTool)
+  registry.register(apiCreateConnectionTool)
+  registry.register(mcpCreateConnectionTool)
   return registry
 }

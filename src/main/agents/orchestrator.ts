@@ -23,6 +23,8 @@ export interface ToolConfirmRequest {
   name: string
   input: Record<string, unknown>
   description: string
+  secretFields?: string[]
+  hasValidation?: boolean
 }
 
 /**
@@ -888,7 +890,9 @@ export class Orchestrator {
         toolUseId,
         name: tool.name,
         input,
-        description: tool.describe?.(input) ?? JSON.stringify(input)
+        description: tool.describe?.(input) ?? JSON.stringify(input),
+        secretFields: tool.secretFields,
+        hasValidation: tool.validate !== undefined
       })
       if (!decision.approved) {
         return { content: 'The user denied this tool call.', isError: true }

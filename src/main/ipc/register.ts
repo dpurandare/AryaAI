@@ -15,6 +15,7 @@ import {
   type SessionExportResult,
   type ToolConfirmRequestPayload,
   type ToolDescriptor,
+  type ToolValidateResult,
   type SearchHistoryStatusDto,
   type SessionTitleUpdatedPayload
 } from '@shared/ipc-contract'
@@ -75,7 +76,13 @@ const SYSTEM_PROMPT =
   'just retrieving that past context — e.g. "search for the analysis we did for X, and show a ' +
   'comparison for Y" means finding X via search_history AND THEN actually redoing the analysis for Y ' +
   "using the same method, presented as a comparison — not just relaying the retrieved excerpt as the " +
-  'whole answer.'
+  'whole answer. To set up a new Database, External API, or MCP server connection from details the user ' +
+  'gives you in chat, use db_create_connection/api_create_connection/mcp_create_connection instead of ' +
+  'telling the user to fill out the corresponding Settings form by hand — gather the non-secret details ' +
+  "yourself, but never ask the user to type a password/API key/token/bearer token into chat: the " +
+  "confirmation dialog that appears has its own real password field for that, which never reaches you. " +
+  'Each of these tools tests the connection for real before saving it, so a bad host/credential fails ' +
+  'clearly right away.'
 
 const providerRegistry = createDefaultProviderRegistry()
 
@@ -325,6 +332,26 @@ export function registerIpcHandlers(): void {
       resolve({ approved, input })
     }
   )
+
+  // Called by ToolConfirmDialog before approving a tool that declares
+  // `validate` (see Tool's own doc comment) — a pure probe, no persistence,
+  // callable repeatedly with corrected input so a bad connection can be
+  // fixed in the same dialog instead of round-tripping through a fresh
+  // model tool call.
+  ipcMain.handle(
+    IpcChannel.ToolValidateInput,
+    async (_event, name: string, input: Record<string, unknown>): Promise<ToolValidateResult> => {
+      const tool = toolRegistry.get(name)
+      if (!tool?.validate) return { ok: true }
+      if (!toolContext) return { ok: false, error: 'Tool context not initialized.' }
+      try {
+        await tool.validate(input, { ...toolContext, currentSessionId: 'validate' })
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
 }
 
 function emit(sender: WebContents, payload: ChatStreamEventPayload): void {
@@ -461,7 +488,8 @@ async function runChat(
     {
       ...toolContext,
       currentSessionId: sessionId,
-      registerSavedQuery: (query) => savedQueryManager.register(query, toolRegistry)
+      registerSavedQuery: (query) => savedQueryManager.register(query, toolRegistry),
+      connectMcpServer: (id) => mcpManager.reconnect(id, toolRegistry)
     },
     signal,
     // Missing/unset reads as enabled — default on (see PLANNING_ENABLED_SETTING_KEY's own doc comment).
