@@ -1,9 +1,12 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Paused (2026-09-21, explicit request) — was firing on every push and
+  # failing on real issues (a Windows-only test bug in keychain.test.ts's
+  # file-permission check, plus an unrelated transient Electron-download
+  # 504 from GitHub's own CDN). Re-enable by restoring the push/pull_request
+  # triggers below once ready to resume the per-push cadence.
+  workflow_dispatch:
 
 jobs:
   build:
