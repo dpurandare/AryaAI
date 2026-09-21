@@ -1,3 +1,4 @@
+import type pptxgen from 'pptxgenjs'
 import type { SavedQueryDto } from '@shared/ipc-contract'
 import type { WorkspaceGuard } from '../security/workspace-guard'
 
@@ -14,6 +15,18 @@ export interface ToolContext {
   registerSavedQuery?: (query: SavedQueryDto) => void
   /** Live-reconnects a freshly-saved MCP server (see mcp_create_connection in tools/config-gen/mcp.ts) so its tools appear immediately — same call the Settings > MCP servers save flow already makes. Optional/absent in tests, same reasoning as registerSavedQuery. */
   connectMcpServer?: (id: string) => Promise<void>
+  /**
+   * In-progress decks (#78), keyed by an id `pptx_start_deck` generates —
+   * the only way state can survive across the top-level `pptx_add_slide`
+   * calls and the several separate, fully-isolated `delegate_to_page-
+   * creator` calls (each its own fresh conversation) that build up one
+   * presentation together within a single turn. Fresh per turn (created
+   * in ipc/register.ts's runChat, same lifetime as `registerSavedQuery`),
+   * never persisted — `pptx_save_deck` is what turns it into a real file.
+   * A plain `Map`, not a class, since nothing else needs to own behavior
+   * around it. Optional/absent in tests that don't need deck tools.
+   */
+  activeDecks?: Map<string, { pres: pptxgen; slides: pptxgen.Slide[] }>
 }
 
 /**

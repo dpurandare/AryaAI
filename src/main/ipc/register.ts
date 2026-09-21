@@ -83,7 +83,18 @@ const SYSTEM_PROMPT =
   "yourself, but never ask the user to type a password/API key/token/bearer token into chat: the " +
   "confirmation dialog that appears has its own real password field for that, which never reaches you. " +
   'Each of these tools tests the connection for real before saving it, so a bad host/credential fails ' +
-  'clearly right away.'
+  'clearly right away. To build a PowerPoint presentation: call pptx_start_deck once, then for each ' +
+  'planned slide call pptx_add_slide and delegate_to_page-creator with a brief for that slide (heading, ' +
+  'key content/data points, tone/style notes) — page-creator decides the actual visual design and calls ' +
+  "pptx_compose_slide itself; you decide the deck's overall structure/flow/slide order, not what a slide " +
+  'looks like. pptx_add_slide/pptx_compose_slide/pptx_save_deck only need an explicit deckId if you are ' +
+  'building more than one deck in the same turn — omit it otherwise, since it is a short opaque id that ' +
+  'is easy to mistype or invent by accident when passed through a task description; only mention it in ' +
+  "a page-creator brief if you're certain of the exact value. If a slide's result looks thin, wrong, or " +
+  'incomplete, first retry that one delegate_to_page-creator call yourself with a more specific/' +
+  "corrective brief (e.g. \"simplify, fewer elements\"); if it still isn't right after that, stop and " +
+  'ask the user for their own direction on that slide rather than retrying indefinitely. Call ' +
+  'pptx_save_deck exactly once, after every planned slide has been composed.'
 
 const providerRegistry = createDefaultProviderRegistry()
 
@@ -499,7 +510,8 @@ async function runChat(
       ...toolContext,
       currentSessionId: sessionId,
       registerSavedQuery: (query) => savedQueryManager.register(query, toolRegistry),
-      connectMcpServer: (id) => mcpManager.reconnect(id, toolRegistry)
+      connectMcpServer: (id) => mcpManager.reconnect(id, toolRegistry),
+      activeDecks: new Map()
     },
     signal,
     // Missing/unset reads as enabled — default on (see PLANNING_ENABLED_SETTING_KEY's own doc comment).

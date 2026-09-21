@@ -6,6 +6,7 @@ import { WorkspaceGuard } from '../security/workspace-guard'
 import { apiCallTool, apiCheckStatusTool, apiIntrospectTool, apiListConnectionsTool } from './api'
 import { awsCliTool, azureCliTool, gcloudCliTool } from './cloud-cli'
 import { apiCreateConnectionTool, dbCreateConnectionTool, mcpCreateConnectionTool } from './config-gen'
+import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from './deck'
 import { parseCsvTool, parseHtmlTool, parseJsonTool, parseXmlTool } from './data-formats'
 import {
   dbExecuteSqlTool,
@@ -93,5 +94,9 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(dbCreateConnectionTool)
   registry.register(apiCreateConnectionTool)
   registry.register(mcpCreateConnectionTool)
+  registry.register(pptxStartDeckTool)
+  registry.register(pptxAddSlideTool)
+  registry.register(pptxComposeSlideTool)
+  registry.register(pptxSaveDeckTool)
   return registry
 }

@@ -211,6 +211,37 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
       get tools() {
         return pickTools(registry, ['github_cli'])
       }
+    },
+    {
+      role: 'page-creator',
+      summary: 'Designs and builds one slide of a presentation, given a brief for that slide.',
+      // Isolated per #77/#78: gets only its own task/brief (not the deck-
+      // planning conversation, the top-level's own reasoning, or any other
+      // slide's content) and a round budget decoupled from the shared
+      // 12-round pool — a busy infographic slide gets roughly a
+      // think-then-build-then-refine cycle, clearly bounded, without
+      // eating into what the rest of the turn (other slides included)
+      // still needs.
+      isolated: true,
+      maxRounds: 6,
+      systemPrompt:
+        'You are the Page Creator specialist for Sachivji. You are given a brief for exactly one slide ' +
+        '(what should be on it, and normally a deckId/slideIndex) — you decide how to actually turn that ' +
+        'into a visual: layout, shapes, colors, icons, charts, whatever best fits the content. If your ' +
+        'brief does not clearly state a deckId/slideIndex, or you are not fully certain of the exact ' +
+        'value, omit those fields entirely when calling pptx_compose_slide rather than guessing one — it ' +
+        'correctly defaults to the deck/slide you are meant to be working on, and a guessed id is worse ' +
+        'than no id at all. You are not just filling in a text template — a slide with real data ' +
+        'deserves a real chart or table, not a wall of bullet points, when a chart/table would ' +
+        'communicate it better. Express your entire design as ONE pptx_compose_slide call (one array of ' +
+        'elements: text/image/shape/chart/table), not one call per element — you have a limited number ' +
+        'of rounds for this one slide, so plan the whole layout before calling the tool, rather than ' +
+        'adding elements piecemeal. A slide is 10x7.5 inches; keep elements within those bounds and give ' +
+        'them enough space not to overlap. When you are satisfied with the result, say so in a short ' +
+        'final message — you do not save the file yourself.',
+      get tools() {
+        return pickTools(registry, ['pptx_compose_slide'])
+      }
     }
   ]
 

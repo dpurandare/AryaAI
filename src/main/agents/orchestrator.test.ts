@@ -8,6 +8,8 @@ import { MockProvider, type ScriptedTurn } from '../../../test/support/mock-prov
 import { WorkspaceGuard } from '../security/workspace-guard'
 import { ToolRegistry } from '../tools/registry'
 import { readFileTool, listDirectoryTool, writeFileTool } from '../tools/file-ops'
+import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from '../tools/deck'
+import { officeReadDocumentTool } from '../tools/office-docs/read'
 import type { ToolContext } from '../tools/types'
 import { createAgents } from './roles'
 import { Orchestrator, type Agent, type ConfirmDecision, type OrchestratorEvent, type ToolConfirmRequest } from './orchestrator'
@@ -1356,6 +1358,94 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(codingStatuses[0]).toContain('(round 1/5)')
       expect(codingStatuses[1]).toContain('(round 2/5)')
       expect(codingStatuses.every((m) => !m.includes('/12'))).toBe(true)
+    })
+  })
+
+  describe('deck creation (#78)', () => {
+    it('a real deck: start, add slide, delegate to the isolated page-creator, compose, save — a real .pptx lands on disk', async () => {
+      const registry = buildRegistry()
+      registry.register(pptxStartDeckTool)
+      registry.register(pptxAddSlideTool)
+      registry.register(pptxComposeSlideTool)
+      registry.register(pptxSaveDeckTool)
+      const agents = createAgents(registry)
+      const deckCtx: ToolContext = { ...ctx, activeDecks: new Map() }
+
+      // The mock provider returns scripted inputs verbatim, so a real
+      // deckId (generated at runtime by pptx_start_deck) has to be
+      // discovered first: run just that one call, read the real id back
+      // out of its tool_result, then drive the rest of the pipeline
+      // against it in a second run reusing the same live deckCtx.
+      const startProvider = new MockProvider([
+        { toolCalls: [{ id: 'start', name: 'pptx_start_deck', input: {} }] },
+        { text: 'Started.', stopReason: 'end_turn' }
+      ])
+      const startOrchestrator = new Orchestrator(
+        startProvider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        deckCtx,
+        signal
+      )
+      const startEvents = await collect(startOrchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      const startResultText = startEvents
+        .filter((e) => e.kind === 'stream' && e.event.type === 'tool_result')
+        .map((e) => (e as { event: { content: string } }).event.content)[0]
+      const deckId = /"([^"]+)"/.exec(startResultText ?? '')?.[1] ?? ''
+      expect(deckId).toBeTruthy()
+
+      const turns2: ScriptedTurn[] = [
+        { toolCalls: [{ id: 'add', name: 'pptx_add_slide', input: { deckId } }] },
+        {
+          toolCalls: [
+            { id: 'delegate', name: 'delegate_to_page-creator', input: { task: `Compose slide 0 of deck ${deckId}: title "Hello"` } }
+          ]
+        },
+        {
+          toolCalls: [
+            {
+              id: 'compose',
+              name: 'pptx_compose_slide',
+              input: { deckId, slideIndex: 0, elements: [{ type: 'text', text: 'Hello', x: 0.5, y: 0.5, w: 5, h: 1 }] }
+            }
+          ]
+        },
+        { text: 'Composed.', stopReason: 'end_turn' },
+        { toolCalls: [{ id: 'save', name: 'pptx_save_deck', input: { deckId, path: 'deck.pptx' } }] },
+        { text: 'Deck saved.', stopReason: 'end_turn' }
+      ]
+      const provider2 = new MockProvider(turns2)
+      const orchestrator2 = new Orchestrator(
+        provider2,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        deckCtx,
+        signal
+      )
+      const events = await collect(orchestrator2, [{ role: 'user', content: [{ type: 'text', text: 'make a 1-slide deck' }] }])
+
+      // The isolated delegate's own request must carry only its task, not
+      // the deck-planning conversation — same #77 property, first real
+      // consumer. requests[0]/[1] are the outer round's own two calls
+      // (add_slide, then deciding to delegate); [2] is page-creator's own
+      // first round.
+      const delegateRequest = provider2.requests[2]
+      expect(JSON.stringify(delegateRequest.messages)).not.toContain('make a 1-slide deck')
+      expect(JSON.stringify(delegateRequest.messages)).toContain('Hello')
+
+      const toolResults = events
+        .filter((e) => e.kind === 'stream' && e.event.type === 'tool_result')
+        .map((e) => (e as { event: { content: string } }).event.content)
+      expect(toolResults.some((c) => c.includes('Saved deck.pptx'))).toBe(true)
+
+      const text = await officeReadDocumentTool.execute({ path: 'deck.pptx' }, deckCtx)
+      expect(text).toContain('Hello')
     })
   })
 })
