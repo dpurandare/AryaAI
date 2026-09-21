@@ -43,6 +43,9 @@ export const IpcChannel = {
   WorkspaceGetRoot: 'workspace:get-root',
   WorkspaceSetRoot: 'workspace:set-root',
 
+  SecretStorageGetInfo: 'secret-storage:get-info',
+  SecretStorageSwitchToFile: 'secret-storage:switch-to-file',
+
   ToolsList: 'tools:list',
 
   ContextWindowGet: 'context-window:get',
@@ -155,6 +158,12 @@ export interface ToolConfirmRequestPayload {
 export interface ToolValidateResult {
   ok: boolean
   error?: string
+}
+
+/** #75 — which backend provider keys/connection secrets are stored in, and where the file lives (shown as a read-only indicator in Settings once file mode is active). */
+export interface SecretStorageInfo {
+  mode: 'keychain' | 'file'
+  envFilePath: string
 }
 
 export type DbEngine = 'sqlite' | 'postgres' | 'mssql'

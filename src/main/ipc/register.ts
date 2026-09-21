@@ -16,6 +16,7 @@ import {
   type ToolConfirmRequestPayload,
   type ToolDescriptor,
   type ToolValidateResult,
+  type SecretStorageInfo,
   type SearchHistoryStatusDto,
   type SessionTitleUpdatedPayload
 } from '@shared/ipc-contract'
@@ -25,7 +26,7 @@ import { insertMessage, listMessages } from '../db/messages'
 import { enqueueMessage, getEmbeddingConfig, getIndexState, rebuildIndex, runBackfill } from '../search-history/indexer'
 import { getSetting, setSetting } from '../db/settings'
 import { addUsage, getUsage } from '../db/usage'
-import { setApiKey, getApiKey } from '../security/keychain'
+import { setApiKey, getApiKey, envFilePath, getSecretStorageMode, switchToFileStorage } from '../security/keychain'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import {
   deleteConnection,
@@ -253,6 +254,15 @@ export function registerIpcHandlers(): void {
       // on the very next message with no app restart.
       toolContext.workspaceGuard = new WorkspaceGuard(path)
     }
+  })
+
+  ipcMain.handle(
+    IpcChannel.SecretStorageGetInfo,
+    (): SecretStorageInfo => ({ mode: getSecretStorageMode(), envFilePath: envFilePath() })
+  )
+  ipcMain.handle(IpcChannel.SecretStorageSwitchToFile, (): SecretStorageInfo => {
+    switchToFileStorage()
+    return { mode: getSecretStorageMode(), envFilePath: envFilePath() }
   })
 
   ipcMain.handle(IpcChannel.ToolsList, (): ToolDescriptor[] =>

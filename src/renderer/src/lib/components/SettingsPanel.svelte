@@ -270,6 +270,31 @@
     }
   }
 
+  // --- Secret storage backend (TASKS.md #75) ---
+  let secretStorageMode = $state<'keychain' | 'file'>('keychain')
+  let secretStorageEnvPath = $state('')
+  let switchingSecretStorage = $state(false)
+  let showSwitchConfirm = $state(false)
+
+  async function loadSecretStorageInfo(): Promise<void> {
+    const info = await window.sachiv.getSecretStorageInfo()
+    secretStorageMode = info.mode
+    secretStorageEnvPath = info.envFilePath
+  }
+  loadSecretStorageInfo()
+
+  async function confirmSwitchSecretStorageToFile(): Promise<void> {
+    switchingSecretStorage = true
+    try {
+      const info = await window.sachiv.switchSecretStorageToFile()
+      secretStorageMode = info.mode
+      secretStorageEnvPath = info.envFilePath
+      showSwitchConfirm = false
+    } finally {
+      switchingSecretStorage = false
+    }
+  }
+
   // --- Search history / embedding provider (TASKS.md #52 — decoupled from the chat provider above) ---
   const EMBEDDING_PROVIDER_SETTING_KEY = 'embeddingProviderId'
   const EMBEDDING_MODEL_SETTING_KEY = 'embeddingModel'
@@ -711,6 +736,35 @@
         {savingWorkspace ? 'Saving...' : 'Save'}
       </button>
     </div>
+
+    <hr />
+
+    <h2>Secret storage</h2>
+    <p class="status">
+      Where provider API keys and DB/API/MCP connection secrets are kept.
+    </p>
+    {#if secretStorageMode === 'keychain'}
+      <p class="status">Secret storage: <strong>OS Keychain</strong> (encrypted, OS-native).</p>
+      {#if !showSwitchConfirm}
+        <button onclick={() => (showSwitchConfirm = true)}>Switch to file storage instead</button>
+      {:else}
+        <p class="status">
+          This moves every secret into a plaintext file at <code>{secretStorageEnvPath}</code> —
+          less secure than the OS keychain, and there's no way to switch back once done. The
+          keychain keeps a live backup afterward, so nothing is deleted. Are you sure?
+        </p>
+        <div class="actions">
+          <button onclick={() => (showSwitchConfirm = false)}>Cancel</button>
+          <button class="primary" disabled={switchingSecretStorage} onclick={confirmSwitchSecretStorageToFile}>
+            {switchingSecretStorage ? 'Switching...' : 'Switch to file storage'}
+          </button>
+        </div>
+      {/if}
+    {:else}
+      <p class="status">
+        Secret storage: <strong>File</strong> (<code>{secretStorageEnvPath}</code>).
+      </p>
+    {/if}
 
     <hr />
 
