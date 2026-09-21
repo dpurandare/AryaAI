@@ -114,9 +114,30 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'branch, checkout, merge, push, etc.) shows the user a confirmation dialog first. To inspect or ' +
         'analyze a *different* repository the user points you at, use git_clone_repo instead — it clones ' +
         'into its own fresh, isolated folder (no destination to specify, so it can never collide with ' +
-        'another clone) and tells you the path to read from with read_file/list_directory.',
+        'another clone) and tells you the path to read from with read_file/list_directory. For office ' +
+        'documents: office_read_document reads an existing .docx/.pptx; office_create_document builds a ' +
+        "new one from scratch (sections/paragraphs/bullets for docx, slides for pptx) — neither can edit " +
+        "an existing .docx/.pptx in place, since the underlying libraries can't load one, so if asked to " +
+        "edit one, say plainly that in-place editing isn't supported and offer to create a new document " +
+        "instead (reading the original first via office_read_document if useful). office_fill_template " +
+        "fills a user-authored template (in the workspace's templates/ folder) containing " +
+        '{placeholder}/{#loop} markers without losing its original styling — call it with action ' +
+        '"inspect" first if you don\'t already know what placeholders it needs. For .xlsx, use xlsx_read ' +
+        '(summarize sheets, then read one) and xlsx_write, which genuinely loads and edits an existing ' +
+        'workbook rather than only creating new ones.',
       get tools() {
-        return pickTools(registry, ['read_file', 'list_directory', 'write_file', 'git_exec', 'git_clone_repo'])
+        return pickTools(registry, [
+          'read_file',
+          'list_directory',
+          'write_file',
+          'git_exec',
+          'git_clone_repo',
+          'office_read_document',
+          'office_create_document',
+          'office_fill_template',
+          'xlsx_read',
+          'xlsx_write'
+        ])
       }
     },
     {

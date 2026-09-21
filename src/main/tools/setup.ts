@@ -18,6 +18,13 @@ import {
 import { listDirectoryTool, readFileTool, writeFileTool } from './file-ops'
 import { gitCloneRepoTool, gitExecTool } from './git'
 import { githubCliTool } from './github-cli'
+import {
+  officeCreateDocumentTool,
+  officeFillTemplateTool,
+  officeReadDocumentTool,
+  xlsxReadTool,
+  xlsxWriteTool
+} from './office-docs'
 import { ToolRegistry } from './registry'
 import { shellExecuteTool } from './shell'
 import type { ToolContext } from './types'
@@ -77,5 +84,10 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(parseCsvTool)
   registry.register(parseJsonTool)
   registry.register(parseXmlTool)
+  registry.register(officeReadDocumentTool)
+  registry.register(officeCreateDocumentTool)
+  registry.register(officeFillTemplateTool)
+  registry.register(xlsxReadTool)
+  registry.register(xlsxWriteTool)
   return registry
 }
