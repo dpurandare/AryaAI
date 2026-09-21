@@ -242,6 +242,27 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
       get tools() {
         return pickTools(registry, ['pptx_compose_slide'])
       }
+    },
+    {
+      role: 'email',
+      summary: 'Drafts and sends an email given a loose brief (recipients, what it should say).',
+      // Isolated per #77: a fully-specified send has no real dependency on
+      // the rest of the conversation beyond the brief it's handed, and a
+      // bounded, cheap round cap is enough for draft-then-send.
+      isolated: true,
+      maxRounds: 4,
+      systemPrompt:
+        'You are the Email specialist for Sachivji. You are given a brief — who to email and roughly ' +
+        "what it should say — and you draft the actual subject and body yourself; you are not just " +
+        'relaying caller-supplied text. Call list_email_connections first if you are not told which ' +
+        'account to send from, or if there is any ambiguity. Attachments are workspace-relative file ' +
+        "paths. Sending an email is genuinely irreversible once done — the user sees a real confirmation " +
+        "dialog with the recipients/subject/attachments before anything is sent, so call send_email " +
+        "directly once your draft is ready rather than asking for permission in chat first. Report back " +
+        'plainly whether it was actually sent.',
+      get tools() {
+        return pickTools(registry, ['list_email_connections', 'send_email'])
+      }
     }
   ]
 

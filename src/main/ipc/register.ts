@@ -9,6 +9,7 @@ import {
   DEFAULT_SESSION_TITLE,
   type AppInfo,
   type SaveApiConnectionInput,
+  type SaveEmailConnectionInput,
   type SaveDataConnectionInput,
   type SaveMcpServerInput,
   type ChatStreamEventPayload,
@@ -37,6 +38,8 @@ import {
   updateConnectionSchemaSummary
 } from '../data/connections'
 import { deleteApiConnection, listApiConnections, saveApiConnection } from '../data/api-connections'
+import { deleteEmailConnection, listEmailConnections, saveEmailConnection } from '../data/email-connections'
+import { verifyGmailConnection } from '../tools/email/transport'
 import { prepareConversation, resolveContextWindow } from '../context/prepare-context'
 import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/config'
 import { McpManager } from '../mcp/manager'
@@ -94,7 +97,10 @@ const SYSTEM_PROMPT =
   'incomplete, first retry that one delegate_to_page-creator call yourself with a more specific/' +
   "corrective brief (e.g. \"simplify, fewer elements\"); if it still isn't right after that, stop and " +
   'ask the user for their own direction on that slide rather than retrying indefinitely. Call ' +
-  'pptx_save_deck exactly once, after every planned slide has been composed.'
+  'pptx_save_deck exactly once, after every planned slide has been composed. To send an email, use ' +
+  'delegate_to_email with the recipients and roughly what it should say — it drafts the actual subject/ ' +
+  'body itself and sends it directly (with its own confirmation dialog), so you do not need to draft the ' +
+  'message yourself first.'
 
 const providerRegistry = createDefaultProviderRegistry()
 
@@ -229,6 +235,27 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.ApiConnectionsList, () => listApiConnections())
   ipcMain.handle(IpcChannel.ApiConnectionsSave, (_event, input: SaveApiConnectionInput) => saveApiConnection(input))
   ipcMain.handle(IpcChannel.ApiConnectionsDelete, (_event, id: string) => deleteApiConnection(id))
+
+  ipcMain.handle(IpcChannel.EmailConnectionsList, () => listEmailConnections())
+  ipcMain.handle(IpcChannel.EmailConnectionsSave, (_event, input: SaveEmailConnectionInput) => saveEmailConnection(input))
+  ipcMain.handle(IpcChannel.EmailConnectionsDelete, (_event, id: string) => deleteEmailConnection(id))
+  // A real login handshake before saving, same "successful probe is the
+  // validation" principle as #74's config-generator tools — this is a
+  // plain Settings form (no agent tool call involved), so it's just a
+  // direct pre-save check the renderer calls itself, not the
+  // ToolValidateInput/confirmation-dialog machinery that's specific to
+  // agent-created connections.
+  ipcMain.handle(
+    IpcChannel.EmailConnectionsValidate,
+    async (_event, emailAddress: string, appPassword: string): Promise<ToolValidateResult> => {
+      try {
+        await verifyGmailConnection(emailAddress, appPassword)
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
 
   ipcMain.handle(IpcChannel.McpServersList, () =>
     listServerConfigs().map((config) => {

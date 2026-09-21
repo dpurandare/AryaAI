@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ApiAuthType, ApiConnectionDto, DataConnectionDto, McpServerDto, McpTransport, ProviderDescriptor, ToolDescriptor } from '@shared/ipc-contract'
+  import type { ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, McpServerDto, McpTransport, ProviderDescriptor, ToolDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
 
   let {
@@ -242,6 +242,60 @@
   async function removeApiConnection(id: string): Promise<void> {
     await window.sachiv.deleteApiConnection(id)
     await loadApiConnections()
+  }
+
+  // --- Email accounts (#79 phase 1: Gmail only, app-password auth) ---
+  let emailConnections = $state<EmailConnectionDto[]>([])
+  let showAddEmailConnection = $state(false)
+  let emailName = $state('')
+  let emailAddress = $state('')
+  let emailAppPassword = $state('')
+  let savingEmailConnection = $state(false)
+  let emailConnectionError = $state('')
+
+  async function loadEmailConnections(): Promise<void> {
+    emailConnections = await window.sachiv.listEmailConnections()
+  }
+  loadEmailConnections()
+
+  function resetEmailConnectionForm(): void {
+    emailName = ''
+    emailAddress = ''
+    emailAppPassword = ''
+    emailConnectionError = ''
+    showAddEmailConnection = false
+  }
+
+  async function saveEmailConnectionWithValidation(): Promise<void> {
+    if (!emailName.trim() || !emailAddress.trim() || !emailAppPassword.trim()) return
+    savingEmailConnection = true
+    emailConnectionError = ''
+    try {
+      // Real login handshake before persisting anything — same "a
+      // successful probe is the validation" principle as #74, just called
+      // directly by this form rather than through the tool-confirmation
+      // dialog (there's no agent tool call involved in a Settings-created
+      // connection).
+      const result = await window.sachiv.validateEmailConnection(emailAddress.trim(), emailAppPassword)
+      if (!result.ok) {
+        emailConnectionError = result.error ?? 'Could not sign in with that address/app password.'
+        return
+      }
+      await window.sachiv.saveEmailConnection({
+        name: emailName.trim(),
+        emailAddress: emailAddress.trim(),
+        appPassword: emailAppPassword
+      })
+      resetEmailConnectionForm()
+      await loadEmailConnections()
+    } finally {
+      savingEmailConnection = false
+    }
+  }
+
+  async function removeEmailConnection(id: string): Promise<void> {
+    await window.sachiv.deleteEmailConnection(id)
+    await loadEmailConnections()
   }
 
   // --- Workspace boundary (TASKS.md #41) ---
@@ -716,6 +770,52 @@
       </div>
     {:else}
       <button onclick={() => (showAddApiConnection = true)}>+ Add API connection</button>
+    {/if}
+
+    <hr />
+
+    <h2>Email accounts</h2>
+    <p class="status">
+      Accounts the Email specialist can send from. Gmail only for now, with an app password — you'll
+      need 2-Step Verification enabled on the Google account first. <a
+        href="https://support.google.com/accounts/answer/185833"
+        target="_blank"
+        rel="noopener noreferrer">How to create an app password</a
+      >. Outlook/Microsoft 365 isn't supported yet (TASKS.md #79).
+    </p>
+    {#if emailConnections.length}
+      <ul class="connection-list">
+        {#each emailConnections as conn (conn.id)}
+          <li>
+            <span class="conn-name">{conn.name}</span>
+            <span class="conn-engine">{conn.emailAddress}</span>
+            <button class="link-danger" onclick={() => removeEmailConnection(conn.id)}>Remove</button>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="status">No email accounts yet.</p>
+    {/if}
+
+    {#if showAddEmailConnection}
+      <div class="add-connection-form">
+        <input placeholder="Display name, e.g. Work Gmail" bind:value={emailName} />
+        <input placeholder="Gmail address" bind:value={emailAddress} />
+        <input placeholder="App password" type="password" bind:value={emailAppPassword} />
+        {#if emailConnectionError}<p class="status error">{emailConnectionError}</p>{/if}
+        <div class="actions">
+          <button onclick={resetEmailConnectionForm}>Cancel</button>
+          <button
+            class="primary"
+            disabled={savingEmailConnection || !emailName.trim() || !emailAddress.trim() || !emailAppPassword.trim()}
+            onclick={saveEmailConnectionWithValidation}
+          >
+            {savingEmailConnection ? 'Signing in...' : 'Add account'}
+          </button>
+        </div>
+      </div>
+    {:else}
+      <button onclick={() => (showAddEmailConnection = true)}>+ Add email account</button>
     {/if}
 
     <hr />

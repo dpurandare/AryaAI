@@ -38,6 +38,11 @@ export const IpcChannel = {
   McpServersList: 'mcp-servers:list',
   McpServersSave: 'mcp-servers:save',
   McpServersDelete: 'mcp-servers:delete',
+
+  EmailConnectionsList: 'email-connections:list',
+  EmailConnectionsSave: 'email-connections:save',
+  EmailConnectionsDelete: 'email-connections:delete',
+  EmailConnectionsValidate: 'email-connections:validate',
   McpServersReconnect: 'mcp-servers:reconnect',
 
   WorkspaceGetRoot: 'workspace:get-root',
@@ -304,6 +309,26 @@ export interface SaveApiConnectionInput {
   username?: string
   secret?: string
   specUrl?: string
+}
+
+/**
+ * Phase 1 of #79 — Gmail only, app-password auth (see TASKS.md #79 for
+ * why Outlook needs a separate, not-yet-built OAuth2/Graph path). Never
+ * carries the actual app password.
+ */
+export interface EmailConnectionDto {
+  id: string
+  name: string
+  emailAddress: string
+  hasSecret: boolean
+}
+
+/** `id` omitted creates a new connection; `appPassword` omitted on an edit leaves the stored one unchanged. */
+export interface SaveEmailConnectionInput {
+  id?: string
+  name: string
+  emailAddress: string
+  appPassword?: string
 }
 
 export type McpTransport = 'stdio' | 'http'

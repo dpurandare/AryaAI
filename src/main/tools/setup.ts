@@ -7,6 +7,7 @@ import { apiCallTool, apiCheckStatusTool, apiIntrospectTool, apiListConnectionsT
 import { awsCliTool, azureCliTool, gcloudCliTool } from './cloud-cli'
 import { apiCreateConnectionTool, dbCreateConnectionTool, mcpCreateConnectionTool } from './config-gen'
 import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from './deck'
+import { listEmailConnectionsTool, sendEmailTool } from './email'
 import { parseCsvTool, parseHtmlTool, parseJsonTool, parseXmlTool } from './data-formats'
 import {
   dbExecuteSqlTool,
@@ -98,5 +99,7 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(pptxAddSlideTool)
   registry.register(pptxComposeSlideTool)
   registry.register(pptxSaveDeckTool)
+  registry.register(listEmailConnectionsTool)
+  registry.register(sendEmailTool)
   return registry
 }

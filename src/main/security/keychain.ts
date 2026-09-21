@@ -71,14 +71,19 @@ function keychainDelete(key: string): void {
 
 /**
  * Maps this app's internal secret keys (`db:<id>`, `api:<id>`, `mcp:<id>`,
- * or a bare provider/service id like `openai`/`tavily`) to the .env
- * naming convention settled for #75 — no app-name prefix, since this is a
- * dedicated file the app reads directly into its own secret store, never
- * merged into `process.env` or a shared shell session, so there's no real
- * collision risk a prefix would guard against.
+ * `email:<id>`, or a bare provider/service id like `openai`/`tavily`) to
+ * the .env naming convention settled for #75 — no app-name prefix, since
+ * this is a dedicated file the app reads directly into its own secret
+ * store, never merged into `process.env` or a shared shell session, so
+ * there's no real collision risk a prefix would guard against. `email`
+ * was added here when #79 introduced that key namespace — a real gap
+ * found while implementing #79: this function's prefix list had been
+ * written before #79 existed and needed updating, exactly the kind of
+ * thing a hardcoded list like this can silently miss when a new secret
+ * namespace shows up later.
  */
 function envKeyFor(key: string): string {
-  const match = /^(db|api|mcp):(.+)$/.exec(key)
+  const match = /^(db|api|mcp|email):(.+)$/.exec(key)
   if (match) return `${match[1].toUpperCase()}_${match[2]}`
   return `PROVIDER_${key.toUpperCase()}`
 }

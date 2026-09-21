@@ -12,6 +12,7 @@ export type AgentRole =
   | 'data'
   | 'distribution'
   | 'page-creator'
+  | 'email'
 
 /**
  * The user-selectable/plannable roles — powers both the renderer's manual
@@ -23,7 +24,10 @@ export type AgentRole =
  * directly, or letting the classifier target it as a whole plan step,
  * would both be nonsensical. It still needs an `AgentRole` value (for
  * `Agent.role`/`dispatchDelegate`'s map key and role-chip labeling) and an
- * `AGENT_ROLE_LABELS` entry below — just not a slot here.
+ * `AGENT_ROLE_LABELS` entry below — just not a slot here. `email` (#79)
+ * IS included, unlike `page-creator` — unlike a one-slide brief, "send an
+ * email about X" is a perfectly normal standalone user request and a
+ * reasonable classify-and-plan step target on its own.
  */
 export const AGENT_ROLES: readonly AgentRole[] = [
   'planning',
@@ -31,7 +35,8 @@ export const AGENT_ROLES: readonly AgentRole[] = [
   'coding',
   'terminal-devops',
   'data',
-  'distribution'
+  'distribution',
+  'email'
 ]
 
 /** Human-readable label per role — used by both the orchestrator's own system prompt and the renderer's mode picker/role chips, so the two stay in sync. */
@@ -42,5 +47,6 @@ export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
   'terminal-devops': 'Terminal/DevOps',
   data: 'Data',
   distribution: 'Distribution',
-  'page-creator': 'Page Creator'
+  'page-creator': 'Page Creator',
+  email: 'Email'
 }

@@ -55,12 +55,18 @@ describe('keychain (#75 dual-backend secret storage)', () => {
   it('switchToFileStorage exports existing keychain secrets, switches mode, and writes 0600', async () => {
     setApiKey('openai', 'sk-abc')
     setApiKey('db:conn-1', 'db-password')
+    // #79's key namespace — added after #75 first shipped; regression
+    // coverage for a real gap where envKeyFor's prefix list hadn't been
+    // updated yet and this would have silently fallen through to
+    // PROVIDER_EMAIL:conn-2 (an invalid, colon-containing env key name).
+    setApiKey('email:conn-2', 'app-password')
 
     switchToFileStorage()
 
     expect(getSecretStorageMode()).toBe('file')
     expect(getApiKey('openai')).toBe('sk-abc')
     expect(getApiKey('db:conn-1')).toBe('db-password')
+    expect(getApiKey('email:conn-2')).toBe('app-password')
 
     const info = await stat(envFilePath())
     expect(info.mode & 0o777).toBe(0o600)
@@ -68,9 +74,11 @@ describe('keychain (#75 dual-backend secret storage)', () => {
     const raw = await readFile(envFilePath(), 'utf-8')
     expect(raw).toContain('PROVIDER_OPENAI=')
     expect(raw).toContain('DB_conn-1=')
+    expect(raw).toContain('EMAIL_conn-2=')
     // Real secret values must never appear in plaintext in the file itself.
     expect(raw).not.toContain('sk-abc')
     expect(raw).not.toContain('db-password')
+    expect(raw).not.toContain('app-password')
   })
 
   it('after switching, new writes go to both .env (primary) and the keychain (live backup)', async () => {
