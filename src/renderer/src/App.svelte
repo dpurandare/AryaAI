@@ -3,6 +3,7 @@
   import ChatView from './lib/components/ChatView.svelte'
   import SettingsPanel from './lib/components/SettingsPanel.svelte'
   import ToolConfirmDialog from './lib/components/ToolConfirmDialog.svelte'
+  import FirstRunSetup from './lib/components/FirstRunSetup.svelte'
   import {
     DEFAULT_SESSION_TITLE,
     type SessionDto,
@@ -96,6 +97,8 @@
   let activeId = $state('')
   let runtimes = $state<Record<string, SessionRuntime>>({})
   let showSettings = $state(false)
+  let showFirstRunSetup = $state(false)
+  let firstRunEnvPath = $state('')
   let providers = $state<ProviderDescriptor[]>([])
   let providerId = $state('openai')
   let hasKey = $state(false)
@@ -456,6 +459,40 @@
     await loadProviderState(providerId)
   }
 
+  const ONBOARDING_SETTING_KEY = 'onboardingCompleted'
+
+  /**
+   * #75's first-run entry point for the secret-storage choice. Must never
+   * fire for an existing real install that predates this setting — only
+   * treats it as a genuine first run when there's truly nothing yet (no
+   * sessions, no provider key configured for anything), backfilling the
+   * flag silently otherwise so this check is cheap on every later launch.
+   */
+  async function checkFirstRun(): Promise<void> {
+    if ((await window.sachiv.getSetting(ONBOARDING_SETTING_KEY)) === 'true') return
+    const [existingSessions, allProviders] = await Promise.all([
+      window.sachiv.listSessions(),
+      window.sachiv.listProviders()
+    ])
+    const anyKeyConfigured = (await Promise.all(allProviders.map((p) => window.sachiv.hasApiKey(p.id)))).some(Boolean)
+    if (existingSessions.length === 0 && !anyKeyConfigured) {
+      firstRunEnvPath = (await window.sachiv.getSecretStorageInfo()).envFilePath
+      showFirstRunSetup = true
+    } else {
+      await window.sachiv.setSetting(ONBOARDING_SETTING_KEY, 'true')
+    }
+  }
+
+  async function completeFirstRun(): Promise<void> {
+    await window.sachiv.setSetting(ONBOARDING_SETTING_KEY, 'true')
+    showFirstRunSetup = false
+  }
+
+  async function chooseFileStorageOnFirstRun(): Promise<void> {
+    await window.sachiv.switchSecretStorageToFile()
+    await completeFirstRun()
+  }
+
   window.sachiv
     .getAppInfo()
     .then((info) => {
@@ -510,11 +547,24 @@
     if (stored !== null && stored !== undefined) toolDetailsExpanded = stored === 'true'
   })
 
-  initProvider()
-  loadSessions()
+  // checkFirstRun's "is this genuinely a fresh install" check reads the
+  // session list — it must run and finish *before* loadSessions gets a
+  // chance to auto-create a default session (loadSessions does this
+  // whenever the list is empty), or the two race: found live, the
+  // first-run screen silently never appeared because loadSessions' own
+  // session sometimes landed first, making the fresh-check see a
+  // "pre-existing" session that was actually just its own side effect.
+  checkFirstRun().then(() => {
+    initProvider()
+    loadSessions()
+  })
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
+
+{#if showFirstRunSetup}
+  <FirstRunSetup envFilePath={firstRunEnvPath} onChooseKeychain={completeFirstRun} onChooseFile={chooseFileStorageOnFirstRun} />
+{/if}
 
 <div class="titlebar" class:mac={isMac}>
   <button
