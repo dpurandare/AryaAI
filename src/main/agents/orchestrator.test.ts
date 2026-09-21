@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -10,7 +10,7 @@ import { ToolRegistry } from '../tools/registry'
 import { readFileTool, listDirectoryTool, writeFileTool } from '../tools/file-ops'
 import type { ToolContext } from '../tools/types'
 import { createAgents } from './roles'
-import { Orchestrator, type ConfirmDecision, type OrchestratorEvent, type ToolConfirmRequest } from './orchestrator'
+import { Orchestrator, type Agent, type ConfirmDecision, type OrchestratorEvent, type ToolConfirmRequest } from './orchestrator'
 
 // Deliberately builds the tool registry/context directly rather than via
 // tools/setup.ts, which imports `electron` at module scope and would crash
@@ -1269,6 +1269,93 @@ describe('Orchestrator (integration, mocked provider)', () => {
         .map((b) => b.content)
 
       expect(toolResultContents.every((c) => !c.includes('substantially overlap'))).toBe(true)
+    })
+  })
+
+  describe('isolated delegation (#77)', () => {
+    function isolate(agents: Map<AgentRole, Agent>, role: AgentRole, maxRounds?: number): Map<AgentRole, Agent> {
+      const isolated = new Map(agents)
+      isolated.set(role, { ...agents.get(role)!, isolated: true, maxRounds })
+      return isolated
+    }
+
+    it('gets only its own task, not the full parent conversation', async () => {
+      const registry = buildRegistry()
+      const agents = isolate(createAgents(registry), 'coding')
+
+      const turns: ScriptedTurn[] = [
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.txt' } }] },
+        { text: 'Done.', stopReason: 'end_turn' }, // nested isolated round
+        { text: 'The Coding specialist wrote the file.', stopReason: 'end_turn' } // outer final
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal
+      )
+
+      const conversation: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'EARLIER-CONTEXT-MARKER: my favorite color is blue' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'Noted!' }] },
+        { role: 'user', content: [{ type: 'text', text: 'Please write hello.txt for me.' }] }
+      ]
+      await collect(orchestrator, conversation)
+
+      // provider.requests[0] is the outer round; [1] is the isolated delegate's own round.
+      const nestedRequestText = JSON.stringify(provider.requests[1].messages)
+      expect(nestedRequestText).not.toContain('EARLIER-CONTEXT-MARKER')
+      expect(nestedRequestText).toContain('write hello.txt')
+    })
+
+    it('gets its own fresh, independently-capped round budget — not the shared MAX_TOTAL_ROUNDS pool', async () => {
+      const registry = buildRegistry()
+      const agents = isolate(createAgents(registry), 'coding', 5)
+      await writeFile(join(root, 'note.txt'), 'hi', 'utf-8')
+
+      const turns: ScriptedTurn[] = [
+        // 3 outer rounds first, so the shared state.roundsUsed is already
+        // well past 0 by the time delegation happens.
+        { toolCalls: [{ id: 'r1', name: 'read_file', input: { path: 'note.txt' } }] },
+        { toolCalls: [{ id: 'r2', name: 'read_file', input: { path: 'note.txt' } }] },
+        { toolCalls: [{ id: 'r3', name: 'read_file', input: { path: 'note.txt' } }] },
+        // Outer round 4: delegate.
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'read note.txt twice' } }] },
+        // Isolated delegate's own round 1 and 2.
+        { toolCalls: [{ id: 'r4', name: 'read_file', input: { path: 'note.txt' } }] },
+        { text: 'Read it twice.', stopReason: 'end_turn' },
+        // Outer final.
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      const statusMessages = events
+        .filter((e) => e.kind === 'stream' && e.event.type === 'status')
+        .map((e) => (e as { event: { message: string; agentRole?: string } }).event)
+
+      const codingStatuses = statusMessages.filter((s) => s.agentRole === 'coding').map((s) => s.message)
+      // Its own counter starts at 1 and is capped at its own maxRounds (5),
+      // never at the shared pool's 12 — even though the outer loop had
+      // already used 4 of the 12 shared rounds by the time it delegated.
+      expect(codingStatuses[0]).toContain('(round 1/5)')
+      expect(codingStatuses[1]).toContain('(round 2/5)')
+      expect(codingStatuses.every((m) => !m.includes('/12'))).toBe(true)
     })
   })
 })

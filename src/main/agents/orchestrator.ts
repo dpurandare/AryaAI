@@ -11,6 +11,22 @@ export interface Agent {
   summary: string
   systemPrompt: string
   tools: Tool[]
+  /**
+   * Opt-in, per #77 — every existing role leaves this unset and keeps
+   * today's exact behavior (full inherited conversation, shared round
+   * budget). A `true` here changes `dispatchDelegate`'s two real
+   * assumptions that are wrong for a bounded, self-contained, repeatedly-
+   * invoked-per-turn role (e.g. a future "compose one slide" specialist):
+   * the nested call gets only its own task/brief as context, not the
+   * entire parent conversation, and its own fresh round budget (see
+   * `maxRounds`) instead of sharing the parent's `MAX_TOTAL_ROUNDS` pool —
+   * decoupling the *round ceiling* only; token usage still rolls up into
+   * the parent's cumulative totals afterward, so cost accounting stays
+   * honest and complete.
+   */
+  isolated?: boolean
+  /** Only meaningful with `isolated: true` — the fresh round budget that role's own delegate calls get, capped independently of `MAX_TOTAL_ROUNDS`. Defaults to `MAX_TOTAL_ROUNDS` if omitted. */
+  maxRounds?: number
 }
 
 export interface ConfirmDecision {
@@ -601,9 +617,9 @@ export class Orchestrator {
    * progressing. A real "round 3/12" counter is honest, cheap progress
    * signal the renderer already has everything it needs to show.
    */
-  private roundStatusMessage(agentRole: AgentRole | undefined, localRound: number, state: RunState): string {
+  private roundStatusMessage(agentRole: AgentRole | undefined, localRound: number, state: RunState, maxRounds: number): string {
     const activity = localRound === 1 ? 'thinking' : 'reviewing tool results'
-    const progress = `(round ${state.roundsUsed}/${MAX_TOTAL_ROUNDS})`
+    const progress = `(round ${state.roundsUsed}/${maxRounds})`
     return agentRole
       ? `${AGENT_ROLE_LABELS[agentRole]} agent is ${activity}… ${progress}`
       : `Model (${this.model}) is ${activity}… ${progress}`
@@ -636,7 +652,8 @@ export class Orchestrator {
     state: RunState,
     agentRole: AgentRole | undefined,
     extraToolDefs: ToolDefinition[] = [],
-    isTopLevel = false
+    isTopLevel = false,
+    maxRounds: number = MAX_TOTAL_ROUNDS
   ): AsyncGenerator<OrchestratorEvent, { text: string; isError: boolean }> {
     const toolByName = new Map(tools.map((t) => [t.name, t]))
     const toolDefs: ToolDefinition[] = [
@@ -649,13 +666,16 @@ export class Orchestrator {
     // seeing a tool result," for the status message below.
     let localRound = 0
 
-    while (state.roundsUsed < MAX_TOTAL_ROUNDS) {
+    while (state.roundsUsed < maxRounds) {
       state.roundsUsed++
       localRound++
 
       yield {
         kind: 'stream',
-        event: tagEvent({ type: 'status', message: this.roundStatusMessage(agentRole, localRound, state) }, agentRole)
+        event: tagEvent(
+          { type: 'status', message: this.roundStatusMessage(agentRole, localRound, state, maxRounds) },
+          agentRole
+        )
       }
 
       let assistantText = ''
@@ -809,7 +829,7 @@ export class Orchestrator {
       for await (const event of this.provider.stream({
         model: this.model,
         system:
-          `${systemPrompt}\n\nYou have used all ${MAX_TOTAL_ROUNDS} rounds available for this turn — no ` +
+          `${systemPrompt}\n\nYou have used all ${maxRounds} rounds available for this turn — no ` +
           'more tool calls are possible. Answer now using only what has already been found above: ' +
           "summarize the real information gathered so far, and say plainly if it's incomplete, rather " +
           'than attempting anything further.',
@@ -845,7 +865,7 @@ export class Orchestrator {
       return { text: wrapUpText, isError: false }
     }
 
-    return { text: `Stopped after ${MAX_TOTAL_ROUNDS} agent rounds.`, isError: true }
+    return { text: `Stopped after ${maxRounds} agent rounds.`, isError: true }
   }
 
   /**
@@ -926,16 +946,38 @@ export class Orchestrator {
     if (!agent) return { content: `Unknown agent role "${role}".`, isError: true }
 
     const task = String(input.task ?? '')
-    const nestedConversation: Message[] = [
-      ...conversation,
-      {
-        role: 'user',
-        content: [{ type: 'text', text: `[Orchestrator -> ${AGENT_ROLE_LABELS[role]}]: ${task}` }]
-      }
-    ]
+    const taskMessage: Message = {
+      role: 'user',
+      content: [{ type: 'text', text: `[Orchestrator -> ${AGENT_ROLE_LABELS[role]}]: ${task}` }]
+    }
+    // Isolated (#77): only this brief, not the whole parent conversation —
+    // and a fresh round budget, not the shared MAX_TOTAL_ROUNDS pool, so a
+    // role invoked repeatedly per turn (once per slide, say) can't
+    // collectively exhaust the budget the rest of the turn still needs.
+    const nestedConversation: Message[] = agent.isolated ? [taskMessage] : [...conversation, taskMessage]
+    const nestedState: RunState = agent.isolated
+      ? { roundsUsed: 0, inputTokens: 0, outputTokens: 0, maxOutputTokens: state.maxOutputTokens }
+      : state
+    const maxRounds = agent.isolated ? (agent.maxRounds ?? MAX_TOTAL_ROUNDS) : MAX_TOTAL_ROUNDS
 
     try {
-      const result = yield* this.runLoop(agent.systemPrompt, agent.tools, nestedConversation, state, role)
+      const result = yield* this.runLoop(
+        agent.systemPrompt,
+        agent.tools,
+        nestedConversation,
+        nestedState,
+        role,
+        [],
+        false,
+        maxRounds
+      )
+      // The round ceiling is decoupled for an isolated call, but its real
+      // token cost isn't — roll up into the parent's cumulative totals so
+      // session_usage/the context meter still see the true full cost.
+      if (agent.isolated) {
+        state.inputTokens += nestedState.inputTokens
+        state.outputTokens += nestedState.outputTokens
+      }
       return { content: result.text || '(no response)', isError: result.isError }
     } catch (err) {
       return { content: err instanceof Error ? err.message : String(err), isError: true }
