@@ -74,4 +74,18 @@ describe('db_create_connection', () => {
     await expect(dbCreateConnectionTool.execute(input, {} as never)).rejects.toThrow()
     expect(listConnections().some((c) => c.name === 'Remote')).toBe(false)
   }, 15000)
+
+  it('rejects an unreachable mssql host, and does not persist anything', async () => {
+    const input = {
+      name: 'Warehouse',
+      engine: 'mssql',
+      host: 'this-host-does-not-exist.invalid',
+      port: 1433,
+      database: 'db',
+      username: 'sa',
+      password: 'pw'
+    }
+    await expect(dbCreateConnectionTool.execute(input, {} as never)).rejects.toThrow()
+    expect(listConnections().some((c) => c.name === 'Warehouse')).toBe(false)
+  }, 15000)
 })

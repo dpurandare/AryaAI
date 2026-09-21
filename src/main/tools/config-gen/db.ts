@@ -1,5 +1,6 @@
 import type { DbEngine, SaveDataConnectionInput } from '@shared/ipc-contract'
 import { saveConnection } from '../../data/connections'
+import { MssqlDriver } from '../db/mssql-driver'
 import { PostgresDriver } from '../db/postgres-driver'
 import { SqliteDriver } from '../db/sqlite-driver'
 import type { DbDriver } from '../db/types'
@@ -15,16 +16,17 @@ async function probeConnection(input: Record<string, unknown>): Promise<void> {
   let driver: DbDriver
   if (engine === 'sqlite') {
     driver = new SqliteDriver(String(input.filePath ?? ''))
-  } else if (engine === 'postgres') {
-    driver = new PostgresDriver({
+  } else if (engine === 'postgres' || engine === 'mssql') {
+    const config = {
       host: String(input.host ?? ''),
-      port: Number(input.port ?? 5432),
+      port: Number(input.port ?? (engine === 'postgres' ? 5432 : 1433)),
       database: String(input.database ?? ''),
       username: String(input.username ?? ''),
       password: String(input.password ?? '')
-    })
+    }
+    driver = engine === 'postgres' ? new PostgresDriver(config) : new MssqlDriver(config)
   } else {
-    throw new Error(`Unknown engine "${engine}" — must be "sqlite" or "postgres".`)
+    throw new Error(`Unknown engine "${engine}" — must be "sqlite", "postgres", or "mssql".`)
   }
   try {
     await driver.introspectSchema()
@@ -38,21 +40,22 @@ export const dbCreateConnectionTool: Tool = {
   description:
     'Create a new Database connection (Settings > Data sources) directly from details gathered in chat, ' +
     "instead of asking the user to fill out the Settings form by hand. Gather the non-secret fields " +
-    "yourself (host/port/database/username for postgres, filePath for sqlite); the connection's password " +
-    "(postgres only) is entered by the user directly in the confirmation dialog, never typed to you — " +
-    'never ask the user to tell you their password in chat. The connection is real-tested (a genuine ' +
-    "schema probe) before being saved, so a bad host/credential is caught immediately, not discovered later.",
+    "yourself (host/port/database/username for postgres/mssql, filePath for sqlite); the connection's " +
+    "password (postgres/mssql only) is entered by the user directly in the confirmation dialog, never " +
+    "typed to you — never ask the user to tell you their password in chat. The connection is real-tested " +
+    "(a genuine schema probe) before being saved, so a bad host/credential is caught immediately, not " +
+    "discovered later.",
   inputSchema: {
     type: 'object',
     properties: {
       name: { type: 'string' },
-      engine: { type: 'string', enum: ['sqlite', 'postgres'] },
+      engine: { type: 'string', enum: ['sqlite', 'postgres', 'mssql'] },
       filePath: { type: 'string', description: 'sqlite only: path to an existing .sqlite/.db file' },
-      host: { type: 'string', description: 'postgres only' },
-      port: { type: 'number', description: 'postgres only, default 5432' },
-      database: { type: 'string', description: 'postgres only' },
-      username: { type: 'string', description: 'postgres only' },
-      password: { type: 'string', description: 'postgres only — the user enters this directly, do not ask for it in chat' }
+      host: { type: 'string', description: 'postgres/mssql only' },
+      port: { type: 'number', description: 'postgres/mssql only, default 5432/1433' },
+      database: { type: 'string', description: 'postgres/mssql only' },
+      username: { type: 'string', description: 'postgres/mssql only' },
+      password: { type: 'string', description: 'postgres/mssql only — the user enters this directly, do not ask for it in chat' }
     },
     required: ['name', 'engine']
   },

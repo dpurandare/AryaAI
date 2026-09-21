@@ -29,6 +29,7 @@ import { isMutatingSql } from '../tools/db/sql-classifier'
  */
 const SETTINGS_KEY = 'dataConnections'
 const KEYCHAIN_PREFIX = 'db:'
+const DEFAULT_PORT: Record<'postgres' | 'mssql', number> = { postgres: 5432, mssql: 1433 }
 
 export interface ResolvedSqliteConnection {
   engine: 'sqlite'
@@ -44,7 +45,17 @@ export interface ResolvedPostgresConnection {
   password: string
 }
 
-export type ResolvedConnection = ResolvedSqliteConnection | ResolvedPostgresConnection
+/** Same shape as ResolvedPostgresConnection today (both are plain host/port/database/username/password servers) — kept as its own named type anyway, matching this file's existing one-type-per-engine convention, since the two engines' actual connection semantics (and default port) are unrelated and coincidentally sharing a shape now doesn't mean they always will. */
+export interface ResolvedMssqlConnection {
+  engine: 'mssql'
+  host: string
+  port: number
+  database: string
+  username: string
+  password: string
+}
+
+export type ResolvedConnection = ResolvedSqliteConnection | ResolvedPostgresConnection | ResolvedMssqlConnection
 
 function readList(): DataConnectionDto[] {
   const raw = getSetting(SETTINGS_KEY)
@@ -98,16 +109,16 @@ export function saveConnection(input: SaveDataConnectionInput): DataConnectionDt
       : {
           id,
           name: input.name,
-          engine: 'postgres',
+          engine: input.engine,
           host: input.host ?? '',
-          port: input.port ?? 5432,
+          port: input.port ?? DEFAULT_PORT[input.engine],
           database: input.database ?? '',
           username: input.username ?? '',
           savedQueries: existingQueries,
           schemaSummary: existingSummary
         }
 
-  if (input.engine === 'postgres' && input.password) {
+  if (input.engine !== 'sqlite' && input.password) {
     setApiKey(KEYCHAIN_PREFIX + id, input.password)
   }
 
@@ -139,9 +150,9 @@ export function resolveConnection(nameOrId: string): ResolvedConnection | undefi
   }
 
   return {
-    engine: 'postgres',
+    engine: dto.engine,
     host: dto.host ?? '',
-    port: dto.port ?? 5432,
+    port: dto.port ?? DEFAULT_PORT[dto.engine],
     database: dto.database ?? '',
     username: dto.username ?? '',
     password: getApiKey(KEYCHAIN_PREFIX + dto.id) ?? ''

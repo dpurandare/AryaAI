@@ -1,11 +1,46 @@
+import type { DbEngine } from '@shared/ipc-contract'
 import type { Tool } from '../types'
 import { openDriver } from './driver-factory'
 import { quoteIdentifier } from './identifier'
+import { positionalPlaceholder } from './param-binding'
 import type { DbDriver, DbTable } from './types'
 
 const DEFAULT_LIST_LIMIT = 50
 const MAX_LIST_LIMIT = 200
 const FIND_LIMIT = 50
+
+/**
+ * A real, pre-existing bug found while widening this for a 3rd engine, not
+ * introduced by it: this used to hardcode a literal `?` here regardless of
+ * engine — which genuinely never worked against a real Postgres connection
+ * (confirmed live against a real Postgres container: `syntax error at or
+ * near "OFFSET"` — Postgres's wire protocol has no `?` placeholder syntax
+ * at all, only `$1, $2, ...`). Fixed as part of adding SQL Server, which
+ * has the same placeholder problem PLUS a deeper one LIMIT/OFFSET can't
+ * paper over: T-SQL has no `LIMIT`/`OFFSET` keywords at all — pagination
+ * needs `OFFSET ... ROWS FETCH NEXT ... ROWS ONLY`, which itself requires
+ * an `ORDER BY` clause even when the order doesn't actually matter here.
+ */
+export function buildPagedSelect(engine: DbEngine, tableIdent: string, limit: number, offset: number): { sql: string; params: unknown[] } {
+  if (engine === 'mssql') {
+    return {
+      sql: `SELECT * FROM ${tableIdent} ORDER BY (SELECT NULL) OFFSET ${positionalPlaceholder(engine, 1)} ROWS FETCH NEXT ${positionalPlaceholder(engine, 2)} ROWS ONLY`,
+      params: [offset, limit]
+    }
+  }
+  return {
+    sql: `SELECT * FROM ${tableIdent} LIMIT ${positionalPlaceholder(engine, 1)} OFFSET ${positionalPlaceholder(engine, 2)}`,
+    params: [limit, offset]
+  }
+}
+
+/** Same real bug, same fix, for the single-condition lookup — mssql uses `TOP n` (before the column list, no ORDER BY needed) instead of a trailing `LIMIT`. */
+export function buildFindSelect(engine: DbEngine, tableIdent: string, columnIdent: string, limit: number): string {
+  if (engine === 'mssql') {
+    return `SELECT TOP ${limit} * FROM ${tableIdent} WHERE ${columnIdent} = ${positionalPlaceholder(engine, 1)}`
+  }
+  return `SELECT * FROM ${tableIdent} WHERE ${columnIdent} = ${positionalPlaceholder(engine, 1)} LIMIT ${limit}`
+}
 
 /**
  * Table/column names come from the model, but can never be bound as query
@@ -58,10 +93,8 @@ export const dbListRowsTool: Tool = {
       const table = await requireTable(driver, String(input.table ?? ''))
       const limit = Math.min(MAX_LIST_LIMIT, Math.max(1, Number(input.limit) || DEFAULT_LIST_LIMIT))
       const offset = Math.max(0, Number(input.offset) || 0)
-      const result = await driver.execute(`SELECT * FROM ${quoteIdentifier(table.name)} LIMIT ? OFFSET ?`, [
-        limit,
-        offset
-      ])
+      const { sql, params } = buildPagedSelect(driver.engine, quoteIdentifier(table.name), limit, offset)
+      const result = await driver.execute(sql, params)
       return `${result.rowCount} row(s):\n${JSON.stringify(result.rows, null, 2)}`
     } finally {
       await driver.close()
@@ -115,10 +148,8 @@ export const dbFindRowsTool: Tool = {
       const table = await requireTable(driver, String(input.table ?? ''))
       const column = String(input.column ?? '')
       requireColumn(table, column)
-      const result = await driver.execute(
-        `SELECT * FROM ${quoteIdentifier(table.name)} WHERE ${quoteIdentifier(column)} = ? LIMIT ${FIND_LIMIT}`,
-        [input.value]
-      )
+      const sql = buildFindSelect(driver.engine, quoteIdentifier(table.name), quoteIdentifier(column), FIND_LIMIT)
+      const result = await driver.execute(sql, [input.value])
       return `${result.rowCount} row(s):\n${JSON.stringify(result.rows, null, 2)}`
     } finally {
       await driver.close()

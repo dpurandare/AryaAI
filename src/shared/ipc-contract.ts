@@ -157,7 +157,7 @@ export interface ToolValidateResult {
   error?: string
 }
 
-export type DbEngine = 'sqlite' | 'postgres'
+export type DbEngine = 'sqlite' | 'postgres' | 'mssql'
 
 export type SavedQueryParamType = 'string' | 'number'
 

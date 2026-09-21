@@ -15,8 +15,8 @@ export interface DbQueryResult {
 }
 
 export interface DbDriver {
-  /** Which positional placeholder style execute()'s params bind against — needed by callers (saved-query-tools.ts) that build parameterized SQL from a named-param template before calling execute(). */
-  readonly engine: 'sqlite' | 'postgres'
+  /** Which positional placeholder style execute()'s params bind against — needed by callers (saved-query-tools.ts, crud.ts) that build parameterized/paginated SQL before calling execute(). */
+  readonly engine: 'sqlite' | 'postgres' | 'mssql'
   introspectSchema(): Promise<DbTable[]>
   /** `params` are bound positionally (`?` for SQLite, `$1..$n` for Postgres) — never string-interpolated into `sql`. */
   execute(sql: string, params?: unknown[]): Promise<DbQueryResult>

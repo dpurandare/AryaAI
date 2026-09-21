@@ -1,5 +1,12 @@
 import type { DbEngine } from '@shared/ipc-contract'
 
+/** The one positional-placeholder convention every engine's driver and every caller building parameterized SQL (bindNamedParams below, crud.ts's hand-built queries) agrees on — `index` is 1-based to match how each engine actually numbers/names its own placeholders. */
+export function positionalPlaceholder(engine: DbEngine, index: number): string {
+  if (engine === 'postgres') return `$${index}`
+  if (engine === 'mssql') return `@p${index}`
+  return '?'
+}
+
 /**
  * A saved query's SQL is authored once (Settings, or a one-time LLM-assisted
  * pass) with named placeholders like `:userId`, then reused across many
@@ -30,7 +37,7 @@ export function bindNamedParams(
       throw new Error(`Missing value for parameter ":${name}".`)
     }
     params.push(values[name])
-    return engine === 'postgres' ? `$${params.length}` : '?'
+    return positionalPlaceholder(engine, params.length)
   })
   return { sql, params }
 }

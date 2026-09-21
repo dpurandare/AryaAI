@@ -44,7 +44,8 @@
   let connections = $state<DataConnectionDto[]>([])
   let showAddConnection = $state(false)
   let connName = $state('')
-  let connEngine = $state<'sqlite' | 'postgres'>('sqlite')
+  let connEngine = $state<'sqlite' | 'postgres' | 'mssql'>('sqlite')
+  const DEFAULT_PORT: Record<'postgres' | 'mssql', string> = { postgres: '5432', mssql: '1433' }
   let connFilePath = $state('')
   let connHost = $state('')
   let connPort = $state('5432')
@@ -74,15 +75,16 @@
     if (!connName.trim()) return
     savingConnection = true
     try {
+      const isSqlite = connEngine === 'sqlite'
       await window.sachiv.saveDataConnection({
         name: connName.trim(),
         engine: connEngine,
-        filePath: connEngine === 'sqlite' ? connFilePath.trim() : undefined,
-        host: connEngine === 'postgres' ? connHost.trim() : undefined,
-        port: connEngine === 'postgres' ? Number(connPort) || 5432 : undefined,
-        database: connEngine === 'postgres' ? connDatabase.trim() : undefined,
-        username: connEngine === 'postgres' ? connUsername.trim() : undefined,
-        password: connEngine === 'postgres' && connPassword ? connPassword : undefined
+        filePath: isSqlite ? connFilePath.trim() : undefined,
+        host: isSqlite ? undefined : connHost.trim(),
+        port: connEngine === 'sqlite' ? undefined : Number(connPort) || Number(DEFAULT_PORT[connEngine]),
+        database: isSqlite ? undefined : connDatabase.trim(),
+        username: isSqlite ? undefined : connUsername.trim(),
+        password: !isSqlite && connPassword ? connPassword : undefined
       })
       resetConnectionForm()
       await loadConnections()
@@ -485,9 +487,16 @@
     {#if showAddConnection}
       <div class="add-connection-form">
         <input placeholder="Connection name" bind:value={connName} />
-        <select bind:value={connEngine}>
+        <select
+          value={connEngine}
+          onchange={(e) => {
+            connEngine = e.currentTarget.value as typeof connEngine
+            if (connEngine !== 'sqlite') connPort = DEFAULT_PORT[connEngine]
+          }}
+        >
           <option value="sqlite">SQLite</option>
           <option value="postgres">Postgres</option>
+          <option value="mssql">SQL Server</option>
         </select>
         {#if connEngine === 'sqlite'}
           <input placeholder="Path to .db file" bind:value={connFilePath} />

@@ -90,6 +90,29 @@ describe('data connections', () => {
     })
   })
 
+  it('saves and resolves a mssql connection the same way as postgres, with its own default port', () => {
+    const saved = saveConnection({
+      name: 'Warehouse',
+      engine: 'mssql',
+      host: 'sql.example.com',
+      database: 'app',
+      username: 'sa',
+      password: 'super-secret'
+    })
+    expect(saved).toMatchObject({ engine: 'mssql', port: 1433 })
+    expect(saved).not.toHaveProperty('password')
+
+    const resolved = resolveConnection('Warehouse')
+    expect(resolved).toEqual({
+      engine: 'mssql',
+      host: 'sql.example.com',
+      port: 1433,
+      database: 'app',
+      username: 'sa',
+      password: 'super-secret'
+    })
+  })
+
   it('resolves by id as well as by name', () => {
     const saved = saveConnection({ name: 'Local', engine: 'sqlite', filePath: '/data/app.db' })
     expect(resolveConnection(saved.id)).toEqual({ engine: 'sqlite', filePath: '/data/app.db' })
