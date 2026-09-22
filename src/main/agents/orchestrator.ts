@@ -339,6 +339,24 @@ export class Orchestrator {
 
     const plan = this.options.planningEnabled ? yield* this.classifyAndPlan(conversation, state) : undefined
 
+    // Stop clicked while classifyAndPlan's own request was in flight: it
+    // already swallowed that abort quietly and returned `undefined` (same
+    // shape as "no plan needed"), relying on *this* check to actually end
+    // the turn — found live: without it, an aborted classify pass fell
+    // straight through into a brand-new full round below, silently
+    // discarding the user's Stop and spending a whole extra model call
+    // (with its own visible "round 1" status flicker) before anything
+    // acknowledged the cancellation. Scoped to planningEnabled specifically
+    // — with planning off, `plan` is `undefined` because there was never a
+    // classify call to abort, and runLoop below is the *first* real attempt
+    // this turn; it must still run so its own status/abort handling fires
+    // normally (a signal already aborted before the user even sent this
+    // turn is a real, if rare, case that existing behavior already covers).
+    if (this.options.planningEnabled && this.signal.aborted) {
+      yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, undefined, true) }
+      return
+    }
+
     if (!plan || plan.steps.length <= 1) {
       yield* this.runLoop(
         this.buildOrchestratorSystemPrompt(),
@@ -536,7 +554,17 @@ export class Orchestrator {
    * can actually do it.
    */
   private buildClassifySystemPrompt(): string {
+    // Filtered to AGENT_ROLES, same set VALID_STEP_ROLES validates a
+    // parsed plan's steps against (parsePlan) — `this.agents` itself has
+    // every role including page-creator, which is deliberately NOT a valid
+    // plan-step target (see shared/agents.ts's own doc comment: isolated,
+    // delegate-only, expects a specific one-slide brief). Listing it here
+    // anyway previously let the classifier believe it was a real option,
+    // even though selecting it would just make parsePlan silently reject
+    // the whole plan — wasted, confusing classify calls that were never
+    // going to produce a usable plan either way.
     const specialists = [...this.agents.values()]
+      .filter((a) => (AGENT_ROLES as readonly string[]).includes(a.role))
       .map((a) => `- ${a.role}: ${a.summary}${a.tools.length === 0 ? ' (no tools of its own — reasoning/text only)' : ''}`)
       .join('\n')
     return (
@@ -553,6 +581,12 @@ export class Orchestrator {
       "tagging the role whose tools can actually do it — don't route a step needing a tool to a role " +
       "with no tools. If a sub-part needs no tool at all (pure reasoning, or combining results already " +
       "gathered), don't give it its own step — it belongs in the final answer instead.\n" +
+      'Building a slide deck/presentation is never a plan step for any role, "coding" included — ' +
+      'coding has no deck-building tools at all and falls back to a much worse plain-bullet-list output ' +
+      "if forced into it (found live). Deck-building only happens in the top-level's own final round, " +
+      'directly, via pptx_start_deck + delegate_to_page-creator per slide — never a delegated step. If ' +
+      'the request needs research before the deck can be built, plan the research as its own step; leave ' +
+      'the actual deck construction out of the plan entirely so it happens in that final round.\n' +
       "Keep the step count small and don't over-decompose a genuinely simple request into multiple " +
       `trivial steps just to look thorough.\n\nRoles:\n${specialists}`
     )
@@ -750,6 +784,24 @@ export class Orchestrator {
         const message = `This response was cut off after reaching the ${state.maxOutputTokens}-token output limit for this round — it may be incomplete.`
         assistantBlocks.push({ type: 'warning', message, agentRole })
         yield { kind: 'stream', event: tagEvent({ type: 'warning', message }, agentRole) }
+      } else if (!assistantText && toolCalls.length === 0) {
+        // A second, distinct empty-response shape from the max_tokens one
+        // above — found live against gpt-oss/Ollama on a long, tool-heavy
+        // conversation: the server's own stream ended cleanly
+        // (finish_reason "stop", not "length" — the output budget was never
+        // exhausted) yet produced no visible content and no tool call at
+        // all. Ollama surfaces gpt-oss's chain-of-thought as a separate
+        // `reasoning` delta field this app deliberately never reads (see
+        // streamOpenAICompatible) — confirmed live that the model can spend
+        // an entire round reasoning and then just stop, past reasoning
+        // grown long enough. Previously this ended the turn in total
+        // silence: no persisted message, no visible error, nothing —
+        // indistinguishable from the app having done nothing at all.
+        const message =
+          'The model produced no visible output for this response (no text, no tool call) — a known quirk ' +
+          'with local reasoning models on longer or more complex requests. Try asking again.'
+        assistantBlocks.push({ type: 'warning', message, agentRole })
+        yield { kind: 'stream', event: tagEvent({ type: 'warning', message }, agentRole) }
       }
       const inputByCallId = new Map<string, Record<string, unknown>>()
       for (const call of toolCalls) {
@@ -781,7 +833,7 @@ export class Orchestrator {
       conversation.push({ role: 'assistant', content: assistantBlocks })
 
       if (stopReason !== 'tool_use' || toolCalls.length === 0) {
-        return { text: assistantText, isError: stopReason === 'max_tokens' }
+        return { text: assistantText, isError: stopReason === 'max_tokens' || !assistantText }
       }
 
       const resultBlocks: ContentBlock[] = []

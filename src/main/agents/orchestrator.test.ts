@@ -502,6 +502,43 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hello! How can I help?' })
     })
 
+    it('Stop clicked during the classify call ends the whole turn immediately — it must not silently fall through into a brand-new full round', async () => {
+      // Real bug, found live: classifyAndPlan's own catch swallows an abort
+      // and returns `undefined` quietly (same shape as "no plan needed"),
+      // relying on the caller to notice the signal is already aborted.
+      // run() didn't check that before falling through to a normal runLoop
+      // round — so clicking Stop while classify-and-plan was in flight
+      // silently discarded the cancellation and started a whole new model
+      // call anyway. The second scripted turn below is a real, successful
+      // response the bug would have let through; the fix must never reach
+      // it at all.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const controller = new AbortController()
+      controller.abort()
+      const provider = new MockProvider([
+        { throwError: 'simulated SDK abort error' },
+        { text: 'This should never be reached', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        controller.signal,
+        { planningEnabled: true }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(streamEvents).toEqual([{ type: 'message_stop', stopReason: 'aborted' }])
+      expect(provider.requests).toHaveLength(1)
+    })
+
     it('sends only the latest message to the classify call, not the full conversation', async () => {
       // Found live, repeatedly, against the real default model: given the
       // full history (which past the first turn always includes an earlier
@@ -536,6 +573,45 @@ describe('Orchestrator (integration, mocked provider)', () => {
       await collect(orchestrator, [priorTurn, latest])
 
       expect(provider.requests[0].messages).toEqual([latest])
+    })
+
+    it('never lists page-creator as a classify-able role, and tells the model deck-building is never a plan step', async () => {
+      // Real bug, found live: page-creator is deliberately excluded from
+      // AGENT_ROLES/VALID_STEP_ROLES (shared/agents.ts's own doc comment —
+      // it's isolated, delegate-only, expects a one-slide brief) but
+      // buildClassifySystemPrompt previously listed it anyway (iterating
+      // the raw agents map, not the same AGENT_ROLES-filtered set
+      // VALID_STEP_ROLES validates against) — a classify call could "pick"
+      // an option that was always going to make parsePlan silently reject
+      // the whole plan. Separately: a presentation request was seen live
+      // getting planned as a "coding" step, which has no deck-building
+      // tools at all and fell back to a much worse plain-bullet-list tool
+      // instead — the prompt now says so explicitly.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Sure, here you go.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      const classifySystem = provider.requests[0].system ?? ''
+      expect(classifySystem).not.toMatch(/-\s*page-creator:/)
+      expect(classifySystem).toMatch(/deck-building/i)
+      expect(classifySystem).toContain('research')
+      expect(classifySystem).toContain('coding')
     })
 
     it('a compound plan dispatches each step to its tagged specialist in order, then synthesizes a final answer', async () => {
@@ -819,6 +895,42 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect((warning as { message: string }).message).toMatch(/cut off/i)
       // Partial text is kept, not discarded.
       expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'This got cut' })
+
+      const messages = events.filter((e) => e.kind === 'message')
+      const persistedWarning = messages.find(
+        (e) => e.kind === 'message' && e.content.some((c) => c.type === 'warning')
+      )
+      expect(persistedWarning).toBeDefined()
+    })
+
+    it('a round that ends cleanly (not max_tokens) with no text and no tool call reports a warning instead of ending in total silence', async () => {
+      // Found live against gpt-oss/Ollama on a long, tool-heavy conversation:
+      // the stream ended with finish_reason "stop" (the output budget was
+      // never hit — a real "max_tokens" round would have a different
+      // warning, tested above) yet produced no visible content and no tool
+      // call at all. Before this existed, the turn just ended with nothing
+      // persisted and nothing shown — indistinguishable from the app having
+      // silently done nothing.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ text: '', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      const warning = streamEvents.find((e) => e.type === 'warning')
+      expect(warning).toMatchObject({ type: 'warning' })
+      expect((warning as { message: string }).message).toMatch(/no visible output/i)
 
       const messages = events.filter((e) => e.kind === 'message')
       const persistedWarning = messages.find(
