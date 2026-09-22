@@ -1,10 +1,23 @@
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import JSZip from 'jszip'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WorkspaceGuard } from '../../security/workspace-guard'
 import type { ToolContext } from '../types'
 import { officeCreateDocumentTool } from './create'
+
+/** The real `document.xml` of a .docx just written to disk — for asserting on actual Word constructs, not just "a file exists". */
+async function readDocumentXml(path: string): Promise<string> {
+  const buffer = await readFile(path)
+  const zip = await JSZip.loadAsync(buffer)
+  return zip.files['word/document.xml'].async('string')
+}
+
+/** Every `<w:t>` run's plain text content, in document order — what a reader would actually see, with no formatting markup. */
+function extractTextRuns(xml: string): string[] {
+  return [...xml.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/gs)].map((m) => m[1])
+}
 
 describe('office_create_document', () => {
   let root: string
@@ -42,6 +55,84 @@ describe('office_create_document', () => {
     expect(result).toBe('Created deck.pptx.')
     const info = await stat(join(root, 'deck.pptx'))
     expect(info.size).toBeGreaterThan(0)
+  })
+
+  it('renders **bold**/*italic*/`code` markdown as real run formatting, not literal markers in the text', async () => {
+    // Real bug: a Paragraph built from one un-parsed string showed the raw
+    // "**word**" asterisks in Word — the model writes prose the way it
+    // would in chat (Markdown) regardless of this tool's plain-string schema.
+    await officeCreateDocumentTool.execute(
+      {
+        path: 'formatting.docx',
+        sections: [{ paragraphs: ['This is **bold**, this is *italic*, and this is `code`.'] }]
+      },
+      ctx
+    )
+    const xml = await readDocumentXml(join(root, 'formatting.docx'))
+    expect(xml).toContain('<w:b/>')
+    expect(xml).toContain('<w:i/>')
+    const text = extractTextRuns(xml).join('')
+    expect(text).not.toContain('**')
+    expect(text).not.toContain('`')
+    expect(text).toContain('bold')
+    expect(text).toContain('italic')
+    expect(text).toContain('code')
+  })
+
+  it('renders a `table` field as a real Word table with a shaded, bold header row', async () => {
+    await officeCreateDocumentTool.execute(
+      {
+        path: 'table.docx',
+        sections: [{ table: { headers: ['Metric', 'Value'], rows: [['PLF', '97%']] } }]
+      },
+      ctx
+    )
+    const xml = await readDocumentXml(join(root, 'table.docx'))
+    expect(xml).toContain('<w:tbl>')
+    expect(xml).toContain('D9D9D9') // header shading
+    const text = extractTextRuns(xml).join('|')
+    expect(text).toContain('Metric')
+    expect(text).toContain('PLF')
+  })
+
+  it('auto-converts a markdown pipe table written into a plain paragraph string into a real Word table', async () => {
+    // Found live: the model writes a full markdown table (`| A | B |` rows
+    // plus a `|---|---|` separator) into a `paragraphs` string instead of
+    // using the dedicated `table` field — this must still come out as a
+    // real table, not a wall of literal pipe characters.
+    await officeCreateDocumentTool.execute(
+      {
+        path: 'markdown-table.docx',
+        sections: [
+          {
+            paragraphs: ['| Metric | Value |\n|--------|-------|\n| PLF | 97% |']
+          }
+        ]
+      },
+      ctx
+    )
+    const xml = await readDocumentXml(join(root, 'markdown-table.docx'))
+    expect(xml).toContain('<w:tbl>')
+    const text = extractTextRuns(xml).join('|')
+    expect(text).not.toContain('---')
+    expect(text).toContain('Metric')
+    expect(text).toContain('PLF')
+  })
+
+  it('auto-converts markdown bullet/numbered lines written into a plain paragraph string into real Word list items', async () => {
+    await officeCreateDocumentTool.execute(
+      {
+        path: 'lists.docx',
+        sections: [{ paragraphs: ['- First point\n- Second point', '1. Step one\n2. Step two'] }]
+      },
+      ctx
+    )
+    const xml = await readDocumentXml(join(root, 'lists.docx'))
+    expect(xml).toContain('<w:numPr>') // real list-formatted paragraphs, not literal "- "/"1. " text
+    const text = extractTextRuns(xml).join('|')
+    expect(text).not.toMatch(/^-\s|^\d+[.)]\s/)
+    expect(text).toContain('First point')
+    expect(text).toContain('Step one')
   })
 
   it('rejects an unsupported extension', async () => {
