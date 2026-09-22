@@ -97,6 +97,7 @@ export async function* streamOpenAICompatible(
   )
 
   const toolCalls = new Map<number, { id: string; name: string }>()
+  let sawMessageStop = false
 
   for await (const chunk of stream) {
     const choice = chunk.choices[0]
@@ -133,7 +134,25 @@ export async function* streamOpenAICompatible(
           : choice.finish_reason === 'length'
             ? 'max_tokens'
             : 'end_turn'
+      sawMessageStop = true
       yield { type: 'message_stop', stopReason }
     }
+  }
+
+  // Found live against Ollama/gpt-oss: the underlying HTTP stream can end
+  // (server closes the connection — a crashed/unloaded model, a truncated
+  // response, or just a quirk of Ollama's OpenAI-compat layer) without ever
+  // sending a chunk that carries `finish_reason`. Every consumer of this
+  // generator (runLoop, classifyAndPlan) relies on eventually seeing a
+  // `message_stop` to know the round is over — the *renderer* specifically
+  // only clears its "Thinking…" state on that event (or an `error` one).
+  // Without this fallback, a stream that ends silently like this leaves the
+  // whole turn stuck forever with no error, nothing left running to
+  // Stop/cancel, and no way to recover short of reloading the window —
+  // confirmed live via a real hang with zero pending promises and zero
+  // network activity, i.e. the process had already finished, it just never
+  // said so.
+  if (!sawMessageStop) {
+    yield { type: 'message_stop', stopReason: 'end_turn' }
   }
 }
