@@ -10,6 +10,7 @@ import {
   type AppInfo,
   type SaveApiConnectionInput,
   type SaveEmailConnectionInput,
+  type ValidateEmailConnectionInput,
   type SaveDataConnectionInput,
   type SaveMcpServerInput,
   type ChatStreamEventPayload,
@@ -38,8 +39,13 @@ import {
   updateConnectionSchemaSummary
 } from '../data/connections'
 import { deleteApiConnection, listApiConnections, saveApiConnection } from '../data/api-connections'
-import { deleteEmailConnection, listEmailConnections, saveEmailConnection } from '../data/email-connections'
-import { verifyGmailConnection } from '../tools/email/transport'
+import {
+  deleteEmailConnection,
+  listEmailConnections,
+  saveEmailConnection,
+  setDefaultEmailConnection
+} from '../data/email-connections'
+import { verifyEmailConnection } from '../tools/email/transport'
 import { prepareConversation, resolveContextWindow } from '../context/prepare-context'
 import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/config'
 import { McpManager } from '../mcp/manager'
@@ -239,6 +245,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.EmailConnectionsList, () => listEmailConnections())
   ipcMain.handle(IpcChannel.EmailConnectionsSave, (_event, input: SaveEmailConnectionInput) => saveEmailConnection(input))
   ipcMain.handle(IpcChannel.EmailConnectionsDelete, (_event, id: string) => deleteEmailConnection(id))
+  ipcMain.handle(IpcChannel.EmailConnectionsSetDefault, (_event, id: string) => setDefaultEmailConnection(id))
   // A real login handshake before saving, same "successful probe is the
   // validation" principle as #74's config-generator tools — this is a
   // plain Settings form (no agent tool call involved), so it's just a
@@ -247,9 +254,9 @@ export function registerIpcHandlers(): void {
   // agent-created connections.
   ipcMain.handle(
     IpcChannel.EmailConnectionsValidate,
-    async (_event, emailAddress: string, appPassword: string): Promise<ToolValidateResult> => {
+    async (_event, input: ValidateEmailConnectionInput): Promise<ToolValidateResult> => {
       try {
-        await verifyGmailConnection(emailAddress, appPassword)
+        await verifyEmailConnection(input)
         return { ok: true }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }

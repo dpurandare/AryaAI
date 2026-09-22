@@ -43,6 +43,7 @@ export const IpcChannel = {
   EmailConnectionsSave: 'email-connections:save',
   EmailConnectionsDelete: 'email-connections:delete',
   EmailConnectionsValidate: 'email-connections:validate',
+  EmailConnectionsSetDefault: 'email-connections:set-default',
   McpServersReconnect: 'mcp-servers:reconnect',
 
   WorkspaceGetRoot: 'workspace:get-root',
@@ -312,15 +313,33 @@ export interface SaveApiConnectionInput {
 }
 
 /**
- * Phase 1 of #79 — Gmail only, app-password auth (see TASKS.md #79 for
- * why Outlook needs a separate, not-yet-built OAuth2/Graph path). Never
- * carries the actual app password.
+ * App-password SMTP auth only — no OAuth2/Graph path (that's a separate,
+ * not-yet-built flow for a real first-class Outlook/Microsoft 365 option;
+ * see TASKS.md #79's already-documented Phase 2). A Microsoft-specific
+ * app-password provider was tried here (2026-09-22) and reverted:
+ * confirmed live (a real SMTP login attempt, not just docs) that Microsoft
+ * has fully retired SMTP Basic Auth — app passwords included — for BOTH
+ * Office 365/Microsoft 365 work accounts AND personal Outlook.com/Hotmail
+ * accounts as of an April 2026 deadline that's already passed; there is no
+ * per-account or admin toggle to bring it back. 'custom' covers any other
+ * SMTP server (host/port/TLS given directly) — genuinely useful on its own
+ * merits (Yahoo, iCloud, a company's own mail server, Zoho, ...), not a
+ * Microsoft workaround.
  */
+export type EmailProvider = 'gmail' | 'custom'
+
 export interface EmailConnectionDto {
   id: string
   name: string
   emailAddress: string
+  provider: EmailProvider
+  /** `custom` only — nodemailer's own {host, port, secure} shape. */
+  host?: string
+  port?: number
+  secure?: boolean
   hasSecret: boolean
+  /** Computed, not stored per-connection (see data/email-connections.ts's resolveDefaultId) — what send_email uses when the caller doesn't name a connection. */
+  isDefault: boolean
 }
 
 /** `id` omitted creates a new connection; `appPassword` omitted on an edit leaves the stored one unchanged. */
@@ -328,7 +347,21 @@ export interface SaveEmailConnectionInput {
   id?: string
   name: string
   emailAddress: string
+  provider: EmailProvider
+  host?: string
+  port?: number
+  secure?: boolean
   appPassword?: string
+}
+
+/** What the Settings "add account" form validates before ever saving — a real SMTP login attempt, no message sent. Unlike SaveEmailConnectionInput, appPassword is required here: the form only ever validates a freshly-typed password, never an edit that's keeping the old one. */
+export interface ValidateEmailConnectionInput {
+  provider: EmailProvider
+  emailAddress: string
+  appPassword: string
+  host?: string
+  port?: number
+  secure?: boolean
 }
 
 export type McpTransport = 'stdio' | 'http'

@@ -12,6 +12,7 @@ import {
   type ApiConnectionDto,
   type SaveApiConnectionInput,
   type EmailConnectionDto,
+  type ValidateEmailConnectionInput,
   type SaveEmailConnectionInput,
   type ContextWindowInfo,
   type ProviderDescriptor,
@@ -86,8 +87,9 @@ const api = {
     ipcRenderer.invoke(IpcChannel.EmailConnectionsSave, input),
   deleteEmailConnection: (id: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.EmailConnectionsDelete, id),
-  validateEmailConnection: (emailAddress: string, appPassword: string): Promise<ToolValidateResult> =>
-    ipcRenderer.invoke(IpcChannel.EmailConnectionsValidate, emailAddress, appPassword),
+  validateEmailConnection: (input: ValidateEmailConnectionInput): Promise<ToolValidateResult> =>
+    ipcRenderer.invoke(IpcChannel.EmailConnectionsValidate, input),
+  setDefaultEmailConnection: (id: string): Promise<void> => ipcRenderer.invoke(IpcChannel.EmailConnectionsSetDefault, id),
 
   listMcpServers: (): Promise<McpServerDto[]> => ipcRenderer.invoke(IpcChannel.McpServersList),
   saveMcpServer: (input: SaveMcpServerInput): Promise<McpServerDto> =>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, McpServerDto, McpTransport, ProviderDescriptor, ToolDescriptor } from '@shared/ipc-contract'
+  import type { ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, ToolDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
 
   let {
@@ -244,14 +244,23 @@
     await loadApiConnections()
   }
 
-  // --- Email accounts (#79 phase 1: Gmail only, app-password auth) ---
+  // --- Email accounts (#79: Gmail app password, or any other SMTP server given directly — see transport.ts for why there's no Microsoft-specific option) ---
   let emailConnections = $state<EmailConnectionDto[]>([])
   let showAddEmailConnection = $state(false)
   let emailName = $state('')
+  let emailProvider = $state<EmailProvider>('gmail')
   let emailAddress = $state('')
   let emailAppPassword = $state('')
+  let emailHost = $state('')
+  let emailPort = $state('587')
+  let emailSecure = $state(false)
   let savingEmailConnection = $state(false)
   let emailConnectionError = $state('')
+
+  const EMAIL_PROVIDER_LABELS: Record<EmailProvider, string> = {
+    gmail: 'Gmail',
+    custom: 'Custom SMTP'
+  }
 
   async function loadEmailConnections(): Promise<void> {
     emailConnections = await window.sachiv.listEmailConnections()
@@ -260,31 +269,51 @@
 
   function resetEmailConnectionForm(): void {
     emailName = ''
+    emailProvider = 'gmail'
     emailAddress = ''
     emailAppPassword = ''
+    emailHost = ''
+    emailPort = '587'
+    emailSecure = false
     emailConnectionError = ''
     showAddEmailConnection = false
   }
 
   async function saveEmailConnectionWithValidation(): Promise<void> {
+    const isCustom = emailProvider === 'custom'
     if (!emailName.trim() || !emailAddress.trim() || !emailAppPassword.trim()) return
+    if (isCustom && !emailHost.trim()) return
     savingEmailConnection = true
     emailConnectionError = ''
     try {
+      const host = isCustom ? emailHost.trim() : undefined
+      const port = isCustom ? Number(emailPort) || 587 : undefined
+      const secure = isCustom ? emailSecure : undefined
       // Real login handshake before persisting anything — same "a
       // successful probe is the validation" principle as #74, just called
       // directly by this form rather than through the tool-confirmation
       // dialog (there's no agent tool call involved in a Settings-created
       // connection).
-      const result = await window.sachiv.validateEmailConnection(emailAddress.trim(), emailAppPassword)
+      const result = await window.sachiv.validateEmailConnection({
+        provider: emailProvider,
+        emailAddress: emailAddress.trim(),
+        appPassword: emailAppPassword,
+        host,
+        port,
+        secure
+      })
       if (!result.ok) {
         emailConnectionError = result.error ?? 'Could not sign in with that address/app password.'
         return
       }
       await window.sachiv.saveEmailConnection({
         name: emailName.trim(),
+        provider: emailProvider,
         emailAddress: emailAddress.trim(),
-        appPassword: emailAppPassword
+        appPassword: emailAppPassword,
+        host,
+        port,
+        secure
       })
       resetEmailConnectionForm()
       await loadEmailConnections()
@@ -295,6 +324,11 @@
 
   async function removeEmailConnection(id: string): Promise<void> {
     await window.sachiv.deleteEmailConnection(id)
+    await loadEmailConnections()
+  }
+
+  async function makeEmailConnectionDefault(id: string): Promise<void> {
+    await window.sachiv.setDefaultEmailConnection(id)
     await loadEmailConnections()
   }
 
@@ -776,19 +810,25 @@
 
     <h2>Email accounts</h2>
     <p class="status">
-      Accounts the Email specialist can send from. Gmail only for now, with an app password — you'll
-      need 2-Step Verification enabled on the Google account first. <a
+      Accounts the Email specialist can send from — Gmail via an app password, or any other SMTP
+      server (host/port given directly) with its own credentials. <a
         href="https://support.google.com/accounts/answer/185833"
         target="_blank"
-        rel="noopener noreferrer">How to create an app password</a
-      >. Outlook/Microsoft 365 isn't supported yet (TASKS.md #79).
+        rel="noopener noreferrer">Gmail app password</a
+      >. <strong>No Microsoft (Office 365/Outlook/Hotmail) option</strong> — tried one and reverted:
+      confirmed live that Microsoft has fully retired SMTP app-password sign-in for both work and
+      personal Microsoft accounts, with no per-account way to turn it back on. A real Outlook option
+      needs a different integration (Microsoft sign-in, not a password field) that isn't built yet.
     </p>
     {#if emailConnections.length}
       <ul class="connection-list">
         {#each emailConnections as conn (conn.id)}
           <li>
-            <span class="conn-name">{conn.name}</span>
-            <span class="conn-engine">{conn.emailAddress}</span>
+            <span class="conn-name">{conn.name}{#if conn.isDefault}<span class="default-badge">default</span>{/if}</span>
+            <span class="conn-engine">{conn.emailAddress} ({EMAIL_PROVIDER_LABELS[conn.provider]})</span>
+            {#if !conn.isDefault}
+              <button class="link" onclick={() => makeEmailConnectionDefault(conn.id)}>Set as default</button>
+            {/if}
             <button class="link-danger" onclick={() => removeEmailConnection(conn.id)}>Remove</button>
           </li>
         {/each}
@@ -800,14 +840,30 @@
     {#if showAddEmailConnection}
       <div class="add-connection-form">
         <input placeholder="Display name, e.g. Work Gmail" bind:value={emailName} />
-        <input placeholder="Gmail address" bind:value={emailAddress} />
-        <input placeholder="App password" type="password" bind:value={emailAppPassword} />
+        <select value={emailProvider} onchange={(e) => (emailProvider = e.currentTarget.value as EmailProvider)}>
+          <option value="gmail">Gmail</option>
+          <option value="custom">Custom SMTP server</option>
+        </select>
+        <input placeholder="Email address" bind:value={emailAddress} />
+        <input placeholder="Password / app password" type="password" bind:value={emailAppPassword} />
+        {#if emailProvider === 'custom'}
+          <input placeholder="SMTP host, e.g. smtp.example.com" bind:value={emailHost} />
+          <input placeholder="Port (587 = STARTTLS, 465 = TLS)" bind:value={emailPort} />
+          <label class="checkbox-row">
+            <input type="checkbox" bind:checked={emailSecure} />
+            Use TLS on connect (typically port 465 — leave unchecked for STARTTLS on 587)
+          </label>
+        {/if}
         {#if emailConnectionError}<p class="status error">{emailConnectionError}</p>{/if}
         <div class="actions">
           <button onclick={resetEmailConnectionForm}>Cancel</button>
           <button
             class="primary"
-            disabled={savingEmailConnection || !emailName.trim() || !emailAddress.trim() || !emailAppPassword.trim()}
+            disabled={savingEmailConnection ||
+              !emailName.trim() ||
+              !emailAddress.trim() ||
+              !emailAppPassword.trim() ||
+              (emailProvider === 'custom' && !emailHost.trim())}
             onclick={saveEmailConnectionWithValidation}
           >
             {savingEmailConnection ? 'Signing in...' : 'Add account'}
@@ -1042,6 +1098,26 @@
     font-size: 0.75rem;
     cursor: pointer;
   }
+  .link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    padding: 0;
+    font-size: 0.75rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .default-badge {
+    margin-left: 0.5rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
   .add-connection-form {
     display: flex;
     flex-direction: column;
@@ -1049,6 +1125,14 @@
     padding: 0.6rem;
     border-radius: 8px;
     background: var(--bg);
+  }
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    cursor: pointer;
   }
   .actions {
     display: flex;
