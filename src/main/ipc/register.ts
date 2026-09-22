@@ -533,6 +533,11 @@ async function runChat(
   const userMessage = insertMessage(sessionId, 'user', [{ type: 'text', text }])
   enqueueMessage(userMessage.id, sessionId, userMessage.content)
 
+  // A named local, not an inline `new Map()`, specifically so the
+  // finally-block below can still see whatever's left in it after the
+  // turn ends — see that block's own comment for why that matters.
+  const activeDecks: NonNullable<ToolContext['activeDecks']> = new Map()
+
   const orchestrator = new Orchestrator(
     provider,
     model,
@@ -545,22 +550,58 @@ async function runChat(
       currentSessionId: sessionId,
       registerSavedQuery: (query) => savedQueryManager.register(query, toolRegistry),
       connectMcpServer: (id) => mcpManager.reconnect(id, toolRegistry),
-      activeDecks: new Map()
+      activeDecks
     },
     signal,
     // Missing/unset reads as enabled — default on (see PLANNING_ENABLED_SETTING_KEY's own doc comment).
     { planningEnabled: getSetting(PLANNING_ENABLED_SETTING_KEY) !== 'false' }
   )
 
-  for await (const orchestratorEvent of orchestrator.run(conversation, forcedRole)) {
-    if (orchestratorEvent.kind === 'stream') {
-      emit(sender, { streamId, sessionId, event: orchestratorEvent.event })
-      if (orchestratorEvent.event.type === 'usage') {
-        addUsage(sessionId, orchestratorEvent.event.inputTokens, orchestratorEvent.event.outputTokens)
+  try {
+    for await (const orchestratorEvent of orchestrator.run(conversation, forcedRole)) {
+      if (orchestratorEvent.kind === 'stream') {
+        emit(sender, { streamId, sessionId, event: orchestratorEvent.event })
+        if (orchestratorEvent.event.type === 'usage') {
+          addUsage(sessionId, orchestratorEvent.event.inputTokens, orchestratorEvent.event.outputTokens)
+        }
+      } else {
+        const record = insertMessage(sessionId, orchestratorEvent.role, orchestratorEvent.content)
+        enqueueMessage(record.id, sessionId, record.content)
       }
-    } else {
-      const record = insertMessage(sessionId, orchestratorEvent.role, orchestratorEvent.content)
-      enqueueMessage(record.id, sessionId, record.content)
+    }
+  } finally {
+    // `activeDecks` is fresh per turn (see its own construction above) and
+    // never persisted — a deck composed here but not explicitly saved via
+    // pptx_save_deck before the turn ends (the new round-timeout/turn-
+    // deadline limits from the same session that surfaced this, a genuine
+    // error, or the model just never getting to it) was silently discarded
+    // the instant this function returned, with real composed slides simply
+    // gone — found live: several real slides were built, the deck was
+    // never saved, the *next* turn's fresh, empty activeDecks made every
+    // further pptx_* call fail with "No deck is in progress," and the
+    // model then claimed success by pointing at an unrelated, stale file
+    // that happened to share a similar name, rather than admitting the
+    // real work was lost. Auto-saving here, unconditionally, whenever a
+    // non-empty deck is still around when the turn ends — success, error,
+    // or abort — means composed work is never silently discarded again;
+    // the user gets a real file and a plain explanation, not silence.
+    for (const [deckId, deck] of activeDecks) {
+      if (deck.slides.length === 0) continue // pptx_start_deck called, nothing ever composed — nothing worth saving
+      try {
+        const relPath = `unsaved-presentation-${deckId}.pptx`
+        const saveTool = toolRegistry.get('pptx_save_deck')
+        if (!saveTool) continue
+        await saveTool.execute({ deckId, path: relPath }, { ...toolContext, currentSessionId: sessionId, activeDecks })
+        const message =
+          `This turn ended before the presentation ("${deckId}") was explicitly saved, so it was ` +
+          `saved automatically as "${relPath}" (${deck.slides.length} slide(s)) instead of being lost. ` +
+          'Ask to continue adding slides to it, or rename/move the file, whenever convenient.'
+        emit(sender, { streamId, sessionId, event: { type: 'warning', message } })
+        const record = insertMessage(sessionId, 'assistant', [{ type: 'warning', message }])
+        enqueueMessage(record.id, sessionId, record.content)
+      } catch (err) {
+        console.error(`runChat: failed to auto-save in-progress deck "${deckId}" at turn end:`, err)
+      }
     }
   }
 

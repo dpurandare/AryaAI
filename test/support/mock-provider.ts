@@ -20,6 +20,8 @@ export interface ScriptedTurn {
   usage?: { inputTokens: number; outputTokens: number }
   /** Throws instead of streaming anything — every real SDK throws its own differently-shaped error when the request's AbortSignal fires mid-call; the orchestrator is expected to tell that apart from a genuine failure via `request.signal.aborted`, not by inspecting the error itself. */
   throwError?: string
+  /** Simulates a round that never produces anything on its own — the stream just never resolves until `request.signal` fires (a round-timeout or a real user Stop), then throws an AbortError-shaped error, the same way a real fetch-based provider does when aborted mid-request. For exercising Orchestrator's own round-timeout/deadline handling, which a MockProvider turn that resolves instantly can never naturally trigger. */
+  hang?: boolean
 }
 
 export interface MockProviderOptions {
@@ -83,6 +85,18 @@ export class MockProvider implements ModelProvider {
 
     if (turn.throwError) {
       throw new Error(turn.throwError)
+    }
+
+    if (turn.hang) {
+      await new Promise<never>((_resolve, reject) => {
+        const signal = request.signal
+        if (!signal) return // no signal means this really would hang forever — a test bug, not simulated behavior
+        if (signal.aborted) {
+          reject(new Error('The operation was aborted'))
+          return
+        }
+        signal.addEventListener('abort', () => reject(new Error('The operation was aborted')), { once: true })
+      })
     }
 
     if (turn.text) {

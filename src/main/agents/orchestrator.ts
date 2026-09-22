@@ -56,6 +56,53 @@ export type OrchestratorEvent =
 const MAX_TOTAL_ROUNDS = 12
 const DELEGATE_PREFIX = 'delegate_to_'
 
+/**
+ * How long a single provider round is allowed to run before being treated
+ * as hung and stopped the same way a user-clicked Stop already is. Found
+ * live: a real turn (a rich multi-slide presentation) sat completely
+ * unresponsive for over an hour with zero visible error and Stop unable to
+ * help — confirmed directly against the running process that nothing was
+ * actually pending (no open network connection, no pending Promise
+ * anywhere in the heap), meaning the round had already died silently with
+ * no bound on how long the app would just sit there before anyone noticed.
+ * 5 minutes is generous for a legitimately slow local model composing
+ * something complex (seen live taking several minutes for one real round)
+ * but not infinite — every round now has a hard ceiling.
+ *
+ * This is the ceiling for a round's *first* attempt only — see
+ * `startRoundTimer`'s adaptive budget, which grows on each consecutive
+ * retry. A flat 5-minute ceiling applied identically to every retry was
+ * itself found live to be a second bug on top of the original hang: on
+ * timeout, the retry resends the exact same prompt/context with no
+ * adaptation, so a round that genuinely needs close to or over 5 minutes
+ * can never converge — every attempt gets killed just before finishing and
+ * restarts from zero, burning the whole turn deadline on repeated wasted
+ * restarts while surfacing a warning that looks like a failure each time.
+ */
+const ROUND_TIMEOUT_MS = 5 * 60 * 1000
+
+/** Never budget a round less than this, even one started with almost no turn time left (e.g. the final wrap-up call). */
+const ROUND_TIMEOUT_FLOOR_MS = 30 * 1000
+
+/** Always reserve at least this much of the remaining turn budget when sizing a round's timeout, so ending a round never leaves literally zero time for the next attempt or the final wrap-up call. */
+const ROUND_TIMEOUT_SAFETY_MARGIN_MS = 60 * 1000
+
+/**
+ * A hard wall-clock ceiling on one whole turn, top-level rounds and every
+ * delegate call combined — not just a per-round bound. Found live: a
+ * single request (a rich presentation) ran past an hour with no end in
+ * sight even before it silently died; a fixed per-round timeout alone
+ * still lets a turn with many legitimately-slow rounds run indefinitely
+ * long in aggregate. Checked at the top of every `runLoop` iteration
+ * (top-level and every delegate, isolated or not — they all share the
+ * same `state.deadlineAt`, see `RunState`); once past it, `runLoop` stops
+ * starting new rounds the exact same way running out of `maxRounds`
+ * already does, falling into the existing round-cap wrap-up path so
+ * whatever's real gets synthesized into an actual answer instead of
+ * silently cut off.
+ */
+const TURN_DEADLINE_MS = 15 * 60 * 1000
+
 /** See `capRepeatedToolResults` below. */
 const MAX_KEPT_RESULTS_PER_TOOL = 3
 
@@ -232,12 +279,15 @@ interface AccumulatedToolCall {
   thoughtSignature?: string
 }
 
-/** Shared across every nesting level of one `run()` call — the round cap, cumulative token usage, and per-round output budget all need to span top-level + every delegate. */
+/** Shared across every nesting level of one `run()` call — the round cap, cumulative token usage, and per-round output budget all need to span top-level + every delegate. `deadlineAt` is likewise shared (never reset, even for an isolated delegate's own fresh `roundsUsed`) — a per-slide page-creator call getting its own round budget was never meant to let the *whole turn* run past its own wall-clock cap. */
 interface RunState {
   roundsUsed: number
   inputTokens: number
   outputTokens: number
   maxOutputTokens: number
+  deadlineAt: number
+  /** How many round-timeouts in a row have just happened at this nesting level — reset to 0 the moment a round actually completes, incremented on each timeout. Grows the next round's timeout budget (see `startRoundTimer`) so a retry gets more room than the attempt that just wasn't enough, instead of blindly repeating the same losing timeout forever. */
+  consecutiveRoundTimeouts: number
 }
 
 const MIN_MAX_OUTPUT_TOKENS = 4096 // today's original flat value — kept as the floor, not the ceiling
@@ -315,6 +365,60 @@ export class Orchestrator {
   ) {}
 
   /**
+   * A per-round AbortSignal that fires on whichever comes first: the real
+   * user/turn-level `this.signal`, or this round's own timeout budget
+   * elapsing. Every `provider.stream()` call site passes `roundSignal`
+   * instead of `this.signal` directly, and checks `roundSignal.aborted`
+   * (not `this.signal.aborted`) in its catch block — so a timeout is
+   * handled by the exact same, already-tested "clean abort" path a real
+   * Stop click already goes through, not a new/parallel one. `timedOut()`
+   * lets the caller tell the two apart afterward, only to choose a more
+   * honest message ("this took too long" vs "you stopped it") — never to
+   * change the control flow itself. Always call `clear()` once the round's
+   * own stream has actually finished (in a `finally`), or the timer leaks
+   * and can fire long after the round it was guarding is already done.
+   *
+   * The budget is adaptive, not the flat `ROUND_TIMEOUT_MS` for every
+   * attempt: `consecutiveRoundTimeouts` (how many times in a row this exact
+   * round has just been retried after timing out) roughly doubles the
+   * ceiling each time, so a round that's merely slow — not hung — gets
+   * more room on each retry instead of being killed at the identical point
+   * forever. Still bounded by the actual remaining turn budget (with a
+   * safety margin reserved for whatever runs next) and a floor so even a
+   * round started with almost no time left gets a workable window.
+   */
+  private startRoundTimer(
+    deadlineAt: number,
+    consecutiveRoundTimeouts: number
+  ): { signal: AbortSignal; timedOut: () => boolean; clear: () => void; budgetMs: number } {
+    if (this.signal.aborted) {
+      return { signal: this.signal, timedOut: () => false, clear: () => {}, budgetMs: 0 }
+    }
+    const controller = new AbortController()
+    let didTimeOut = false
+    const onParentAbort = (): void => controller.abort()
+    this.signal.addEventListener('abort', onParentAbort, { once: true })
+    const remaining = deadlineAt - Date.now()
+    const budgetMs = Math.max(
+      ROUND_TIMEOUT_FLOOR_MS,
+      Math.min(remaining - ROUND_TIMEOUT_SAFETY_MARGIN_MS, ROUND_TIMEOUT_MS * (consecutiveRoundTimeouts + 1))
+    )
+    const timer = setTimeout(() => {
+      didTimeOut = true
+      controller.abort()
+    }, budgetMs)
+    return {
+      signal: controller.signal,
+      timedOut: () => didTimeOut,
+      budgetMs,
+      clear: () => {
+        clearTimeout(timer)
+        this.signal.removeEventListener('abort', onParentAbort)
+      }
+    }
+  }
+
+  /**
    * Runs one user turn. If `forcedRole` is set (manual override — see
    * TASKS.md orchestrator plan), skips the orchestrator's own routing
    * entirely and runs that specialist directly, with no delegate tools of
@@ -327,7 +431,14 @@ export class Orchestrator {
    */
   async *run(conversation: Message[], forcedRole?: AgentRole | null): AsyncIterable<OrchestratorEvent> {
     const maxOutputTokens = await this.resolveMaxOutputTokens(conversation)
-    const state: RunState = { roundsUsed: 0, inputTokens: 0, outputTokens: 0, maxOutputTokens }
+    const state: RunState = {
+      roundsUsed: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      maxOutputTokens,
+      deadlineAt: Date.now() + TURN_DEADLINE_MS,
+      consecutiveRoundTimeouts: 0
+    }
 
     if (forcedRole) {
       const agent = this.agents.get(forcedRole)
@@ -443,6 +554,10 @@ export class Orchestrator {
     let roundUsage: { inputTokens: number; outputTokens: number } | undefined
     const latestMessage = conversation[conversation.length - 1]
 
+    // Always a fresh (non-retried) budget — this is a one-shot probe that
+    // falls open on timeout rather than retrying, so the adaptive growth
+    // that a real retry loop gets doesn't apply here.
+    const roundTimer = this.startRoundTimer(state.deadlineAt, 0)
     try {
       for await (const event of this.provider.stream({
         model: this.model,
@@ -453,15 +568,21 @@ export class Orchestrator {
         // starved gpt-oss's hidden reasoning into an empty response before
         // this existed (finish_reason:"length", 0 visible chars).
         maxTokens: state.maxOutputTokens,
-        signal: this.signal
+        signal: roundTimer.signal
       })) {
         if (event.type === 'text_delta') text += event.text
         else if (event.type === 'usage') roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
         else if (event.type === 'message_stop') stopReason = event.stopReason
       }
     } catch (err) {
-      if (!this.signal.aborted) throw err
+      if (!roundTimer.signal.aborted) throw err
+      // A timed-out classify call falls open exactly like a genuinely
+      // malformed one already does (see the no-plan branch below) — it's
+      // a probe, not the real answer, so there's nothing here worth
+      // surfacing beyond just proceeding without a plan.
       return undefined
+    } finally {
+      roundTimer.clear()
     }
 
     if (roundUsage) {
@@ -700,7 +821,7 @@ export class Orchestrator {
     // seeing a tool result," for the status message below.
     let localRound = 0
 
-    while (state.roundsUsed < maxRounds) {
+    while (state.roundsUsed < maxRounds && Date.now() < state.deadlineAt) {
       state.roundsUsed++
       localRound++
 
@@ -723,6 +844,7 @@ export class Orchestrator {
       // double/triple-count if they summed the raw events.
       let roundUsage: { inputTokens: number; outputTokens: number } | undefined
 
+      const roundTimer = this.startRoundTimer(state.deadlineAt, state.consecutiveRoundTimeouts)
       try {
         for await (const event of this.provider.stream({
           model: this.model,
@@ -730,7 +852,7 @@ export class Orchestrator {
           messages: capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
           maxTokens: state.maxOutputTokens,
           tools: toolDefs.length ? toolDefs : undefined,
-          signal: this.signal
+          signal: roundTimer.signal
         })) {
           if (event.type === 'text_delta') {
             assistantText += event.text
@@ -762,10 +884,39 @@ export class Orchestrator {
         // error, and pattern-matching on error names/types across all 4
         // would be brittle. A genuine failure (network error, bad request,
         // etc.) rethrows unchanged, preserving today's error surfacing.
-        if (!this.signal.aborted) throw err
-        yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, agentRole, isTopLevel) }
-        return { text: assistantText, isError: true }
+        // roundTimer.signal (not this.signal) is checked here specifically
+        // so a round-timeout — this round alone taking past its own budget
+        // — is recognized as a clean abort too, not rethrown as a genuine
+        // error.
+        if (!roundTimer.signal.aborted) throw err
+        if (!roundTimer.timedOut()) {
+          // A real user Stop click — ends the whole turn now, as before.
+          yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, agentRole, isTopLevel) }
+          return { text: assistantText, isError: true }
+        }
+        // A round-timeout is NOT a user Stop — ending the whole turn over
+        // one slow round would be exactly as bad as the bug this exists to
+        // fix (one stuck slide killing an otherwise-fine presentation).
+        // Report it and let the loop continue to the next round instead —
+        // still bounded by the normal maxRounds/state.deadlineAt checks
+        // above, same as any other round. Growing the budget here (rather
+        // than resetting to 0) is what the next startRoundTimer call reads
+        // to give the retry more room than this attempt got.
+        state.consecutiveRoundTimeouts++
+        const message =
+          `The model hasn't finished responding after over ${Math.round(roundTimer.budgetMs / 60000)} ` +
+          "minute(s) — this is generation time on a slow model, not a tool being stuck. Giving it more " +
+          'time and trying again.'
+        yield { kind: 'stream', event: tagEvent({ type: 'warning', message }, agentRole) }
+        continue
+      } finally {
+        roundTimer.clear()
       }
+
+      // The round actually completed (whether or not it timed out on a
+      // *previous* attempt) — the next round starts a fresh escalation from
+      // here, not compounding on unrelated future slowness.
+      state.consecutiveRoundTimeouts = 0
 
       if (roundUsage) {
         state.inputTokens += roundUsage.inputTokens
@@ -876,18 +1027,25 @@ export class Orchestrator {
     // call runs unconditionally here regardless of how far over budget
     // `state.roundsUsed` already is — every call site that hits this path
     // gets exactly one real chance to summarize instead of stub out.
+    const outOfTime = Date.now() >= state.deadlineAt
     let wrapUpText = ''
+    // A one-shot call with no retry of its own, so no escalation applies — same as classifyAndPlan.
+    const wrapUpTimer = this.startRoundTimer(state.deadlineAt, 0)
     try {
       for await (const event of this.provider.stream({
         model: this.model,
         system:
-          `${systemPrompt}\n\nYou have used all ${maxRounds} rounds available for this turn — no ` +
+          `${systemPrompt}\n\n${
+            outOfTime
+              ? "You have used all the time available for this turn — it's taking too long — no"
+              : `You have used all ${maxRounds} rounds available for this turn — no`
+          } ` +
           'more tool calls are possible. Answer now using only what has already been found above: ' +
           "summarize the real information gathered so far, and say plainly if it's incomplete, rather " +
           'than attempting anything further.',
         messages: capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
         maxTokens: state.maxOutputTokens,
-        signal: this.signal
+        signal: wrapUpTimer.signal
         // No `tools` — forces a text-only reply, so this genuinely cannot loop further.
       })) {
         if (event.type === 'text_delta') wrapUpText += event.text
@@ -908,8 +1066,10 @@ export class Orchestrator {
         yield { kind: 'stream', event: outEvent }
       }
     } catch (err) {
-      if (!this.signal.aborted) throw err
+      if (!wrapUpTimer.signal.aborted) throw err
       return { text: wrapUpText, isError: true }
+    } finally {
+      wrapUpTimer.clear()
     }
 
     if (wrapUpText) {
@@ -917,7 +1077,10 @@ export class Orchestrator {
       return { text: wrapUpText, isError: false }
     }
 
-    return { text: `Stopped after ${maxRounds} agent rounds.`, isError: true }
+    return {
+      text: outOfTime ? 'Stopped — this turn was taking too long.' : `Stopped after ${maxRounds} agent rounds.`,
+      isError: true
+    }
   }
 
   /**
@@ -1008,7 +1171,17 @@ export class Orchestrator {
     // collectively exhaust the budget the rest of the turn still needs.
     const nestedConversation: Message[] = agent.isolated ? [taskMessage] : [...conversation, taskMessage]
     const nestedState: RunState = agent.isolated
-      ? { roundsUsed: 0, inputTokens: 0, outputTokens: 0, maxOutputTokens: state.maxOutputTokens }
+      ? {
+          roundsUsed: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          maxOutputTokens: state.maxOutputTokens,
+          // Not reset — the fresh round *count* is per-delegate-call, but
+          // the wall-clock turn deadline is the whole turn's, shared with
+          // every other slide/delegate call in it.
+          deadlineAt: state.deadlineAt,
+          consecutiveRoundTimeouts: 0
+        }
       : state
     const maxRounds = agent.isolated ? (agent.maxRounds ?? MAX_TOTAL_ROUNDS) : MAX_TOTAL_ROUNDS
 

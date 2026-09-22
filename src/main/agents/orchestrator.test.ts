@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '@shared/protocol'
 import type { AgentRole } from '@shared/agents'
 import { MockProvider, type ScriptedTurn } from '../../../test/support/mock-provider'
@@ -1134,6 +1134,258 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
       expect(toolResults).toContainEqual('Stopped after 12 agent rounds.')
     })
+  })
+
+  describe('round timeout and turn deadline (a real turn sat unresponsive for over an hour, found live)', () => {
+    // Mirrors orchestrator.ts's own private constants (not exported — these
+    // tests drive real wall-clock time via fake timers rather than
+    // importing them, so a change to any of them shows up here as a real,
+    // meaningful test failure instead of silently staying in sync).
+    const ROUND_TIMEOUT_MS = 5 * 60 * 1000
+    const ROUND_TIMEOUT_FLOOR_MS = 30 * 1000
+    const ROUND_TIMEOUT_SAFETY_MARGIN_MS = 60 * 1000
+    const TURN_DEADLINE_MS = 15 * 60 * 1000
+
+    /**
+     * Mirrors startRoundTimer's adaptive budget formula: a round's timeout
+     * grows with each consecutive retry (roughly doubling), bounded by the
+     * actual remaining turn budget (minus a safety margin) and a floor. Lets
+     * these tests advance fake time by exactly the real amount each round
+     * will wait, rather than assuming every round waits a flat 5 minutes.
+     */
+    function roundBudgetMs(remainingMs: number, consecutiveRoundTimeouts: number): number {
+      return Math.max(
+        ROUND_TIMEOUT_FLOOR_MS,
+        Math.min(remainingMs - ROUND_TIMEOUT_SAFETY_MARGIN_MS, ROUND_TIMEOUT_MS * (consecutiveRoundTimeouts + 1))
+      )
+    }
+
+    /**
+     * The exact sequence of hang-round advances needed to cross a shared
+     * TURN_DEADLINE_MS purely via consecutive round-timeouts, starting from
+     * however much of the deadline is already elapsed. Because later
+     * rounds' budgets shrink as the deadline nears (floored at 30s), this
+     * is 4 rounds under today's constants, not 3 — a direct, worked-out
+     * consequence of the adaptive design (verified via simulation), not a
+     * guess.
+     */
+    function hangRoundAdvancesToDeadline(elapsedAtStart = 0): number[] {
+      const advances: number[] = []
+      let elapsed = elapsedAtStart
+      let consecutive = 0
+      while (elapsed < TURN_DEADLINE_MS) {
+        const budget = roundBudgetMs(TURN_DEADLINE_MS - elapsed, consecutive)
+        const advance = budget + 1000
+        advances.push(advance)
+        elapsed += advance
+        consecutive++
+      }
+      return advances
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('a single round that never produces anything is stopped after ROUND_TIMEOUT_MS, cleanly — not left hanging, not rethrown as a genuine error', async () => {
+      // Found live: a real round sat with zero pending network activity and
+      // zero pending promises anywhere in the process, yet never resolved
+      // and never told the renderer it was done — Stop had nothing left to
+      // cancel, and the composer stayed stuck forever. `hang: true` (see
+      // mock-provider.ts) simulates exactly that shape: a stream that only
+      // ever settles via its AbortSignal, the same way a real fetch-based
+      // provider behaves when aborted mid-request.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { hang: true },
+        { text: 'Recovered after the stuck round.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      await vi.advanceTimersByTimeAsync(ROUND_TIMEOUT_MS + 1000)
+      const events = await resultPromise
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      const warning = streamEvents.find((e) => e.type === 'warning')
+      expect(warning).toBeDefined()
+      // Wording deliberately attributes the delay to the model, not a
+      // "stuck tool" — the actual confusion reported live.
+      expect((warning as { message: string }).message).toMatch(/not a tool being stuck/i)
+      expect((warning as { message: string }).message).toMatch(/after over 5 minute/i)
+      // The turn didn't just die with the stuck round — unlike a genuine
+      // user Stop (which still ends the turn immediately, untouched by
+      // this fix), a timed-out round is treated as one failed attempt and
+      // the loop moves on to a real next round, ending normally.
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Recovered after the stuck round.' })
+      expect(streamEvents).toContainEqual({ type: 'message_stop', stopReason: 'end_turn' })
+      expect(streamEvents.some((e) => e.type === 'message_stop' && e.stopReason === 'aborted')).toBe(false)
+      expect(provider.requests).toHaveLength(2)
+    })
+
+    it('a genuine user Stop during a hung round still ends the whole turn immediately — only a *timeout* is treated as recoverable', async () => {
+      // The critical distinction the round-timeout fix must preserve: an
+      // actual Stop click is not "one round failed, try again" — the user
+      // asked for the whole thing to stop, right now, same as it always
+      // has.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const controller = new AbortController()
+      const provider = new MockProvider([
+        { hang: true },
+        { text: 'Should never be reached — the user stopped it.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        controller.signal,
+        { planningEnabled: false }
+      )
+
+      const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      controller.abort()
+      const events = await resultPromise
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(streamEvents).toContainEqual({ type: 'message_stop', stopReason: 'aborted' })
+      expect(streamEvents.some((e) => e.type === 'warning')).toBe(false) // no "took too long" — this wasn't a timeout
+      expect(provider.requests).toHaveLength(1) // never reached the 2nd scripted turn
+    })
+
+    it('a whole turn past TURN_DEADLINE_MS stops starting new rounds and synthesizes from what was already gathered, distinct wording from a round-count exhaustion', async () => {
+      // Consecutive round-timeouts each get a growing budget (see
+      // roundBudgetMs above) rather than a flat 5 minutes every time, so it
+      // takes 4 hung rounds under today's constants — not 3 — to actually
+      // cross the 15-minute turn deadline (worked out via
+      // hangRoundAdvancesToDeadline, not assumed). Once the last one's own
+      // timeout fires past the deadline, a further round is never even
+      // attempted; the wrap-up path fires instead, with wording that
+      // reflects "took too long" rather than "used all N rounds" (a real,
+      // separate exhaustion reason from MAX_TOTAL_ROUNDS, well under it
+      // here — only 4 of the shared 12 rounds were actually used).
+      const advances = hangRoundAdvancesToDeadline()
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        ...advances.map(() => ({ hang: true }) as const),
+        { text: 'Here is what was gathered before time ran out.', stopReason: 'end_turn' as const }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      for (const advance of advances) {
+        await vi.advanceTimersByTimeAsync(advance)
+      }
+      const events = await resultPromise
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(streamEvents).toContainEqual({
+        type: 'text_delta',
+        text: 'Here is what was gathered before time ran out.'
+      })
+      // N timed-out rounds + 1 wrap-up — a further real round was never
+      // attempted once the turn deadline had passed.
+      expect(provider.requests).toHaveLength(advances.length + 1)
+      const wrapUpRequest = provider.requests[advances.length]
+      expect(wrapUpRequest.tools).toBeUndefined()
+      expect(wrapUpRequest.system).toMatch(/taking too long/i)
+      expect(wrapUpRequest.system).not.toMatch(/used all \d+ rounds/i)
+    }, 20000)
+
+    it('an isolated delegate inherits the parent turn\'s deadline — its fresh round *count* does not also mean a fresh 15 minutes', async () => {
+      // #77's isolated delegation gives a role like `email` (isolated:
+      // true, maxRounds: 4) its own fresh roundsUsed budget so it can't
+      // eat the rest of the turn's shared round pool — and its own fresh
+      // consecutiveRoundTimeouts counter (see dispatchDelegate), so the
+      // escalation sequence below starts from 0 again even though it's
+      // reusing the parent's already-ticking deadline. Confirmed here that
+      // this does NOT also hand it a fresh wall-clock deadline: dispatched
+      // early (round 1, cheap), then a run of hang rounds *inside* the
+      // delegate's own isolated runLoop exhausts the shared 15-minute
+      // budget — its wrap-up call still fires for the *time* reason, not
+      // the round-count one (never reaching its own maxRounds:4 on its own
+      // terms — hangRoundAdvancesToDeadline() below needs more than 4
+      // attempts), proving it saw the real (inherited, already
+      // mostly-spent) deadline rather than a fresh one starting from its
+      // own dispatch.
+      const advances = hangRoundAdvancesToDeadline()
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        {
+          toolCalls: [{ id: 'call_delegate', name: 'delegate_to_email', input: { task: 'email someone' } }],
+          stopReason: 'tool_use'
+        },
+        ...advances.map(() => ({ hang: true }) as const),
+        // The delegate's own (nested, tagged) wrap-up call.
+        { text: 'Partial draft before time ran out.', stopReason: 'end_turn' as const },
+        // The top-level's own wrap-up, once the delegate's result comes back.
+        { text: 'Reporting back what the Email specialist managed.', stopReason: 'end_turn' as const }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const resultPromise = collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'email someone about this' }] }
+      ])
+      for (const advance of advances) {
+        await vi.advanceTimersByTimeAsync(advance)
+      }
+      const events = await resultPromise
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      // 1 (delegate dispatch) + N (hung, inside the delegate) + 1 (the
+      // delegate's own wrap-up) + 1 (top-level's own wrap-up) — never the
+      // delegate's own fresh 4-round budget playing out in full, which
+      // would mean more requests than this.
+      expect(provider.requests).toHaveLength(advances.length + 3)
+      const nestedWrapUpRequest = provider.requests[advances.length + 1]
+      expect(nestedWrapUpRequest.system).toMatch(/taking too long/i)
+      expect(nestedWrapUpRequest.system).not.toMatch(/used all \d+ rounds/i)
+      expect(streamEvents).toContainEqual({
+        type: 'text_delta',
+        text: 'Reporting back what the Email specialist managed.'
+      })
+    }, 20000)
   })
 
   describe('capping repeated same-tool results within a single turn (context-bloat fix)', () => {
