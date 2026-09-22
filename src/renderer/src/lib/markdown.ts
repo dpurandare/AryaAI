@@ -83,9 +83,20 @@ function extractMath(text: string): { text: string; blocks: string[] } {
     result = result.replace(regex, (_match, source: string) => {
       let html: string
       try {
+        // A bare `%` is LaTeX's comment character — it swallows everything
+        // to end-of-line, including the closing `}` of an enclosing
+        // \text{...}. Found live: gpt-oss wrote `\text{ (130 %)}` for a
+        // percentage, which KaTeX correctly rejected as "Unexpected end of
+        // input in a macro argument, expected '}'", rendering as a visible
+        // raw-LaTeX error instead of the number. Models reliably write a
+        // literal `%` for "percent" without escaping it, so repair that one
+        // specific, extremely common mistake before parsing rather than
+        // showing every percentage as a parse error — an already-escaped
+        // `\%` is left alone.
+        const escaped = source.replace(/(?<!\\)%/g, '\\%')
         // trust: false (the default) keeps commands like \href/\includegraphics
         // inert — this text is untrusted model output, not authored LaTeX.
-        html = katex.renderToString(source, { displayMode, throwOnError: false, trust: false, output: 'html' })
+        html = katex.renderToString(escaped, { displayMode, throwOnError: false, trust: false, output: 'html' })
       } catch {
         // KaTeX's own parse errors are normally caught internally by
         // throwOnError:false and rendered as a visible red error span —

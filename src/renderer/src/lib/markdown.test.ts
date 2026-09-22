@@ -83,4 +83,17 @@ describe('renderMarkdown', () => {
     const html = renderMarkdown('Bad math: \\(\\frac{1\\)')
     expect(html).toContain('katex-error')
   })
+
+  it('escapes a bare % inside math instead of treating it as a LaTeX comment (real bug: gpt-oss wrote \\text{ (130 %)}, which ate the closing brace and rendered as a raw katex-error)', () => {
+    const html = renderMarkdown('\\[\n\\text{PLF} = \\frac{613\\,898}{470\\,000} \\approx 1.30 \\text{ (130 %)}\n\\]')
+    expect(html).toContain('class="katex-display"')
+    expect(html).not.toContain('katex-error')
+    expect(html).toContain('130')
+  })
+
+  it('leaves an already-escaped \\% alone (no double-escaping)', () => {
+    const html = renderMarkdown('\\(50\\%\\)')
+    expect(html).toContain('class="katex"')
+    expect(html).not.toContain('katex-error')
+  })
 })
