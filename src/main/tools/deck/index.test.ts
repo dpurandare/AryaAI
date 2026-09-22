@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -6,6 +6,13 @@ import { WorkspaceGuard } from '../../security/workspace-guard'
 import { officeReadDocumentTool } from '../office-docs/read'
 import type { ToolContext } from '../types'
 import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from './index'
+
+// Smallest possible valid PNG (1x1, transparent) — real bytes, for tests that
+// need an image element to point at a file that genuinely exists.
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64'
+)
 
 describe('deck tools (#78)', () => {
   let root: string
@@ -162,6 +169,78 @@ describe('deck tools (#78)', () => {
     )
     await expect(pptxSaveDeckTool.execute({ deckId, path: '../escape.pptx' }, ctx)).rejects.toThrow(/workspace boundary/)
   })
+
+  it('composes a real, existing image file onto the slide', async () => {
+    await writeFile(join(root, 'logo.png'), TINY_PNG)
+    const startResult = await pptxStartDeckTool.execute({}, ctx)
+    const deckId = /"([^"]+)"/.exec(startResult)?.[1]
+    await pptxAddSlideTool.execute({ deckId }, ctx)
+    await expect(
+      pptxComposeSlideTool.execute(
+        { deckId, slideIndex: 0, elements: [{ type: 'image', path: 'logo.png', x: 0, y: 0, w: 1, h: 1 }] },
+        ctx
+      )
+    ).resolves.toContain('Composed slide 0')
+    // Real file, not just an in-memory addImage() call that never gets read.
+    await expect(pptxSaveDeckTool.execute({ deckId, path: 'with-image.pptx' }, ctx)).resolves.toContain('Saved')
+  })
+
+  it(
+    'rejects an image element whose path does not exist in the workspace, with a clear message ' +
+      '(pptxgenjs itself only reads the file at save time, which would otherwise surface as a confusing ' +
+      'ENOENT far from the actual mistake)',
+    async () => {
+      const startResult = await pptxStartDeckTool.execute({}, ctx)
+      const deckId = /"([^"]+)"/.exec(startResult)?.[1]
+      await pptxAddSlideTool.execute({ deckId }, ctx)
+      await expect(
+        pptxComposeSlideTool.execute(
+          { deckId, slideIndex: 0, elements: [{ type: 'image', path: 'nonexistent-icon.png', x: 0, y: 0, w: 1, h: 1 }] },
+          ctx
+        )
+      ).rejects.toThrow(/does not exist in the workspace/)
+    }
+  )
+
+  it(
+    'does not leave any elements applied when one element in the batch is invalid — a corrected retry ' +
+      'must not duplicate the earlier, already-valid elements (live-found: a slide ended up with the same ' +
+      'text and chart twice after a failed "map" element was fixed and the call was retried)',
+    async () => {
+      const startResult = await pptxStartDeckTool.execute({}, ctx)
+      const deckId = /"([^"]+)"/.exec(startResult)?.[1]
+      await pptxAddSlideTool.execute({ deckId }, ctx)
+
+      await expect(
+        pptxComposeSlideTool.execute(
+          {
+            deckId,
+            slideIndex: 0,
+            elements: [
+              { type: 'text', text: 'Analytics Landscape', x: 0.5, y: 0.3, w: 9, h: 1 },
+              { type: 'map', x: 0, y: 0, w: 1, h: 1 }
+            ]
+          },
+          ctx
+        )
+      ).rejects.toThrow(/Unknown element type "map"/)
+
+      // Retry with the corrected array (as the role prompt now instructs).
+      await pptxComposeSlideTool.execute(
+        {
+          deckId,
+          slideIndex: 0,
+          elements: [{ type: 'text', text: 'Analytics Landscape', x: 0.5, y: 0.3, w: 9, h: 1 }]
+        },
+        ctx
+      )
+
+      await pptxSaveDeckTool.execute({ deckId, path: 'no-dup.pptx' }, ctx)
+      const text = await officeReadDocumentTool.execute({ path: 'no-dup.pptx' }, ctx)
+      const occurrences = text.split('Analytics Landscape').length - 1
+      expect(occurrences).toBe(1)
+    }
+  )
 
   it('throws a clear error when the tool context has no activeDecks (e.g. a bare test context)', async () => {
     await expect(pptxStartDeckTool.execute({}, { workspaceGuard: ctx.workspaceGuard, currentSessionId: 't' })).rejects.toThrow(

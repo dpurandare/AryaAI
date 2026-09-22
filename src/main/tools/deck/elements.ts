@@ -1,5 +1,8 @@
+import { access } from 'node:fs/promises'
 import type pptxgen from 'pptxgenjs'
 import type { ToolContext } from '../types'
+
+const VALID_ELEMENT_TYPES = ['text', 'image', 'shape', 'chart', 'table'] as const
 
 /**
  * A deliberately simplified, flat element schema for `pptx_compose_slide` —
@@ -86,7 +89,51 @@ function addTableElement(slide: pptxgen.Slide, el: SlideElementInput): void {
   )
 }
 
-/** Applies one element to a real slide — throws a clear, element-specific error rather than a generic pptxgenjs failure when required fields are missing. */
+/**
+ * Checks one element is well-formed *without* touching the slide — including,
+ * for an image, that the file actually exists. pptxgenjs itself only reads
+ * image files at `writeFile()` time (pptx_save_deck), so without this check
+ * a hallucinated icon path would silently "succeed" at compose time and only
+ * fail much later, far from the mistake, as a generic ENOENT at save. Callers
+ * must validate every element in a slide's array before applying any of them
+ * (see pptx_compose_slide), so one bad element can't leave the rest applied.
+ */
+export async function validateElement(el: SlideElementInput, ctx: ToolContext): Promise<void> {
+  switch (el.type) {
+    case 'text':
+      return
+    case 'image': {
+      if (!el.path) throw new Error('An "image" element needs a "path".')
+      const absPath = ctx.workspaceGuard.assertWithinWorkspace(el.path)
+      try {
+        await access(absPath)
+      } catch {
+        throw new Error(
+          `Image element's "path" ("${el.path}") does not exist in the workspace. There is no icon/image ` +
+            'generator available — only reference a file that has actually been created or uploaded. Use a ' +
+            '"shape" or "text" element instead if no suitable image file exists.'
+        )
+      }
+      return
+    }
+    case 'shape':
+      if (!el.shape) throw new Error('A "shape" element needs a "shape" name (e.g. "rect", "roundRect", "oval", "line").')
+      return
+    case 'chart':
+      if (!el.chartType) throw new Error('A "chart" element needs a "chartType" (e.g. "bar", "line", "pie").')
+      if ((el.series ?? []).length === 0) throw new Error('A "chart" element needs at least one entry in "series".')
+      return
+    case 'table':
+      if ((el.rows ?? []).length === 0) throw new Error('A "table" element needs at least one row in "rows".')
+      return
+    default:
+      throw new Error(
+        `Unknown element type "${String((el as { type?: unknown }).type)}" — must be one of: ${VALID_ELEMENT_TYPES.join(', ')}.`
+      )
+  }
+}
+
+/** Applies one element to a real slide — throws a clear, element-specific error rather than a generic pptxgenjs failure when required fields are missing. Call validateElement on every element in a batch first; this does not re-check image existence. */
 export function applyElement(slide: pptxgen.Slide, el: SlideElementInput, ctx: ToolContext): void {
   switch (el.type) {
     case 'text':

@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import pptxgen from 'pptxgenjs'
 import type { Tool, ToolContext } from '../types'
-import { applyElement, type SlideElementInput } from './elements'
+import { applyElement, validateElement, type SlideElementInput } from './elements'
 
 function requireDecks(ctx: ToolContext): Map<string, { pres: pptxgen; slides: pptxgen.Slide[] }> {
   if (!ctx.activeDecks) throw new Error('Deck tools are unavailable in this context.')
@@ -109,6 +109,11 @@ export const pptxComposeSlideTool: Tool = {
     const elements = Array.isArray(input.elements) ? (input.elements as SlideElementInput[]) : []
     if (elements.length === 0) throw new Error('"elements" must be a non-empty array.')
 
+    // Validate every element before applying any of them — a slide is not
+    // undoable once mutated (pptxgenjs has no remove-element API), so a
+    // single bad element partway through the array used to leave the earlier
+    // ones permanently applied; a corrected retry then duplicated them.
+    for (const el of elements) await validateElement(el, ctx)
     for (const el of elements) applyElement(slide, el, ctx)
 
     return `Composed slide ${slideIndex} of deck "${deck.id}" with ${elements.length} element(s).`
