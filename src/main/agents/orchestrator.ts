@@ -655,12 +655,24 @@ export class Orchestrator {
         result.content.length > STEP_RESULT_CONTEXT_CAP
           ? result.content.slice(0, STEP_RESULT_CONTEXT_CAP) + '\n[...truncated for context budget...]'
           : result.content
+      // `result.isError` used to only reach the renderer (the plan_step_done
+      // event just above, for its ✓/✗ UI) — the text below, the only copy
+      // of this step's outcome any later step or the final synthesis round
+      // actually sees, formatted a failure identically to a real result.
+      // Nothing distinguished "here is your data" from "here is why I
+      // couldn't get your data" except the prose itself, which a later step
+      // has no structural reason to scrutinize — it could just as easily
+      // treat an error string as content to summarize/write into a report.
+      // The explicit (FAILED...) marker is what a step actually reacts to.
+      const stepLabel = `[Plan step ${index + 1} — ${AGENT_ROLE_LABELS[step.role]}]${
+        result.isError ? ' (FAILED — no usable result)' : ''
+      }`
       const stepMessage: Message = {
         role: 'user',
         content: [
           {
             type: 'text',
-            text: `[Plan step ${index + 1} — ${AGENT_ROLE_LABELS[step.role]}]: ${step.description}\n\nResult:\n${trimmed}`
+            text: `${stepLabel}: ${step.description}\n\nResult:\n${trimmed}`
           }
         ]
       }
@@ -712,11 +724,19 @@ export class Orchestrator {
       '"description": "..."}]}\n' +
       '- "simple": answerable directly, or with at most one tool call or delegation. Use an empty steps ' +
       'array or a single entry.\n' +
-      '- "compound": genuinely separate sub-tasks (e.g. two independent lookups, or a lookup followed by ' +
-      "a separate calculation) that each need a specialist's tools. List each as its own ordered step, " +
-      "tagging the role whose tools can actually do it — don't route a step needing a tool to a role " +
-      "with no tools. If a sub-part needs no tool at all (pure reasoning, or combining results already " +
-      "gathered), don't give it its own step — it belongs in the final answer instead.\n" +
+      '- "compound": genuinely separate sub-tasks (e.g. two independent lookups, a lookup followed by ' +
+      'a separate calculation, or — found live, a real miss — gathering information and THEN saving/' +
+      'producing a deliverable from it, e.g. "look up X and write it into a Word document/spreadsheet/' +
+      'file") that each need a specialist\'s tools. List each as its own ordered step, tagging the role ' +
+      "whose tools can actually do it — don't route a step needing a tool to a role with no tools, and " +
+      "never fold a whole multi-part request like that into a single step for whichever role matches " +
+      "its first/dominant verb (e.g. routing \"search for X and write it to a Word doc\" entirely to " +
+      'research as one "simple" step) — research has no file-writing tools at all, so the document part ' +
+      'would just silently never happen. Any part of the request that asks for a saved file/document/' +
+      'spreadsheet output is its own step for coding (or whichever role actually has that tool), after ' +
+      "the step(s) that gather what goes into it. If a sub-part needs no tool at all (pure reasoning, or " +
+      "combining results already gathered), don't give it its own step — it belongs in the final answer " +
+      'instead.\n' +
       'Building a slide deck/presentation is never a plan step for any role, "coding" included — ' +
       'coding has no deck-building tools at all and falls back to a much worse plain-bullet-list output ' +
       "if forced into it (found live). Deck-building only happens in the top-level's own final round, " +
@@ -909,6 +929,51 @@ export class Orchestrator {
           yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, agentRole, isTopLevel) }
           return { text: assistantText, isError: true }
         }
+        // A genuine round-timeout that the provider surfaced as a thrown
+        // error — fall through to the shared roundTimer.timedOut() handling
+        // below, the same as the silent-completion shape.
+      } finally {
+        roundTimer.clear()
+      }
+
+      /**
+       * A round-timeout can surface in two completely different shapes for
+       * the exact same underlying cause (this round's own timer fired and
+       * called `controller.abort()`), depending on how the provider's SDK
+       * reacts to an aborted request:
+       *  1. It rejects the in-flight promise/iterator (Anthropic's and
+       *     Google's SDKs, confirmed live) — caught above, handled in the
+       *     `catch` block.
+       *  2. It doesn't throw at all (the `openai` SDK — used for both
+       *     OpenAI itself and Ollama's OpenAI-compat endpoint — confirmed
+       *     live and by direct reproduction: aborting a stalled stream ends
+       *     its async iterator cleanly, no exception). `streamOpenAICompatible`
+       *     then hits its own end-of-stream fallback and yields an ordinary-
+       *     looking empty `end_turn`, which used to be silently misread as
+       *     "the model produced no output" — ending the whole round/turn
+       *     with a warning that blamed "a known quirk with local reasoning
+       *     models," instead of retrying with more time. `provider.requests`
+       *     stayed at 1 for the entire remaining turn budget in a real
+       *     reproduction of this — the retry path was never reached at all.
+       * Checking `roundTimer.timedOut()` directly here — after the try/catch
+       * either fell through or was caught above — is what makes the retry
+       * fire for shape 2 as well as shape 1.
+       */
+      if (this.signal.aborted && !roundTimer.timedOut() && !assistantText && toolCalls.length === 0) {
+        // A genuine user Stop, surfaced via shape 2 above (no thrown error)
+        // — same "the user asked for this, not a timeout" outcome the catch
+        // block already gives shape 1, just reached without an exception to
+        // catch. Narrowed to "no real content produced" so a round that
+        // actually finished at the same instant Stop happened to be clicked
+        // still gets to keep its real answer instead of being discarded.
+        yield {
+          kind: 'stream',
+          event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, agentRole, isTopLevel)
+        }
+        return { text: assistantText, isError: true }
+      }
+
+      if (roundTimer.timedOut()) {
         // A round-timeout is NOT a user Stop — ending the whole turn over
         // one slow round would be exactly as bad as the bug this exists to
         // fix (one stuck slide killing an otherwise-fine presentation).
@@ -924,8 +989,6 @@ export class Orchestrator {
           'time and trying again.'
         yield { kind: 'stream', event: tagEvent({ type: 'warning', message }, agentRole) }
         continue
-      } finally {
-        roundTimer.clear()
       }
 
       // The round actually completed (whether or not it timed out on a

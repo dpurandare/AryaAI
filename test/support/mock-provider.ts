@@ -20,8 +20,30 @@ export interface ScriptedTurn {
   usage?: { inputTokens: number; outputTokens: number }
   /** Throws instead of streaming anything — every real SDK throws its own differently-shaped error when the request's AbortSignal fires mid-call; the orchestrator is expected to tell that apart from a genuine failure via `request.signal.aborted`, not by inspecting the error itself. */
   throwError?: string
-  /** Simulates a round that never produces anything on its own — the stream just never resolves until `request.signal` fires (a round-timeout or a real user Stop), then throws an AbortError-shaped error, the same way a real fetch-based provider does when aborted mid-request. For exercising Orchestrator's own round-timeout/deadline handling, which a MockProvider turn that resolves instantly can never naturally trigger. */
+  /**
+   * Simulates a round that never produces anything on its own — the stream
+   * just never resolves until `request.signal` fires (a round-timeout or a
+   * real user Stop), then **throws** an AbortError-shaped error. Matches
+   * Anthropic's and Google's SDKs (confirmed live). Does NOT match the
+   * `openai` SDK (used for both OpenAI and Ollama) — see `hangSilently`.
+   */
   hang?: boolean
+  /**
+   * Simulates the same "never produces anything until aborted" shape as
+   * `hang`, but ends the stream **silently instead of throwing** — the
+   * `openai` SDK's actual behavior when a stalled request's AbortSignal
+   * fires, confirmed both by reading its source (`core/streaming.mjs`
+   * catches the abort internally and `return`s rather than rethrowing) and
+   * by a direct reproduction against a real HTTP server. Found live: this
+   * distinction is exactly why the orchestrator's round-timeout retry
+   * silently never fired against a real stalled Ollama connection, despite
+   * passing every test written against `hang`'s throwing shape — the
+   * silent end looked identical to a genuine empty response instead of a
+   * timeout. Yields a bare `message_stop` (`end_turn`) once aborted, the
+   * same synthetic event `streamOpenAICompatible`'s own end-of-stream
+   * fallback produces for this exact case.
+   */
+  hangSilently?: boolean
 }
 
 export interface MockProviderOptions {
@@ -97,6 +119,20 @@ export class MockProvider implements ModelProvider {
         }
         signal.addEventListener('abort', () => reject(new Error('The operation was aborted')), { once: true })
       })
+    }
+
+    if (turn.hangSilently) {
+      await new Promise<void>((resolve) => {
+        const signal = request.signal
+        if (!signal) return // no signal means this really would hang forever — a test bug, not simulated behavior
+        if (signal.aborted) {
+          resolve()
+          return
+        }
+        signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      yield { type: 'message_stop', stopReason: 'end_turn' }
+      return
     }
 
     if (turn.text) {

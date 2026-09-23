@@ -58,4 +58,21 @@ describe('createAgents', () => {
 
     expect(agents.get('data')?.tools.map((t) => t.name)).not.toContain('read_file')
   })
+
+  it('every general-purpose specialist is told to flag a part of its task it cannot finish, except planning (no tools) and page-creator (fixed one-slide brief)', () => {
+    // Found live: handed "search for X and write it into a Word document"
+    // as one delegated step, Research searched, produced a text summary,
+    // and stopped — it has no file-writing tools, so the document part
+    // silently never happened. This note is the defensive backstop for
+    // whenever a step still ends up needing something outside its role's
+    // tools (classification miss, planning disabled, or a direct request).
+    const agents = createAgents(new ToolRegistry())
+    const note = "don't silently stop as if the whole request is done"
+
+    for (const role of ['research', 'coding', 'terminal-devops', 'data', 'distribution', 'email'] as const) {
+      expect(agents.get(role)?.systemPrompt).toContain(note)
+    }
+    expect(agents.get('planning')?.systemPrompt).not.toContain(note)
+    expect(agents.get('page-creator')?.systemPrompt).not.toContain(note)
+  })
 })

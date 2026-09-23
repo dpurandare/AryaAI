@@ -614,6 +614,36 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(classifySystem).toContain('coding')
     })
 
+    it('explicitly tells the classifier not to fold "gather info, then save a file" into one research-only step', async () => {
+      // Found live: "search for X and write it into a Word document" was
+      // classified as a single "simple" step routed to research, which has
+      // no file-writing tools at all — the document part silently never
+      // happened, and the user had to ask again to get the file.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Sure, here you go.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      const classifySystem = provider.requests[0].system ?? ''
+      expect(classifySystem).toMatch(/write it into a Word document/i)
+      expect(classifySystem).toMatch(/research has no file-writing tools/i)
+    })
+
     it('a compound plan dispatches each step to its tagged specialist in order, then synthesizes a final answer', async () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
@@ -682,6 +712,65 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // non-tool_use, last-event shape every other test in this file checks.
       expect(streamEvents.at(-1)).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
       expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'X is 5 and Y is 10.' })
+    })
+
+    it("a failed plan step's result is marked FAILED in the shared conversation, not left indistinguishable from real data", async () => {
+      // Found live via review, not yet in production: `plan_step_done`'s
+      // `isError` only ever reached the renderer's ✓/✗ UI — the actual text
+      // folded into the conversation (the only copy of a step's outcome any
+      // later step or the final synthesis round ever sees) formatted a
+      // failure identically to a real result. A later step (e.g. Coding,
+      // asked to write a report from step 1's data) had no structural
+      // reason to notice "Unknown data connection" wasn't real data.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        {
+          text: '{"complexity": "compound", "steps": [{"role": "data", "description": "get sales figures"}, {"role": "coding", "description": "write a report from the figures"}]}',
+          stopReason: 'end_turn'
+        },
+        // Step 1 (data) genuinely fails — a real provider/tool error, not a timeout.
+        { throwError: 'Unknown data connection "sales_db".' },
+        // Step 2 (coding) still runs regardless — this app's deliberate
+        // design (see the wrap-up-call comments elsewhere in this file):
+        // report what's real rather than aborting the rest of the plan.
+        { text: "I can't write the report — no sales data was available.", stopReason: 'end_turn' },
+        { text: 'The report could not be completed.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'get sales figures and write a report' }] }
+      ])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+      expect(streamEvents).toContainEqual({ type: 'plan_step_done', index: 0, isError: true })
+
+      const userMessages = events.filter((e) => e.kind === 'message' && e.role === 'user')
+      const step1Text = userMessages
+        .flatMap((e) => (e.kind === 'message' ? e.content : []))
+        .find((c) => c.type === 'text' && c.text.includes('[Plan step 1 — Data]'))
+      expect(step1Text && step1Text.type === 'text' ? step1Text.text : '').toMatch(
+        /\[Plan step 1 — Data\] \(FAILED — no usable result\):/
+      )
+      expect(
+        step1Text && step1Text.type === 'text' ? step1Text.text : ''
+      ).toContain('Unknown data connection "sales_db".')
+
+      // A step that actually succeeded must NOT get the FAILED marker.
+      const step2Text = userMessages
+        .flatMap((e) => (e.kind === 'message' ? e.content : []))
+        .find((c) => c.type === 'text' && c.text.includes('[Plan step 2 — Coding]'))
+      expect(step2Text && step2Text.type === 'text' ? step2Text.text : '').toMatch(/^\[Plan step 2 — Coding\]:/)
     })
 
     it('malformed classifier JSON fails open to normal behavior instead of crashing the turn', async () => {
@@ -1269,6 +1358,88 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
       expect(streamEvents).toContainEqual({ type: 'message_stop', stopReason: 'aborted' })
       expect(streamEvents.some((e) => e.type === 'warning')).toBe(false) // no "took too long" — this wasn't a timeout
+      expect(provider.requests).toHaveLength(1) // never reached the 2nd scripted turn
+    })
+
+    it('a hung round that ends SILENTLY on abort (no thrown error — the real openai/Ollama shape) is also retried, not misread as an empty response', async () => {
+      // The actual bug found live: Anthropic's/Google's SDKs throw when a
+      // stalled request's AbortSignal fires (the `hang: true` shape tested
+      // above), but the `openai` SDK — used for both OpenAI and Ollama —
+      // does not: confirmed by reading its source and by a direct
+      // reproduction against a real HTTP server. Its stream just ends
+      // cleanly, which streamOpenAICompatible's own end-of-stream fallback
+      // turns into an ordinary-looking empty `end_turn`. Before this fix,
+      // that was indistinguishable from a genuine empty response and ended
+      // the whole round with "a known quirk with local reasoning models"
+      // instead of ever retrying — `provider.requests` stayed at 1 for the
+      // rest of the turn's budget in a real repro of this exact shape.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { hangSilently: true },
+        { text: 'Recovered after the silently-stuck round.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      await vi.advanceTimersByTimeAsync(ROUND_TIMEOUT_MS + 1000)
+      const events = await resultPromise
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      const warning = streamEvents.find((e) => e.type === 'warning')
+      expect(warning).toBeDefined()
+      expect((warning as { message: string }).message).toMatch(/not a tool being stuck/i)
+      expect((warning as { message: string }).message).toMatch(/after over 5 minute/i)
+      // Must NOT have been misread as "the model produced no output" — that
+      // warning has completely different wording and, critically, ends the
+      // turn instead of retrying.
+      expect(streamEvents.some((e) => e.type === 'warning' && /no visible output/i.test(e.message))).toBe(false)
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Recovered after the silently-stuck round.' })
+      expect(streamEvents).toContainEqual({ type: 'message_stop', stopReason: 'end_turn' })
+      expect(streamEvents.some((e) => e.type === 'message_stop' && e.stopReason === 'aborted')).toBe(false)
+      expect(provider.requests).toHaveLength(2)
+    })
+
+    it('a genuine user Stop during a SILENTLY-hung round still ends the whole turn immediately, not misread as an empty response', async () => {
+      // The other half of the same distinction: a real Stop during the
+      // silent-end shape must still report 'aborted', not fall into the
+      // "model said nothing" warning path just because nothing threw.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const controller = new AbortController()
+      const provider = new MockProvider([
+        { hangSilently: true },
+        { text: 'Should never be reached — the user stopped it.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        controller.signal,
+        { planningEnabled: false }
+      )
+
+      const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      controller.abort()
+      const events = await resultPromise
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(streamEvents).toContainEqual({ type: 'message_stop', stopReason: 'aborted' })
+      expect(streamEvents.some((e) => e.type === 'warning')).toBe(false)
       expect(provider.requests).toHaveLength(1) // never reached the 2nd scripted turn
     })
 

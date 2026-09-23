@@ -299,5 +299,28 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     }
   ]
 
+  // Found live: handed "search for X and write it into a Word document" as
+  // a single delegated step, Research searched, produced a nice text
+  // summary, and stopped — it has no file-writing tools at all, so the
+  // document part just silently never happened; the user had to ask again.
+  // The primary fix is classify-and-plan (orchestrator.ts's
+  // buildClassifySystemPrompt) correctly splitting a request like that into
+  // separate steps for the roles that actually have the right tools — this
+  // is the defensive backstop for whenever a step's own brief still turns
+  // out to need something outside that role's tools anyway (a
+  // classification miss, planning disabled, or a direct non-delegated
+  // request). Not applied to `planning` (no tools to be missing) or
+  // `page-creator` (isolated, given a fixed one-slide brief shape where
+  // this framing doesn't fit — see its own doc comment in shared/agents.ts).
+  const COMPLETENESS_NOTE =
+    " If part of what you're asked to do needs a tool or capability you don't have, do the part(s) you " +
+    "can with what's actually available to you, then say plainly which part you couldn't finish and why " +
+    "— don't silently stop as if the whole request is done just because the part you could do went well."
+  for (const agent of agents) {
+    if (agent.role !== 'planning' && agent.role !== 'page-creator') {
+      agent.systemPrompt += COMPLETENESS_NOTE
+    }
+  }
+
   return new Map(agents.map((agent) => [agent.role, agent]))
 }
