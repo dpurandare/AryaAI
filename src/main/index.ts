@@ -5,6 +5,18 @@ import { registerIpcHandlers } from './ipc/register'
 import { setDbPath } from './db'
 import { initUpdater } from './updater'
 
+// On GNOME/Wayland, Electron auto-selects the native Wayland backend, whose
+// window taskbar/dash icon comes from a .desktop file matched to the
+// window's Wayland app_id — not from the `icon:` BrowserWindow option below.
+// An unpackaged dev build has no such .desktop file, so the icon falls back
+// to Electron's generic one. Forcing XWayland in dev restores the standard
+// X11 _NET_WM_ICON path, which mutter does honor and which already works
+// correctly via the `icon:` option. The packaged app ships a real .desktop
+// file (via electron-builder's linux target) and isn't affected either way.
+if (is.dev && process.platform === 'linux') {
+  app.commandLine.appendSwitch('ozone-platform-hint', 'x11')
+}
+
 const devIconPath = join(__dirname, '../../build/icon.png')
 
 function createMainWindow(): BrowserWindow {

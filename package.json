@@ -11,7 +11,7 @@
   },
   "license": "UNLICENSED",
   "scripts": {
-    "postinstall": "node scripts/brand-electron-dev.mjs",
+    "postinstall": "node scripts/ensure-electron.mjs && node scripts/brand-electron-dev.mjs",
     "predev": "node scripts/brand-electron-dev.mjs",
     "dev": "electron-vite dev",
     "prestart": "node scripts/brand-electron-dev.mjs",

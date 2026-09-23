@@ -1388,6 +1388,108 @@ describe('Orchestrator (integration, mocked provider)', () => {
     }, 20000)
   })
 
+  describe('tool execution timeout (a stuck tool.execute() with no timeout of its own, found live)', () => {
+    // Mirrors orchestrator.ts's own private TOOL_EXECUTE_TIMEOUT_MS.
+    const TOOL_EXECUTE_TIMEOUT_MS = 5 * 60 * 1000
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    function buildRegistryWithHangingTool(): ToolRegistry {
+      const registry = buildRegistry()
+      registry.register({
+        name: 'hang_tool',
+        description: "A tool whose execute() never resolves, for testing dispatchTool's own timeout.",
+        inputSchema: { type: 'object', properties: {} },
+        mutates: true,
+        execute: () => new Promise<string>(() => {})
+      })
+      return registry
+    }
+
+    it('a tool call that never resolves is abandoned after TOOL_EXECUTE_TIMEOUT_MS instead of hanging the whole turn forever', async () => {
+      // Found live: office_create_document, given malformed model input
+      // (GPT-OSS sent a `{ text: string }` object where the schema calls
+      // for a plain string), crashed inside its own synchronous JS — but
+      // only surfaced that after the turn had already sat stuck for the
+      // better part of an hour with the confirmation already approved and
+      // zero pending network activity. `dispatchTool`'s `await
+      // tool.execute(...)` had no timeout of its own (unlike
+      // provider.stream, which got one in the round-timeout fix above), so
+      // nothing could ever move the turn past it, and Stop had nothing
+      // wired up to cancel it either.
+      const registry = buildRegistryWithHangingTool()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_hang', name: 'hang_tool', input: {} }], stopReason: 'tool_use' },
+        { text: 'Recovered after the stuck tool call.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      await vi.advanceTimersByTimeAsync(TOOL_EXECUTE_TIMEOUT_MS + 1000)
+      const events = await resultPromise
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      const toolResult = streamEvents.find((e) => e.type === 'tool_result')
+      expect(toolResult).toBeDefined()
+      expect((toolResult as { isError: boolean }).isError).toBe(true)
+      expect((toolResult as { content: string }).content).toMatch(/did not finish within 5 minute/i)
+      // The turn didn't just die with the stuck tool call — it's treated as
+      // one failed tool result and the loop moves on to a real next round.
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Recovered after the stuck tool call.' })
+      expect(streamEvents).toContainEqual({ type: 'message_stop', stopReason: 'end_turn' })
+    })
+
+    it('a genuine user Stop during a stuck tool call is not made to wait out the full timeout', async () => {
+      // If the abort signal weren't wired into the tool-execution wait too,
+      // this would only resolve after advancing fake time by the full
+      // TOOL_EXECUTE_TIMEOUT_MS (or hang forever under real timers).
+      // Resolving here, with zero fake time advanced, proves the abort
+      // short-circuits the wait immediately — the same guarantee Stop
+      // already had for a stuck provider round.
+      const registry = buildRegistryWithHangingTool()
+      const agents = createAgents(registry)
+      const controller = new AbortController()
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_hang', name: 'hang_tool', input: {} }], stopReason: 'tool_use' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        controller.signal,
+        { planningEnabled: false }
+      )
+
+      const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      controller.abort()
+      const events = await resultPromise
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(streamEvents.some((e) => e.type === 'message_stop')).toBe(true)
+    })
+  })
+
   describe('capping repeated same-tool results within a single turn (context-bloat fix)', () => {
     it('collapses all but the most recent 3 results for a repeatedly-called read-only tool in what is sent to the provider', async () => {
       // Reported directly: a real complex request made 9 separate

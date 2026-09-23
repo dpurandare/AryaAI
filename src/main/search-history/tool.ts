@@ -50,6 +50,10 @@ export const searchHistoryTool: Tool = {
 
     const state = getIndexState()
     if (state.kind === 'needs-rebuild') return NEEDS_REBUILD_MESSAGE
+    // Already known-broken from a real prior attempt (see indexer.ts's
+    // lastEmbedFailureReason) — no need to re-probe reachability below,
+    // it would just fail identically.
+    if (state.kind === 'unavailable') return notReachableMessage(new Error(state.reason))
 
     if (state.kind === 'empty' || state.indexed === 0) {
       // Nothing indexed yet — the message_vectors table may not even exist,

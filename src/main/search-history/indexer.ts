@@ -50,11 +50,38 @@ export type IndexState =
   | { kind: 'empty' }
   | { kind: 'ready'; indexed: number; total: number }
   | { kind: 'needs-rebuild' }
+  | { kind: 'unavailable'; reason: string }
+
+/**
+ * The most recent embed attempt's outcome, recorded by `recordEmbedFailure`/
+ * `recordEmbedSuccess` below — used only to distinguish "never indexed
+ * anything because nothing's been sent yet" from "never indexed anything
+ * because every attempt has failed" in `getIndexState`'s 'unavailable'
+ * state. Found live: a fresh install with Ollama installed but
+ * `nomic-embed-text` never pulled failed on every single message, forever,
+ * completely silently — `enqueueMessage`/`runBackfill` only `console.error`
+ * it (invisible outside a dev terminal), and `IndexState` had no failure
+ * variant at all, so Settings showed "0 / 0 messages indexed" — identical
+ * to a fresh install that just hasn't sent a message yet. Cleared on the
+ * next success rather than only ever growing stale, so switching to a
+ * working model/provider self-heals this without any extra plumbing.
+ */
+let lastEmbedFailureReason: string | undefined
+
+function recordEmbedFailure(err: unknown): void {
+  lastEmbedFailureReason = err instanceof Error ? err.message : String(err)
+}
+
+function recordEmbedSuccess(): void {
+  lastEmbedFailureReason = undefined
+}
 
 export function getIndexState(): IndexState {
   const meta = getIndexMeta()
   const config = getEmbeddingConfig()
-  if (!meta) return { kind: 'empty' }
+  if (!meta) {
+    return lastEmbedFailureReason ? { kind: 'unavailable', reason: lastEmbedFailureReason } : { kind: 'empty' }
+  }
   if (meta.provider_id !== config.providerId || meta.model !== config.model) {
     return { kind: 'needs-rebuild' }
   }
@@ -115,6 +142,7 @@ async function embedAndStoreChunks(
   const apiKey = getApiKey(providerId)
   const provider = getEmbeddingProvider(providerId, apiKey)
   const vectors = await provider.embed(chunks, model)
+  recordEmbedSuccess()
 
   const now = Date.now()
   if (!meta) {
@@ -159,6 +187,7 @@ export function enqueueMessage(messageId: string, sessionId: string, content: Co
     try {
       await embedAndStoreChunks(messageId, sessionId, text, config.providerId, config.model)
     } catch (err) {
+      recordEmbedFailure(err)
       console.error(`search_history: failed to index message ${messageId}:`, err)
     }
   })
@@ -243,6 +272,7 @@ export async function runBackfill(): Promise<void> {
           const ok = await embedAndStoreChunks(row.id, row.session_id, text, config.providerId, config.model)
           if (!ok) return // config changed mid-backfill — stop, needs rebuild
         } catch (err) {
+          recordEmbedFailure(err)
           console.error(`search_history: backfill failed for message ${row.id}:`, err)
           // Leave it un-indexed; the next backfill pass will retry it.
         }

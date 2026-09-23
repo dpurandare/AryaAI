@@ -73,6 +73,28 @@ function parseInlineRuns(text: string): TextRun[] {
   return runs.length ? runs : [new TextRun('')]
 }
 
+/**
+ * Coerces one array entry from a string-array field (`paragraphs`/`bullets`/
+ * `numbers`) to a real string. Found live against GPT-OSS: asked to save a
+ * long answer to Word, it sent `paragraphs: [{ text: "..." }]` instead of
+ * `paragraphs: ["..."]` — a schema violation (the field is declared
+ * `items: { type: 'string' }`) smaller/local models reach for often enough
+ * that it's worth tolerating here, not just documenting in the schema.
+ * Left unguarded, `renderParagraphText`'s `text.split('\n')` threw
+ * `text.split is not a function` on the object, which — because dispatchTool
+ * had no timeout of its own at the time (see orchestrator.ts's
+ * TOOL_EXECUTE_TIMEOUT_MS) — surfaced only after the turn had already sat
+ * stuck for the better part of an hour, not as an immediate, recoverable
+ * tool error.
+ */
+function asText(entry: unknown): string {
+  if (typeof entry === 'string') return entry
+  if (entry && typeof entry === 'object' && typeof (entry as { text?: unknown }).text === 'string') {
+    return (entry as { text: string }).text
+  }
+  return String(entry ?? '')
+}
+
 function isTableRowLine(line: string): boolean {
   return /^\s*\|.*\|\s*$/.test(line)
 }
@@ -182,13 +204,16 @@ async function buildDocx(title: string | undefined, sections: DocxSection[]): Pr
     if (section.heading) {
       children.push(new Paragraph({ children: parseInlineRuns(section.heading), heading: HeadingLevel.HEADING_1 }))
     }
-    for (const paragraph of section.paragraphs ?? []) children.push(...renderParagraphText(paragraph))
+    for (const paragraph of section.paragraphs ?? []) children.push(...renderParagraphText(asText(paragraph)))
     for (const bullet of section.bullets ?? []) {
-      children.push(new Paragraph({ bullet: { level: 0 }, children: parseInlineRuns(bullet) }))
+      children.push(new Paragraph({ bullet: { level: 0 }, children: parseInlineRuns(asText(bullet)) }))
     }
     for (const number of section.numbers ?? []) {
       children.push(
-        new Paragraph({ numbering: { reference: NUMBERED_LIST_REFERENCE, level: 0 }, children: parseInlineRuns(number) })
+        new Paragraph({
+          numbering: { reference: NUMBERED_LIST_REFERENCE, level: 0 },
+          children: parseInlineRuns(asText(number))
+        })
       )
     }
     if (section.table) children.push(buildTable(section.table))

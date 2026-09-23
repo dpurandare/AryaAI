@@ -103,6 +103,21 @@ const ROUND_TIMEOUT_SAFETY_MARGIN_MS = 60 * 1000
  */
 const TURN_DEADLINE_MS = 15 * 60 * 1000
 
+/**
+ * A ceiling on one `tool.execute()` call. Found live: the round-timeout
+ * above only wraps `provider.stream()` — once a round ends in a tool call,
+ * `dispatchTool`'s `await tool.execute(...)` has no timeout and isn't tied
+ * to `this.signal` (Stop) at all, so a tool that never resolves (a stalled
+ * write, a hung network call inside a tool with no timeout of its own)
+ * reproduces the exact "sat unresponsive for over an hour, Stop unable to
+ * cancel it" bug the round-timeout was built to fix, just one step later in
+ * the same loop. This can't force-cancel whatever the tool is actually
+ * doing (`Tool.execute` takes no signal) — same limitation the round timer
+ * itself accepts for a stalled provider connection — but it guarantees the
+ * orchestrator's own wait, and so the whole turn, is never blocked forever.
+ */
+const TOOL_EXECUTE_TIMEOUT_MS = 5 * 60 * 1000
+
 /** See `capRepeatedToolResults` below. */
 const MAX_KEPT_RESULTS_PER_TOOL = 3
 
@@ -1136,11 +1151,61 @@ export class Orchestrator {
     }
 
     try {
-      const content = await tool.execute(input, this.toolContext)
+      const content = await this.executeWithTimeout(tool, input)
       return { content, isError: false }
     } catch (err) {
       return { content: err instanceof Error ? err.message : String(err), isError: true }
     }
+  }
+
+  /**
+   * Races `tool.execute` against `this.signal` (Stop) and a flat timeout, so
+   * neither can leave the turn waiting forever — see `TOOL_EXECUTE_TIMEOUT_MS`.
+   * A loser's rejection is what's thrown; the tool's own promise is left to
+   * settle on its own (nothing to cancel it by), matching how a round-timeout
+   * abandons a stalled provider connection rather than truly killing it.
+   */
+  private executeWithTimeout(tool: Tool, input: Record<string, unknown>): Promise<string> {
+    if (this.signal.aborted) return Promise.reject(new Error('The user stopped this turn.'))
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const onAbort = (): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(new Error('The user stopped this turn.'))
+      }
+      const timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(
+          new Error(
+            `"${tool.name}" did not finish within ${Math.round(TOOL_EXECUTE_TIMEOUT_MS / 60000)} minute(s) — ` +
+              'giving up on this tool call so the turn can continue.'
+          )
+        )
+      }, TOOL_EXECUTE_TIMEOUT_MS)
+      const cleanup = (): void => {
+        clearTimeout(timer)
+        this.signal.removeEventListener('abort', onAbort)
+      }
+      this.signal.addEventListener('abort', onAbort, { once: true })
+      tool.execute(input, this.toolContext).then(
+        (content) => {
+          if (settled) return
+          settled = true
+          cleanup()
+          resolve(content)
+        },
+        (err) => {
+          if (settled) return
+          settled = true
+          cleanup()
+          reject(err)
+        }
+      )
+    })
   }
 
   /**

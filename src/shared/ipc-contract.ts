@@ -106,9 +106,11 @@ export interface AppUpdateAvailablePayload {
 export interface SearchHistoryStatusDto {
   providerId: string
   model: string
-  state: 'empty' | 'ready' | 'needs-rebuild'
+  state: 'empty' | 'ready' | 'needs-rebuild' | 'unavailable'
   indexed: number
   total: number
+  /** Only set when `state` is 'unavailable' — the most recent embed attempt's error message. */
+  reason?: string
 }
 
 export interface SessionDto {

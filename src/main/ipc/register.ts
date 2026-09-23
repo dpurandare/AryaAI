@@ -344,7 +344,8 @@ export function registerIpcHandlers(): void {
       model: config.model,
       state: state.kind,
       indexed: state.kind === 'ready' ? state.indexed : 0,
-      total: state.kind === 'ready' ? state.total : 0
+      total: state.kind === 'ready' ? state.total : 0,
+      reason: state.kind === 'unavailable' ? state.reason : undefined
     }
   })
   ipcMain.handle(IpcChannel.SearchHistoryRebuildIndex, () => rebuildIndex())

@@ -233,4 +233,56 @@ describe('search-history indexer', () => {
     await rebuildIndex()
     expect(getIndexState()).toEqual({ kind: 'ready', indexed: 1, total: 1 })
   })
+
+  // Placed last in this file deliberately: lastEmbedFailureReason is
+  // process-wide module state (see indexer.ts), not reset by this file's
+  // beforeEach (which only resets the DB). The final test below ends on a
+  // successful embed, clearing it back out for anything that runs after
+  // this file's tests in the same worker.
+  describe("getIndexState's 'unavailable' state (a real failure never surfaced anywhere, found live)", () => {
+    it('reports unavailable with the failure reason once an embed attempt fails and nothing has ever been indexed', async () => {
+      // Found live: a fresh install with Ollama installed but
+      // nomic-embed-text never pulled failed on every message forever,
+      // completely silently — Settings showed "0 / 0 messages indexed",
+      // identical to a fresh install that just hasn't sent a message yet.
+      const { getEmbeddingProvider } = await import('../providers/setup')
+      vi.mocked(getEmbeddingProvider).mockReturnValueOnce({
+        id: 'fake',
+        embed: vi.fn(async () => {
+          throw new Error('model "nomic-embed-text" not found, try pulling it first')
+        })
+      })
+
+      const session = createSession('S1')
+      const message = insertMessage(session.id, 'user', [{ type: 'text', text: 'revenue was 4.2 million' }])
+      enqueueMessage(message.id, session.id, message.content)
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(getIndexState()).toEqual({
+        kind: 'unavailable',
+        reason: 'model "nomic-embed-text" not found, try pulling it first'
+      })
+    })
+
+    it('self-heals back to ready once a later embed attempt succeeds, with no extra plumbing needed', async () => {
+      const { getEmbeddingProvider } = await import('../providers/setup')
+      vi.mocked(getEmbeddingProvider).mockReturnValueOnce({
+        id: 'fake',
+        embed: vi.fn(async () => {
+          throw new Error('boom')
+        })
+      })
+
+      const session = createSession('S1')
+      const failing = insertMessage(session.id, 'user', [{ type: 'text', text: 'revenue was 4.2 million' }])
+      enqueueMessage(failing.id, session.id, failing.content)
+      await new Promise((r) => setTimeout(r, 0))
+      expect(getIndexState()).toEqual({ kind: 'unavailable', reason: 'boom' })
+
+      const succeeding = insertMessage(session.id, 'user', [{ type: 'text', text: 'revenue is now 5.1 million' }])
+      enqueueMessage(succeeding.id, session.id, succeeding.content)
+      await new Promise((r) => setTimeout(r, 0))
+      expect(getIndexState()).toEqual({ kind: 'ready', indexed: 1, total: 2 })
+    })
+  })
 })

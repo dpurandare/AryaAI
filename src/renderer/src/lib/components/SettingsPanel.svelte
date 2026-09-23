@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, ToolDescriptor } from '@shared/ipc-contract'
+  import type { ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
 
   let {
@@ -396,11 +396,7 @@
   let embeddingHasKey = $state(false)
   let embeddingApiKey = $state('')
   let savingEmbeddingKey = $state(false)
-  let searchHistoryStatus = $state<{
-    state: 'empty' | 'ready' | 'needs-rebuild'
-    indexed: number
-    total: number
-  } | null>(null)
+  let searchHistoryStatus = $state<SearchHistoryStatusDto | null>(null)
   let rebuildingIndex = $state(false)
 
   async function loadEmbeddingConfig(): Promise<void> {
@@ -487,6 +483,13 @@
     if (!searchHistoryStatus) return 'Loading...'
     if (searchHistoryStatus.state === 'needs-rebuild') {
       return 'Embedding model changed — index needs a rebuild before search works again.'
+    }
+    if (searchHistoryStatus.state === 'unavailable') {
+      // Every embed attempt so far has failed and nothing has ever been
+      // indexed — most commonly Ollama not running or the embedding model
+      // not pulled yet (see README's Prerequisites). Distinct from
+      // 'empty', which just means nothing's been sent yet.
+      return `Search history disabled — ${searchHistoryStatus.reason}`
     }
     return `${searchHistoryStatus.indexed} / ${searchHistoryStatus.total} messages indexed`
   }

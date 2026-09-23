@@ -8,10 +8,11 @@ This file is kept up to date at every stage so it always reflects what actually 
 
 ## Prerequisites
 
-- Node.js 20+ and npm (developed against Node 24 / npm 11)
+- **Node.js 22+ (developed/tested against Node 24 / npm 11) — not 20.** Found live on a fresh Linux install: `better-sqlite3`'s prebuilt native binary (and several other deps — `electron`, `jsdom`, `vitest`) declare `engines: { node: ">=22" }` for real, not as a formality. Under Node 20, `better-sqlite3`'s bundled binary **segfaults the process** the moment it's loaded (confirmed directly: `require('better-sqlite3')` crashes with `Segmentation fault (core dumped)`), not a catchable JS error. `npm install` itself succeeds either way — it only warns (`EBADENGINE`) — so this won't be obvious until the app actually touches its database. Use `nvm install 24 && nvm alias default 24` (or your version manager's equivalent) if you're not already on 22+.
 - macOS, Windows, or Linux
 - **Linux only:** a running secret-service keyring (GNOME Keyring, KWallet, or similar) with `libsecret` installed (`libsecret-1-0` on Debian/Ubuntu, `libsecret` on Fedora/Arch). API keys are stored via Electron's `safeStorage`, which on Linux is backed by `libsecret` — without a keyring daemon running, `safeStorage.isEncryptionAvailable()` returns false and saving a key in Settings will fail with "OS-native secure storage is not available on this machine." Most desktop Linux installs (GNOME, KDE, etc.) already run one; minimal/tiling-WM setups may not and need `gnome-keyring` (or equivalent) installed and unlocked at login.
-- **Optional, only if you use the corresponding tool:** `aws`/`az`/`gcloud` on PATH and already authenticated (for the cloud CLI tools — the app doesn't manage cloud credentials itself), and a reachable Postgres server for a Postgres data connection (SQLite connections need nothing beyond a file path).
+- **Linux only, dev (`npm run dev`/`npm start`):** on some distros (Ubuntu 24.04+ and others restricting unprivileged user namespaces) Electron's sandbox needs a one-time permissions fix or it refuses to launch — see [Troubleshooting](#troubleshooting) below if you hit a `SUID sandbox helper binary` error.
+- **Optional, only if you use the corresponding tool:** `aws`/`az`/`gcloud` on PATH and already authenticated (for the cloud CLI tools — the app doesn't manage cloud credentials itself); a reachable Postgres server for a Postgres data connection (SQLite connections need nothing beyond a file path); and [Ollama](https://ollama.com) installed and running with the `nomic-embed-text` model pulled (`ollama pull nomic-embed-text`) for the `search_history` tool, which embeds locally via Ollama by default (Settings > Search history lets you point it at a different provider/model instead). Without this, `search_history` isn't a hard error — Settings shows **"Search history disabled — ..."** with the actual reason, and the tool tells the model plainly rather than silently doing nothing; every other feature works normally.
 
 ## Setup
 
@@ -21,6 +22,8 @@ npm install
 
 If `better-sqlite3`'s native module fails to build (rare — it ships prebuilt binaries for most platforms), you'll need a C++ toolchain: Xcode Command Line Tools on macOS, `build-essential` on Linux, or Visual Studio Build Tools on Windows.
 
+Electron's own binary is downloaded lazily on first launch (`npm run dev`/`npm start`), not during `npm install` — this app's `postinstall` script triggers that download eagerly instead, so the first `npm install` after cloning (or any `rm -rf node_modules && npm install`) does the ~150-200MB download up front rather than surprising you on first launch.
+
 ## Running in development
 
 ```bash
@@ -28,6 +31,53 @@ npm run dev
 ```
 
 Opens the Electron app with hot reload on the renderer. Closing the window (or Cmd/Ctrl+Q) quits it.
+
+## Troubleshooting
+
+**`npm run dev` / `npm start` aborts with:**
+
+```
+FATAL:sandbox/linux/suid/client/setuid_sandbox_host.cc:...] The SUID sandbox helper binary was found,
+but is not configured correctly. Rather than run without sandboxing I'm aborting now. You need to make
+sure that .../node_modules/electron/dist/chrome-sandbox is owned by root and has mode 4755.
+```
+
+Linux only. Newer distros (Ubuntu 24.04+ and others) restrict unprivileged user namespaces via AppArmor by default — check with `cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns` (`1` means restricted). Electron falls back to its classic setuid-root sandbox helper in that case, but a freshly-downloaded `chrome-sandbox` binary is owned by your own user, not root, so Electron refuses to run unsandboxed rather than silently weakening security. Fix:
+
+```bash
+sudo chown root:root node_modules/electron/dist/chrome-sandbox
+sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+```
+
+This resets every time `npm install` re-downloads Electron (including a clean `rm -rf node_modules && npm install`), so redo it after one of those if the error comes back. Only affects unpackaged dev runs — the packaged AppImage/deb (`npm run dist:linux`) is unaffected either way.
+
+**Chatting with an Ollama (local) model, it forgets things or the context/cost meter shows a surprisingly small number (often ~4K), even though the model's page advertises a much bigger context window (e.g. 128K):**
+
+Ollama loads a model with a small runtime context window by default — commonly 4096 tokens — regardless of that model's real architectural maximum, unless told otherwise. `gpt-oss:20b` advertises 131072 but is actually *loaded* at 4096 out of the box, confirmed live. This app reads the model's real, currently-loaded context straight from Ollama and budgets conversation history against that live number (`src/main/providers/ollama.ts`'s `loadedContextWindow`/`configuredContextWindow`, used by `resolveContextWindow`) rather than assuming the bigger advertised figure — so the small number you're seeing is Ollama's actual runtime setting, not a bug in the meter.
+
+Fix: create a custom model with a larger `num_ctx` baked in via a Modelfile, then use that custom model instead of the base one. Two working examples already live at the repo root:
+
+```
+# ModelFile — gpt-oss:20b with a 128K context window
+FROM gpt-oss:20b
+PARAMETER num_ctx 131072
+```
+
+```
+# ModelFile2 — qwen3.8:latest with a 256K context window
+FROM qwen3.8:latest
+PARAMETER num_ctx 262144
+```
+
+Build and select one:
+
+```bash
+ollama create gpt-oss-custom -f ./ModelFile      # or: ollama create qwen3.8-custom -f ./ModelFile2
+```
+
+Then pick the new `gpt-oss-custom` (or `qwen3.8-custom`) entry as the model in Settings, same as any other Ollama model — nothing else in the app needs configuring. It'll show up in Ollama's model list (`ollama list`) as its own separate model, several GB of disk space per variant (it's a full copy, not a lightweight alias), and the context/cost meter will immediately reflect the real, larger `num_ctx` you set, whether the model is currently loaded or idled out of VRAM (Ollama's default when nothing's been sent in a while).
+
+Adjust `num_ctx` to whatever the base model actually supports and your available VRAM allows — a larger context window uses proportionally more memory when the model is loaded. `PARAMETER num_parallel N` (commented out in both example files) trades concurrent-request capacity for per-request context if you ever run multiple chats against the same loaded model at once.
 
 ## Current state (review this before testing)
 
@@ -46,7 +96,7 @@ The Work Order is functionally complete except code signing/notarization (blocke
   - **Database** (Data): schema introspection and SQL execution against a configured SQLite or Postgres connection (Settings > Data sources). Beyond raw SQL, mechanical `db_list_rows`/`db_count_rows`/`db_find_rows` cover simple per-table lookups with no SQL needed, and the agent can save a working parametric query (`db_save_query`) as its own reusable tool for next time.
   - **External APIs** (Research): connect to and call arbitrary third-party REST APIs configured in Settings > External APIs (base URL + auth: none/API key header/bearer/basic). `api_introspect` discovers endpoints from an OpenAPI/Swagger spec, `api_call` makes an authenticated call (auto-following common pagination shapes when asked), and `api_check_status` polls an asynchronous job rather than blocking the chat turn.
   - **Structured data** (Research/Data): `parse_html` extracts clean reader-mode article text from a URL/file/inline HTML instead of the agent wading through raw markup itself; `parse_csv`/`parse_json`/`parse_xml` summarize a document's shape and support a query/filter action (plus, CSV/JSON only, appending one new record) without pulling the whole thing into context.
-  - **Web search & conversation history** (Research): `web_search` uses the Tavily Search API when a key is configured (Settings > Web search) — real ranked results with independently fetchable URLs, `topic:"news"` for current-events queries — falling back to DuckDuckGo's free Instant Answer API (well-known topics only, says so plainly when it has nothing) when no key is set. `search_history` is a semantic search over your own past sessions (including the active one) so the agent can recall or compare something discussed earlier instead of guessing.
+  - **Web search & conversation history** (Research): `web_search` uses the Tavily Search API when a key is configured (Settings > Web search) — real ranked results with independently fetchable URLs, `topic:"news"` for current-events queries — falling back to DuckDuckGo's free Instant Answer API (well-known topics only, says so plainly when it has nothing) when no key is set. `search_history` is a semantic search over your own past sessions (including the active one) so the agent can recall or compare something discussed earlier instead of guessing — needs the embedding prerequisite above; Settings > Search history shows its live status.
   - **MCP** (all roles): configure stdio or HTTP/SSE MCP servers in Settings — discovered tools merge into the registry automatically, live, with no restart.
 - Planning is reasoning-only for now (no tools of its own).
 

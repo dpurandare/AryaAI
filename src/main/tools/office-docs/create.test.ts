@@ -135,6 +135,31 @@ describe('office_create_document', () => {
     expect(text).toContain('Step one')
   })
 
+  it('tolerates a { text: string } object in paragraphs/bullets/numbers instead of a plain string', async () => {
+    // Found live against GPT-OSS: asked to save a long answer to Word, it
+    // sent `paragraphs: [{ text: "..." }]` — a schema violation (the field
+    // is declared `items: { type: 'string' }`) — which crashed with
+    // "text.split is not a function" deep inside renderParagraphText.
+    await officeCreateDocumentTool.execute(
+      {
+        path: 'malformed.docx',
+        sections: [
+          {
+            paragraphs: [{ text: 'A wrapped paragraph.' } as unknown as string],
+            bullets: [{ text: 'A wrapped bullet.' } as unknown as string],
+            numbers: [{ text: 'A wrapped number.' } as unknown as string]
+          }
+        ]
+      },
+      ctx
+    )
+    const xml = await readDocumentXml(join(root, 'malformed.docx'))
+    const text = extractTextRuns(xml).join('|')
+    expect(text).toContain('A wrapped paragraph.')
+    expect(text).toContain('A wrapped bullet.')
+    expect(text).toContain('A wrapped number.')
+  })
+
   it('rejects an unsupported extension', async () => {
     await expect(officeCreateDocumentTool.execute({ path: 'notes.txt' }, ctx)).rejects.toThrow(/only supports .docx and .pptx/)
   })

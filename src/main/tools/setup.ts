@@ -42,7 +42,7 @@ export const PLANNING_ENABLED_SETTING_KEY = 'planningEnabled'
 
 /** Fallback when the user hasn't configured a workspace root yet — a dedicated folder under Documents. */
 export function defaultWorkspaceRoot(): string {
-  return join(app.getPath('documents'), 'Sachiv Workspace')
+  return join(app.getPath('documents'), 'Sachivji Workspace')
 }
 
 /**

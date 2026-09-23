@@ -37,7 +37,7 @@ describe('createToolContext', () => {
     await rm(userDataDir, { recursive: true, force: true })
   })
 
-  it('defaults to a "Sachiv Workspace" folder under Documents when unconfigured', () => {
+  it('defaults to a "Sachivji Workspace" folder under Documents when unconfigured', () => {
     const ctx = createToolContext()
     expect(ctx.workspaceGuard.root).toBe(defaultWorkspaceRoot())
     expect(existsSync(ctx.workspaceGuard.root)).toBe(true)
