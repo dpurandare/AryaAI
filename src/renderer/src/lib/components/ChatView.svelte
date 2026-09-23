@@ -3,8 +3,10 @@
   import ModelPicker from './ModelPicker.svelte'
   import ContextMeter from './ContextMeter.svelte'
   import MarkdownText from './MarkdownText.svelte'
+  import ToolConfirmDialog from './ToolConfirmDialog.svelte'
   import { AGENT_ROLES, AGENT_ROLE_LABELS, type AgentRole } from '@shared/agents'
   import { parseSearchHistoryResult } from '../search-history-result'
+  import type { ToolConfirmRequestPayload, LimitReachedRequestPayload } from '@shared/ipc-contract'
 
   interface ToolCallDisplay {
     id: string
@@ -54,7 +56,17 @@
     contextWindow,
     toolDetailsExpanded,
     onToggleToolDetails,
-    isMac
+    isMac,
+    pendingConfirm,
+    autoApproveTools,
+    autoApproveRules,
+    onApproveTool,
+    onDenyTool,
+    onValidateTool,
+    onToggleAutoApprove,
+    onToggleAutoApproveRule,
+    pendingLimit,
+    onRespondLimit
   }: {
     messages: DisplayMessage[]
     statusLine: string
@@ -75,9 +87,60 @@
     onToggleToolDetails: () => void
     /** For the tool-output toggle's tooltip label only — the real Cmd/Ctrl+O handling lives in App.svelte. */
     isMac: boolean
+    /**
+     * When set, this session has a tool call awaiting approval — the
+     * composer below renders the inline confirmation UI in place of the
+     * normal input for as long as this stays non-null, rather than a modal
+     * overlay elsewhere on screen. See ToolConfirmDialog.svelte's own doc
+     * comment for why: a separately-rendered overlay could go invisible
+     * with no way back to a usable composer short of restarting the app;
+     * this is the one screen area already guaranteed visible whenever this
+     * session is on screen at all.
+     */
+    pendingConfirm: ToolConfirmRequestPayload | null
+    autoApproveTools: boolean
+    autoApproveRules: Record<string, boolean>
+    onApproveTool: (input: Record<string, unknown>) => void
+    onDenyTool: () => void
+    onValidateTool: (name: string, input: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
+    onToggleAutoApprove: (value: boolean) => void
+    onToggleAutoApproveRule: (name: string, value: boolean) => void
+    /** Same idea as pendingConfirm, for a different question — a round/time budget ran out and the orchestrator is waiting to hear whether to keep going (see orchestrator.ts's askToContinue) rather than silently wrapping up. Mutually exclusive with pendingConfirm in the composer-area render below. */
+    pendingLimit: LimitReachedRequestPayload | null
+    onRespondLimit: (continueWorking: boolean) => void
   } = $props()
 
   let draft = $state('')
+
+  // Drag-to-resize the composer, matching the sidebar's own resize-handle
+  // pattern (App.svelte's startSidebarResize) instead of the textarea's
+  // native browser corner-drag — one consistent resize interaction across
+  // the app rather than two different ones.
+  const COMPOSER_MIN_HEIGHT = 40
+  const COMPOSER_MAX_HEIGHT = 480
+  let composerHeight = $state(COMPOSER_MIN_HEIGHT)
+  window.sachiv.getSetting('composerHeight').then((stored) => {
+    if (stored) composerHeight = Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, Number(stored)))
+  })
+
+  function startComposerResize(event: PointerEvent): void {
+    event.preventDefault()
+    const startY = event.clientY
+    const startHeight = composerHeight
+
+    function onMove(moveEvent: PointerEvent): void {
+      // The handle sits above the composer — dragging up (clientY decreasing) grows it.
+      const next = startHeight + (startY - moveEvent.clientY)
+      composerHeight = Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, next))
+    }
+    function onUp(): void {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.sachiv.setSetting('composerHeight', String(composerHeight))
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
   // Plain $state object, not $state(new Set()) — a raw Set's own add/delete
   // methods aren't deep-reactive under Svelte 5 runes (that needs SvelteSet
   // from svelte/reactivity); property writes on a plain object are, and
@@ -135,6 +198,13 @@
 
   function modeLabel(role: AgentRole | null): string {
     return role ? AGENT_ROLE_LABELS[role] : 'Auto'
+  }
+
+  function limitReachedMessage(limit: LimitReachedRequestPayload): string {
+    const who = limit.agentRole ? `The ${AGENT_ROLE_LABELS[limit.agentRole]} specialist` : 'This turn'
+    return limit.reason === 'time'
+      ? `${who} has been working for a while without finishing. Give it more time, or stop here?`
+      : `${who} has used all ${limit.maxRounds} steps available without finishing. Allow more steps, or stop here?`
   }
 
   function submit(): void {
@@ -284,31 +354,67 @@
     {/each}
   </div>
 
+  <div
+    class="composer-resize-handle"
+    role="separator"
+    aria-orientation="horizontal"
+    aria-label="Resize message input"
+    onpointerdown={startComposerResize}
+  ></div>
+
   <div class="composer-area">
-    <form class="composer" onsubmit={(e) => (e.preventDefault(), submit())}>
-      <textarea
-        bind:value={draft}
-        placeholder="Message Sachivji..."
-        disabled={sending}
-        onkeydown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault()
-            submit()
-          } else if (e.key === 'Tab' && e.ctrlKey) {
-            // Cmd+Tab is the OS app-switcher and can't be intercepted by any app,
-            // hence Ctrl+Tab here — capturable within a focused field, and the
-            // same convention browsers/editors already use for cycling tabs.
-            e.preventDefault()
-            cycleMode(e.shiftKey ? -1 : 1)
-          }
-        }}
-      ></textarea>
-      {#if sending}
-        <button class="send stop" type="button" onclick={onStop} aria-label="Stop generating">⏹</button>
-      {:else}
-        <button class="send" type="submit" disabled={!draft.trim()} aria-label="Send">↵</button>
-      {/if}
-    </form>
+    {#if pendingConfirm}
+      <ToolConfirmDialog
+        toolUseId={pendingConfirm.toolUseId}
+        name={pendingConfirm.name}
+        description={pendingConfirm.description}
+        input={pendingConfirm.input}
+        secretFields={pendingConfirm.secretFields ?? []}
+        hasValidation={pendingConfirm.hasValidation ?? false}
+        autoApprove={autoApproveTools}
+        autoApproveTool={Boolean(autoApproveRules[pendingConfirm.name])}
+        onApprove={onApproveTool}
+        onDeny={onDenyTool}
+        {onStop}
+        onValidate={(input) => onValidateTool(pendingConfirm.name, input)}
+        onToggleAutoApprove={onToggleAutoApprove}
+        onToggleAutoApproveTool={(value) => onToggleAutoApproveRule(pendingConfirm.name, value)}
+      />
+    {:else if pendingLimit}
+      <div class="limit-reached" role="group" aria-label="Continue or stop">
+        <p>{limitReachedMessage(pendingLimit)}</p>
+        <div class="limit-actions">
+          <button type="button" onclick={() => onRespondLimit(false)}>Stop here</button>
+          <button type="button" class="primary" onclick={() => onRespondLimit(true)}>Continue</button>
+        </div>
+      </div>
+    {:else}
+      <form class="composer" onsubmit={(e) => (e.preventDefault(), submit())}>
+        <textarea
+          bind:value={draft}
+          style="height: {composerHeight}px"
+          placeholder="Message Sachivji..."
+          disabled={sending}
+          onkeydown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              submit()
+            } else if (e.key === 'Tab' && e.ctrlKey) {
+              // Cmd+Tab is the OS app-switcher and can't be intercepted by any app,
+              // hence Ctrl+Tab here — capturable within a focused field, and the
+              // same convention browsers/editors already use for cycling tabs.
+              e.preventDefault()
+              cycleMode(e.shiftKey ? -1 : 1)
+            }
+          }}
+        ></textarea>
+        {#if sending}
+          <button class="send stop" type="button" onclick={onStop} aria-label="Stop generating">⏹</button>
+        {:else}
+          <button class="send" type="submit" disabled={!draft.trim()} aria-label="Send">↵</button>
+        {/if}
+      </form>
+    {/if}
 
     <div class="status-bar">
       <div class="status-left">
@@ -574,6 +680,25 @@
     color: var(--text);
     white-space: normal;
   }
+  /* Mirrors App.svelte's .sidebar-resize-handle exactly — same thin-bar,
+     hover/active-accent affordance, just row-resize instead of col-resize. */
+  .composer-resize-handle {
+    flex-shrink: 0;
+    height: 6px;
+    cursor: row-resize;
+    background: transparent;
+    position: relative;
+  }
+  .composer-resize-handle::after {
+    content: '';
+    position: absolute;
+    inset: 1.5px 0;
+    border-radius: 2px;
+  }
+  .composer-resize-handle:hover::after,
+  .composer-resize-handle:active::after {
+    background: var(--accent);
+  }
   .composer-area {
     padding: 0.75rem 1.25rem 0.6rem;
     border-top: 1px solid var(--border);
@@ -587,10 +712,46 @@
     border-radius: 20px;
     padding: 0.6rem 0.6rem 0.6rem 1.1rem;
   }
+  .limit-reached {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 0.7rem 1rem;
+  }
+  .limit-reached p {
+    margin: 0;
+    font-size: 0.85rem;
+  }
+  .limit-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+  .limit-actions button {
+    padding: 0.4rem 0.8rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--panel-hover);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .limit-actions button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #1a1a1a;
+    font-weight: 600;
+  }
   textarea {
     flex: 1;
+    /* Height is driven by composerHeight (set via composer-resize-handle,
+       same drag pattern as the sidebar's own handle) rather than the
+       browser's native corner-drag — one consistent resize interaction
+       across the app instead of two different ones. */
     resize: none;
-    height: 2.4rem;
     padding: 0.35rem 0;
     border: none;
     background: none;
@@ -611,16 +772,6 @@
     cursor: pointer;
     font-size: 1rem;
     flex-shrink: 0;
-  }
-  /* ToolConfirmDialog's overlay is `position: fixed; inset: 0; z-index: 20`
-     — a normal-flow sibling like this button sits below any positioned,
-     z-indexed element regardless of DOM order, so without this the overlay
-     physically intercepts every click on Stop while a confirmation dialog
-     is open, however visible the button still looks underneath it. Found
-     live: Stop did nothing while waiting on a tool confirmation. */
-  .send.stop {
-    position: relative;
-    z-index: 30;
   }
   .send:disabled {
     opacity: 0.35;

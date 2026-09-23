@@ -2,13 +2,13 @@
   import SessionList from './lib/components/SessionList.svelte'
   import ChatView from './lib/components/ChatView.svelte'
   import SettingsPanel from './lib/components/SettingsPanel.svelte'
-  import ToolConfirmDialog from './lib/components/ToolConfirmDialog.svelte'
   import FirstRunSetup from './lib/components/FirstRunSetup.svelte'
   import {
     DEFAULT_SESSION_TITLE,
     type SessionDto,
     type MessageDto,
     type ToolConfirmRequestPayload,
+    type LimitReachedRequestPayload,
     type ProviderDescriptor
   } from '@shared/ipc-contract'
   import type { AgentRole } from '@shared/agents'
@@ -77,6 +77,8 @@
     currentStreamId: string
     sessionUsage: { inputTokens: number; outputTokens: number }
     pendingConfirm: ToolConfirmRequestPayload | null
+    /** A round/time budget was hit and the orchestrator is waiting to hear whether to keep going — see orchestrator.ts's askToContinue. Mutually exclusive with pendingConfirm in practice (only one can be in flight at a time per stream), kept as its own field rather than folded into one union so ChatView's prop list stays a plain, obvious `X | null` for each. */
+    pendingLimit: LimitReachedRequestPayload | null
     /** Whether `messages`/`sessionUsage` have been fetched from the DB at least once — after that, a session's own live event stream is the source of truth, not another DB read, or a background reply already written into `messages` would be clobbered by a stale reload the moment you switch back to it. */
     loaded: boolean
   }
@@ -88,6 +90,7 @@
       currentStreamId: '',
       sessionUsage: { inputTokens: 0, outputTokens: 0 },
       pendingConfirm: null,
+      pendingLimit: null,
       loaded: false
     }
   }
@@ -131,7 +134,7 @@
   let sessionActivity = $derived.by(() => {
     const result: Record<string, 'generating' | 'needs-confirmation'> = {}
     for (const [id, runtime] of Object.entries(runtimes)) {
-      if (runtime.pendingConfirm) result[id] = 'needs-confirmation'
+      if (runtime.pendingConfirm || runtime.pendingLimit) result[id] = 'needs-confirmation'
       else if (runtime.sending) result[id] = 'generating'
     }
     return result
@@ -378,11 +381,13 @@
     const runtime = runtimes[activeId]
     if (!runtime) return
     if (runtime.currentStreamId) window.sachiv.cancelChat(runtime.currentStreamId)
-    // The backend now treats an abort while awaiting confirmation as a
-    // denial (orchestrator.ts's confirmOrAbort), but that resolution still
-    // has to travel back over IPC — close the dialog immediately here so
-    // Stop feels instant instead of leaving it up until that round-trips.
+    // The backend now treats an abort while awaiting confirmation (or a
+    // pending continue-or-stop question) as a denial/stop (orchestrator.ts's
+    // confirmOrAbort/askToContinue), but that resolution still has to travel
+    // back over IPC — clear both immediately here so Stop feels instant
+    // instead of leaving the composer replaced until that round-trips.
     runtime.pendingConfirm = null
+    runtime.pendingLimit = null
   }
 
   function approveTool(input: Record<string, unknown>): void {
@@ -397,6 +402,13 @@
     if (!confirm) return
     window.sachiv.respondToolConfirm(confirm.toolUseId, false)
     activeRuntime.pendingConfirm = null
+  }
+
+  function respondLimit(continueWorking: boolean): void {
+    const limit = activeRuntime.pendingLimit
+    if (!limit) return
+    window.sachiv.respondLimitReached(limit.requestId, continueWorking)
+    activeRuntime.pendingLimit = null
   }
 
   function toggleAutoApproveTool(name: string, value: boolean): void {
@@ -523,6 +535,14 @@
     // there quietly (surfaced only via the sidebar's activity dot) instead
     // of popping a dialog over whatever you're actually doing.
     ensureRuntime(payload.sessionId).pendingConfirm = payload
+  })
+
+  window.sachiv.onLimitReachedRequest((payload) => {
+    // No auto-approve equivalent — unlike a tool call, there's no per-name
+    // rule that makes sense here, and silently auto-continuing would be
+    // exactly the "just keeps going with no way to say stop" behavior this
+    // whole feature exists to avoid.
+    ensureRuntime(payload.sessionId).pendingLimit = payload
   })
 
   window.sachiv.getSetting('sidebarWidth').then((stored) => {
@@ -652,28 +672,20 @@
         {toolDetailsExpanded}
         onToggleToolDetails={toggleToolDetails}
         {isMac}
+        pendingConfirm={activeRuntime.pendingConfirm}
+        {autoApproveTools}
+        {autoApproveRules}
+        onApproveTool={approveTool}
+        onDenyTool={denyTool}
+        onValidateTool={(name, input) => window.sachiv.validateToolInput(name, input)}
+        onToggleAutoApprove={(value) => (autoApproveTools = value)}
+        onToggleAutoApproveRule={toggleAutoApproveTool}
+        pendingLimit={activeRuntime.pendingLimit}
+        onRespondLimit={respondLimit}
       />
     {/if}
   </section>
 </main>
-
-{#if activeRuntime.pendingConfirm}
-  {@const confirm = activeRuntime.pendingConfirm}
-  <ToolConfirmDialog
-    name={confirm.name}
-    description={confirm.description}
-    input={confirm.input}
-    secretFields={confirm.secretFields ?? []}
-    hasValidation={confirm.hasValidation ?? false}
-    autoApprove={autoApproveTools}
-    autoApproveTool={Boolean(autoApproveRules[confirm.name])}
-    onApprove={approveTool}
-    onDeny={denyTool}
-    onValidate={(input) => window.sachiv.validateToolInput(confirm.name, input)}
-    onToggleAutoApprove={(value) => (autoApproveTools = value)}
-    onToggleAutoApproveTool={(value) => toggleAutoApproveTool(confirm.name, value)}
-  />
-{/if}
 
 <style>
   /* Base palette + font/color resets live in theme.css, shared with

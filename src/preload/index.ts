@@ -7,6 +7,7 @@ import {
   type MessageDto,
   type ChatStreamEventPayload,
   type ToolConfirmRequestPayload,
+  type LimitReachedRequestPayload,
   type DataConnectionDto,
   type SaveDataConnectionInput,
   type ApiConnectionDto,
@@ -138,6 +139,15 @@ const api = {
   ): Promise<void> => ipcRenderer.invoke(IpcChannel.ToolConfirmRespond, toolUseId, approved, input),
   validateToolInput: (name: string, input: Record<string, unknown>): Promise<ToolValidateResult> =>
     ipcRenderer.invoke(IpcChannel.ToolValidateInput, name, input),
+
+  onLimitReachedRequest: (callback: (payload: LimitReachedRequestPayload) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, payload: LimitReachedRequestPayload): void =>
+      callback(payload)
+    ipcRenderer.on(IpcChannel.LimitReachedRequest, listener)
+    return () => ipcRenderer.removeListener(IpcChannel.LimitReachedRequest, listener)
+  },
+  respondLimitReached: (requestId: string, continueWorking: boolean): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.LimitReachedRespond, requestId, continueWorking),
 
   getSecretStorageInfo: (): Promise<SecretStorageInfo> => ipcRenderer.invoke(IpcChannel.SecretStorageGetInfo),
   switchSecretStorageToFile: (): Promise<SecretStorageInfo> =>

@@ -1,5 +1,6 @@
 <script lang="ts">
   let {
+    toolUseId,
     name,
     description,
     input,
@@ -9,10 +10,13 @@
     autoApproveTool,
     onApprove,
     onDeny,
+    onStop,
     onValidate,
     onToggleAutoApprove,
     onToggleAutoApproveTool
   }: {
+    /** Identifies which confirmation request this is — the reset trigger below keys off it rather than component-creation time, so a genuinely new request can never show stale JSON/secret fields from a previous one. */
+    toolUseId: string
     name: string
     description: string
     input: Record<string, unknown>
@@ -21,22 +25,43 @@
     autoApprove: boolean
     autoApproveTool: boolean
     onApprove: (input: Record<string, unknown>) => void
+    /** Denies only this one tool call — the turn continues, and the model sees the denial and decides what to do next. */
     onDeny: () => void
+    /** Ends the whole turn right now, same as Stop during a normal response — distinct from Deny, which only rejects this one call and lets the turn keep going. Was always reachable before this was inline (a z-index fix kept the composer's own Stop button clickable over the old modal overlay) — kept as its own action here rather than silently dropped now that this replaces the composer instead of floating over it. */
+    onStop: () => void
     onValidate: (input: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
     onToggleAutoApprove: (value: boolean) => void
     onToggleAutoApproveTool: (value: boolean) => void
   } = $props()
 
-  // Secret fields never appear in the editable JSON textarea — kept in
-  // their own real password inputs instead, merged back in only at the
-  // moment of approval (see combinedInput()). This is what keeps a secret
-  // out of anything the model could see or that gets persisted.
-  const visibleInput = Object.fromEntries(Object.entries(input).filter(([key]) => !secretFields.includes(key)))
-  let editedJson = $state(JSON.stringify(visibleInput, null, 2))
+  let editedJson = $state('')
   let jsonError = $state('')
-  let secretValues = $state<Record<string, string>>(Object.fromEntries(secretFields.map((f) => [f, ''])))
+  let secretValues = $state<Record<string, string>>({})
   let validating = $state(false)
   let validationError = $state('')
+
+  /**
+   * Resets whenever this becomes a genuinely different confirmation request
+   * (a new `toolUseId`), not just once at component-creation time. Found
+   * live (a real Svelte compiler warning, `state_referenced_locally`, sat
+   * unaddressed for a while): the previous version computed `editedJson`'s
+   * initial value from a plain `const visibleInput = ...` derived from
+   * `input`/`secretFields` directly — correct only for the very first
+   * request a given component instance ever renders. Rendered inline now
+   * (this used to be a modal, always torn down and recreated between
+   * requests, which papered over the bug), reusing the same instance across
+   * successive confirmations is the normal case, so this now has to hold up
+   * on every request, not just the first.
+   */
+  $effect(() => {
+    void toolUseId
+    const visibleInput = Object.fromEntries(Object.entries(input).filter(([key]) => !secretFields.includes(key)))
+    editedJson = JSON.stringify(visibleInput, null, 2)
+    secretValues = Object.fromEntries(secretFields.map((f) => [f, '']))
+    jsonError = ''
+    validationError = ''
+    validating = false
+  })
 
   function combinedInput(): Record<string, unknown> | null {
     try {
@@ -70,21 +95,31 @@
   }
 </script>
 
-<div class="overlay" role="presentation">
-  <div class="panel" role="alertdialog" aria-modal="true" aria-label="Tool call confirmation">
+<!-- Rendered inline in place of the composer (ChatView.svelte), not as a
+     modal overlay — found live: the overlay's own pending state could go
+     invisible with no way back to a usable composer short of restarting the
+     app (Stop's fix for exactly this, App.svelte's stopGeneration, still
+     applies here — it's the same underlying pendingConfirm/signal wiring,
+     just a different rendering of it). Living in the one place already
+     guaranteed visible whenever this session is on screen closes that gap
+     structurally instead of relying on a separately-rendered layer. -->
+<div class="confirm" role="group" aria-label="Tool call confirmation">
+  <div class="confirm-header">
     <h2>Run <code>{name}</code>?</h2>
     <p class="description">{description}</p>
-    <textarea class="json" bind:value={editedJson} spellcheck="false"></textarea>
-    {#if jsonError}<p class="error">{jsonError}</p>{/if}
+  </div>
+  <textarea class="json" bind:value={editedJson} spellcheck="false"></textarea>
+  {#if jsonError}<p class="error">{jsonError}</p>{/if}
 
-    {#each secretFields as field (field)}
-      <label class="secret-field">
-        {field}
-        <input type="password" bind:value={secretValues[field]} autocomplete="new-password" />
-      </label>
-    {/each}
-    {#if validationError}<p class="error">{validationError}</p>{/if}
+  {#each secretFields as field (field)}
+    <label class="secret-field">
+      {field}
+      <input type="password" bind:value={secretValues[field]} autocomplete="new-password" />
+    </label>
+  {/each}
+  {#if validationError}<p class="error">{validationError}</p>{/if}
 
+  <div class="confirm-row">
     <label class="auto-approve">
       <input
         type="checkbox"
@@ -101,39 +136,32 @@
       />
       Always auto-approve <code>{name}</code>
     </label>
+  </div>
 
-    <div class="actions">
-      <button onclick={onDeny}>Deny</button>
-      <button class="primary" onclick={approve} disabled={validating}>
-        {validating ? 'Validating…' : 'Approve'}
-      </button>
-    </div>
+  <div class="actions">
+    <button type="button" class="ghost" onclick={onStop} title="Ends the whole turn now, not just this one call">
+      Stop turn
+    </button>
+    <button type="button" onclick={onDeny}>Deny</button>
+    <button type="button" class="primary" onclick={approve} disabled={validating}>
+      {validating ? 'Validating…' : 'Approve'}
+    </button>
   </div>
 </div>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 20;
-  }
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 1.5rem;
-    width: 420px;
+  .confirm {
     display: flex;
     flex-direction: column;
-    gap: 0.6rem;
+    gap: 0.5rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 0.8rem 1rem;
   }
-  h2 {
+  .confirm-header h2 {
     margin: 0;
-    font-size: 1rem;
+    font-size: 0.9rem;
   }
   code {
     background: var(--panel-hover);
@@ -141,53 +169,72 @@
     border-radius: 4px;
   }
   .description {
-    margin: 0;
-    font-size: 0.85rem;
+    margin: 0.2rem 0 0;
+    font-size: 0.8rem;
     color: var(--text-muted);
   }
   .json {
+    width: 100%;
+    box-sizing: border-box;
     resize: vertical;
-    min-height: 6rem;
-    padding: 0.6rem;
+    min-height: 4.5rem;
+    max-height: 40vh;
+    padding: 0.5rem;
     border-radius: 6px;
     border: 1px solid var(--border);
     background: var(--bg);
     color: var(--text);
     font-family: ui-monospace, monospace;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
   }
   .error {
     margin: 0;
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     color: var(--warn);
   }
   .secret-field {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    font-size: 0.8rem;
+    gap: 0.2rem;
+    font-size: 0.78rem;
     color: var(--text-muted);
   }
   .secret-field input {
-    padding: 0.4rem 0.5rem;
+    padding: 0.35rem 0.5rem;
     border-radius: 6px;
     border: 1px solid var(--border);
     background: var(--bg);
     color: var(--text);
-    font-size: 0.85rem;
+    font-size: 0.82rem;
+  }
+  .confirm-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.9rem;
   }
   .auto-approve {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 0.8rem;
+    gap: 0.4rem;
+    font-size: 0.78rem;
     color: var(--text-muted);
   }
   .actions {
     display: flex;
-    justify-content: flex-end;
+    /* "Stop turn" (ends everything) sits apart on the left, away from the
+       routine Deny/Approve pair for this one call, so the two kinds of
+       decision aren't visually mixed together as equally-weighted options. */
+    justify-content: space-between;
     gap: 0.5rem;
-    margin-top: 0.25rem;
+  }
+  .actions .ghost {
+    background: none;
+    border-color: transparent;
+    color: var(--text-muted);
+  }
+  .actions .ghost:hover {
+    color: var(--text);
+    border-color: var(--border);
   }
   button {
     padding: 0.4rem 0.8rem;

@@ -139,7 +139,20 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         '{placeholder}/{#loop} markers without losing its original styling — call it with action ' +
         '"inspect" first if you don\'t already know what placeholders it needs. For .xlsx, use xlsx_read ' +
         '(summarize sheets, then read one) and xlsx_write, which genuinely loads and edits an existing ' +
-        'workbook rather than only creating new ones.',
+        'workbook rather than only creating new ones. ' +
+        'You have NO shell/execution access at all — you can write a script but you can never run it, ' +
+        'and there is no way to check that assumption; do not call shell_execute or any other execution ' +
+        "tool, and do not report a task as done because you wrote code that *would* produce the result " +
+        "if run. Found live: asked for a chart image (a task that inherently requires writing a Python " +
+        'script AND running it), you wrote the script, tried shell_execute, got "Unknown tool," and then ' +
+        'narrated confident-sounding success ("I have created a script to generate and save the chart") ' +
+        'without the chart ever actually existing — the file only appeared several delegate calls later, ' +
+        'when the top-level orchestrator gave up delegating and ran the shell command itself. Whenever a ' +
+        'task genuinely needs code to be *executed*, not just written, write the file yourself, then say ' +
+        "plainly in your result that it still needs to be run and hand that back — the orchestrator will " +
+        'delegate_to_terminal_devops for the execution step; never assume that will happen invisibly, and ' +
+        "never claim the task is complete until you've verified the actual output exists (e.g. read the " +
+        "file back or list the directory), not just that you wrote code you believe would create it.",
       get tools() {
         return pickTools(registry, [
           'read_file',

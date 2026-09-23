@@ -1,5 +1,6 @@
 import type { ContentBlock, StreamEvent } from './protocol'
 import type { ContextWindowInfo } from './model-metadata'
+import type { AgentRole } from './agents'
 
 export type { ContextWindowInfo }
 
@@ -63,6 +64,10 @@ export const IpcChannel = {
   ToolConfirmRequest: 'tools:confirm-request',
   ToolConfirmRespond: 'tools:confirm-respond',
   ToolValidateInput: 'tools:validate-input',
+
+  /** Asked whenever a turn/delegate call's round or time budget runs out — lets the user grant more budget and keep going instead of the work being silently wrapped up. See orchestrator.ts's confirmContinue. */
+  LimitReachedRequest: 'limit:reached-request',
+  LimitReachedRespond: 'limit:reached-respond',
 
   SearchHistoryStatus: 'search-history:status',
   SearchHistoryRebuildIndex: 'search-history:rebuild-index',
@@ -161,6 +166,18 @@ export interface ToolConfirmRequestPayload {
   secretFields?: string[]
   /** True when the dialog should call ToolValidateInput before approving, so a bad connection is caught and can be corrected in the same dialog instead of round-tripping through a fresh tool call. */
   hasValidation?: boolean
+}
+
+/** A unique id for one limit-reached prompt — resolved once via LimitReachedRespond, never reused (a fresh one is generated each time the same turn hits a limit again after being granted more budget). */
+export interface LimitReachedRequestPayload {
+  streamId: string
+  sessionId: string
+  requestId: string
+  reason: 'rounds' | 'time'
+  roundsUsed: number
+  maxRounds: number
+  /** The specialist whose own delegate call hit the limit — undefined for the top-level turn itself. */
+  agentRole?: AgentRole
 }
 
 export interface ToolValidateResult {

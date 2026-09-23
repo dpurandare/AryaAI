@@ -16,6 +16,7 @@ import {
   type ChatStreamEventPayload,
   type SessionExportResult,
   type ToolConfirmRequestPayload,
+  type LimitReachedRequestPayload,
   type ToolDescriptor,
   type ToolValidateResult,
   type SecretStorageInfo,
@@ -63,7 +64,13 @@ import {
   WORKSPACE_ROOT_SETTING_KEY
 } from '../tools/setup'
 import type { ToolContext } from '../tools/types'
-import { Orchestrator, type ConfirmDecision, type ToolConfirmRequest } from '../agents/orchestrator'
+import {
+  Orchestrator,
+  type ConfirmDecision,
+  type ToolConfirmRequest,
+  type LimitDecision,
+  type LimitReachedRequest
+} from '../agents/orchestrator'
 import { createAgents } from '../agents/roles'
 
 // search_history is registered in the default tool registry (tools/setup.ts),
@@ -133,6 +140,7 @@ const savedQueryManager = new SavedQueryToolManager()
 let toolContext: ToolContext | undefined
 
 const pendingConfirmations = new Map<string, (decision: ConfirmDecision) => void>()
+const pendingLimitDecisions = new Map<string, (decision: LimitDecision) => void>()
 const activeStreams = new Map<string, AbortController>()
 
 /**
@@ -398,6 +406,13 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  ipcMain.handle(IpcChannel.LimitReachedRespond, (_event, requestId: string, continueWorking: boolean) => {
+    const resolve = pendingLimitDecisions.get(requestId)
+    if (!resolve) return
+    pendingLimitDecisions.delete(requestId)
+    resolve({ continueWorking })
+  })
+
   // Called by ToolConfirmDialog before approving a tool that declares
   // `validate` (see Tool's own doc comment) — a pure probe, no persistence,
   // callable repeatedly with corrected input so a bad connection can be
@@ -434,6 +449,20 @@ function makeConfirmTool(
       pendingConfirmations.set(request.toolUseId, resolve)
       const payload: ToolConfirmRequestPayload = { streamId, sessionId, ...request }
       sender.send(IpcChannel.ToolConfirmRequest, payload)
+    })
+}
+
+/** Builds the confirmContinue callback the Orchestrator uses whenever a round/time budget is exhausted — see orchestrator.ts's askToContinue/LimitReachedRequest. */
+function makeConfirmContinue(
+  sender: WebContents,
+  streamId: string,
+  sessionId: string
+): (request: LimitReachedRequest) => Promise<LimitDecision> {
+  return (request) =>
+    new Promise((resolve) => {
+      pendingLimitDecisions.set(request.requestId, resolve)
+      const payload: LimitReachedRequestPayload = { streamId, sessionId, ...request }
+      sender.send(IpcChannel.LimitReachedRequest, payload)
     })
 }
 
@@ -563,8 +592,11 @@ async function runChat(
       activeDecks
     },
     signal,
-    // Missing/unset reads as enabled — default on (see PLANNING_ENABLED_SETTING_KEY's own doc comment).
-    { planningEnabled: getSetting(PLANNING_ENABLED_SETTING_KEY) !== 'false' }
+    {
+      // Missing/unset reads as enabled — default on (see PLANNING_ENABLED_SETTING_KEY's own doc comment).
+      planningEnabled: getSetting(PLANNING_ENABLED_SETTING_KEY) !== 'false',
+      confirmContinue: makeConfirmContinue(sender, streamId, sessionId)
+    }
   )
 
   try {
@@ -601,10 +633,15 @@ async function runChat(
         const relPath = `unsaved-presentation-${deckId}.pptx`
         const saveTool = toolRegistry.get('pptx_save_deck')
         if (!saveTool) continue
-        await saveTool.execute({ deckId, path: relPath }, { ...toolContext, currentSessionId: sessionId, activeDecks })
+        const saveResult = await saveTool.execute(
+          { deckId, path: relPath },
+          { ...toolContext, currentSessionId: sessionId, activeDecks }
+        )
+        const savedPathMatch = /^Saved (\S+) /.exec(String(saveResult))
+        const savedPath = savedPathMatch ? savedPathMatch[1] : relPath
         const message =
           `This turn ended before the presentation ("${deckId}") was explicitly saved, so it was ` +
-          `saved automatically as "${relPath}" (${deck.slides.length} slide(s)) instead of being lost. ` +
+          `saved automatically as "${savedPath}" (${deck.slides.length} slide(s)) instead of being lost. ` +
           'Ask to continue adding slides to it, or rename/move the file, whenever convenient.'
         emit(sender, { streamId, sessionId, event: { type: 'warning', message } })
         const record = insertMessage(sessionId, 'assistant', [{ type: 'warning', message }])

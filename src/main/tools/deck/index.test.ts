@@ -76,13 +76,13 @@ describe('deck tools (#78)', () => {
     )
 
     const saveResult = await pptxSaveDeckTool.execute({ deckId, path: 'deck.pptx' }, ctx)
-    expect(saveResult).toBe('Saved deck.pptx (2 slide(s)).')
+    expect(saveResult).toBe('Saved documents/deck.pptx (2 slide(s)).')
 
     // The deck is discarded from memory after saving.
     await expect(pptxComposeSlideTool.execute({ deckId, slideIndex: 0, elements: [] }, ctx)).rejects.toThrow(/Unknown deck/)
 
     // Real file, real readable content.
-    const text = await officeReadDocumentTool.execute({ path: 'deck.pptx' }, ctx)
+    const text = await officeReadDocumentTool.execute({ path: 'documents/deck.pptx' }, ctx)
     expect(text).toContain('Slide 1:')
     expect(text).toContain('Q3 Overview')
     expect(text).toContain('Slide 2:')
@@ -118,8 +118,8 @@ describe('deck tools (#78)', () => {
     expect(result).toContain('Composed slide 1') // the most recently added slide, index 1
 
     const saveResult = await pptxSaveDeckTool.execute({ path: 'auto.pptx' }, ctx)
-    expect(saveResult).toBe('Saved auto.pptx (2 slide(s)).')
-    const text = await officeReadDocumentTool.execute({ path: 'auto.pptx' }, ctx)
+    expect(saveResult).toBe('Saved documents/auto.pptx (2 slide(s)).')
+    const text = await officeReadDocumentTool.execute({ path: 'documents/auto.pptx' }, ctx)
     expect(text).toContain('Auto-targeted')
   })
 
@@ -236,7 +236,7 @@ describe('deck tools (#78)', () => {
       )
 
       await pptxSaveDeckTool.execute({ deckId, path: 'no-dup.pptx' }, ctx)
-      const text = await officeReadDocumentTool.execute({ path: 'no-dup.pptx' }, ctx)
+      const text = await officeReadDocumentTool.execute({ path: 'documents/no-dup.pptx' }, ctx)
       const occurrences = text.split('Analytics Landscape').length - 1
       expect(occurrences).toBe(1)
     }

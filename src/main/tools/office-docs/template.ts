@@ -1,9 +1,10 @@
 import Docxtemplater from 'docxtemplater'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, extname } from 'node:path'
+import { dirname, extname, relative } from 'node:path'
 import PizZip from 'pizzip'
 import type { Tool } from '../types'
 import { extractOfficeText } from './extract'
+import { resolveNewFilePath } from '../workspace-layout'
 
 const MAX_TEMPLATE_BYTES = 20_000_000
 const PLACEHOLDER_PATTERN = /\{[^}]+\}/g
@@ -32,7 +33,10 @@ export const officeFillTemplateTool: Tool = {
     '{placeholder}/{#loop}...{/loop} markers, producing a new file with the original styling/branding ' +
     "intact — the one supported way to get template-driven output, distinct from office_create_document's " +
     "from-scratch build. action \"inspect\" (no data needed) lists the template's placeholders so you know " +
-    'what data to supply; action "fill" (default) substitutes data into templatePath and writes outputPath.',
+    'what data to supply; action "fill" (default) substitutes data into templatePath and writes outputPath ' +
+    '— a brand-new output file is placed under documents/ automatically regardless of the path given, ' +
+    'unless a file already exists there (then it writes back to that existing location instead); the ' +
+    'result names the real path used.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -71,7 +75,7 @@ export const officeFillTemplateTool: Tool = {
 
     const outputRelPath = String(input.outputPath ?? '')
     if (!outputRelPath) throw new Error('outputPath is required for action "fill".')
-    const outputAbsPath = ctx.workspaceGuard.assertWithinWorkspace(outputRelPath)
+    const outputAbsPath = resolveNewFilePath(ctx.workspaceGuard, outputRelPath)
     const data = typeof input.data === 'object' && input.data !== null ? (input.data as Record<string, unknown>) : {}
 
     let doc: Docxtemplater
@@ -85,6 +89,6 @@ export const officeFillTemplateTool: Tool = {
     const outputBuffer = doc.getZip().generate({ type: 'nodebuffer' })
     await mkdir(dirname(outputAbsPath), { recursive: true })
     await writeFile(outputAbsPath, outputBuffer)
-    return `Filled template written to ${outputRelPath}.`
+    return `Filled template written to ${relative(ctx.workspaceGuard.root, outputAbsPath)}.`
   }
 }

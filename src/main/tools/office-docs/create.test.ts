@@ -37,23 +37,23 @@ describe('office_create_document', () => {
     expect(officeCreateDocumentTool.describe?.({ path: 'out.docx' })).toBe('Create "out.docx"')
   })
 
-  it('creates a real, non-empty .docx from sections', async () => {
+  it('creates a real, non-empty .docx from sections, placed under documents/ automatically', async () => {
     const result = await officeCreateDocumentTool.execute(
       { path: 'report.docx', title: 'Q3 Report', sections: [{ heading: 'Summary', paragraphs: ['All good.'], bullets: ['Item one'] }] },
       ctx
     )
-    expect(result).toBe('Created report.docx.')
-    const info = await stat(join(root, 'report.docx'))
+    expect(result).toBe('Created documents/report.docx.')
+    const info = await stat(join(root, 'documents', 'report.docx'))
     expect(info.size).toBeGreaterThan(0)
   })
 
-  it('creates a real, non-empty .pptx from slides', async () => {
+  it('creates a real, non-empty .pptx from slides, placed under documents/ automatically', async () => {
     const result = await officeCreateDocumentTool.execute(
       { path: 'deck.pptx', title: 'Kickoff', slides: [{ title: 'Agenda', bullets: ['Intro', 'Roadmap'] }] },
       ctx
     )
-    expect(result).toBe('Created deck.pptx.')
-    const info = await stat(join(root, 'deck.pptx'))
+    expect(result).toBe('Created documents/deck.pptx.')
+    const info = await stat(join(root, 'documents', 'deck.pptx'))
     expect(info.size).toBeGreaterThan(0)
   })
 
@@ -68,7 +68,7 @@ describe('office_create_document', () => {
       },
       ctx
     )
-    const xml = await readDocumentXml(join(root, 'formatting.docx'))
+    const xml = await readDocumentXml(join(root, 'documents', 'formatting.docx'))
     expect(xml).toContain('<w:b/>')
     expect(xml).toContain('<w:i/>')
     const text = extractTextRuns(xml).join('')
@@ -87,7 +87,7 @@ describe('office_create_document', () => {
       },
       ctx
     )
-    const xml = await readDocumentXml(join(root, 'table.docx'))
+    const xml = await readDocumentXml(join(root, 'documents', 'table.docx'))
     expect(xml).toContain('<w:tbl>')
     expect(xml).toContain('D9D9D9') // header shading
     const text = extractTextRuns(xml).join('|')
@@ -111,7 +111,7 @@ describe('office_create_document', () => {
       },
       ctx
     )
-    const xml = await readDocumentXml(join(root, 'markdown-table.docx'))
+    const xml = await readDocumentXml(join(root, 'documents', 'markdown-table.docx'))
     expect(xml).toContain('<w:tbl>')
     const text = extractTextRuns(xml).join('|')
     expect(text).not.toContain('---')
@@ -127,7 +127,7 @@ describe('office_create_document', () => {
       },
       ctx
     )
-    const xml = await readDocumentXml(join(root, 'lists.docx'))
+    const xml = await readDocumentXml(join(root, 'documents', 'lists.docx'))
     expect(xml).toContain('<w:numPr>') // real list-formatted paragraphs, not literal "- "/"1. " text
     const text = extractTextRuns(xml).join('|')
     expect(text).not.toMatch(/^-\s|^\d+[.)]\s/)
@@ -153,7 +153,7 @@ describe('office_create_document', () => {
       },
       ctx
     )
-    const xml = await readDocumentXml(join(root, 'malformed.docx'))
+    const xml = await readDocumentXml(join(root, 'documents', 'malformed.docx'))
     const text = extractTextRuns(xml).join('|')
     expect(text).toContain('A wrapped paragraph.')
     expect(text).toContain('A wrapped bullet.')

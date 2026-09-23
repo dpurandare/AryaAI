@@ -446,7 +446,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     // then throws) still comes through — only the provider call itself is
     // short-circuited by the already-aborted signal.
     expect(streamEvents).toEqual([
-      { type: 'status', message: 'Model (mock-model) is thinking… (round 1/12)' },
+      { type: 'status', message: 'Model (mock-model) is thinking… (round 1/20)' },
       { type: 'message_stop', stopReason: 'aborted' }
     ])
   })
@@ -642,6 +642,39 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const classifySystem = provider.requests[0].system ?? ''
       expect(classifySystem).toMatch(/write it into a Word document/i)
       expect(classifySystem).toMatch(/research has no file-writing tools/i)
+    })
+
+    it('explicitly tells the classifier that writing code and running it are two separate steps, not one', async () => {
+      // Found live: "generate a chart image from this data" was classified
+      // as a single "coding" step. Coding wrote the Python script, tried to
+      // run it directly, hit "Unknown tool" (coding has no shell access at
+      // all), and reported success anyway without the file ever existing —
+      // it only got created several delegate calls later, once the
+      // top-level orchestrator gave up delegating and ran shell_execute
+      // itself.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Sure, here you go.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      const classifySystem = provider.requests[0].system ?? ''
+      expect(classifySystem).toMatch(/code to be written AND actually run/i)
+      expect(classifySystem).toMatch(/coding has no shell access at all/i)
     })
 
     it('a compound plan dispatches each step to its tagged specialist in order, then synthesizes a final answer', async () => {
@@ -1124,13 +1157,18 @@ describe('Orchestrator (integration, mocked provider)', () => {
   })
 
   describe('exhausting the MAX_TOTAL_ROUNDS budget (previously untested — a real bug found live)', () => {
+    // Mirrors orchestrator.ts's own private MAX_TOTAL_ROUNDS — see that
+    // describe block's own such mirrors elsewhere in this file for why
+    // (drives real scripted-turn counts/assertions instead of importing it).
+    const MAX_TOTAL_ROUNDS = 20
+
     it('synthesizes a real answer from what was actually gathered instead of a bare "stopped" stub', async () => {
       // Reported directly: real, on-topic content had already been found
       // via tool calls across many rounds, but the user got nothing but a
-      // bare "Stopped after 12 agent rounds" message — everything gathered
-      // was discarded. This scripts exactly that: 12 rounds of a real tool
-      // call (never finishing on its own), then one final text-only turn
-      // the fix's wrap-up call should reach.
+      // bare "Stopped after N agent rounds" message — everything gathered
+      // was discarded. This scripts exactly that: a full budget's worth of
+      // rounds of a real tool call (never finishing on its own), then one
+      // final text-only turn the fix's wrap-up call should reach.
       const registry = buildRegistry()
       const agents = createAgents(registry)
       await writeFileTool.execute({ path: 'note.txt', content: 'real gathered content' }, ctx)
@@ -1139,7 +1177,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
         toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
         stopReason: 'tool_use'
       }
-      const turns: ScriptedTurn[] = Array.from({ length: 12 }, () => toolCallTurn)
+      const turns: ScriptedTurn[] = Array.from({ length: MAX_TOTAL_ROUNDS }, () => toolCallTurn)
       turns.push({ text: 'Based on everything gathered above, here is the real synthesized answer.', stopReason: 'end_turn' })
 
       const provider = new MockProvider(turns)
@@ -1162,10 +1200,10 @@ describe('Orchestrator (integration, mocked provider)', () => {
         type: 'text_delta',
         text: 'Based on everything gathered above, here is the real synthesized answer.'
       })
-      expect(provider.requests).toHaveLength(13) // 12 real rounds + 1 wrap-up
-      const wrapUpRequest = provider.requests[12]
+      expect(provider.requests).toHaveLength(MAX_TOTAL_ROUNDS + 1) // N real rounds + 1 wrap-up
+      const wrapUpRequest = provider.requests[MAX_TOTAL_ROUNDS]
       expect(wrapUpRequest.tools).toBeUndefined() // forces a text-only reply — genuinely cannot loop further
-      expect(wrapUpRequest.system).toMatch(/used all 12 rounds/i)
+      expect(wrapUpRequest.system).toMatch(new RegExp(`used all ${MAX_TOTAL_ROUNDS} rounds`, 'i'))
 
       // The renderer's "is this turn actually finished" detection depends on
       // a real message_stop for this wrap-up round specifically, not just
@@ -1176,14 +1214,12 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(finalStop).toBeDefined()
     })
 
-    it('falls back to the honest "stopped" stub, still visible to the user, only if the wrap-up call itself produces nothing', async () => {
+    it('falls back to the honest "stopped" stub, still visible to the user, if the wrap-up call itself produces nothing', async () => {
       // Goes through real delegation (delegate_to_coding), not a plain
-      // top-level call — matching exactly how the real bug manifested
-      // (a plan-step's delegate call exhausting the shared round budget).
-      // dispatchDelegate wraps runLoop's returned text into a real
-      // tool_result unconditionally, so the stub is genuinely visible
-      // either way; a plain top-level exhaustion's return value is never
-      // wrapped into a message at all, which isn't what this is checking.
+      // top-level call. dispatchDelegate wraps runLoop's returned text into
+      // a real tool_result unconditionally, so the stub is genuinely
+      // visible either way; a plain top-level exhaustion's return value is
+      // never wrapped into a message at all, which isn't what this is checking.
       const registry = buildRegistry()
       const agents = createAgents(registry)
       await writeFileTool.execute({ path: 'note.txt', content: 'x' }, ctx)
@@ -1195,12 +1231,17 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const turns: ScriptedTurn[] = [
         // Round 1 (top-level): delegate to Coding.
         { toolCalls: [{ id: 'd1', name: 'delegate_to_coding', input: { task: 'keep reading' } }], stopReason: 'tool_use' },
-        // Rounds 2-12 (nested, 11 of them): real tool calls, never finishing on their own.
-        ...Array.from({ length: 11 }, () => toolCallTurn),
-        // Nested wrap-up (round budget now exhausted): produces nothing.
+        // The delegate's own fresh budget (MAX_TOTAL_ROUNDS - 1 real calls, since
+        // it's already used its first round on the initial delegate dispatch itself
+        // from the top level's perspective — but its OWN nested counter starts at
+        // 0, so it gets the full budget): real tool calls, never finishing on their own.
+        ...Array.from({ length: MAX_TOTAL_ROUNDS }, () => toolCallTurn),
+        // Nested wrap-up (the delegate's OWN round budget now exhausted): produces nothing.
         { stopReason: 'end_turn' },
-        // Top-level's own wrap-up, cascading from the same exhausted counter.
-        { text: 'The Coding specialist ran out of rounds without finishing.', stopReason: 'end_turn' }
+        // Top-level's own synthesis — its own counter is barely touched (just the
+        // one delegate-dispatch round), so it gets a full, uncascaded round budget
+        // and can produce a real answer even though the delegate ran out.
+        { text: 'The Coding specialist ran out of rounds without finishing; here is what it found regardless.', stopReason: 'end_turn' }
       ]
 
       const provider = new MockProvider(turns)
@@ -1221,7 +1262,212 @@ describe('Orchestrator (integration, mocked provider)', () => {
         .filter((e) => e.kind === 'stream' && e.event.type === 'tool_result')
         .map((e) => (e.kind === 'stream' && e.event.type === 'tool_result' ? e.event.content : ''))
 
-      expect(toolResults).toContainEqual('Stopped after 12 agent rounds.')
+      expect(toolResults).toContainEqual(`Stopped after ${MAX_TOTAL_ROUNDS} agent rounds.`)
+      // The real point of per-delegate budgets: the top level is NOT also
+      // immediately exhausted just because its delegate was — it still
+      // produces a real final answer instead of cascading into its own stub.
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+      expect(streamEvents).toContainEqual({
+        type: 'text_delta',
+        text: 'The Coding specialist ran out of rounds without finishing; here is what it found regardless.'
+      })
+    })
+
+    it("one delegate exhausting its own round budget does not starve a second delegate's or the top level's own budget", async () => {
+      // The concrete fix: previously all of this drew from one shared
+      // MAX_TOTAL_ROUNDS pool, so a heavy first delegate call could leave
+      // nothing for a second one invoked later in the same turn. Now each
+      // gets its own fresh pool.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      await writeFileTool.execute({ path: 'note.txt', content: 'x' }, ctx)
+
+      const toolCallTurn: ScriptedTurn = {
+        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
+        stopReason: 'tool_use'
+      }
+      const turns: ScriptedTurn[] = [
+        // Round 1 (top-level): delegate to Coding, which then burns its
+        // *entire own* fresh budget without ever finishing.
+        { toolCalls: [{ id: 'd1', name: 'delegate_to_coding', input: { task: 'dig deep' } }], stopReason: 'tool_use' },
+        ...Array.from({ length: MAX_TOTAL_ROUNDS }, () => toolCallTurn),
+        { stopReason: 'end_turn' }, // Coding's own wrap-up: exhausted, produces nothing.
+        // Round 2 (top-level): now delegate to Data — a completely fresh
+        // delegate call, which must get its own full, unstarved budget.
+        {
+          toolCalls: [{ id: 'd2', name: 'delegate_to_data', input: { task: 'look this up instead' } }],
+          stopReason: 'tool_use'
+        },
+        // Data's very first round already produces a real answer — proving
+        // it wasn't handed an already-exhausted counter from Research.
+        { text: 'Found it via Data instead.', stopReason: 'end_turn' },
+        // Top-level's own final synthesis.
+        { text: 'Here is the answer, found via the Data specialist.', stopReason: 'end_turn' }
+      ]
+
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'find this' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Found it via Data instead.', agentRole: 'data' })
+      expect(streamEvents).toContainEqual({
+        type: 'text_delta',
+        text: 'Here is the answer, found via the Data specialist.'
+      })
+    })
+
+    it('asks before abandoning when options.confirmContinue is set, and actually finishes the work if granted more budget', async () => {
+      // The point of the whole feature: a turn making genuine, still-
+      // succeeding progress (found live: a real multi-step Docker
+      // build/debug cycle) shouldn't be silently wrapped into a summary
+      // just because it needed one round more than the budget allowed.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      await writeFileTool.execute({ path: 'note.txt', content: 'x' }, ctx)
+
+      const toolCallTurn: ScriptedTurn = {
+        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
+        stopReason: 'tool_use'
+      }
+      const turns: ScriptedTurn[] = [
+        ...Array.from({ length: MAX_TOTAL_ROUNDS }, () => toolCallTurn),
+        // Granted one more round after confirmContinue says yes — finishes for real here.
+        { text: 'Finished for real after being granted more time.', stopReason: 'end_turn' }
+      ]
+
+      const provider = new MockProvider(turns)
+      let askedWith: { reason: string; roundsUsed: number; maxRounds: number } | undefined
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        {
+          planningEnabled: false,
+          confirmContinue: async (request) => {
+            askedWith = request
+            return { continueWorking: true }
+          }
+        }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'keep going' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(askedWith).toEqual({
+        requestId: expect.any(String),
+        reason: 'rounds',
+        roundsUsed: MAX_TOTAL_ROUNDS,
+        maxRounds: MAX_TOTAL_ROUNDS
+      })
+      // Never reached the wrap-up's tools-disabled synthesis call at all —
+      // continuing re-entered the real round loop instead.
+      expect(streamEvents).toContainEqual({
+        type: 'text_delta',
+        text: 'Finished for real after being granted more time.'
+      })
+      expect(streamEvents.some((e) => e.type === 'warning')).toBe(false)
+    })
+
+    it('proceeds to the normal wrap-up stub if the user chooses to stop when asked', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      await writeFileTool.execute({ path: 'note.txt', content: 'x' }, ctx)
+
+      const toolCallTurn: ScriptedTurn = {
+        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
+        stopReason: 'tool_use'
+      }
+      const turns: ScriptedTurn[] = [
+        ...Array.from({ length: MAX_TOTAL_ROUNDS }, () => toolCallTurn),
+        { text: 'Here is what was found before stopping.', stopReason: 'end_turn' } // the wrap-up call
+      ]
+
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false, confirmContinue: async () => ({ continueWorking: false }) }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'keep going' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(provider.requests).toHaveLength(MAX_TOTAL_ROUNDS + 1) // N real rounds + 1 wrap-up, no extra continued rounds
+      expect(streamEvents).toContainEqual({
+        type: 'text_delta',
+        text: 'Here is what was found before stopping.'
+      })
+    })
+
+    it('a genuine user Stop while the continue-or-stop question is pending resolves it as "stop" immediately', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      await writeFileTool.execute({ path: 'note.txt', content: 'x' }, ctx)
+
+      const toolCallTurn: ScriptedTurn = {
+        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
+        stopReason: 'tool_use'
+      }
+      const turns: ScriptedTurn[] = Array.from({ length: MAX_TOTAL_ROUNDS }, () => toolCallTurn)
+
+      const provider = new MockProvider(turns)
+      const controller = new AbortController()
+      // Resolved by confirmContinue itself the instant it's actually called
+      // — waiting on this real signal instead of guessing how many
+      // microtask ticks MAX_TOTAL_ROUNDS real rounds take to run through.
+      let reachedConfirm: () => void = () => {}
+      const confirmReached = new Promise<void>((resolve) => {
+        reachedConfirm = resolve
+      })
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        controller.signal,
+        {
+          planningEnabled: false,
+          // The returned decision promise never resolves on its own — only
+          // the Stop-click's abort race should settle it.
+          confirmContinue: () => {
+            reachedConfirm()
+            return new Promise(() => {})
+          }
+        }
+      )
+
+      const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'keep going' }] }])
+      await confirmReached
+      controller.abort()
+      await resultPromise
+      // No throw, no hang — resolving via the abort race is enough to prove
+      // this doesn't wait on a promise that (by design in this test) never settles.
     })
   })
 
@@ -2079,9 +2325,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const toolResults = events
         .filter((e) => e.kind === 'stream' && e.event.type === 'tool_result')
         .map((e) => (e as { event: { content: string } }).event.content)
-      expect(toolResults.some((c) => c.includes('Saved deck.pptx'))).toBe(true)
+      expect(toolResults.some((c) => c.includes('Saved documents/deck.pptx'))).toBe(true)
 
-      const text = await officeReadDocumentTool.execute({ path: 'deck.pptx' }, deckCtx)
+      const text = await officeReadDocumentTool.execute({ path: 'documents/deck.pptx' }, deckCtx)
       expect(text).toContain('Hello')
     })
   })

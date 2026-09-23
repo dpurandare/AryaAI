@@ -47,8 +47,8 @@ describe('office_fill_template', () => {
       { templatePath: 'templates/letter.docx', outputPath: 'out/letter-ada.docx', data: { name: 'Ada', total: '42' } },
       ctx
     )
-    expect(result).toBe('Filled template written to out/letter-ada.docx.')
-    const text = await officeReadDocumentTool.execute({ path: 'out/letter-ada.docx' }, ctx)
+    expect(result).toBe('Filled template written to documents/out/letter-ada.docx.')
+    const text = await officeReadDocumentTool.execute({ path: 'documents/out/letter-ada.docx' }, ctx)
     expect(text).toContain('Hello Ada, your total is 42.')
   })
 
@@ -61,7 +61,7 @@ describe('office_fill_template', () => {
       { templatePath: 'templates/deck.pptx', outputPath: 'out/report-acme.pptx', data: { company: 'Acme' } },
       ctx
     )
-    const text = await officeReadDocumentTool.execute({ path: 'out/report-acme.pptx' }, ctx)
+    const text = await officeReadDocumentTool.execute({ path: 'documents/out/report-acme.pptx' }, ctx)
     expect(text).toContain('Report for Acme')
   })
 

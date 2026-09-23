@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, relative } from 'node:path'
 import type { Tool } from './types'
+import { resolveNewFilePath } from './workspace-layout'
 
 const MAX_READ_BYTES = 200_000
 
@@ -46,7 +47,12 @@ export const listDirectoryTool: Tool = {
 
 export const writeFileTool: Tool = {
   name: 'write_file',
-  description: 'Create or overwrite a UTF-8 text file inside the workspace.',
+  description:
+    'Create or overwrite a UTF-8 text file inside the workspace. A brand-new file is placed ' +
+    "automatically by kind — code (.py/.js/.ts/.sh/.sql/...) under code/, an office/document format " +
+    "under documents/, an image/video/icon under resources/, anything else at the workspace root — " +
+    'regardless of the path given; the result message states the real path actually used. Overwriting ' +
+    'a file that already exists always writes back to wherever it already is, never relocates it.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -62,9 +68,9 @@ export const writeFileTool: Tool = {
   },
   async execute(input, ctx) {
     const content = String(input.content ?? '')
-    const path = ctx.workspaceGuard.assertWithinWorkspace(String(input.path ?? ''))
+    const path = resolveNewFilePath(ctx.workspaceGuard, String(input.path ?? ''))
     await mkdir(dirname(path), { recursive: true })
     await writeFile(path, content, 'utf-8')
-    return `Wrote ${content.length} characters to ${String(input.path)}.`
+    return `Wrote ${content.length} characters to ${relative(ctx.workspaceGuard.root, path)}.`
   }
 }

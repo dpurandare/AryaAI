@@ -12,9 +12,10 @@ import {
   WidthType
 } from 'docx'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, extname } from 'node:path'
+import { dirname, extname, relative } from 'node:path'
 import pptxgen from 'pptxgenjs'
 import type { Tool } from '../types'
+import { resolveNewFilePath } from '../workspace-layout'
 
 interface DocxTable {
   headers?: string[]
@@ -256,7 +257,9 @@ export const officeCreateDocumentTool: Tool = {
   name: 'office_create_document',
   description:
     'Create a new .docx or .pptx file from scratch inside the workspace — the format is chosen by the ' +
-    "path's extension. This can only build a new document, never open/edit an existing one (docx/pptxgenjs " +
+    "path's extension. Automatically placed under documents/ regardless of the path given, unless a file " +
+    'already exists at that path (then it writes back there instead) — the result names the real path ' +
+    'used. This can only build a new document, never open/edit an existing one (docx/pptxgenjs ' +
     "have no load capability for these formats — see office_fill_template for the one supported way back " +
     "into 'editing', via a user-authored template). For .docx, provide sections (each an optional heading " +
     'plus paragraphs/bullets/numbers/table). **bold**, *italic*/_italic_, and `code` inside any text field ' +
@@ -332,7 +335,7 @@ export const officeCreateDocumentTool: Tool = {
     if (extension !== 'docx' && extension !== 'pptx') {
       throw new Error(`office_create_document only supports .docx and .pptx (got "${relPath}").`)
     }
-    const absPath = ctx.workspaceGuard.assertWithinWorkspace(relPath)
+    const absPath = resolveNewFilePath(ctx.workspaceGuard, relPath)
     await mkdir(dirname(absPath), { recursive: true })
     const title = typeof input.title === 'string' ? input.title : undefined
 
@@ -344,6 +347,6 @@ export const officeCreateDocumentTool: Tool = {
       const slides = Array.isArray(input.slides) ? (input.slides as PptxSlide[]) : []
       await buildPptx(absPath, title, slides)
     }
-    return `Created ${relPath}.`
+    return `Created ${relative(ctx.workspaceGuard.root, absPath)}.`
   }
 }

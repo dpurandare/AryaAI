@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
 import type { AgentRole } from '@shared/agents'
 import { AGENT_ROLE_LABELS, AGENT_ROLES } from '@shared/agents'
@@ -12,20 +13,19 @@ export interface Agent {
   systemPrompt: string
   tools: Tool[]
   /**
-   * Opt-in, per #77 — every existing role leaves this unset and keeps
-   * today's exact behavior (full inherited conversation, shared round
-   * budget). A `true` here changes `dispatchDelegate`'s two real
-   * assumptions that are wrong for a bounded, self-contained, repeatedly-
-   * invoked-per-turn role (e.g. a future "compose one slide" specialist):
-   * the nested call gets only its own task/brief as context, not the
-   * entire parent conversation, and its own fresh round budget (see
-   * `maxRounds`) instead of sharing the parent's `MAX_TOTAL_ROUNDS` pool —
-   * decoupling the *round ceiling* only; token usage still rolls up into
-   * the parent's cumulative totals afterward, so cost accounting stays
-   * honest and complete.
+   * Opt-in, per #77 — every existing role leaves this unset. A `true` here
+   * changes only `dispatchDelegate`'s conversation scoping: the nested call
+   * gets just its own task/brief as context instead of the entire parent
+   * conversation, for a bounded, self-contained, repeatedly-invoked-per-turn
+   * role (e.g. a "compose one slide" specialist) that doesn't need — and
+   * ideally shouldn't see — everything said so far. Every delegate call,
+   * isolated or not, already gets its own fresh round budget (see
+   * `maxRounds`); token usage still always rolls up into the parent's
+   * cumulative totals, so cost accounting stays honest and complete either
+   * way.
    */
   isolated?: boolean
-  /** Only meaningful with `isolated: true` — the fresh round budget that role's own delegate calls get, capped independently of `MAX_TOTAL_ROUNDS`. Defaults to `MAX_TOTAL_ROUNDS` if omitted. */
+  /** The fresh round budget this role's own delegate calls get — every delegate call has always had its own pool, isolated or not (found live: a single turn-wide shared pool let one delegate's legitimate multi-step work starve the rest of the turn). Defaults to `MAX_TOTAL_ROUNDS` if omitted. */
   maxRounds?: number
 }
 
@@ -44,6 +44,30 @@ export interface ToolConfirmRequest {
 }
 
 /**
+ * Asked whenever a turn/delegate call's round or time budget runs out —
+ * found live: the existing wrap-up-and-summarize behavior (see runLoop's
+ * exhaustion handling) is the right *default* recovery, but for a turn that
+ * was making genuine, still-succeeding progress (a real multi-step Docker
+ * build/debug cycle, not a runaway loop), silently finalizing a summary
+ * instead of actually finishing the work isn't always what the user wants.
+ * `requestId` is fresh every time — the same turn/delegate call can hit this
+ * more than once if granted more budget and then exhausts that too.
+ */
+export interface LimitReachedRequest {
+  requestId: string
+  reason: 'rounds' | 'time'
+  roundsUsed: number
+  maxRounds: number
+  /** The specialist whose own delegate call hit the limit — undefined for the top-level turn itself. */
+  agentRole?: AgentRole
+}
+
+export interface LimitDecision {
+  /** True grants a fresh round budget (and, if the reason was 'time', a fresh wall-clock deadline) and resumes; false proceeds to the existing wrap-up-and-summarize behavior. */
+  continueWorking: boolean
+}
+
+/**
  * What `Orchestrator.run` yields. Kept decoupled from Electron/the DB (no
  * `WebContents`, no direct `insertMessage` calls) so it stays unit-testable
  * against a mocked provider later (TASKS.md #59) — the caller in
@@ -53,7 +77,19 @@ export type OrchestratorEvent =
   | { kind: 'stream'; event: StreamEvent }
   | { kind: 'message'; role: 'assistant' | 'user'; content: ContentBlock[] }
 
-const MAX_TOTAL_ROUNDS = 12
+/**
+ * The round ceiling each call to `runLoop` gets on its own — the top-level
+ * turn, and (since every delegate call now gets its own fresh pool rather
+ * than sharing one turn-wide budget — see `dispatchDelegate`) each
+ * individual delegate call too. Deliberately generous now that it's scoped
+ * per-call rather than shared: was 12 and shared turn-wide, which a real,
+ * completely legitimate session (clone a repo, read 4 files, delegate a
+ * multi-step Docker build/debug/fix cycle — nothing looping or wasted) hit
+ * mid-task, with the container not yet confirmed working. `TURN_DEADLINE_MS`
+ * remains the real backstop against a turn actually running too long; this
+ * exists mainly to catch genuine runaway loops, not to ration ordinary work.
+ */
+const MAX_TOTAL_ROUNDS = 20
 const DELEGATE_PREFIX = 'delegate_to_'
 
 /**
@@ -370,13 +406,22 @@ export class Orchestrator {
     private readonly toolContext: ToolContext,
     private readonly signal: AbortSignal,
     /**
-     * Defaults to disabled so existing/unit-test callers that construct an
-     * Orchestrator directly without scripting an extra classify turn keep
-     * working unchanged — the real app (ipc/register.ts) always passes this
-     * explicitly, computed from the persisted `planningEnabled` setting
-     * (default on there, not here).
+     * `planningEnabled` defaults to disabled so existing/unit-test callers
+     * that construct an Orchestrator directly without scripting an extra
+     * classify turn keep working unchanged — the real app (ipc/register.ts)
+     * always passes this explicitly, computed from the persisted
+     * `planningEnabled` setting (default on there, not here).
+     *
+     * `confirmContinue` defaults to absent, in which case runLoop's
+     * exhaustion handling falls straight to today's existing wrap-up
+     * behavior unchanged — every existing caller/test that doesn't pass it
+     * keeps working exactly as before; only a caller that wants the
+     * ask-before-abandoning behavior needs to provide it.
      */
-    private readonly options: { planningEnabled: boolean } = { planningEnabled: false }
+    private readonly options: {
+      planningEnabled: boolean
+      confirmContinue?: (request: LimitReachedRequest) => Promise<LimitDecision>
+    } = { planningEnabled: false }
   ) {}
 
   /**
@@ -737,6 +782,12 @@ export class Orchestrator {
       "the step(s) that gather what goes into it. If a sub-part needs no tool at all (pure reasoning, or " +
       "combining results already gathered), don't give it its own step — it belongs in the final answer " +
       'instead.\n' +
+      'A request needing code to be written AND actually run (e.g. "generate a chart image from this ' +
+      'data") is two separate steps, never one — found live: routed as a single "coding" step, it wrote ' +
+      'a Python script, tried to run it directly, hit "Unknown tool" (coding has no shell access at all), ' +
+      "and reported success anyway without the file ever existing. coding writes the script as its step; " +
+      'a separate, later "terminal-devops" step actually runs it — never assume one role can do both just ' +
+      'because the task reads as one sentence.\n' +
       'Building a slide deck/presentation is never a plan step for any role, "coding" included — ' +
       'coding has no deck-building tools at all and falls back to a much worse plain-bullet-list output ' +
       "if forced into it (found live). Deck-building only happens in the top-level's own final round, " +
@@ -1089,23 +1140,48 @@ export class Orchestrator {
       conversation.push({ role: 'user', content: resultBlocks })
     }
 
-    // Round budget exhausted — rather than discarding everything gathered
-    // so far and returning a bare "ran out of rounds" stub, make one final,
-    // tools-disabled call asking the model to synthesize a real answer
-    // from what's already in `conversation`. Found live, and worse than it
-    // first looked: `state.roundsUsed` is shared across the *entire* run,
-    // not scoped per delegate call — so once a nested plan-step delegate
-    // exhausted the budget, executePlan's own top-level synthesis call
-    // (whose whole job is weaving plan-step results into a real final
-    // answer) hit the identical exhausted counter and fell through to this
-    // same stub too, immediately, without running a single round. The
-    // user's real question had already turned up a genuinely relevant,
-    // on-topic result (a real news article) sitting untouched in
-    // `conversation` when this used to just discard it all. This wrap-up
-    // call runs unconditionally here regardless of how far over budget
+    const outOfTime = Date.now() >= state.deadlineAt
+
+    // Ask before abandoning, rather than always silently wrapping up — a
+    // no-op (askToContinue immediately resolves continueWorking: false)
+    // unless the caller opted in via options.confirmContinue, so every
+    // existing caller/test keeps today's exact unchanged behavior. Granting
+    // more budget just resets the counters and re-enters this same method
+    // via yield* — a fresh call, not a special retry path, so it goes
+    // through the exact same round loop (and can hit this exact same
+    // question again if it also runs out).
+    const continueDecision = await this.askToContinue({
+      requestId: randomUUID(),
+      reason: outOfTime ? 'time' : 'rounds',
+      roundsUsed: state.roundsUsed,
+      maxRounds,
+      agentRole
+    })
+    if (continueDecision.continueWorking) {
+      state.roundsUsed = 0
+      if (outOfTime) state.deadlineAt = Date.now() + TURN_DEADLINE_MS
+      return yield* this.runLoop(systemPrompt, tools, conversation, state, agentRole, extraToolDefs, isTopLevel, maxRounds)
+    }
+
+    // Round budget exhausted (and either no confirmContinue was configured,
+    // or the user chose to stop rather than continue) — rather than
+    // discarding everything gathered so far and returning a bare "ran out
+    // of rounds" stub, make one final, tools-disabled call asking the model
+    // to synthesize a real answer from what's already in `conversation`.
+    // Found live, and worse than it first looked: `state.roundsUsed` used
+    // to be shared across the *entire* run, not scoped per delegate call —
+    // so once a nested plan-step delegate exhausted the budget,
+    // executePlan's own top-level synthesis call (whose whole job is
+    // weaving plan-step results into a real final answer) hit the identical
+    // exhausted counter and fell through to this same stub too,
+    // immediately, without running a single round (fixed separately — see
+    // dispatchDelegate's own fresh-budget-per-call comment). The user's
+    // real question had already turned up a genuinely relevant, on-topic
+    // result (a real news article) sitting untouched in `conversation` when
+    // this used to just discard it all. This wrap-up call runs
+    // unconditionally here regardless of how far over budget
     // `state.roundsUsed` already is — every call site that hits this path
     // gets exactly one real chance to summarize instead of stub out.
-    const outOfTime = Date.now() >= state.deadlineAt
     let wrapUpText = ''
     // A one-shot call with no retry of its own, so no escalation applies — same as classifyAndPlan.
     const wrapUpTimer = this.startRoundTimer(state.deadlineAt, 0)
@@ -1179,6 +1255,28 @@ export class Orchestrator {
       const onAbort = (): void => resolve({ approved: false })
       this.signal.addEventListener('abort', onAbort, { once: true })
       this.confirmTool(request).then((decision) => {
+        this.signal.removeEventListener('abort', onAbort)
+        resolve(decision)
+      })
+    })
+  }
+
+  /**
+   * Same abort-race shape as `confirmOrAbort` above, for the same reason —
+   * a genuine Stop click while this is pending must resolve it immediately
+   * rather than leaving it to the renderer's round trip. Also the single
+   * place that applies today's exact unchanged default (no configured
+   * `confirmContinue` — the common case for every caller that hasn't opted
+   * in, including every existing test) by resolving `continueWorking: false`
+   * without ever reaching the renderer at all.
+   */
+  private askToContinue(request: LimitReachedRequest): Promise<LimitDecision> {
+    const confirmContinue = this.options.confirmContinue
+    if (!confirmContinue || this.signal.aborted) return Promise.resolve({ continueWorking: false })
+    return new Promise((resolve) => {
+      const onAbort = (): void => resolve({ continueWorking: false })
+      this.signal.addEventListener('abort', onAbort, { once: true })
+      confirmContinue(request).then((decision) => {
         this.signal.removeEventListener('abort', onAbort)
         resolve(decision)
       })
@@ -1293,25 +1391,31 @@ export class Orchestrator {
       role: 'user',
       content: [{ type: 'text', text: `[Orchestrator -> ${AGENT_ROLE_LABELS[role]}]: ${task}` }]
     }
-    // Isolated (#77): only this brief, not the whole parent conversation —
-    // and a fresh round budget, not the shared MAX_TOTAL_ROUNDS pool, so a
-    // role invoked repeatedly per turn (once per slide, say) can't
-    // collectively exhaust the budget the rest of the turn still needs.
+    // `isolated` (#77) controls conversation scoping only — this brief alone
+    // vs. the whole parent conversation. The round *budget* is always its
+    // own fresh pool per delegate call, isolated or not — found live: one
+    // shared MAX_TOTAL_ROUNDS pool across the whole turn let a single
+    // delegate's real, legitimate work (several file reads, then a
+    // multi-step Docker build/debug/fix cycle — nothing looping or wasted)
+    // exhaust the budget the rest of the turn still needed, cutting the
+    // task off mid-way with the container not yet confirmed working. Every
+    // delegate call now gets the same clean slate a role invoked repeatedly
+    // per turn (once per slide, say) already relied on for #77, and a
+    // compound plan's steps can no longer starve each other or the final
+    // synthesis round.
     const nestedConversation: Message[] = agent.isolated ? [taskMessage] : [...conversation, taskMessage]
-    const nestedState: RunState = agent.isolated
-      ? {
-          roundsUsed: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          maxOutputTokens: state.maxOutputTokens,
-          // Not reset — the fresh round *count* is per-delegate-call, but
-          // the wall-clock turn deadline is the whole turn's, shared with
-          // every other slide/delegate call in it.
-          deadlineAt: state.deadlineAt,
-          consecutiveRoundTimeouts: 0
-        }
-      : state
-    const maxRounds = agent.isolated ? (agent.maxRounds ?? MAX_TOTAL_ROUNDS) : MAX_TOTAL_ROUNDS
+    const nestedState: RunState = {
+      roundsUsed: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      maxOutputTokens: state.maxOutputTokens,
+      // Not reset — the fresh round *count* is per-delegate-call, but the
+      // wall-clock turn deadline is the whole turn's, shared with every
+      // other delegate call in it.
+      deadlineAt: state.deadlineAt,
+      consecutiveRoundTimeouts: 0
+    }
+    const maxRounds = agent.maxRounds ?? MAX_TOTAL_ROUNDS
 
     try {
       const result = yield* this.runLoop(
@@ -1324,13 +1428,11 @@ export class Orchestrator {
         false,
         maxRounds
       )
-      // The round ceiling is decoupled for an isolated call, but its real
-      // token cost isn't — roll up into the parent's cumulative totals so
-      // session_usage/the context meter still see the true full cost.
-      if (agent.isolated) {
-        state.inputTokens += nestedState.inputTokens
-        state.outputTokens += nestedState.outputTokens
-      }
+      // The round ceiling is its own fresh pool per delegate call, but real
+      // token cost never is — roll up into the parent's cumulative totals
+      // so session_usage/the context meter still see the true full cost.
+      state.inputTokens += nestedState.inputTokens
+      state.outputTokens += nestedState.outputTokens
       return { content: result.text || '(no response)', isError: result.isError }
     } catch (err) {
       return { content: err instanceof Error ? err.message : String(err), isError: true }

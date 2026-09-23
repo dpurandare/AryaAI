@@ -29,7 +29,7 @@ describe('office_read_document', () => {
       { path: 'report.docx', title: 'Q3 Report', sections: [{ heading: 'Summary', paragraphs: ['All good.'], bullets: ['Item one'] }] },
       ctx
     )
-    const text = await officeReadDocumentTool.execute({ path: 'report.docx' }, ctx)
+    const text = await officeReadDocumentTool.execute({ path: 'documents/report.docx' }, ctx)
     expect(text).toContain('Q3 Report')
     expect(text).toContain('Summary')
     expect(text).toContain('All good.')
@@ -41,7 +41,7 @@ describe('office_read_document', () => {
       { path: 'deck.pptx', title: 'Kickoff', slides: [{ title: 'Agenda', bullets: ['Intro', 'Roadmap'] }] },
       ctx
     )
-    const text = await officeReadDocumentTool.execute({ path: 'deck.pptx' }, ctx)
+    const text = await officeReadDocumentTool.execute({ path: 'documents/deck.pptx' }, ctx)
     expect(text).toContain('Slide 1:')
     expect(text).toContain('Kickoff')
     expect(text).toContain('Slide 2:')

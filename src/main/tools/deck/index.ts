@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, relative } from 'node:path'
 import pptxgen from 'pptxgenjs'
 import type { Tool, ToolContext } from '../types'
+import { resolveNewFilePath } from '../workspace-layout'
 import { applyElement, validateElement, type SlideElementInput } from './elements'
 
 function requireDecks(ctx: ToolContext): Map<string, { pres: pptxgen; slides: pptxgen.Slide[] }> {
@@ -125,7 +126,9 @@ export const pptxSaveDeckTool: Tool = {
   description:
     'Write the in-progress deck to a real .pptx file in the workspace and discard it from memory (deckId ' +
     'only needs to be given if more than one deck is in progress). Call this once, after every planned ' +
-    'slide has been composed.',
+    'slide has been composed. A brand-new file is placed under documents/ automatically regardless of the ' +
+    'path given, unless a file already exists there (then it writes back to that existing location instead) ' +
+    '— the result names the real path used.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -141,10 +144,11 @@ export const pptxSaveDeckTool: Tool = {
   async execute(input, ctx) {
     const deck = requireDeck(ctx, typeof input.deckId === 'string' ? input.deckId : undefined)
     const relPath = String(input.path ?? '')
-    const absPath = ctx.workspaceGuard.assertWithinWorkspace(relPath)
+    const absPath = resolveNewFilePath(ctx.workspaceGuard, relPath)
     await mkdir(dirname(absPath), { recursive: true })
     await deck.pres.writeFile({ fileName: absPath })
     requireDecks(ctx).delete(deck.id)
-    return `Saved ${relPath} (${deck.slides.length} slide(s)).`
+    const savedRelPath = relative(ctx.workspaceGuard.root, absPath)
+    return `Saved ${savedRelPath} (${deck.slides.length} slide(s)).`
   }
 }

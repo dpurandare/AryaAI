@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -51,6 +51,43 @@ describe('file-ops tools', () => {
       expect(writeFileTool.describe?.({ path: 'note.txt', content: 'hello' })).toBe(
         'Write 5 characters to "note.txt"'
       )
+    })
+
+    it('places a brand-new code file under code/ regardless of the path given, and says so in the result', async () => {
+      const result = await writeFileTool.execute({ path: 'generate_chart.py', content: 'print(1)' }, ctx)
+      expect(result).toContain('code/generate_chart.py')
+      expect(await readFile(join(root, 'code', 'generate_chart.py'), 'utf-8')).toBe('print(1)')
+    })
+
+    it('preserves a model-given subfolder under the managed folder rather than flattening it', async () => {
+      await writeFileTool.execute({ path: 'scripts/build.sh', content: '#!/bin/sh' }, ctx)
+      expect(await readFile(join(root, 'code', 'scripts', 'build.sh'), 'utf-8')).toBe('#!/bin/sh')
+    })
+
+    it('does not double-nest a path that already explicitly targets the managed folder', async () => {
+      await writeFileTool.execute({ path: 'code/already-there.py', content: 'x' }, ctx)
+      expect(await readFile(join(root, 'code', 'already-there.py'), 'utf-8')).toBe('x')
+    })
+
+    it('an unclassified extension stays at the given (root-relative) path, unaffected', async () => {
+      const result = await writeFileTool.execute({ path: 'note.txt', content: 'hello' }, ctx)
+      expect(result).toBe('Wrote 5 characters to note.txt.')
+    })
+
+    it('overwriting a code file that already exists elsewhere writes back there, not into code/', async () => {
+      // Found live risk: reclassifying every write, not just creation, would
+      // silently create a second copy in a different folder the moment an
+      // existing file (e.g. one the user placed themselves, pre-dating this
+      // convention) got overwritten — set up directly via fs, not via
+      // write_file, so this really is "already there" rather than something
+      // the tool itself already redirected.
+      await mkdir(join(root, 'legacy'), { recursive: true })
+      await writeFile(join(root, 'legacy', 'old_script.py'), 'v1', 'utf-8')
+
+      const result = await writeFileTool.execute({ path: 'legacy/old_script.py', content: 'v2' }, ctx)
+      expect(result).toContain('legacy/old_script.py')
+      expect(await readFile(join(root, 'legacy', 'old_script.py'), 'utf-8')).toBe('v2')
+      await expect(readFile(join(root, 'code', 'legacy', 'old_script.py'), 'utf-8')).rejects.toThrow()
     })
   })
 

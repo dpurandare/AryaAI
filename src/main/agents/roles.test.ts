@@ -75,4 +75,18 @@ describe('createAgents', () => {
     expect(agents.get('planning')?.systemPrompt).not.toContain(note)
     expect(agents.get('page-creator')?.systemPrompt).not.toContain(note)
   })
+
+  it("tells coding plainly it has no shell/execution access, and not to report a task done just because it wrote code that would produce the result", () => {
+    // Found live: asked to generate a chart image, coding wrote a Python
+    // script, tried shell_execute, got "Unknown tool" (coding's tool list
+    // has no execution capability at all — that's terminal-devops only),
+    // and then reported success anyway ("I have created a script to
+    // generate and save the chart") without the chart ever actually
+    // existing yet.
+    const agents = createAgents(new ToolRegistry())
+    const codingPrompt = agents.get('coding')?.systemPrompt ?? ''
+    expect(codingPrompt).toMatch(/no shell\/execution access at all/i)
+    expect(codingPrompt).toMatch(/delegate_to_terminal_devops/i)
+    expect(agents.get('coding')?.tools.map((t) => t.name)).not.toContain('shell_execute')
+  })
 })
