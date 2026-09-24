@@ -7,6 +7,7 @@ import { evaluateClassifyGate, shouldSampleForCalibration, type ClassifyGateVerd
 import { CONTEXT_BUDGET_FRACTION, overheadTokens, resolveContextWindow } from '../context/prepare-context'
 import { isRateLimitError, retryAfterMsFromError } from '../providers/rate-limit'
 import type { ModelProvider, ToolDefinition } from '../providers/types'
+import { SHOW_MEDIA_MARKER, type ShowMediaPayload } from '../tools/show-media'
 import type { Tool, ToolContext } from '../tools/types'
 
 export interface Agent {
@@ -443,6 +444,7 @@ function tagEvent(event: StreamEvent, agentRole: AgentRole | undefined): StreamE
   if (event.type === 'tool_use_start') return { ...event, agentRole }
   if (event.type === 'status') return { ...event, agentRole }
   if (event.type === 'warning') return { ...event, agentRole }
+  if (event.type === 'image') return { ...event, agentRole }
   return event
 }
 
@@ -1536,6 +1538,14 @@ export class Orchestrator {
           const result = await this.dispatchTool(call.id, call.name, input, toolByName)
           content = result.content
           isError = result.isError
+          // TASKS.md #82 — a real `image` block, never sent back to the
+          // model (see ContentBlock's own doc comment), alongside the
+          // short tool_result text above that the model does see.
+          if (result.image) {
+            const imageBlock: ContentBlock = { type: 'image', toolUseId: call.id, ...result.image, agentRole }
+            resultBlocks.push(imageBlock)
+            yield { kind: 'stream', event: tagEvent({ type: 'image', toolUseId: call.id, ...result.image }, agentRole) }
+          }
         }
 
         resultBlocks.push({ type: 'tool_result', toolUseId: call.id, content, isError })
@@ -1704,7 +1714,7 @@ export class Orchestrator {
     name: string,
     input: Record<string, unknown>,
     toolByName: Map<string, Tool>
-  ): Promise<{ content: string; isError: boolean }> {
+  ): Promise<{ content: string; isError: boolean; image?: { path: string; mimeType: string; dataBase64: string } }> {
     const tool = toolByName.get(name)
     if (!tool) {
       return { content: `Unknown tool "${name}".`, isError: true }
@@ -1733,6 +1743,27 @@ export class Orchestrator {
 
     try {
       const content = await this.executeWithTimeout(tool, input)
+      if (name === 'show_media') {
+        // TASKS.md #82 — show_media signals its real image payload via a
+        // JSON marker (see tools/show-media.ts) rather than widening the
+        // `Tool.execute(): Promise<string>` contract every other tool
+        // implements, just for this one. Split here into a real `image`
+        // block (never sent back to the model — see ContentBlock's own doc
+        // comment) plus a short, honest tool_result text the model does see.
+        try {
+          const parsed = JSON.parse(content) as Partial<ShowMediaPayload>
+          if (parsed[SHOW_MEDIA_MARKER] && parsed.path && parsed.mimeType && parsed.dataBase64) {
+            return {
+              content: `Displayed ${parsed.path} to the user.`,
+              isError: false,
+              image: { path: parsed.path, mimeType: parsed.mimeType, dataBase64: parsed.dataBase64 }
+            }
+          }
+        } catch {
+          // Malformed marker payload — fall through and surface the raw
+          // content as an ordinary (unusual, but not fatal) tool result.
+        }
+      }
       return { content, isError: false }
     } catch (err) {
       return { content: err instanceof Error ? err.message : String(err), isError: true }

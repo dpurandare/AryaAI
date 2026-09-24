@@ -14,6 +14,8 @@
     input: string
     result?: string
     isError?: boolean
+    /** TASKS.md #82 — a `show_media` call's real payload, carried on the same tool segment rather than as a separate one; never sent to any provider, display-only. */
+    image?: { path: string; mimeType: string; dataBase64: string }
   }
 
   interface DisplaySegment {
@@ -326,6 +328,17 @@
                   </span>
                 {/if}
               </svelte:element>
+              {#if segment.toolCall.image}
+                <!-- TASKS.md #82 — always shown regardless of the block's own
+                     collapsed/expanded state: showing the image *is* the
+                     point of this tool, so it shouldn't hide behind the same
+                     toggle built for noisy raw tool output. -->
+                <img
+                  class="tool-image"
+                  src={`data:${segment.toolCall.image.mimeType};base64,${segment.toolCall.image.dataBase64}`}
+                  alt={segment.toolCall.image.path}
+                />
+              {/if}
               {#if !isDelegate}
                 {#if isResolved}
                   {#if showFull}
@@ -679,6 +692,15 @@
     font-family: ui-monospace, monospace;
     white-space: pre-wrap;
     color: var(--text-muted);
+  }
+  .tool-image {
+    display: block;
+    max-width: 100%;
+    max-height: 420px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    margin-top: 0.3rem;
+    object-fit: contain;
   }
   .tool-result.pending {
     font-style: italic;

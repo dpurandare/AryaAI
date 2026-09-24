@@ -136,4 +136,15 @@ describe('createAgents', () => {
       expect(names.filter((n) => n === 'web_search')).toHaveLength(1)
     })
   })
+
+  it('gives show_media (TASKS.md #82) to coding and terminal-devops — the roles that actually generate images — not to every role', () => {
+    const registry = new ToolRegistry()
+    registry.register(fakeTool('show_media'))
+    const agents = createAgents(registry)
+
+    expect(agents.get('coding')?.tools.map((t) => t.name)).toContain('show_media')
+    expect(agents.get('terminal-devops')?.tools.map((t) => t.name)).toContain('show_media')
+    expect(agents.get('research')?.tools.map((t) => t.name)).not.toContain('show_media')
+    expect(agents.get('data')?.tools.map((t) => t.name)).not.toContain('show_media')
+  })
 })

@@ -178,7 +178,10 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         "plainly in your result that it still needs to be run and hand that back — the orchestrator will " +
         'delegate_to_terminal_devops for the execution step; never assume that will happen invisibly, and ' +
         "never claim the task is complete until you've verified the actual output exists (e.g. read the " +
-        "file back or list the directory), not just that you wrote code you believe would create it.",
+        'file back or list the directory), not just that you wrote code you believe would create it. Once ' +
+        'an image file genuinely exists (e.g. a generated chart), call show_media with its path so the ' +
+        "user actually sees it in the chat, rather than just naming the file and leaving them to go open " +
+        'it themselves.',
       get tools() {
         return [
           ...pickTools(registry, [
@@ -191,7 +194,8 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
             'office_create_document',
             'office_fill_template',
             'xlsx_read',
-            'xlsx_write'
+            'xlsx_write',
+            'show_media'
           ]),
           ...mcpTools(registry)
         ]
@@ -207,9 +211,14 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'on this machine; if a CLI is missing, say so plainly rather than guessing at its output. Call ' +
         'the tool directly to run a command — the app already shows the user a confirmation dialog with ' +
         "the exact command before anything executes, so don't ask for permission in chat first or " +
-        'describe what a command would do instead of just running it.',
+        'describe what a command would do instead of just running it. If a command you ran produces an ' +
+        "image file (e.g. a chart script's output), call show_media with its path so the user actually " +
+        'sees it, not just its filename.',
       get tools() {
-        return [...pickTools(registry, ['shell_execute', 'aws_cli', 'azure_cli', 'gcloud_cli']), ...mcpTools(registry)]
+        return [
+          ...pickTools(registry, ['shell_execute', 'aws_cli', 'azure_cli', 'gcloud_cli', 'show_media']),
+          ...mcpTools(registry)
+        ]
       }
     },
     {

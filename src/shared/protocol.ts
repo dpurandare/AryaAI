@@ -55,6 +55,20 @@ export type ContentBlock =
        */
       failureCategory?: 'communication_failure' | 'stopped_by_user' | 'no_answer'
     }
+  /**
+   * TASKS.md #82 — a `show_media` tool call's actual payload, split out
+   * into its own block rather than living in `tool_result`'s `content`
+   * string: the base64 bytes must never be sent back to the model (every
+   * provider's own wire-format mapping drops an `image` block entirely,
+   * the same convention `warning` already uses) — a display-only feature
+   * has no reason to spend real tokens re-sending the encoded image on
+   * every later request. `toolUseId` links it back to the `show_media`
+   * call that produced it, same as `tool_result`. Scope settled deliberately
+   * narrow for a first pass (see `tools/show-media.ts`'s own doc comment):
+   * images only, inline base64 (not a served URL) — video is a separate,
+   * later item once this mechanism is proven.
+   */
+  | { type: 'image'; toolUseId: string; path: string; mimeType: string; dataBase64: string; agentRole?: AgentRole }
 
 export interface Message {
   role: 'user' | 'assistant'
@@ -67,6 +81,8 @@ export type StreamEvent =
   | { type: 'tool_use_delta'; id: string; partialInput: string }
   /** Synthesized by the main process once a tool call finishes running — not emitted by providers. */
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
+  /** Live counterpart of `ContentBlock`'s `image` — see its own doc comment. Streamed once, alongside the `show_media` call's own `tool_result`. */
+  | { type: 'image'; toolUseId: string; path: string; mimeType: string; dataBase64: string; agentRole?: AgentRole }
   /** `agentRole` set means this is a nested specialist's own round ending, not the whole exchange — the renderer must not treat it as final. */
   | {
       type: 'message_stop'

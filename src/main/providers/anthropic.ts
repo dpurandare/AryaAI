@@ -14,7 +14,7 @@ function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
           if (block.type === 'tool_result') {
             return { type: 'tool_result', tool_use_id: block.toolUseId, content: block.content, is_error: block.isError }
           }
-          return null // 'warning' — a human-facing notice, never sent back to the model
+          return null // 'warning'/'image' — human-facing only, never sent back to the model (see their own doc comments in protocol.ts)
         })
         .filter((b): b is Anthropic.ContentBlockParam => b !== null)
     }))

@@ -24,6 +24,11 @@ export function toOpenAIMessages(
 
   for (const m of messages) {
     if (m.role === 'user') {
+      // Only `tool_result` and `text` are ever mapped for a user-role
+      // message — an `image` block (TASKS.md #82) rides alongside a
+      // `show_media` call's own `tool_result` in the same message but is
+      // never selected here, same as `warning` never was; both are
+      // human-facing only (see their own doc comments in protocol.ts).
       for (const block of m.content) {
         if (block.type === 'tool_result') {
           result.push({ role: 'tool', tool_call_id: block.toolUseId, content: block.content })

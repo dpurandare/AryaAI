@@ -9,6 +9,7 @@ import { apiCreateConnectionTool, dbCreateConnectionTool, mcpCreateConnectionToo
 import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from './deck'
 import { listEmailConnectionsTool, sendEmailTool } from './email'
 import { parseCsvTool, parseHtmlTool, parseJsonTool, parseXmlTool } from './data-formats'
+import { showMediaTool } from './show-media'
 import {
   dbExecuteSqlTool,
   dbIntrospectSchemaTool,
@@ -101,5 +102,6 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(pptxSaveDeckTool)
   registry.register(listEmailConnectionsTool)
   registry.register(sendEmailTool)
+  registry.register(showMediaTool)
   return registry
 }

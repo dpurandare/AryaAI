@@ -38,7 +38,7 @@ function toGeminiContents(messages: Message[]): Content[] {
               }
             }
           }
-          return null // 'warning' — a human-facing notice, never sent back to the model
+          return null // 'warning'/'image' — human-facing only, never sent back to the model (see their own doc comments in protocol.ts)
         })
         .filter((p): p is Part => p !== null)
       return { role: m.role === 'assistant' ? ('model' as const) : ('user' as const), parts }

@@ -134,6 +134,43 @@ describe('OpenAIProvider', () => {
     ])
   })
 
+  it('never sends a warning or image block back to the model — both are human-facing only (TASKS.md #82/#102)', async () => {
+    mockCreate.mockResolvedValue(fakeStream([]))
+    const provider = new OpenAIProvider('key')
+    const messages: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'show me chart.png' }] },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'call_1', name: 'show_media', input: { path: 'chart.png' } }]
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'image', toolUseId: 'call_1', path: 'chart.png', mimeType: 'image/png', dataBase64: 'aGVsbG8=' },
+          { type: 'tool_result', toolUseId: 'call_1', content: 'Displayed chart.png to the user.' }
+        ]
+      },
+      { role: 'assistant', content: [{ type: 'warning', message: 'context trimmed' }] }
+    ]
+
+    await collect(provider.stream({ model: 'gpt-4o', messages, maxTokens: 100 }))
+
+    const sentMessages = mockCreate.mock.calls[0][0].messages
+    // The warning-only assistant message is dropped entirely (no empty
+    // turn); the tool_result survives, but the image block never appears
+    // anywhere in what's sent — no data: URI, no base64 payload at all.
+    expect(sentMessages).toEqual([
+      { role: 'user', content: 'show me chart.png' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'show_media', arguments: '{"path":"chart.png"}' } }]
+      },
+      { role: 'tool', tool_call_id: 'call_1', content: 'Displayed chart.png to the user.' }
+    ])
+    expect(JSON.stringify(sentMessages)).not.toContain('aGVsbG8=')
+  })
+
   it('lists model ids', async () => {
     mockList.mockResolvedValue({ data: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }] })
     const provider = new OpenAIProvider('key')

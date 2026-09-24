@@ -2,7 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
+    <!--
+      img-src 'self' data: — added for TASKS.md #82 (show_media's inline
+      base64 image display). Confirmed necessary via real live
+      verification, not assumed: without an explicit img-src, a `data:`
+      URI falls back to default-src 'self', which does NOT cover the
+      `data:` scheme (a different "source" under CSP rules) — an <img>
+      with a data: src silently failed to decode (naturalWidth/Height 0)
+      in a real Electron launch until this was added. Scoped to img-src
+      only; script-src/style-src/default-src stay exactly as locked down
+      as before.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sachivji</title>
   </head>

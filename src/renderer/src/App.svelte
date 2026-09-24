@@ -20,6 +20,8 @@
     input: string
     result?: string
     isError?: boolean
+    /** TASKS.md #82 — a `show_media` call's real payload, carried on the same tool segment rather than as a separate one; never sent to any provider (see protocol.ts's `image` ContentBlock doc comment), display-only. */
+    image?: { path: string; mimeType: string; dataBase64: string }
   }
 
   /**
@@ -179,15 +181,21 @@
     const toolSegmentsById = new Map<string, DisplaySegment>()
 
     for (const m of records) {
+      // An `image` block (TASKS.md #82) rides alongside its `show_media`
+      // call's own `tool_result` in the same synthetic message — still a
+      // continuation of the round that produced it, not a new turn.
       const isPureToolResult =
-        m.content.length > 0 && m.content.every((b) => b.type === 'tool_result')
+        m.content.length > 0 && m.content.every((b) => b.type === 'tool_result' || b.type === 'image')
       if (isPureToolResult) {
         for (const b of m.content) {
-          if (b.type !== 'tool_result') continue
+          if (b.type !== 'tool_result' && b.type !== 'image') continue
           const seg = toolSegmentsById.get(b.toolUseId)
-          if (seg?.toolCall) {
+          if (!seg?.toolCall) continue
+          if (b.type === 'tool_result') {
             seg.toolCall.result = b.content
             seg.toolCall.isError = b.isError
+          } else {
+            seg.toolCall.image = { path: b.path, mimeType: b.mimeType, dataBase64: b.dataBase64 }
           }
         }
         continue
@@ -336,6 +344,9 @@
           call.result = event.content
           call.isError = event.isError
         }
+      } else if (event.type === 'image') {
+        const seg = msg.segments.find((s) => s.kind === 'tool' && s.toolCall?.id === event.toolUseId)
+        if (seg?.toolCall) seg.toolCall.image = { path: event.path, mimeType: event.mimeType, dataBase64: event.dataBase64 }
       } else if (event.type === 'usage') {
         // Safe to sum: the orchestrator emits exactly one clean usage event
         // per round (see orchestrator.ts's roundUsage handling), not the raw

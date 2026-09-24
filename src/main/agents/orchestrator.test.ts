@@ -10,6 +10,7 @@ import { ToolRegistry } from '../tools/registry'
 import { readFileTool, listDirectoryTool, writeFileTool } from '../tools/file-ops'
 import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from '../tools/deck'
 import { officeReadDocumentTool } from '../tools/office-docs/read'
+import { showMediaTool } from '../tools/show-media'
 import type { ToolContext } from '../tools/types'
 import { createAgents } from './roles'
 import { Orchestrator, type Agent, type ConfirmDecision, type OrchestratorEvent, type ToolConfirmRequest } from './orchestrator'
@@ -2667,6 +2668,97 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // its overhead probe still happen (2 calls) — refitConversationToBudget
       // itself must add zero more for a conversation this small.
       expect(provider.countTokensCalls).toHaveLength(2)
+    })
+  })
+
+  describe('show_media — inline image display (TASKS.md #82)', () => {
+    it("splits a show_media result into a separate, real image block plus a short tool_result text — never the raw base64 as the model-visible content", async () => {
+      const pngBytes = Buffer.from(
+        '89504e470d0a1a0a0000000d494844520000000100000001080600000' +
+          '01f15c4890000000a49444154789c626001000000050001fce34d970000000049454e44ae426082',
+        'hex'
+      )
+      await writeFile(join(root, 'chart.png'), pngBytes)
+
+      const registry = buildRegistry()
+      registry.register(showMediaTool)
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_show', name: 'show_media', input: { path: 'chart.png' } }], stopReason: 'tool_use' },
+        { text: 'Here is the chart.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'show me the chart' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      const imageEvent = streamEvents.find((e) => e.type === 'image')
+      expect(imageEvent).toMatchObject({
+        type: 'image',
+        toolUseId: 'call_show',
+        path: 'chart.png',
+        mimeType: 'image/png'
+      })
+      expect((imageEvent as { dataBase64: string }).dataBase64).toBe(pngBytes.toString('base64'))
+
+      // The tool_result the model actually sees is a short confirmation,
+      // never the raw image bytes — a display-only feature has no reason to
+      // spend real tokens re-sending an encoded image on every later request.
+      const toolResultEvent = streamEvents.find((e) => e.type === 'tool_result')
+      expect(toolResultEvent).toMatchObject({ type: 'tool_result', toolUseId: 'call_show', isError: false })
+      const resultContent = (toolResultEvent as { content: string }).content
+      expect(resultContent).toBe('Displayed chart.png to the user.')
+      expect(resultContent.length).toBeLessThan(200)
+
+      // What's actually sent to the (mocked) provider on the next round
+      // must not carry the image block at all — confirmed against the real
+      // per-provider wire-format mapping separately (anthropic.test.ts /
+      // openai-compatible), this just confirms the block exists in the
+      // *persisted* conversation for the UI to use.
+      const persistedResultMessage = events.find(
+        (e) => e.kind === 'message' && e.role === 'user' && e.content.some((c) => c.type === 'image')
+      )
+      expect(persistedResultMessage).toBeDefined()
+    })
+
+    it('a genuinely failed show_media call (unsupported file type) surfaces as an ordinary tool error, no image block emitted', async () => {
+      await writeFile(join(root, 'clip.mp4'), 'x')
+      const registry = buildRegistry()
+      registry.register(showMediaTool)
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_show', name: 'show_media', input: { path: 'clip.mp4' } }], stopReason: 'tool_use' },
+        { text: "That file type isn't supported.", stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'show me clip.mp4' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(streamEvents.some((e) => e.type === 'image')).toBe(false)
+      const toolResultEvent = streamEvents.find((e) => e.type === 'tool_result')
+      expect(toolResultEvent).toMatchObject({ type: 'tool_result', isError: true })
+      expect((toolResultEvent as { content: string }).content).toMatch(/not a supported image type/i)
     })
   })
 

@@ -149,6 +149,37 @@ describe('AnthropicProvider', () => {
     ])
   })
 
+  it('never sends a warning or image block back to the model — both are human-facing only (TASKS.md #82/#102)', async () => {
+    mockStream.mockReturnValue(fakeStream([]))
+    const provider = new AnthropicProvider('key')
+    const messages: Message[] = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'call_1', name: 'show_media', input: { path: 'chart.png' } }]
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'image', toolUseId: 'call_1', path: 'chart.png', mimeType: 'image/png', dataBase64: 'aGVsbG8=' },
+          { type: 'tool_result', toolUseId: 'call_1', content: 'Displayed chart.png to the user.' }
+        ]
+      },
+      { role: 'assistant', content: [{ type: 'warning', message: 'context trimmed' }] }
+    ]
+
+    await collect(provider.stream({ model: 'claude-sonnet-5', messages, maxTokens: 100 }))
+
+    const sent = mockStream.mock.calls[0][0].messages
+    // The warning-only assistant message is dropped entirely (empty
+    // content); the tool_result survives, but the image block never
+    // appears anywhere in what's sent — no base64 payload at all.
+    expect(sent).toEqual([
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'show_media', input: { path: 'chart.png' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'Displayed chart.png to the user.', is_error: undefined }] }
+    ])
+    expect(JSON.stringify(sent)).not.toContain('aGVsbG8=')
+  })
+
   it('lists model ids', async () => {
     mockList.mockResolvedValue({ data: [{ id: 'claude-sonnet-5' }, { id: 'claude-fable-5-1' }] })
     const provider = new AnthropicProvider('key')

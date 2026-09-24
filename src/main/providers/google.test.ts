@@ -194,6 +194,36 @@ describe('GoogleProvider', () => {
     ])
   })
 
+  it('never sends a warning or image block back to the model — both are human-facing only (TASKS.md #82/#102)', async () => {
+    mockGenerateContentStream.mockResolvedValue(fakeStream([]))
+    const provider = new GoogleProvider('key')
+    const messages: Message[] = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'show_media', input: { path: 'chart.png' } }] },
+      {
+        role: 'user',
+        content: [
+          { type: 'image', toolUseId: 'call_1', path: 'chart.png', mimeType: 'image/png', dataBase64: 'aGVsbG8=' },
+          { type: 'tool_result', toolUseId: 'call_1', content: 'Displayed chart.png to the user.' }
+        ]
+      },
+      { role: 'assistant', content: [{ type: 'warning', message: 'context trimmed' }] }
+    ]
+
+    await collect(provider.stream({ model: 'gemini-flash-latest', messages, maxTokens: 100 }))
+
+    const params = mockGenerateContentStream.mock.calls[0][0]
+    // The warning-only assistant message maps to an empty `parts` array
+    // (there's no filter dropping the whole message the way OpenAI's/
+    // Anthropic's mapping does — confirmed as existing behavior, not
+    // something this change alters); the real point here is the image
+    // block never appears anywhere in what's sent, under any key.
+    expect(JSON.stringify(params.contents)).not.toContain('aGVsbG8=')
+    expect(params.contents[1]).toEqual({
+      role: 'user',
+      parts: [{ functionResponse: { id: 'call_1', name: 'show_media', response: { output: 'Displayed chart.png to the user.' } } }]
+    })
+  })
+
   it('wraps an error tool_result under the error key', async () => {
     mockGenerateContentStream.mockResolvedValue(fakeStream([]))
     const provider = new GoogleProvider('key')

@@ -55,9 +55,9 @@ export function trimToolResults(messages: Message[]): Message[] {
   }))
 }
 
-/** A pure-tool_result message is the continuation of the turn before it (a tool round-trip), not a new one — same convention already used by the renderer (App.svelte's mapMessagesToDisplay). */
+/** A pure-tool_result message is the continuation of the turn before it (a tool round-trip), not a new one — same convention already used by the renderer (App.svelte's mapMessagesToDisplay). An `image` block (TASKS.md #82) rides alongside its `show_media` call's own `tool_result` in the same message, so it counts as a continuation too — never sent to the model either way (see toOpenAIMessages/toAnthropicMessages/Google's own mapping), but must not be misread as the start of a new turn for trimming purposes. */
 function isPureToolResult(m: Message): boolean {
-  return m.content.length > 0 && m.content.every((b) => b.type === 'tool_result')
+  return m.content.length > 0 && m.content.every((b) => b.type === 'tool_result' || b.type === 'image')
 }
 
 /** Groups messages into complete turns (one real user message through the next), never splitting a tool_use/tool_result pair — the API rejects a dangling one. */
