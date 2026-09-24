@@ -1,6 +1,7 @@
 import { AnthropicProvider } from './anthropic'
 import { GoogleProvider } from './google'
 import { GroqProvider } from './groq'
+import { MistralProvider } from './mistral'
 import { OllamaProvider } from './ollama'
 import { OpenAIProvider } from './openai'
 import { ProviderRegistry } from './registry'
@@ -43,15 +44,23 @@ export function createDefaultProviderRegistry(): ProviderRegistry {
     supportsEmbeddings: false,
     create: (apiKey) => new GroqProvider(apiKey!)
   })
+  registry.register({
+    id: 'mistral',
+    displayName: 'Mistral',
+    requiresApiKey: true,
+    supportsEmbeddings: true,
+    create: (apiKey) => new MistralProvider(apiKey!)
+  })
   return registry
 }
 
 /**
  * The only way anything in the app obtains an EmbeddingProvider — scoped to
- * the closed set of providers that actually implement one, so callers never
- * need an `if (provider.embed)` guard. Throws for anything outside that set;
- * in practice unreachable, since Settings only ever lets the user pick a
- * `supportsEmbeddings` provider for this role in the first place.
+ * the closed set of providers that actually implement one (openai/google/
+ * ollama/mistral), so callers never need an `if (provider.embed)` guard.
+ * Throws for anything outside that set; in practice unreachable, since
+ * Settings only ever lets the user pick a `supportsEmbeddings` provider for
+ * this role in the first place.
  */
 export function getEmbeddingProvider(providerId: string, apiKey?: string): EmbeddingProvider {
   switch (providerId) {
@@ -61,6 +70,8 @@ export function getEmbeddingProvider(providerId: string, apiKey?: string): Embed
       return new GoogleProvider(apiKey!)
     case 'ollama':
       return new OllamaProvider()
+    case 'mistral':
+      return new MistralProvider(apiKey!)
     default:
       throw new Error(`"${providerId}" does not support embeddings.`)
   }
