@@ -3,6 +3,8 @@ import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
 import type { AgentRole } from '@shared/agents'
 import { AGENT_ROLE_LABELS, AGENT_ROLES } from '@shared/agents'
 import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
+import { evaluateClassifyGate, shouldSampleForCalibration, type ClassifyGateVerdict } from './classify-gate'
+import { CONTEXT_BUDGET_FRACTION, overheadTokens, resolveContextWindow } from '../context/prepare-context'
 import type { ModelProvider, ToolDefinition } from '../providers/types'
 import type { Tool, ToolContext } from '../tools/types'
 
@@ -283,6 +285,98 @@ function collapseDuplicateToolResults(conversation: Message[], toolByName: Reado
   }))
 }
 
+/** Shared by `runLoop` (what's actually sent to the provider) and `resolveMaxOutputTokens` (what overhead to budget for). */
+function toToolDefs(tools: Tool[]): ToolDefinition[] {
+  return tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
+}
+
+/** The latest message's own plain text, for the classify-gate heuristic (classify-gate.ts) — ignores tool_use/tool_result/warning blocks, same as a user's actual typed request would read. */
+function latestMessageText(conversation: Message[]): string {
+  const latest = conversation[conversation.length - 1]
+  if (!latest) return ''
+  return latest.content
+    .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+}
+
+/**
+ * A cheap, local, provider-independent stand-in for a real `countTokens`
+ * call — deliberately conservative (an undercount of real tokens-per-char
+ * only ever makes this *more* likely to trigger the real check below, never
+ * less) so `refitConversationToBudget` can skip the real check entirely on
+ * the overwhelming majority of ordinary rounds, where the conversation is
+ * nowhere near the budget. Never used as the actual trim decision once the
+ * real check has run — only to gate whether that real check (a genuine
+ * network call for Anthropic/Google) happens at all, and to decide how many
+ * results to collapse without re-calling the provider after each one.
+ */
+const ROUGH_CHARS_PER_TOKEN = 3
+
+function roughTokenEstimate(conversation: Message[]): number {
+  let chars = 0
+  for (const m of conversation) {
+    for (const b of m.content) {
+      if (b.type === 'text') chars += b.text.length
+      else if (b.type === 'tool_result') chars += b.content.length
+      else if (b.type === 'tool_use') chars += b.name.length + JSON.stringify(b.input).length
+    }
+  }
+  return Math.ceil(chars / ROUGH_CHARS_PER_TOKEN)
+}
+
+const CONTEXT_FIT_OMITTED_MARKER =
+  "[Earlier tool result omitted to fit this round in the model's context window — see the tool_use input " +
+  'above for what was tried; the original result is still too large together with everything else gathered ' +
+  'so far this turn.]'
+
+/**
+ * The actual mid-turn collapse `refitConversationToBudget` falls back to —
+ * same shape as `capRepeatedToolResults`' own collapse, but ordered purely
+ * by conversation position (oldest first) rather than grouped per tool name,
+ * since the goal here is "make this fit," not "cap repetition of one tool."
+ * Only touches a non-mutating tool's result (a completed mutation is a real
+ * side effect worth remembering in full, same reasoning as
+ * `capRepeatedToolResults`) that isn't already collapsed (skips anything
+ * already short — cheaper than string-comparing every possible placeholder
+ * marker, and an already-small result was never the problem). `fits` is
+ * called with the cheap rough estimator between each collapse, not a real
+ * `countTokens` call, so this stays a single real API call total even when
+ * several results need collapsing.
+ */
+function collapseOldestToolResultsToFit(
+  conversation: Message[],
+  toolByName: ReadonlyMap<string, Tool>,
+  fits: (messages: Message[]) => boolean
+): Message[] {
+  const toolNameByUseId = new Map<string, string>()
+  for (const m of conversation) {
+    for (const b of m.content) {
+      if (b.type === 'tool_use') toolNameByUseId.set(b.id, b.name)
+    }
+  }
+  const collapsibleIdsInOrder: string[] = []
+  for (const m of conversation) {
+    for (const b of m.content) {
+      if (b.type !== 'tool_result' || b.content.length < 200) continue
+      const tool = toolByName.get(toolNameByUseId.get(b.toolUseId) ?? '')
+      if (tool && tool.mutates === false) collapsibleIdsInOrder.push(b.toolUseId)
+    }
+  }
+
+  let working = conversation
+  for (const id of collapsibleIdsInOrder) {
+    if (fits(working)) break
+    working = working.map((m) => ({
+      ...m,
+      content: m.content.map((b): ContentBlock =>
+        b.type === 'tool_result' && b.toolUseId === id ? { ...b, content: CONTEXT_FIT_OMITTED_MARKER } : b
+      )
+    }))
+  }
+  return working
+}
+
 function delegateToolName(role: AgentRole): string {
   return DELEGATE_PREFIX + role.replace(/-/g, '_')
 }
@@ -360,10 +454,22 @@ interface Plan {
  * result was what triggered the original hallucinated-tool-call bug). */
 const STEP_RESULT_CONTEXT_CAP = 2000
 
+/**
+ * A hard ceiling on how many steps a single classify-and-plan pass can hand
+ * to `executePlan` — flagged by an external code review (`review.md`,
+ * TASKS.md #94): `parsePlan` used to accept any length, and an oversized
+ * plan could burn most of the turn's shared round/deadline budget on
+ * redundant specialist calls before the final synthesis round even started.
+ * Truncated rather than rejected outright — a plan with 8 genuinely
+ * reasonable steps is still mostly useful with only the first 5 kept; the
+ * caller surfaces a warning so this isn't silent.
+ */
+const MAX_PLAN_STEPS = 5
+
 const VALID_STEP_ROLES = new Set<string>(AGENT_ROLES)
 
 /** Fails open to `undefined` (treated as "simple" by the caller) on any parse/shape problem — a broken classifier response must never block the turn it's meant to help. */
-function parsePlan(text: string): Plan | undefined {
+function parsePlan(text: string): { plan: Plan; truncated: boolean } | undefined {
   try {
     const stripped = text
       .trim()
@@ -378,7 +484,8 @@ function parsePlan(text: string): Plan | undefined {
       if (typeof s?.role !== 'string' || !VALID_STEP_ROLES.has(s.role)) return undefined
       steps.push({ role: s.role as AgentRole, description: s.description })
     }
-    return { complexity: parsed.complexity, steps }
+    const truncated = steps.length > MAX_PLAN_STEPS
+    return { plan: { complexity: parsed.complexity, steps: truncated ? steps.slice(0, MAX_PLAN_STEPS) : steps }, truncated }
   } catch {
     return undefined
   }
@@ -417,10 +524,24 @@ export class Orchestrator {
      * behavior unchanged — every existing caller/test that doesn't pass it
      * keeps working exactly as before; only a caller that wants the
      * ask-before-abandoning behavior needs to provide it.
+     *
+     * `logClassifyGateSample` defaults to absent (a no-op) — see TASKS.md
+     * #95: every time `classifyAndPlan`'s real classifier call actually
+     * runs, this is handed the deterministic gate's own verdict alongside
+     * the real result, purely for the calibration logging ipc/register.ts
+     * wires to `db/classify-gate-log.ts`. Optional/no-op by default so
+     * every existing caller/test that doesn't care about calibration data
+     * keeps working unchanged — this file stays DB-free either way (see
+     * this class's own doc comment).
      */
     private readonly options: {
       planningEnabled: boolean
       confirmContinue?: (request: LimitReachedRequest) => Promise<LimitDecision>
+      logClassifyGateSample?: (sample: {
+        gateVerdict: ClassifyGateVerdict
+        classifierComplexity: 'simple' | 'compound' | 'unknown'
+        messageLength: number
+      }) => void
     } = { planningEnabled: false }
   ) {}
 
@@ -508,7 +629,19 @@ export class Orchestrator {
       return
     }
 
-    const plan = this.options.planningEnabled ? yield* this.classifyAndPlan(conversation, state) : undefined
+    // Phase 1 of TASKS.md #95: a cheap deterministic pre-check ahead of the
+    // real classifier call — 'skip' only fires on an unambiguous, short,
+    // single-clause message (see classify-gate.ts), so this never decides
+    // "compound" itself, only whether the real call is worth skipping.
+    // Phase 2: even a 'skip' verdict is sometimes overridden anyway
+    // (shouldSampleForCalibration) purely so the real classifier still runs
+    // and its result can be logged against the gate's own verdict — see
+    // classifyAndPlan's own logging call below.
+    const gateVerdict: ClassifyGateVerdict = this.options.planningEnabled
+      ? evaluateClassifyGate(latestMessageText(conversation))
+      : 'run'
+    const shouldClassify = this.options.planningEnabled && (gateVerdict !== 'skip' || shouldSampleForCalibration())
+    const plan = shouldClassify ? yield* this.classifyAndPlan(conversation, state, gateVerdict) : undefined
 
     // Stop clicked while classifyAndPlan's own request was in flight: it
     // already swallowed that abort quietly and returned `undefined` (same
@@ -517,13 +650,14 @@ export class Orchestrator {
     // straight through into a brand-new full round below, silently
     // discarding the user's Stop and spending a whole extra model call
     // (with its own visible "round 1" status flicker) before anything
-    // acknowledged the cancellation. Scoped to planningEnabled specifically
-    // — with planning off, `plan` is `undefined` because there was never a
-    // classify call to abort, and runLoop below is the *first* real attempt
-    // this turn; it must still run so its own status/abort handling fires
-    // normally (a signal already aborted before the user even sent this
-    // turn is a real, if rare, case that existing behavior already covers).
-    if (this.options.planningEnabled && this.signal.aborted) {
+    // acknowledged the cancellation. Scoped to `shouldClassify` specifically
+    // — with planning off, or the gate skipping the classify call entirely,
+    // `plan` is `undefined` because there was never a classify call to
+    // abort, and runLoop below is the *first* real attempt this turn; it
+    // must still run so its own status/abort handling fires normally (a
+    // signal already aborted before the user even sent this turn is a real,
+    // if rare, case that existing behavior already covers).
+    if (shouldClassify && this.signal.aborted) {
       yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, undefined, true) }
       return
     }
@@ -563,19 +697,89 @@ export class Orchestrator {
    * free: a live reading when a provider can give one (today, Ollama's
    * `loadedContextWindow`, a real `/api/ps` read of what's actually
    * loaded), else the same static estimate `prepare-context.ts` already
-   * uses for input-side trimming. `countTokens` is a real network call for
-   * Anthropic/Google, but only once per turn (see `run()`), matching the
-   * cost this app already pays during history trimming before the
-   * Orchestrator is even constructed.
+   * uses for input-side trimming.
+   *
+   * Also subtracts real overhead (system prompt + tool schemas) before
+   * computing what's left — flagged by an external code review (`review.md`,
+   * TASKS.md #97): this used to only subtract `countTokens(conversation)`,
+   * so the `MIN_MAX_OUTPUT_TOKENS` floor could still request more output
+   * than was actually free once the system prompt and tool definitions sent
+   * in the same request were accounted for, especially for a small local
+   * model's context window. Reuses `overheadTokens` (`prepare-context.ts`,
+   * already built for #51's input-side trim) rather than a second estimator.
+   * The exact system prompt/tool set used varies per round (forced-role vs.
+   * Auto, a specialist's own smaller tool list, the classify pass's empty
+   * one) but `state.maxOutputTokens` is computed once and shared across
+   * every round and every nested delegate call in the whole run (see
+   * `RunState`) — so the top-level orchestrator's own prompt plus the full
+   * default tool registry (`buildOrchestratorSystemPrompt`/`defaultTools`)
+   * is used as the worst-case (largest) overhead estimate every round
+   * actually uses, which only ever makes the budget more conservative for a
+   * smaller specialist prompt/tool set, never short of what's really free.
+   *
+   * `countTokens` is a real network call for Anthropic/Google — now two per
+   * turn (conversation + overhead), not one, but still only at `run()`
+   * startup, not per round, matching the cost this app already pays during
+   * history trimming before the Orchestrator is even constructed.
    */
   private async resolveMaxOutputTokens(conversation: Message[]): Promise<number> {
     const ceiling = maxOutputTokensFor(this.model).tokens
     const loaded = await this.provider.loadedContextWindow?.(this.model)
     const windowTokens = loaded ?? contextWindowFor(this.model).tokens
     const used = await this.provider.countTokens(conversation, this.model)
-    const remaining = Math.max(0, windowTokens - used)
+    const overhead = await overheadTokens(
+      { system: this.buildOrchestratorSystemPrompt(), tools: toToolDefs(this.defaultTools) },
+      this.model,
+      this.provider
+    )
+    const remaining = Math.max(0, windowTokens - used - overhead)
     const budget = Math.floor(remaining * OUTPUT_TOKENS_FRACTION)
     return Math.min(ceiling, Math.max(MIN_MAX_OUTPUT_TOKENS, budget))
+  }
+
+  /**
+   * Re-fits the conversation against the context window before every
+   * provider request, not just once via `prepareConversation` before the
+   * turn starts — flagged by an external code review (`review.md`,
+   * TASKS.md #98): `capRepeatedToolResults`/`collapseDuplicateToolResults`
+   * already dedupe by tool name and URL overlap, but nothing previously
+   * re-checked *total* conversation size mid-turn, so `executePlan`'s
+   * appended step results or an ordinary long multi-round tool-call
+   * sequence could each individually stay under their local caps while the
+   * sum still pushed a later round's request over the model's real context
+   * window.
+   *
+   * Deliberately two-tier to avoid turning every single round into an extra
+   * real network call: `roughTokenEstimate` (a cheap, local, conservative
+   * char-count approximation) decides whether the *real* `countTokens` check
+   * even needs to run at all, so an ordinary short conversation — the
+   * overwhelming majority of rounds — returns immediately with zero added
+   * cost or latency. Only once the rough estimate suggests real risk does
+   * this spend a real `countTokens` call (a genuine network request for
+   * Anthropic/Google) to confirm, and only then collapse the oldest
+   * still-expanded, non-mutating tool results (oldest first, cheapest-to-
+   * re-fetch-if-still-needed) until it's estimated to fit — re-measured with
+   * the same cheap local estimator between collapses, never a real call per
+   * collapse, so this stays at most one real `countTokens` call per round
+   * even in a turn that needs several results collapsed.
+   */
+  private async refitConversationToBudget(
+    messages: Message[],
+    toolByName: ReadonlyMap<string, Tool>,
+    systemPrompt: string,
+    toolDefs: ToolDefinition[],
+    state: RunState
+  ): Promise<Message[]> {
+    const contextWindow = await resolveContextWindow(this.model, this.provider)
+    const roughBudget = Math.floor(contextWindow.tokens * CONTEXT_BUDGET_FRACTION) - state.maxOutputTokens
+    if (roughTokenEstimate(messages) <= roughBudget) return messages
+
+    const overhead = await overheadTokens({ system: systemPrompt, tools: toolDefs }, this.model, this.provider)
+    const budget = Math.max(0, roughBudget - overhead)
+    const actual = await this.provider.countTokens(messages, this.model)
+    if (actual <= budget) return messages
+
+    return collapseOldestToolResultsToFit(messages, toolByName, (candidate) => roughTokenEstimate(candidate) <= budget)
   }
 
   /**
@@ -606,7 +810,8 @@ export class Orchestrator {
    */
   private async *classifyAndPlan(
     conversation: Message[],
-    state: RunState
+    state: RunState,
+    gateVerdict: ClassifyGateVerdict
   ): AsyncGenerator<OrchestratorEvent, Plan | undefined> {
     state.roundsUsed++
     let text = ''
@@ -651,7 +856,15 @@ export class Orchestrator {
       yield { kind: 'stream', event: { type: 'usage', ...roundUsage } }
     }
 
-    const plan = parsePlan(text)
+    const parsed = parsePlan(text)
+    if (parsed?.truncated) {
+      const message =
+        `This request's plan had more steps than the ${MAX_PLAN_STEPS}-step limit — proceeding with just the ` +
+        'first ones; the rest of the request may need a follow-up turn.'
+      yield { kind: 'stream', event: { type: 'warning', message } }
+      yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message }] }
+    }
+    const plan = parsed?.plan
     if (!plan) {
       if (stopReason === 'max_tokens') {
         // Surfaced to the user, not just logged — this is the one real
@@ -675,6 +888,16 @@ export class Orchestrator {
         console.error('orchestrator: classify-and-plan response was not valid JSON, treating as a normal request')
       }
     }
+    // Phase 2 of TASKS.md #95 — a real classifier response, whatever it was
+    // (including "unparseable"), logged alongside the gate's own verdict for
+    // this turn. Only reached once the call actually completed (the
+    // timeout/abort path above returns before this), so this never logs a
+    // probe that never got a real answer.
+    this.options.logClassifyGateSample?.({
+      gateVerdict,
+      classifierComplexity: plan?.complexity ?? 'unknown',
+      messageLength: latestMessageText(conversation).length
+    })
     return plan
   }
 
@@ -898,7 +1121,7 @@ export class Orchestrator {
   ): AsyncGenerator<OrchestratorEvent, { text: string; isError: boolean }> {
     const toolByName = new Map(tools.map((t) => [t.name, t]))
     const toolDefs: ToolDefinition[] = [
-      ...tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+      ...toToolDefs(tools),
       ...extraToolDefs
     ]
     // Local to this runLoop call (unlike state.roundsUsed, which is the
@@ -930,12 +1153,19 @@ export class Orchestrator {
       // double/triple-count if they summed the raw events.
       let roundUsage: { inputTokens: number; outputTokens: number } | undefined
 
+      const messagesToSend = await this.refitConversationToBudget(
+        capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
+        toolByName,
+        systemPrompt,
+        toolDefs,
+        state
+      )
       const roundTimer = this.startRoundTimer(state.deadlineAt, state.consecutiveRoundTimeouts)
       try {
         for await (const event of this.provider.stream({
           model: this.model,
           system: systemPrompt,
-          messages: capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
+          messages: messagesToSend,
           maxTokens: state.maxOutputTokens,
           tools: toolDefs.length ? toolDefs : undefined,
           signal: roundTimer.signal
@@ -1183,21 +1413,31 @@ export class Orchestrator {
     // `state.roundsUsed` already is — every call site that hits this path
     // gets exactly one real chance to summarize instead of stub out.
     let wrapUpText = ''
+    const wrapUpSystem =
+      `${systemPrompt}\n\n${
+        outOfTime
+          ? "You have used all the time available for this turn — it's taking too long — no"
+          : `You have used all ${maxRounds} rounds available for this turn — no`
+      } ` +
+      'more tool calls are possible. Answer now using only what has already been found above: ' +
+      "summarize the real information gathered so far, and say plainly if it's incomplete, rather " +
+      'than attempting anything further.'
+    // The wrap-up call is exactly the scenario #98 (see refitConversationToBudget) exists for —
+    // reached after exhausting rounds/a whole plan, so `conversation` is at its largest for the turn.
+    const wrapUpMessages = await this.refitConversationToBudget(
+      capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
+      toolByName,
+      wrapUpSystem,
+      [],
+      state
+    )
     // A one-shot call with no retry of its own, so no escalation applies — same as classifyAndPlan.
     const wrapUpTimer = this.startRoundTimer(state.deadlineAt, 0)
     try {
       for await (const event of this.provider.stream({
         model: this.model,
-        system:
-          `${systemPrompt}\n\n${
-            outOfTime
-              ? "You have used all the time available for this turn — it's taking too long — no"
-              : `You have used all ${maxRounds} rounds available for this turn — no`
-          } ` +
-          'more tool calls are possible. Answer now using only what has already been found above: ' +
-          "summarize the real information gathered so far, and say plainly if it's incomplete, rather " +
-          'than attempting anything further.',
-        messages: capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
+        system: wrapUpSystem,
+        messages: wrapUpMessages,
         maxTokens: state.maxOutputTokens,
         signal: wrapUpTimer.signal
         // No `tools` — forces a text-only reply, so this genuinely cannot loop further.
@@ -1322,29 +1562,42 @@ export class Orchestrator {
   /**
    * Races `tool.execute` against `this.signal` (Stop) and a flat timeout, so
    * neither can leave the turn waiting forever — see `TOOL_EXECUTE_TIMEOUT_MS`.
-   * A loser's rejection is what's thrown; the tool's own promise is left to
-   * settle on its own (nothing to cancel it by), matching how a round-timeout
-   * abandons a stalled provider connection rather than truly killing it.
+   * A loser's rejection is what's thrown. Also builds a dedicated
+   * `AbortController` (aborted from either source) and passes its signal
+   * into `tool.execute` — flagged by an external code review (`review.md`,
+   * TASKS.md #93): the orchestrator's own *wait* was already bounded, but
+   * the tool itself never had any way to know it should stop, so a mutating
+   * tool (shell command, file write, DB mutation) kept running after Stop or
+   * a timeout regardless. A tool that doesn't read `signal` at all (most of
+   * them — no cancellable operation to speak of) is unaffected: this is
+   * additive, not a behavior change for tools that ignore it, and the
+   * message reflects the difference (`tool.cancellable` — see
+   * `shellExecuteTool` — vs. every other tool, which honestly says the
+   * underlying operation may still be running).
    */
   private executeWithTimeout(tool: Tool, input: Record<string, unknown>): Promise<string> {
     if (this.signal.aborted) return Promise.reject(new Error('The user stopped this turn.'))
+    const controller = new AbortController()
     return new Promise((resolve, reject) => {
       let settled = false
       const onAbort = (): void => {
         if (settled) return
         settled = true
         cleanup()
+        controller.abort()
         reject(new Error('The user stopped this turn.'))
       }
       const timer = setTimeout(() => {
         if (settled) return
         settled = true
         cleanup()
+        controller.abort()
+        const outcome = tool.cancellable
+          ? 'cancelling it so the turn can continue.'
+          : 'giving up on this tool call so the turn can continue — it has no way to be cancelled, so the ' +
+            'underlying operation may still be running in the background.'
         reject(
-          new Error(
-            `"${tool.name}" did not finish within ${Math.round(TOOL_EXECUTE_TIMEOUT_MS / 60000)} minute(s) — ` +
-              'giving up on this tool call so the turn can continue.'
-          )
+          new Error(`"${tool.name}" did not finish within ${Math.round(TOOL_EXECUTE_TIMEOUT_MS / 60000)} minute(s) — ${outcome}`)
         )
       }, TOOL_EXECUTE_TIMEOUT_MS)
       const cleanup = (): void => {
@@ -1352,7 +1605,7 @@ export class Orchestrator {
         this.signal.removeEventListener('abort', onAbort)
       }
       this.signal.addEventListener('abort', onAbort, { once: true })
-      tool.execute(input, this.toolContext).then(
+      tool.execute(input, this.toolContext, controller.signal).then(
         (content) => {
           if (settled) return
           settled = true

@@ -29,6 +29,7 @@ import { insertMessage, listMessages } from '../db/messages'
 import { enqueueMessage, getEmbeddingConfig, getIndexState, rebuildIndex, runBackfill } from '../search-history/indexer'
 import { getSetting, setSetting } from '../db/settings'
 import { addUsage, getUsage } from '../db/usage'
+import { logClassifyGateSample } from '../db/classify-gate-log'
 import { setApiKey, getApiKey, envFilePath, getSecretStorageMode, switchToFileStorage } from '../security/keychain'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import {
@@ -595,7 +596,11 @@ async function runChat(
     {
       // Missing/unset reads as enabled — default on (see PLANNING_ENABLED_SETTING_KEY's own doc comment).
       planningEnabled: getSetting(PLANNING_ENABLED_SETTING_KEY) !== 'false',
-      confirmContinue: makeConfirmContinue(sender, streamId, sessionId)
+      confirmContinue: makeConfirmContinue(sender, streamId, sessionId),
+      // TASKS.md #95, phase 2 — persists every real classify-and-plan
+      // result alongside the deterministic gate's own verdict, so the
+      // gate's accuracy can be measured before it's ever widened.
+      logClassifyGateSample: logClassifyGateSample
     }
   )
 

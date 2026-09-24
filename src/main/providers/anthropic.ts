@@ -60,9 +60,16 @@ export class AnthropicProvider implements ModelProvider {
     )
 
     const activeToolUse = new Map<number, { id: string; name: string }>()
+    // Anthropic reports input-token usage once, on `message_start` — `message_delta`
+    // (fired later, alongside output usage/stop_reason) never repeats it. Captured here
+    // and reused on every `usage` event this round emits, instead of the input side
+    // being silently reported as 0.
+    let inputTokens = 0
 
     for await (const event of stream) {
-      if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
+      if (event.type === 'message_start') {
+        inputTokens = event.message.usage.input_tokens
+      } else if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
         activeToolUse.set(event.index, {
           id: event.content_block.id,
           name: event.content_block.name
@@ -78,7 +85,7 @@ export class AnthropicProvider implements ModelProvider {
       } else if (event.type === 'message_delta') {
         yield {
           type: 'usage',
-          inputTokens: 0,
+          inputTokens,
           outputTokens: event.usage.output_tokens
         }
         if (event.delta.stop_reason) {

@@ -2,8 +2,8 @@ import { contextWindowFor, type ContextWindowInfo } from '@shared/model-metadata
 import type { ContentBlock, Message, ModelProvider } from '../providers/types'
 
 const TOOL_RESULT_MAX_CHARS = 4000
-/** Leaves headroom under the model's real limit for the response itself and further tool round-trips within the same turn — the system prompt and tool schemas are now measured directly (see `TurnOverhead`/`overheadTokens` below) rather than assumed to fit inside this fraction. */
-const CONTEXT_BUDGET_FRACTION = 0.7
+/** Leaves headroom under the model's real limit for the response itself and further tool round-trips within the same turn — the system prompt and tool schemas are now measured directly (see `TurnOverhead`/`overheadTokens` below) rather than assumed to fit inside this fraction. Exported so `orchestrator.ts`'s mid-turn re-fit (TASKS.md #98) budgets against the exact same fraction as this pre-turn trim, rather than a second, potentially-inconsistent margin. */
+export const CONTEXT_BUDGET_FRACTION = 0.7
 
 /**
  * The system prompt and full tool-schema list actually sent alongside the
@@ -30,7 +30,7 @@ export interface TurnOverhead {
  * so the overhead text rides along as a single synthetic user message —
  * never sent to the model, just counted.
  */
-async function overheadTokens(overhead: TurnOverhead, model: string, provider: ModelProvider): Promise<number> {
+export async function overheadTokens(overhead: TurnOverhead, model: string, provider: ModelProvider): Promise<number> {
   const text = `${overhead.system}\n${JSON.stringify(overhead.tools)}`
   return provider.countTokens([{ role: 'user', content: [{ type: 'text', text }] }], model)
 }

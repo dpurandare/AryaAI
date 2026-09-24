@@ -16,17 +16,21 @@ export const shellExecuteTool: Tool = {
     required: ['command']
   },
   mutates: true,
+  // Honors the orchestrator's cancellation signal for real (see
+  // TASKS.md #93) — `exec`'s own `signal` option kills the child process
+  // group on abort, same as its existing `timeout` option already does.
+  cancellable: true,
   describe(input) {
     return `Run: ${String(input.command ?? '')}`
   },
-  async execute(input, ctx) {
+  async execute(input, ctx, signal) {
     const command = String(input.command ?? '')
     if (!command.trim()) throw new Error('No command given.')
 
     return new Promise((resolvePromise, reject) => {
       exec(
         command,
-        { cwd: ctx.workspaceGuard.root, timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER_BYTES },
+        { cwd: ctx.workspaceGuard.root, timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER_BYTES, signal },
         (error, stdout, stderr) => {
           if (error && typeof error.code !== 'number') {
             // Spawn-level failure (e.g. couldn't launch a shell at all), not a nonzero exit code.

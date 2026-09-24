@@ -133,6 +133,53 @@ describe('Orchestrator (integration, mocked provider)', () => {
     expect(toolResults.every((e) => 'isError' in e && e.isError === false)).toBe(true)
   })
 
+  it('in Auto mode, the top level can use a specialist-labeled mutating tool directly, without delegating, still through real confirmation and correct (undefined) attribution (TASKS.md #96)', async () => {
+    // Confirmed intentional, not a bug: the top-level orchestrator is
+    // constructed with the *entire* default tool registry (registry.list()
+    // below, exactly matching how ipc/register.ts really constructs it),
+    // not just delegation tools — write_file is "Coding's tool" only by
+    // prompt convention, not by actual access control. This test is the
+    // regression coverage #96 asks for: confirmation and role/audit
+    // attribution must both still behave correctly on this direct path,
+    // not just the delegated one covered by the test above.
+    const registry = buildRegistry()
+    const agents = createAgents(registry)
+    const confirmCalls: { name: string; input: Record<string, unknown> }[] = []
+    const confirmAndApprove = async (request: ToolConfirmRequest): Promise<ConfirmDecision> => {
+      confirmCalls.push({ name: request.name, input: request.input })
+      return { approved: true, input: request.input }
+    }
+    const provider = new MockProvider([
+      { toolCalls: [{ id: 'call_write', name: 'write_file', input: { path: 'direct.txt', content: 'no delegate' } }] },
+      { text: 'Wrote it directly.', stopReason: 'end_turn' }
+    ])
+    const orchestrator = new Orchestrator(
+      provider,
+      'mock-model',
+      agents,
+      'You are Sachivji.',
+      registry.list(),
+      confirmAndApprove,
+      ctx,
+      signal
+    )
+
+    const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'write direct.txt' }] }])
+
+    // Real confirmation actually ran — not silently bypassed just because
+    // this call didn't go through a delegate_to_x tool first.
+    expect(confirmCalls).toEqual([{ name: 'write_file', input: { path: 'direct.txt', content: 'no delegate' } }])
+    expect(await readFile(join(root, 'direct.txt'), 'utf-8')).toBe('no delegate')
+
+    const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+    const writeStart = streamEvents.find((e) => e.type === 'tool_use_start' && e.name === 'write_file')
+    // Correctly attributed to the orchestrator itself (undefined), not
+    // mislabeled as any specialist just because it's "usually" Coding's tool.
+    expect((writeStart as { agentRole?: string } | undefined)?.agentRole).toBeUndefined()
+    const toolResult = streamEvents.find((e) => e.type === 'tool_result')
+    expect(toolResult).toMatchObject({ type: 'tool_result', isError: false })
+  })
+
   it('handles a trivial message directly with no delegation', async () => {
     const registry = buildRegistry()
     const agents = createAgents(registry)
@@ -474,6 +521,139 @@ describe('Orchestrator (integration, mocked provider)', () => {
     await expect(iterator.next()).rejects.toThrow('a real network failure')
   })
 
+  describe('classify-gate: skipping the classifier call for obviously simple requests (TASKS.md #95)', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('an unambiguous short message skips the classify call entirely when not sampled for calibration', async () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.99) // above CALIBRATION_SAMPLE_RATE — no sampling this turn
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ text: 'Hello!', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      // Only the one normal round — no classify call at all.
+      expect(provider.requests).toHaveLength(1)
+    })
+
+    it('a message with a compound signal still always goes through the real classifier, gate or no gate', async () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.99)
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'find X and save it' }] }])
+
+      expect(provider.requests).toHaveLength(2) // classify call + one normal round
+    })
+
+    it('phase 2: a skip-worthy message is still occasionally sampled through the real classifier, for calibration', async () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0) // below CALIBRATION_SAMPLE_RATE — always samples
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Hello!', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      // Sampled anyway despite being a skip-worthy message — the real
+      // classifier call happened, its result acted on normally.
+      expect(provider.requests).toHaveLength(2)
+    })
+
+    it('logs the gate verdict alongside the real classifier result, only when the classifier actually ran', async () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.99)
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const samples: { gateVerdict: string; classifierComplexity: string; messageLength: number }[] = []
+      const provider = new MockProvider([
+        { text: '{"complexity": "compound", "steps": [{"role": "research", "description": "x"}, {"role": "data", "description": "y"}]}', stopReason: 'end_turn' },
+        { text: 'step', stopReason: 'end_turn' },
+        { text: 'step', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true, logClassifyGateSample: (sample) => samples.push(sample) }
+      )
+
+      const message = 'find X and Y'
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: message }] }])
+
+      expect(samples).toEqual([{ gateVerdict: 'run', classifierComplexity: 'compound', messageLength: message.length }])
+    })
+
+    it('does not log anything when the gate skips and no sampling happens — nothing real to compare against', async () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.99)
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const samples: unknown[] = []
+      const provider = new MockProvider([{ text: 'Hello!', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true, logClassifyGateSample: (sample) => samples.push(sample) }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      expect(samples).toEqual([])
+    })
+  })
+
   describe('classify-and-plan (planningEnabled)', () => {
     it('a simple request costs one extra classify call but otherwise behaves exactly as before', async () => {
       const registry = buildRegistry()
@@ -494,7 +674,11 @@ describe('Orchestrator (integration, mocked provider)', () => {
         { planningEnabled: true }
       )
 
-      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      // "hi and thanks" (not just "hi") deliberately bypasses the
+      // classify-gate (#95) so this stays a direct test of classifyAndPlan
+      // itself, not of the gate's own skip decision (covered separately in
+      // classify-gate.test.ts).
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
       const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
       expect(provider.requests).toHaveLength(2) // the classify call, then the one normal round
@@ -532,7 +716,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
         { planningEnabled: true }
       )
 
-      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      // Bypasses the classify-gate (#95) deliberately — see the identical
+      // note on the first test in this describe block.
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
       const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
       expect(streamEvents).toEqual([{ type: 'message_stop', stopReason: 'aborted' }])
@@ -569,7 +755,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
       )
 
       const priorTurn: Message = { role: 'assistant', content: [{ type: 'text', text: 'An earlier reply.' }] }
-      const latest: Message = { role: 'user', content: [{ type: 'text', text: 'latest question' }] }
+      // "and" bypasses the classify-gate (#95) deliberately — see the note
+      // on the first test in this describe block.
+      const latest: Message = { role: 'user', content: [{ type: 'text', text: 'latest question and one more' }] }
       await collect(orchestrator, [priorTurn, latest])
 
       expect(provider.requests[0].messages).toEqual([latest])
@@ -605,7 +793,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
         { planningEnabled: true }
       )
 
-      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      // Bypasses the classify-gate (#95) deliberately — see the note on the
+      // first test in this describe block.
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
 
       const classifySystem = provider.requests[0].system ?? ''
       expect(classifySystem).not.toMatch(/-\s*page-creator:/)
@@ -637,7 +827,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
         { planningEnabled: true }
       )
 
-      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      // Bypasses the classify-gate (#95) deliberately — see the note on the
+      // first test in this describe block.
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
 
       const classifySystem = provider.requests[0].system ?? ''
       expect(classifySystem).toMatch(/write it into a Word document/i)
@@ -670,7 +862,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
         { planningEnabled: true }
       )
 
-      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      // Bypasses the classify-gate (#95) deliberately — see the note on the
+      // first test in this describe block.
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
 
       const classifySystem = provider.requests[0].system ?? ''
       expect(classifySystem).toMatch(/code to be written AND actually run/i)
@@ -745,6 +939,49 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // non-tool_use, last-event shape every other test in this file checks.
       expect(streamEvents.at(-1)).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
       expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'X is 5 and Y is 10.' })
+    })
+
+    it('a plan with more than the step cap is truncated, with a warning, rather than run in full (TASKS.md #94)', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const sevenSteps = Array.from({ length: 7 }, (_, i) => `{"role": "research", "description": "step ${i + 1}"}`).join(', ')
+      const provider = new MockProvider([
+        { text: `{"complexity": "compound", "steps": [${sevenSteps}]}`, stopReason: 'end_turn' },
+        // Only 5 steps should actually dispatch, so only 5 nested + 1 synthesis call are scripted.
+        { text: 'step 1 done', stopReason: 'end_turn' },
+        { text: 'step 2 done', stopReason: 'end_turn' },
+        { text: 'step 3 done', stopReason: 'end_turn' },
+        { text: 'step 4 done', stopReason: 'end_turn' },
+        { text: 'step 5 done', stopReason: 'end_turn' },
+        { text: 'all done', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      // Bypasses the classify-gate (#95) deliberately — see the note on the
+      // first test in this describe block.
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'do seven things and report back' }] }
+      ])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      const planEvent = streamEvents.find((e) => e.type === 'plan')
+      expect(planEvent).toMatchObject({ type: 'plan', steps: expect.any(Array) })
+      expect(planEvent && 'steps' in planEvent ? planEvent.steps.length : -1).toBe(5)
+      expect(streamEvents.some((e) => e.type === 'plan_step_start' && e.index === 5)).toBe(false)
+      expect(
+        streamEvents.some((e) => e.type === 'warning' && e.message.includes('more steps than the 5-step limit'))
+      ).toBe(true)
+      expect(streamEvents.at(-1)).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
     })
 
     it("a failed plan step's result is marked FAILED in the shared conversation, not left indistinguishable from real data", async () => {
@@ -825,7 +1062,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
         { planningEnabled: true }
       )
 
-      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      // Bypasses the classify-gate (#95) deliberately — see the note on the
+      // first test in this describe block.
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
       const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
       expect(streamEvents.some((e) => e.type === 'plan')).toBe(false)
@@ -939,6 +1178,52 @@ describe('Orchestrator (integration, mocked provider)', () => {
       await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
 
       expect(provider.requests[0].maxTokens).toBe(4096)
+    })
+
+    it('subtracts real system-prompt/tool-schema overhead, not just the conversation (TASKS.md #97)', async () => {
+      // Before #97, only `countTokens(conversation)` was subtracted from the
+      // context window — the system prompt and tool schemas sent in the same
+      // request were silently assumed to fit in the margin. Picking a
+      // tokensUsed large enough that the old behavior would've hit the local
+      // model's 32768 ceiling, but the new overhead-aware behavior lands
+      // below it, proves the overhead call's result is actually subtracted,
+      // not just made.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      // remaining (old, conversation only) = 131072 - 40000 = 91072,
+      // budget = floor(91072*0.5) = 45536, clamped to ceiling 32768.
+      // remaining (new, conversation + overhead) = 131072 - 40000 - 40000 =
+      // 51072, budget = floor(51072*0.5) = 25536 — under the ceiling, so the
+      // clamp no longer hides the difference.
+      const provider = new MockProvider([{ text: 'Hello!', stopReason: 'end_turn' }], {
+        loadedContextWindow: 131072,
+        tokensUsed: 40000
+      })
+      const orchestrator = new Orchestrator(
+        provider,
+        'gpt-oss:20b',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      expect(provider.countTokensCalls).toHaveLength(2)
+      // The second call is the overhead probe — a single synthetic message
+      // carrying the real orchestrator system prompt and serialized tool
+      // schemas, not the actual conversation.
+      const overheadCall = provider.countTokensCalls[1]
+      const overheadText = overheadCall[0]?.content[0]
+      expect(overheadText).toMatchObject({ type: 'text' })
+      if (overheadText?.type === 'text') {
+        expect(overheadText.text).toContain('You are Sachivji.')
+        expect(overheadText.text).toContain('read_file')
+      }
+      expect(provider.requests[0].maxTokens).toBe(25536)
     })
 
     it('scales a recognized cloud model up dramatically past the old flat 4096, with no live reading needed', async () => {
@@ -1111,7 +1396,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
         { planningEnabled: true }
       )
 
-      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      // Bypasses the classify-gate (#95) deliberately — see this file's
+      // "classify-and-plan (planningEnabled)" describe block for the same note.
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
       const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
       const warning = streamEvents.find((e) => e.type === 'warning')
@@ -1146,7 +1433,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
         { planningEnabled: true }
       )
 
-      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      // Bypasses the classify-gate (#95) deliberately — see this file's
+      // "classify-and-plan (planningEnabled)" describe block for the same note.
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
       const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
       expect(streamEvents.find((e) => e.type === 'warning')).toBeUndefined()
@@ -1904,6 +2193,182 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
       expect(streamEvents.some((e) => e.type === 'message_stop')).toBe(true)
+    })
+
+    it('a cancellable tool actually receives an abort signal on Stop, and its wait ends immediately (TASKS.md #93)', async () => {
+      // Before #93, `tool.execute` had no way to know the turn was stopped —
+      // the orchestrator's own *wait* was bounded, but the tool itself never
+      // learned to stop. This asserts the signal passed to a real,
+      // opted-in-cancellable tool actually reflects the abort, not just that
+      // dispatchTool's promise resolves.
+      // mutates: false deliberately — a mutating tool would also race the
+      // confirmation dialog against the same abort signal (confirmOrAbort),
+      // which could resolve as a denial before execute() is ever called at
+      // all. Keeping this read-only isolates exactly what #93 changed:
+      // executeWithTimeout's own signal propagation into tool.execute.
+      let receivedSignal: AbortSignal | undefined
+      const registry = buildRegistry()
+      registry.register({
+        name: 'cancellable_hang_tool',
+        description: 'A cancellable tool whose execute() never resolves on its own, only reacts to the signal.',
+        inputSchema: { type: 'object', properties: {} },
+        mutates: false,
+        cancellable: true,
+        execute: (_input, _ctx, signal) =>
+          new Promise<string>((_resolve, reject) => {
+            receivedSignal = signal
+            signal?.addEventListener('abort', () => reject(new Error('cancelled')))
+          })
+      })
+      const agents = createAgents(registry)
+      const controller = new AbortController()
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_hang', name: 'cancellable_hang_tool', input: {} }], stopReason: 'tool_use' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        controller.signal,
+        { planningEnabled: false }
+      )
+
+      const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      // Flush pending microtasks (resolveMaxOutputTokens, the round's
+      // provider.stream, dispatchTool) until the tool's own execute() has
+      // actually started and captured its signal — aborting immediately,
+      // with no flush at all, would race ahead of the turn even reaching
+      // the tool call.
+      for (let i = 0; i < 50 && !receivedSignal; i++) await Promise.resolve()
+      expect(receivedSignal).toBeDefined()
+      controller.abort()
+      const events = await resultPromise
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(receivedSignal?.aborted).toBe(true)
+      expect(streamEvents.some((e) => e.type === 'message_stop')).toBe(true)
+    })
+
+    it('a non-cancellable tool that times out says the operation may still be running, not that it was stopped', async () => {
+      const registry = buildRegistryWithHangingTool() // hang_tool has no `cancellable` flag
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_hang', name: 'hang_tool', input: {} }], stopReason: 'tool_use' },
+        { text: 'done', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      await vi.advanceTimersByTimeAsync(TOOL_EXECUTE_TIMEOUT_MS + 1000)
+      const events = await resultPromise
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      const toolResult = streamEvents.find((e) => e.type === 'tool_result') as { content: string } | undefined
+      expect(toolResult?.content).toMatch(/may still be running in the background/i)
+    })
+  })
+
+  describe('mid-turn context re-fit against the window, not just once before the turn (TASKS.md #98)', () => {
+    it('collapses an old, large, read-only tool result to fit the budget, but never a mutating one, even though each is a single call (so capRepeatedToolResults/collapseDuplicateToolResults would not touch either)', async () => {
+      // 'mock-model' matches no known prefix, so both its context window
+      // (8192, model-metadata.ts's DEFAULT_CONTEXT_WINDOW) and output
+      // ceiling (4096, DEFAULT_MAX_OUTPUT_TOKENS) are the generic fallbacks —
+      // deliberately chosen because MIN_MAX_OUTPUT_TOKENS also happens to be
+      // 4096, which pins state.maxOutputTokens at exactly 4096 regardless of
+      // tokensUsed below, keeping the rest of the math predictable:
+      // roughBudget = floor(8192*0.7) - 4096 = 1638; with tokensUsed=1000,
+      // the real (mocked) overhead/actual calls both return 1000, giving a
+      // real budget of 1638-1000=638 tokens (~1914 rough chars) once the
+      // real check fires — well under either 3000-char tool result's own
+      // rough estimate (~1000 tokens), so the real check *does* fire and
+      // *does* find itself over budget.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const bigReadOnlyContent = 'X'.repeat(3000)
+      const bigMutatingContent = 'Y'.repeat(3000)
+      const priorConversation: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'earlier request' }] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'old_read', name: 'read_file', input: { path: 'a.txt' } },
+            { type: 'tool_use', id: 'old_write', name: 'write_file', input: { path: 'b.txt', content: 'x' } }
+          ]
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'tool_result', toolUseId: 'old_read', content: bigReadOnlyContent, isError: false },
+            { type: 'tool_result', toolUseId: 'old_write', content: bigMutatingContent, isError: false }
+          ]
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'done with that earlier request' }] },
+        { role: 'user', content: [{ type: 'text', text: 'new question' }] }
+      ]
+      const provider = new MockProvider([{ text: 'ok', stopReason: 'end_turn' }], { tokensUsed: 1000 })
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      await collect(orchestrator, priorConversation)
+
+      const sentMessages = provider.requests[0].messages
+      const findResult = (toolUseId: string): string | undefined => {
+        for (const m of sentMessages) {
+          for (const b of m.content) {
+            if (b.type === 'tool_result' && b.toolUseId === toolUseId) return b.content
+          }
+        }
+        return undefined
+      }
+      expect(findResult('old_read')).toMatch(/omitted to fit this round/i)
+      expect(findResult('old_write')).toBe(bigMutatingContent)
+    })
+
+    it('does nothing to an ordinary small conversation — the cheap local estimate alone is enough to skip the real check', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ text: 'ok', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      // The real countTokens call inside resolveMaxOutputTokens (used) and
+      // its overhead probe still happen (2 calls) — refitConversationToBudget
+      // itself must add zero more for a conversation this small.
+      expect(provider.countTokensCalls).toHaveLength(2)
     })
   })
 

@@ -53,5 +53,19 @@ export interface Tool {
    * failure; must not persist anything (that's still `execute`'s job).
    */
   validate?(input: Record<string, unknown>, ctx: ToolContext): Promise<void>
-  execute(input: Record<string, unknown>, ctx: ToolContext): Promise<string>
+  /**
+   * `signal` fires when the user clicks Stop or this call runs past
+   * `TOOL_EXECUTE_TIMEOUT_MS` (orchestrator.ts) — optional because most tools
+   * (file writes, DB mutations via drivers with no native cancel, email,
+   * deploy) have no way to actually stop mid-operation and can safely ignore
+   * it; the orchestrator's own wait is bounded either way (see
+   * `executeWithTimeout`), it just can't force-cancel the underlying work
+   * for a tool that doesn't opt in. Set `cancellable: true` on a tool that
+   * DOES react to it (see `shellExecuteTool`), so the timeout/stop message
+   * shown to the model can honestly say "stopped" vs. "may still be running
+   * in the background" for that specific tool.
+   */
+  execute(input: Record<string, unknown>, ctx: ToolContext, signal?: AbortSignal): Promise<string>
+  /** True if `execute` actually honors `signal` to stop the underlying work, not just the orchestrator's wait on it. Defaults to false. */
+  cancellable?: boolean
 }

@@ -8,6 +8,29 @@ function pickTools(registry: ToolRegistry, names: string[]): Tool[] {
 }
 
 /**
+ * Every currently-registered MCP-server tool (see `mcp/client.ts`'s
+ * `mcp__<server>__<tool>` naming) — flagged by an external code review
+ * (`review.md`, TASKS.md #99): README.md has always documented MCP tools as
+ * available to every role ("MCP (all roles): ... discovered tools merge
+ * into the registry automatically"), but no specialist's fixed tool list
+ * ever actually included them, so a connected MCP tool was reachable from
+ * the top-level orchestrator (`toolRegistry.list()`, the full registry) but
+ * silently disappeared the instant a request was delegated to a specialist
+ * — inconsistent routing that could make the top-level agent handle
+ * something itself rather than delegating, purely because delegation would
+ * lose tool access. Fixing the code to match the documented promise, not
+ * narrowing the promise to match the code — there's no per-role MCP
+ * configuration UI to scope this more precisely today, and broad access
+ * matches this app's existing Auto-mode philosophy (#96: the top level
+ * itself already gets the full registry, unfiltered). Read fresh, same as
+ * every `get tools()` getter below, since MCP servers connect/disconnect
+ * after startup.
+ */
+function mcpTools(registry: ToolRegistry): Tool[] {
+  return registry.list().filter((tool) => tool.name.startsWith('mcp__'))
+}
+
+/**
  * The 6 specialist roles per TASKS.md #28. `planning`/`distribution` stay
  * reasoning-only (no tools of their own exist for either yet) — their
  * prompts say so explicitly rather than letting the model imply a
@@ -106,16 +129,19 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         "root is always a safe starting point. If still no real link is available for what you need, say " +
         'so plainly rather than guessing.',
       get tools() {
-        return pickTools(registry, [
-          'web_search',
-          'search_history',
-          'api_list_connections',
-          'api_introspect',
-          'api_call',
-          'api_check_status',
-          'api_create_connection',
-          'parse_html'
-        ])
+        return [
+          ...pickTools(registry, [
+            'web_search',
+            'search_history',
+            'api_list_connections',
+            'api_introspect',
+            'api_call',
+            'api_check_status',
+            'api_create_connection',
+            'parse_html'
+          ]),
+          ...mcpTools(registry)
+        ]
       }
     },
     {
@@ -154,18 +180,21 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         "never claim the task is complete until you've verified the actual output exists (e.g. read the " +
         "file back or list the directory), not just that you wrote code you believe would create it.",
       get tools() {
-        return pickTools(registry, [
-          'read_file',
-          'list_directory',
-          'write_file',
-          'git_exec',
-          'git_clone_repo',
-          'office_read_document',
-          'office_create_document',
-          'office_fill_template',
-          'xlsx_read',
-          'xlsx_write'
-        ])
+        return [
+          ...pickTools(registry, [
+            'read_file',
+            'list_directory',
+            'write_file',
+            'git_exec',
+            'git_clone_repo',
+            'office_read_document',
+            'office_create_document',
+            'office_fill_template',
+            'xlsx_read',
+            'xlsx_write'
+          ]),
+          ...mcpTools(registry)
+        ]
       }
     },
     {
@@ -180,7 +209,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         "the exact command before anything executes, so don't ask for permission in chat first or " +
         'describe what a command would do instead of just running it.',
       get tools() {
-        return pickTools(registry, ['shell_execute', 'aws_cli', 'azure_cli', 'gcloud_cli'])
+        return [...pickTools(registry, ['shell_execute', 'aws_cli', 'azure_cli', 'gcloud_cli']), ...mcpTools(registry)]
       }
     },
     {
@@ -232,7 +261,8 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
       get tools() {
         return [
           ...pickTools(registry, dataToolNames),
-          ...registry.list().filter((tool) => tool.name.startsWith('db_query_'))
+          ...registry.list().filter((tool) => tool.name.startsWith('db_query_')),
+          ...mcpTools(registry)
         ]
       }
     },
@@ -246,7 +276,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'exact command first. You do not have cloud/deployment CLI access yet — describe what those ' +
         'steps would be rather than claiming to have done them.',
       get tools() {
-        return pickTools(registry, ['github_cli'])
+        return [...pickTools(registry, ['github_cli']), ...mcpTools(registry)]
       }
     },
     {

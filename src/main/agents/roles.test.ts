@@ -89,4 +89,51 @@ describe('createAgents', () => {
     expect(codingPrompt).toMatch(/delegate_to_terminal_devops/i)
     expect(agents.get('coding')?.tools.map((t) => t.name)).not.toContain('shell_execute')
   })
+
+  describe('MCP tool visibility per role (TASKS.md #99)', () => {
+    // README.md documents MCP tools as available to every role — before
+    // #99, no specialist's fixed tool list actually included them, so a
+    // connected MCP tool was reachable from the top-level orchestrator
+    // (the full registry) but silently disappeared the instant a request
+    // was delegated to a specialist.
+    it('a connected MCP tool is visible to every general-purpose specialist', () => {
+      const registry = new ToolRegistry()
+      registry.register(fakeTool('mcp__gbrain__search_documents'))
+      const agents = createAgents(registry)
+
+      for (const role of ['research', 'coding', 'terminal-devops', 'data', 'distribution'] as const) {
+        expect(agents.get(role)?.tools.map((t) => t.name)).toContain('mcp__gbrain__search_documents')
+      }
+    })
+
+    it('is live, same as saved queries — an MCP tool connected after createAgents() is still picked up', () => {
+      const registry = new ToolRegistry()
+      const agents = createAgents(registry)
+
+      registry.register(fakeTool('mcp__wiki__get_page'))
+
+      expect(agents.get('research')?.tools.map((t) => t.name)).toContain('mcp__wiki__get_page')
+    })
+
+    it('is NOT given to planning (no tools by design) or the isolated, narrow-brief page-creator/email specialists', () => {
+      const registry = new ToolRegistry()
+      registry.register(fakeTool('mcp__gbrain__search_documents'))
+      const agents = createAgents(registry)
+
+      expect(agents.get('planning')?.tools.map((t) => t.name)).not.toContain('mcp__gbrain__search_documents')
+      expect(agents.get('page-creator')?.tools.map((t) => t.name)).not.toContain('mcp__gbrain__search_documents')
+      expect(agents.get('email')?.tools.map((t) => t.name)).not.toContain('mcp__gbrain__search_documents')
+    })
+
+    it('a non-mcp__ tool is not accidentally swept in by the same mechanism', () => {
+      const registry = new ToolRegistry()
+      registry.register(fakeTool('web_search'))
+      const agents = createAgents(registry)
+
+      // web_search is already a named tool for research — this just confirms
+      // it wasn't *also* duplicated in by mcpTools' prefix filter.
+      const names = agents.get('research')?.tools.map((t) => t.name) ?? []
+      expect(names.filter((n) => n === 'web_search')).toHaveLength(1)
+    })
+  })
 })

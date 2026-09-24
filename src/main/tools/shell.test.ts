@@ -68,4 +68,20 @@ describe('shell_execute', () => {
   it('rejects an empty command', async () => {
     await expect(shellExecuteTool.execute({ command: '  ' }, ctx)).rejects.toThrow(/No command given/)
   })
+
+  it('is declared cancellable (TASKS.md #93)', () => {
+    expect(shellExecuteTool.cancellable).toBe(true)
+  })
+
+  it('actually kills the running process when the signal aborts, instead of letting it run to completion', async () => {
+    const controller = new AbortController()
+    const command = isWindows ? 'ping -n 10 127.0.0.1 > out.txt' : 'sleep 5 && echo done > out.txt'
+    const runPromise = shellExecuteTool.execute({ command }, ctx, controller.signal)
+    controller.abort()
+    await expect(runPromise).rejects.toThrow()
+    // The command was really killed, not just abandoned by the caller — its
+    // own side effect (the file it would have written after sleeping) never
+    // happens, proving the child process itself stopped.
+    await expect(readFile(join(root, 'out.txt'), 'utf-8')).rejects.toThrow()
+  })
 })

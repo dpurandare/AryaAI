@@ -1,5 +1,6 @@
 import type {
   CompletionRequest,
+  Message,
   ModelProvider,
   StreamEvent
 } from '../../src/main/providers/types'
@@ -67,6 +68,8 @@ export class MockProvider implements ModelProvider {
 
   /** Every CompletionRequest received, in order — for asserting what was actually sent. */
   readonly requests: CompletionRequest[] = []
+  /** Every `countTokens` call's own `messages` arg, in order — e.g. for asserting `resolveMaxOutputTokens`'s overhead call (TASKS.md #97) actually ran with the real system-prompt/tool-schema text, not just the conversation. */
+  readonly countTokensCalls: Message[][] = []
 
   private readonly turns: ScriptedTurn[]
   private nextTurnIndex = 0
@@ -91,7 +94,8 @@ export class MockProvider implements ModelProvider {
     return ['mock-model']
   }
 
-  async countTokens(): Promise<number> {
+  async countTokens(messages: Message[]): Promise<number> {
+    this.countTokensCalls.push(messages)
     return this.tokensUsed
   }
 

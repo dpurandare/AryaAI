@@ -40,9 +40,10 @@ describe('AnthropicProvider', () => {
     mockCountTokens.mockReset()
   })
 
-  it('streams text deltas, usage, and a final end_turn stop', async () => {
+  it('streams text deltas, usage (including message_start input tokens), and a final end_turn stop', async () => {
     mockStream.mockReturnValue(
       fakeStream([
+        { type: 'message_start', message: { usage: { input_tokens: 23 } } },
         { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hel' } },
         { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'lo!' } },
         { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } }
@@ -57,7 +58,7 @@ describe('AnthropicProvider', () => {
     expect(events).toEqual([
       { type: 'text_delta', text: 'Hel' },
       { type: 'text_delta', text: 'lo!' },
-      { type: 'usage', inputTokens: 0, outputTokens: 5 },
+      { type: 'usage', inputTokens: 23, outputTokens: 5 },
       { type: 'message_stop', stopReason: 'end_turn' }
     ])
   })
@@ -65,6 +66,7 @@ describe('AnthropicProvider', () => {
   it('streams a tool call: start then incremental input_json_delta', async () => {
     mockStream.mockReturnValue(
       fakeStream([
+        { type: 'message_start', message: { usage: { input_tokens: 17 } } },
         {
           type: 'content_block_start',
           index: 0,
@@ -87,9 +89,18 @@ describe('AnthropicProvider', () => {
     expect(events).toEqual([
       { type: 'tool_use_start', id: 'call_1', name: 'write_file' },
       { type: 'tool_use_delta', id: 'call_1', partialInput: '{"path":"a.txt"}' },
-      { type: 'usage', inputTokens: 0, outputTokens: 8 },
+      { type: 'usage', inputTokens: 17, outputTokens: 8 },
       { type: 'message_stop', stopReason: 'tool_use' }
     ])
+  })
+
+  it('reports inputTokens as 0 if message_start never arrived (defensive default, not expected in practice)', async () => {
+    mockStream.mockReturnValue(
+      fakeStream([{ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 3 } }])
+    )
+    const provider = new AnthropicProvider('key')
+    const events = await collect(provider.stream({ model: 'claude-sonnet-5', messages: [], maxTokens: 100 }))
+    expect(events).toContainEqual({ type: 'usage', inputTokens: 0, outputTokens: 3 })
   })
 
   it('maps stop_reason "max_tokens"', async () => {

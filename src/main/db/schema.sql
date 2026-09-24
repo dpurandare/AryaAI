@@ -26,6 +26,21 @@ CREATE TABLE IF NOT EXISTS session_usage (
   output_tokens INTEGER NOT NULL DEFAULT 0
 );
 
+-- TASKS.md #95, phase 2: every time classifyAndPlan's real classifier call
+-- actually runs, its result is logged alongside the deterministic gate's own
+-- verdict (classify-gate.ts) — whether the gate said 'run' (unsure, so the
+-- real call always happened) or 'skip' (this turn was one of the sampled
+-- ones, run anyway purely to check the gate). Lets the gate's accuracy
+-- against real classifier decisions be measured over time before it's ever
+-- widened to skip more.
+CREATE TABLE IF NOT EXISTS classify_gate_log (
+  id TEXT PRIMARY KEY,
+  gate_verdict TEXT NOT NULL,
+  classifier_complexity TEXT NOT NULL,
+  message_length INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
 -- search_history: which (provider, model) — and the dimension it produced —
 -- the current message_chunk_vectors index was built with. A single row
 -- (id=1). message_chunk_vectors (a sqlite-vec vec0 table) can't be declared
