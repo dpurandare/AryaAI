@@ -1,11 +1,23 @@
 <script lang="ts">
   import { renderMarkdown } from '../markdown'
+  import { renderMermaidBlocks } from '../mermaid-render'
 
   let { text }: { text: string } = $props()
-  const html = $derived(renderMarkdown(text))
+  const rendered = $derived(renderMarkdown(text))
+  let containerEl: HTMLDivElement | undefined = $state()
+
+  // TASKS.md #62 — reruns on every change to `rendered` (including each
+  // token of a still-streaming message), but `renderMermaidBlocks` itself
+  // is cheap to call redundantly: an already-rendered id is skipped, and a
+  // diagram whose source hasn't actually changed resolves from its cache
+  // synchronously — see mermaid-render.ts's own doc comment for why a
+  // streaming message's placeholder DOM nodes aren't stable across calls.
+  $effect(() => {
+    if (containerEl) void renderMermaidBlocks(containerEl, rendered.mermaidBlocks)
+  })
 </script>
 
-<div class="markdown-body">{@html html}</div>
+<div class="markdown-body" bind:this={containerEl}>{@html rendered.html}</div>
 
 <style>
   /* `{@html}` content never gets Svelte's scoping hash, so every descendant
@@ -105,5 +117,32 @@
   .markdown-body :global(td) {
     border: 1px solid var(--border);
     padding: 0.3em 0.6em;
+  }
+  /* TASKS.md #62 — the placeholder shown while mermaid-render.ts's async
+     render is still in flight (typically brief, but real for a large
+     diagram). */
+  .markdown-body :global(.mermaid-pending) {
+    margin: 0.5em 0;
+    padding: 0.6em 0.75em;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 0.85rem;
+  }
+  .markdown-body :global(.mermaid-error) {
+    font-style: normal;
+    color: var(--warn);
+  }
+  /* Once rendered, the placeholder's innerHTML is the diagram's own <svg> —
+     these rules target that replacement content, not a separate element. */
+  .markdown-body :global(.mermaid-pending[data-mermaid-rendered='true']:not(.mermaid-error)) {
+    padding: 0.5em;
+    text-align: center;
+  }
+  .markdown-body :global(.mermaid-pending[data-mermaid-rendered='true']:not(.mermaid-error) svg) {
+    max-width: 100%;
+    height: auto;
   }
 </style>

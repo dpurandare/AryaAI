@@ -37,7 +37,11 @@ const ALLOWED_TAGS = [
   'tr',
   'th',
   'td',
-  'hr'
+  'hr',
+  // TASKS.md #62 — a plain, inert container for a pending Mermaid diagram
+  // placeholder (see extractMermaid below); no XSS surface of its own,
+  // unlike widening this list for e.g. <script>/<iframe>/<object>.
+  'div'
 ]
 
 /**
@@ -115,13 +119,68 @@ function restoreMath(html: string, blocks: string[]): string {
   return html.replace(PLACEHOLDER_RE, (_match, indexStr: string) => blocks[Number(indexStr)] ?? '')
 }
 
-export function renderMarkdown(text: string): string {
-  const { text: withPlaceholders, blocks } = extractMath(text)
+/** The handful of entities `marked` actually produces inside a fenced code block's escaped text content — not a general HTML-entity decoder, just enough to recover the real Mermaid source it escaped. */
+function decodeCodeFenceEntities(escaped: string): string {
+  return escaped
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+}
+
+/**
+ * TASKS.md #62 — pulled out of `marked`'s own HTML output (a ```mermaid
+ * fence renders as an ordinary `<pre><code class="language-mermaid">...`
+ * block, confirmed directly against `marked`'s real output, not assumed)
+ * *before* sanitization, the same "extract, placeholder, splice back later"
+ * shape `extractMath`/`restoreMath` already use above — but the actual
+ * diagram rendering can't happen here: `mermaid.render()` is async, and
+ * this function (like `renderMarkdown`) must stay synchronous so an
+ * ordinary message with no diagram at all never pays an async round-trip
+ * just to render plain text. The real SVG is filled in later, imperatively,
+ * by `MarkdownText.svelte`'s own effect (see `mermaid-render.ts`) — this
+ * only leaves a `data-mermaid-id`-tagged placeholder div for it to find.
+ *
+ * Extracted even for a still-streaming, *unclosed* fence — confirmed
+ * against `marked`'s real behavior, not assumed: an unterminated GFM code
+ * fence runs to end-of-input rather than being left unrecognized, so a
+ * ```mermaid block mid-stream gets this same `<pre><code>` shape well
+ * before its closing ``` has arrived. That's an accepted tradeoff, not a
+ * bug: `mermaid-render.ts` ends up attempting a real render against a
+ * still-growing, likely-invalid source on every token, which mostly just
+ * fails fast into its own caught, harmless error state until the fence
+ * closes and the source stabilizes — the *final* render, once streaming
+ * genuinely stops, always sees the real, complete source.
+ */
+function extractMermaid(html: string): { html: string; blocks: Map<string, string> } {
+  const blocks = new Map<string, string>()
+  let counter = 0
+  const result = html.replace(/<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>\n?/g, (_match, escaped: string) => {
+    const id = `mermaid-${counter++}`
+    blocks.set(id, decodeCodeFenceEntities(escaped))
+    return `<div class="mermaid-pending" data-mermaid-id="${id}">Rendering diagram…</div>`
+  })
+  return { html: result, blocks }
+}
+
+export interface RenderedMarkdown {
+  html: string
+  /** Raw Mermaid source per placeholder id, rendered asynchronously by the caller — see `extractMermaid`'s own doc comment for why this can't happen inside this (synchronous) function. Empty for the overwhelming majority of messages, which contain no diagram at all. */
+  mermaidBlocks: Map<string, string>
+}
+
+export function renderMarkdown(text: string): RenderedMarkdown {
+  const { text: withPlaceholders, blocks: mathBlocks } = extractMath(text)
   const dirty = marked.parse(withPlaceholders, { async: false }) as string
-  const clean = DOMPurify.sanitize(dirty, {
+  const { html: dirtyWithMermaidPlaceholders, blocks: mermaidBlocks } = extractMermaid(dirty)
+  const clean = DOMPurify.sanitize(dirtyWithMermaidPlaceholders, {
     ALLOWED_TAGS,
-    ALLOWED_ATTR: ['href', 'class'],
+    ALLOWED_ATTR: ['href', 'class', 'data-mermaid-id'],
+    // Still blocks every OTHER data-* attribute broadly — data-mermaid-id
+    // is allowed only because it's explicitly named in ALLOWED_ATTR above,
+    // which DOMPurify always honors regardless of this flag.
     ALLOW_DATA_ATTR: false
   })
-  return restoreMath(clean, blocks)
+  return { html: restoreMath(clean, mathBlocks), mermaidBlocks }
 }
