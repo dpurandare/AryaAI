@@ -33,6 +33,13 @@ describe('buildPagedSelect (db_list_rows)', () => {
       params: [20, 10]
     })
   })
+
+  it('mysql: LIMIT/OFFSET with ? placeholders, same shape as sqlite — mysql supports the same LIMIT/OFFSET syntax', () => {
+    expect(buildPagedSelect('mysql', '`t`', 10, 20)).toEqual({
+      sql: 'SELECT * FROM `t` LIMIT ? OFFSET ?',
+      params: [10, 20]
+    })
+  })
 })
 
 describe('buildFindSelect (db_find_rows)', () => {
@@ -46,5 +53,9 @@ describe('buildFindSelect (db_find_rows)', () => {
 
   it('mssql: TOP n before the column list, no ORDER BY needed', () => {
     expect(buildFindSelect('mssql', '"t"', '"col"', 50)).toBe('SELECT TOP 50 * FROM "t" WHERE "col" = @p1')
+  })
+
+  it('mysql: trailing LIMIT with a ? placeholder, same shape as sqlite', () => {
+    expect(buildFindSelect('mysql', '`t`', '`col`', 50)).toBe('SELECT * FROM `t` WHERE `col` = ? LIMIT 50')
   })
 })

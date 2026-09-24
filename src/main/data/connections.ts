@@ -29,7 +29,7 @@ import { isMutatingSql } from '../tools/db/sql-classifier'
  */
 const SETTINGS_KEY = 'dataConnections'
 const KEYCHAIN_PREFIX = 'db:'
-const DEFAULT_PORT: Record<'postgres' | 'mssql', number> = { postgres: 5432, mssql: 1433 }
+const DEFAULT_PORT: Record<'postgres' | 'mssql' | 'mysql', number> = { postgres: 5432, mssql: 1433, mysql: 3306 }
 
 export interface ResolvedSqliteConnection {
   engine: 'sqlite'
@@ -55,7 +55,21 @@ export interface ResolvedMssqlConnection {
   password: string
 }
 
-export type ResolvedConnection = ResolvedSqliteConnection | ResolvedPostgresConnection | ResolvedMssqlConnection
+/** Same shape as the other two server engines, same reasoning for staying its own named type — see ResolvedMssqlConnection above. */
+export interface ResolvedMysqlConnection {
+  engine: 'mysql'
+  host: string
+  port: number
+  database: string
+  username: string
+  password: string
+}
+
+export type ResolvedConnection =
+  | ResolvedSqliteConnection
+  | ResolvedPostgresConnection
+  | ResolvedMssqlConnection
+  | ResolvedMysqlConnection
 
 function readList(): DataConnectionDto[] {
   const raw = getSetting(SETTINGS_KEY)

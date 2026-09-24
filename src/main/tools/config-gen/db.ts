@@ -3,6 +3,7 @@ import { basename, join, resolve } from 'node:path'
 import type { DbEngine, SaveDataConnectionInput } from '@shared/ipc-contract'
 import { saveConnection } from '../../data/connections'
 import { MssqlDriver } from '../db/mssql-driver'
+import { MysqlDriver } from '../db/mysql-driver'
 import { PostgresDriver } from '../db/postgres-driver'
 import { SqliteDriver } from '../db/sqlite-driver'
 import type { DbDriver } from '../db/types'
@@ -97,17 +98,20 @@ async function probeConnection(input: Record<string, unknown>, ctx: ToolContext)
   if (engine === 'sqlite') {
     resolvedFilePath = resolveSqliteFilePath(String(input.filePath ?? ''), ctx.workspaceGuard.root)
     driver = new SqliteDriver(resolvedFilePath)
-  } else if (engine === 'postgres' || engine === 'mssql') {
+  } else if (engine === 'postgres' || engine === 'mssql' || engine === 'mysql') {
+    const defaultPort = { postgres: 5432, mssql: 1433, mysql: 3306 }[engine]
     const config = {
       host: String(input.host ?? ''),
-      port: Number(input.port ?? (engine === 'postgres' ? 5432 : 1433)),
+      port: Number(input.port ?? defaultPort),
       database: String(input.database ?? ''),
       username: String(input.username ?? ''),
       password: String(input.password ?? '')
     }
-    driver = engine === 'postgres' ? new PostgresDriver(config) : new MssqlDriver(config)
+    if (engine === 'postgres') driver = new PostgresDriver(config)
+    else if (engine === 'mssql') driver = new MssqlDriver(config)
+    else driver = new MysqlDriver(config)
   } else {
-    throw new Error(`Unknown engine "${engine}" — must be "sqlite", "postgres", or "mssql".`)
+    throw new Error(`Unknown engine "${engine}" — must be "sqlite", "postgres", "mssql", or "mysql".`)
   }
   try {
     await driver.introspectSchema()
@@ -122,8 +126,8 @@ export const dbCreateConnectionTool: Tool = {
   description:
     'Create a new Database connection (Settings > Data sources) directly from details gathered in chat, ' +
     "instead of asking the user to fill out the Settings form by hand. Gather the non-secret fields " +
-    "yourself (host/port/database/username for postgres/mssql, filePath for sqlite); the connection's " +
-    "password (postgres/mssql only) is entered by the user directly in the confirmation dialog, never " +
+    "yourself (host/port/database/username for postgres/mssql/mysql, filePath for sqlite); the connection's " +
+    "password (postgres/mssql/mysql only) is entered by the user directly in the confirmation dialog, never " +
     "typed to you — never ask the user to tell you their password in chat. The connection is real-tested " +
     "(a genuine schema probe) before being saved, so a bad host/credential is caught immediately, not " +
     "discovered later.",
@@ -131,7 +135,7 @@ export const dbCreateConnectionTool: Tool = {
     type: 'object',
     properties: {
       name: { type: 'string' },
-      engine: { type: 'string', enum: ['sqlite', 'postgres', 'mssql'] },
+      engine: { type: 'string', enum: ['sqlite', 'postgres', 'mssql', 'mysql'] },
       filePath: {
         type: 'string',
         description:
@@ -139,11 +143,11 @@ export const dbCreateConnectionTool: Tool = {
           'NOT relative to the workspace root (unlike read_file/write_file/list_directory). This file can ' +
           'live anywhere on disk.'
       },
-      host: { type: 'string', description: 'postgres/mssql only' },
-      port: { type: 'number', description: 'postgres/mssql only, default 5432/1433' },
-      database: { type: 'string', description: 'postgres/mssql only' },
-      username: { type: 'string', description: 'postgres/mssql only' },
-      password: { type: 'string', description: 'postgres/mssql only — the user enters this directly, do not ask for it in chat' }
+      host: { type: 'string', description: 'postgres/mssql/mysql only' },
+      port: { type: 'number', description: 'postgres/mssql/mysql only, default 5432/1433/3306' },
+      database: { type: 'string', description: 'postgres/mssql/mysql only' },
+      username: { type: 'string', description: 'postgres/mssql/mysql only' },
+      password: { type: 'string', description: 'postgres/mssql/mysql only — the user enters this directly, do not ask for it in chat' }
     },
     required: ['name', 'engine']
   },

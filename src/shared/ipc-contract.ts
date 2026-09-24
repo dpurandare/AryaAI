@@ -191,7 +191,7 @@ export interface SecretStorageInfo {
   envFilePath: string
 }
 
-export type DbEngine = 'sqlite' | 'postgres' | 'mssql'
+export type DbEngine = 'sqlite' | 'postgres' | 'mssql' | 'mysql'
 
 export type SavedQueryParamType = 'string' | 'number'
 

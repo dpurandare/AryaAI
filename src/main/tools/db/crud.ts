@@ -93,7 +93,7 @@ export const dbListRowsTool: Tool = {
       const table = await requireTable(driver, String(input.table ?? ''))
       const limit = Math.min(MAX_LIST_LIMIT, Math.max(1, Number(input.limit) || DEFAULT_LIST_LIMIT))
       const offset = Math.max(0, Number(input.offset) || 0)
-      const { sql, params } = buildPagedSelect(driver.engine, quoteIdentifier(table.name), limit, offset)
+      const { sql, params } = buildPagedSelect(driver.engine, quoteIdentifier(table.name, driver.engine), limit, offset)
       const result = await driver.execute(sql, params)
       return `${result.rowCount} row(s):\n${JSON.stringify(result.rows, null, 2)}`
     } finally {
@@ -118,7 +118,7 @@ export const dbCountRowsTool: Tool = {
     const driver = openDriver(String(input.connection ?? ''))
     try {
       const table = await requireTable(driver, String(input.table ?? ''))
-      const result = await driver.execute(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table.name)}`)
+      const result = await driver.execute(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table.name, driver.engine)}`)
       return String((result.rows?.[0] as { count: unknown } | undefined)?.count ?? 0)
     } finally {
       await driver.close()
@@ -148,7 +148,12 @@ export const dbFindRowsTool: Tool = {
       const table = await requireTable(driver, String(input.table ?? ''))
       const column = String(input.column ?? '')
       requireColumn(table, column)
-      const sql = buildFindSelect(driver.engine, quoteIdentifier(table.name), quoteIdentifier(column), FIND_LIMIT)
+      const sql = buildFindSelect(
+        driver.engine,
+        quoteIdentifier(table.name, driver.engine),
+        quoteIdentifier(column, driver.engine),
+        FIND_LIMIT
+      )
       const result = await driver.execute(sql, [input.value])
       return `${result.rowCount} row(s):\n${JSON.stringify(result.rows, null, 2)}`
     } finally {

@@ -44,8 +44,8 @@
   let connections = $state<DataConnectionDto[]>([])
   let showAddConnection = $state(false)
   let connName = $state('')
-  let connEngine = $state<'sqlite' | 'postgres' | 'mssql'>('sqlite')
-  const DEFAULT_PORT: Record<'postgres' | 'mssql', string> = { postgres: '5432', mssql: '1433' }
+  let connEngine = $state<'sqlite' | 'postgres' | 'mssql' | 'mysql'>('sqlite')
+  const DEFAULT_PORT: Record<'postgres' | 'mssql' | 'mysql', string> = { postgres: '5432', mssql: '1433', mysql: '3306' }
   let connFilePath = $state('')
   let connHost = $state('')
   let connPort = $state('5432')
@@ -613,6 +613,7 @@
           <option value="sqlite">SQLite</option>
           <option value="postgres">Postgres</option>
           <option value="mssql">SQL Server</option>
+          <option value="mysql">MySQL</option>
         </select>
         {#if connEngine === 'sqlite'}
           <input placeholder="Path to .db file" bind:value={connFilePath} />

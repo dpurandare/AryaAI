@@ -1,5 +1,6 @@
 import { resolveConnection } from '../../data/connections'
 import { MssqlDriver } from './mssql-driver'
+import { MysqlDriver } from './mysql-driver'
 import { PostgresDriver } from './postgres-driver'
 import { SqliteDriver } from './sqlite-driver'
 import type { DbDriver } from './types'
@@ -14,5 +15,6 @@ export function openDriver(connectionNameOrId: string): DbDriver {
   }
   if (conn.engine === 'sqlite') return new SqliteDriver(conn.filePath)
   if (conn.engine === 'mssql') return new MssqlDriver(conn)
+  if (conn.engine === 'mysql') return new MysqlDriver(conn)
   return new PostgresDriver(conn)
 }
