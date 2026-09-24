@@ -147,6 +147,15 @@
   // that's already the pattern used elsewhere in this app (verified live:
   // a Set here silently never triggered a re-render on click).
   let expandedIds = $state<Record<string, boolean>>({})
+  /**
+   * TASKS.md #88 — separate from `expandedIds` above (that one caps a
+   * single block's own *content* preview; this one is a per-tool-call
+   * override of the whole block's collapsed/expanded state, layered on top
+   * of #72's global `toolDetailsExpanded` toggle). `undefined` = no
+   * explicit choice yet, so the default below applies; `true`/`false` once
+   * the user has clicked that specific entry's head line.
+   */
+  let toolBlockOverride = $state<Record<string, boolean>>({})
 
   const PREVIEW_MAX_CHARS = 500
   const PREVIEW_MAX_LINES = 10
@@ -222,11 +231,42 @@
   // Long pasted/typed user input renders as one huge bubble otherwise —
   // collapse it to a short preview with a click-to-expand toggle. Display
   // only: the full text is still what gets sent to the model and stored.
+  // Reused for a tool call's own result body too (TASKS.md #87) — same
+  // "noisy giant blob vs. a capped preview with its own expand toggle"
+  // shape, just a different content source.
   function previewOf(text: string): { text: string; truncated: boolean } {
     const lines = text.split('\n')
     let preview = lines.length > PREVIEW_MAX_LINES ? lines.slice(0, PREVIEW_MAX_LINES).join('\n') : text
     if (preview.length > PREVIEW_MAX_CHARS) preview = preview.slice(0, PREVIEW_MAX_CHARS)
     return { text: preview, truncated: preview.length < text.length }
+  }
+
+  /**
+   * TASKS.md #88 — the id of the most recent real (non-delegate) tool-call
+   * segment across the *whole* transcript, not just one message bubble.
+   * Recomputed reactively as new tool calls stream in, so the previous
+   * "most recent" one automatically stops being expanded-by-default the
+   * instant a newer one appears — no manual bookkeeping needed to "hand
+   * off" the default.
+   */
+  let lastToolSegmentId = $derived.by((): string | undefined => {
+    let last: string | undefined
+    for (const m of messages) {
+      for (const s of m.segments) {
+        if (s.kind === 'tool' && s.toolCall && !s.toolCall.name.startsWith('delegate_to_')) last = s.id
+      }
+    }
+    return last
+  })
+
+  /** Whether a given tool-call segment's body should currently render in full — see `toolBlockOverride`'s own doc comment for the default-vs-override split. */
+  function isToolBlockExpanded(segmentId: string): boolean {
+    return toolDetailsExpanded && (toolBlockOverride[segmentId] ?? segmentId === lastToolSegmentId)
+  }
+
+  function toggleToolBlock(segmentId: string): void {
+    if (!toolDetailsExpanded) return
+    toolBlockOverride[segmentId] = !isToolBlockExpanded(segmentId)
   }
 </script>
 
@@ -259,26 +299,36 @@
           {#if segment.kind === 'tool' && segment.toolCall}
             {@const isDelegate = segment.toolCall.name.startsWith('delegate_to_')}
             {@const isResolved = segment.toolCall.result !== undefined}
-            <div class="tool-call" class:collapsed={!toolDetailsExpanded}>
-              <div class="tool-call-head">
+            {@const showFull = isToolBlockExpanded(segment.id)}
+            {@const blockClickable = toolDetailsExpanded && !isDelegate && isResolved}
+            <div class="tool-call" class:collapsed={!showFull}>
+              <svelte:element
+                this={blockClickable ? 'button' : 'div'}
+                class="tool-call-head"
+                class:clickable={blockClickable}
+                type={blockClickable ? 'button' : undefined}
+                role={blockClickable ? 'button' : undefined}
+                onclick={blockClickable ? () => toggleToolBlock(segment.id) : undefined}
+              >
                 <span class="tool-icon">⚙</span>
                 <code>{segment.toolCall.name}</code>
                 <span class="tool-input">{segment.toolCall.input}</span>
-                {#if !toolDetailsExpanded && !isDelegate && isResolved}
+                {#if !showFull && !isDelegate && isResolved}
                   <!-- Collapsed + already resolved: a one-glyph result indicator
                        instead of the full body below — full detail is one
-                       Cmd/Ctrl+O away, not lost, just not filling the transcript
-                       by default. Reported directly: full tool output shown for
-                       every call by default made the chat look broken/noisy
-                       even when the app was working correctly. -->
-                  <span class="tool-status" class:error={segment.toolCall.isError} title={segment.toolCall.isError ? 'Error — Cmd/Ctrl+O for details' : 'Done — Cmd/Ctrl+O for details'}>
+                       Cmd/Ctrl+O (or a click on this entry, TASKS.md #88) away,
+                       not lost, just not filling the transcript by default.
+                       Reported directly: full tool output shown for every call
+                       by default made the chat look broken/noisy even when the
+                       app was working correctly. -->
+                  <span class="tool-status" class:error={segment.toolCall.isError} title={segment.toolCall.isError ? 'Error — click or Cmd/Ctrl+O for details' : 'Done — click or Cmd/Ctrl+O for details'}>
                     {segment.toolCall.isError ? '✗' : '✓'}
                   </span>
                 {/if}
-              </div>
+              </svelte:element>
               {#if !isDelegate}
                 {#if isResolved}
-                  {#if toolDetailsExpanded}
+                  {#if showFull}
                     {@const historicalResults =
                       segment.toolCall.name === 'search_history' && !segment.toolCall.isError
                         ? parseSearchHistoryResult(segment.toolCall.result ?? '')
@@ -295,7 +345,24 @@
                         {/each}
                       </div>
                     {:else}
-                      <div class="tool-result" class:error={segment.toolCall.isError}>{segment.toolCall.result}</div>
+                      <!-- TASKS.md #87: even within an expanded block, an
+                           individually large result (a long file read, a
+                           verbose shell/git output) still rendered in full,
+                           unbounded — a second, finer-grained noise problem
+                           #72's whole-block collapse didn't address. Same
+                           capped-preview-plus-expand pattern already used for
+                           a long user message above, keyed by this segment's
+                           own id so it never collides with that toggle. -->
+                      {@const resultPreview = previewOf(segment.toolCall.result ?? '')}
+                      {@const resultExpanded = Boolean(expandedIds[segment.id])}
+                      <div class="tool-result" class:error={segment.toolCall.isError}>{resultExpanded
+                          ? segment.toolCall.result
+                          : resultPreview.text}{#if resultPreview.truncated && !resultExpanded}…{/if}</div>
+                      {#if resultPreview.truncated}
+                        <button class="expand-toggle" onclick={() => toggleExpand(segment.id)}>
+                          {resultExpanded ? 'Show less' : 'Show more'}
+                        </button>
+                      {/if}
                     {/if}
                   {/if}
                 {:else}
@@ -570,6 +637,30 @@
     align-items: baseline;
     gap: 0.4rem;
     color: var(--text-muted);
+    /* Resets browser <button> chrome when rendered as one (TASKS.md #88,
+       via <svelte:element> — a real <button> when this entry is clickable,
+       a plain <div> otherwise) — harmless no-ops on the plain <div> case. */
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    text-align: left;
+    width: 100%;
+  }
+  /* A resolved, non-delegate entry's head line becomes its own per-entry
+     expand/collapse toggle once global detail mode (#72) is on, independent
+     of the Cmd/Ctrl+O shortcut. */
+  .tool-call-head.clickable {
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .tool-call-head.clickable:hover {
+    color: var(--text);
+  }
+  .tool-call-head.clickable:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
   .tool-icon {
     color: var(--accent);
