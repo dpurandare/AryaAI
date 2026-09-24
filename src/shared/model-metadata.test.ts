@@ -14,6 +14,14 @@ describe('contextWindowFor', () => {
     expect(result.tokens).toBeGreaterThan(0)
   })
 
+  it('matches Groq-hosted model prefixes (TASKS.md #90), confirmed against console.groq.com/docs/models', () => {
+    expect(contextWindowFor('llama-3.3-70b-versatile')).toEqual({ tokens: 131_072, isEstimate: false })
+    expect(contextWindowFor('llama-3.1-8b-instant')).toEqual({ tokens: 131_072, isEstimate: false })
+    // Groq's own hosting of GPT-OSS — a distinct id shape from real OpenAI's
+    // 'gpt-*' models, must not collide with that entry.
+    expect(contextWindowFor('openai/gpt-oss-120b')).toEqual({ tokens: 131_072, isEstimate: false })
+  })
+
   it('uses a conservative 4096 fallback for a local model with no live reading, not a generous guess', () => {
     // Deliberately small, not the unrecognized-cloud-model fallback (8192) —
     // see model-metadata.ts's DEFAULT_LOCAL_CONTEXT_WINDOW comment. A larger
@@ -49,6 +57,16 @@ describe('maxOutputTokensFor', () => {
     expect(maxOutputTokensFor('some-future-model')).toEqual({ tokens: 4_096, isEstimate: true })
   })
 
+  it('gives Groq-hosted models their real, distinct per-model ceilings (TASKS.md #90)', () => {
+    // 131072 vs 32768 for these two are genuinely different real numbers,
+    // not a shared family default — the specific entries must be checked
+    // before the generic 'llama-' fallback.
+    expect(maxOutputTokensFor('llama-3.1-8b-instant')).toEqual({ tokens: 131_072, isEstimate: false })
+    expect(maxOutputTokensFor('llama-3.3-70b-versatile')).toEqual({ tokens: 32_768, isEstimate: false })
+    expect(maxOutputTokensFor('openai/gpt-oss-120b')).toEqual({ tokens: 65_536, isEstimate: false })
+    expect(maxOutputTokensFor('openai/gpt-oss-20b')).toEqual({ tokens: 65_536, isEstimate: false })
+  })
+
   it('gives a local (Ollama-shaped) model a generous default ceiling — no real per-call rejection risk to guard against', () => {
     const result = maxOutputTokensFor('gpt-oss:20b')
     expect(result.isEstimate).toBe(true)
@@ -67,6 +85,11 @@ describe('pricePerMillionTokens', () => {
 
   it('returns undefined for an unrecognized cloud-shaped model rather than guessing', () => {
     expect(pricePerMillionTokens('some-future-model')).toBeUndefined()
+  })
+
+  it('is deliberately undefined for Groq models — real pricing not confirmed at implementation time (TASKS.md #90)', () => {
+    expect(pricePerMillionTokens('llama-3.3-70b-versatile')).toBeUndefined()
+    expect(pricePerMillionTokens('openai/gpt-oss-120b')).toBeUndefined()
   })
 })
 

@@ -1,5 +1,6 @@
 import { AnthropicProvider } from './anthropic'
 import { GoogleProvider } from './google'
+import { GroqProvider } from './groq'
 import { OllamaProvider } from './ollama'
 import { OpenAIProvider } from './openai'
 import { ProviderRegistry } from './registry'
@@ -34,6 +35,13 @@ export function createDefaultProviderRegistry(): ProviderRegistry {
     requiresApiKey: false,
     supportsEmbeddings: true,
     create: () => new OllamaProvider()
+  })
+  registry.register({
+    id: 'groq',
+    displayName: 'Groq',
+    requiresApiKey: true,
+    supportsEmbeddings: false,
+    create: (apiKey) => new GroqProvider(apiKey!)
   })
   return registry
 }

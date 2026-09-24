@@ -24,7 +24,13 @@ const CONTEXT_WINDOWS: ContextWindowEntry[] = [
   { prefix: 'gemini-', tokens: 1_048_576 },
   { prefix: 'gpt-', tokens: 128_000 },
   { prefix: 'o1', tokens: 128_000 },
-  { prefix: 'o3', tokens: 128_000 }
+  { prefix: 'o3', tokens: 128_000 },
+  // Groq-hosted models (TASKS.md #90) — confirmed against console.groq.com/docs/models,
+  // not guessed. 'openai/gpt-oss-*' (Groq's own hosting of the open-weight GPT-OSS
+  // models) is a distinct id shape from real OpenAI's 'gpt-*' above, so it needs its
+  // own entry rather than colliding with — or being shadowed by — that one.
+  { prefix: 'llama-', tokens: 131_072 },
+  { prefix: 'openai/gpt-oss', tokens: 131_072 }
 ]
 
 /**
@@ -91,7 +97,15 @@ const MAX_OUTPUT_TOKENS: MaxOutputEntry[] = [
   { prefix: 'o1', tokens: 32_000 },
   { prefix: 'o3', tokens: 100_000 },
   { prefix: 'gpt-', tokens: 16_384 }, // gpt-4o family
-  { prefix: 'gemini-', tokens: 64_000 }
+  { prefix: 'gemini-', tokens: 64_000 },
+  // Groq-hosted models (TASKS.md #90), confirmed against console.groq.com/docs/models.
+  // Specific ids before the generic 'llama-' fallback, same ordering convention as
+  // claude-opus/sonnet/haiku above — llama-3.1-8b-instant and llama-3.3-70b-versatile
+  // have genuinely different real ceilings, not a shared family default.
+  { prefix: 'llama-3.1-8b', tokens: 131_072 },
+  { prefix: 'llama-3.3-70b', tokens: 32_768 },
+  { prefix: 'llama-', tokens: 32_768 }, // conservative fallback for any other/future Groq Llama model
+  { prefix: 'openai/gpt-oss', tokens: 65_536 }
 ]
 
 /** Ollama has no real per-call rejection risk the way a commercial API does (no fixed registered ceiling to validate against) — a generous default here is safe, and orchestrator.ts's live `loadedContextWindow` reading already scales the *actual* per-round budget down from this when a smaller real context is loaded. */
@@ -112,7 +126,20 @@ interface PriceEntry {
   output: number
 }
 
-/** USD per 1M tokens. Only models with real, confident pricing are listed — everything else resolves to `undefined` rather than a guess. */
+/**
+ * USD per 1M tokens. Only models with real, confident pricing are listed —
+ * everything else resolves to `undefined` rather than a guess (see
+ * `pricePerMillionTokens`'s own "cost unknown" fallback).
+ *
+ * Groq (TASKS.md #90) deliberately has no entries here: its self-serve
+ * pricing moved around materially as recently as 2026-08-26 (llama-3.1-8b-
+ * instant/llama-3.3-70b-versatile reportedly moved to enterprise-only
+ * "contact sales" pricing, dropping off the public rate table), and no
+ * current, first-party numbers were confirmed directly from Groq's own docs
+ * at implementation time — only third-party aggregator pages, which this
+ * table's own policy treats as not confident enough to list. Revisit once
+ * real, current pricing can be confirmed against Groq's own pricing page.
+ */
 const PRICES: PriceEntry[] = [
   { prefix: 'claude-opus', input: 15, output: 75 },
   { prefix: 'claude-sonnet', input: 3, output: 15 },
