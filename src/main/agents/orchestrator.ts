@@ -5,6 +5,7 @@ import { AGENT_ROLE_LABELS, AGENT_ROLES } from '@shared/agents'
 import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
 import { evaluateClassifyGate, shouldSampleForCalibration, type ClassifyGateVerdict } from './classify-gate'
 import { CONTEXT_BUDGET_FRACTION, overheadTokens, resolveContextWindow } from '../context/prepare-context'
+import { isRateLimitError, retryAfterMsFromError } from '../providers/rate-limit'
 import type { ModelProvider, ToolDefinition } from '../providers/types'
 import type { Tool, ToolContext } from '../tools/types'
 
@@ -155,6 +156,54 @@ const TURN_DEADLINE_MS = 15 * 60 * 1000
  * orchestrator's own wait, and so the whole turn, is never blocked forever.
  */
 const TOOL_EXECUTE_TIMEOUT_MS = 5 * 60 * 1000
+
+/**
+ * TASKS.md #91 — how many app-level rate-limit retries a single round gets
+ * (separate from, and on top of, each SDK's own internal ~2-retry backoff —
+ * see `rate-limit.ts`). Bounded so a genuinely persistent rate limit still
+ * ends the turn with a clear message eventually, rather than retrying
+ * forever.
+ */
+const MAX_RATE_LIMIT_RETRIES = 5
+
+/** A hard ceiling on any single rate-limit wait, even if the provider's own `Retry-After` asks for longer — keeps one retry from single-handedly consuming most of the turn's wall-clock budget. */
+const RATE_LIMIT_MAX_WAIT_MS = 2 * 60 * 1000
+
+/** Exponential backoff for when the provider gave no `Retry-After` (or `retry-after-ms`) at all — e.g. every Google/`@google/genai` error, which carries no headers (see `rate-limit.ts`). Starts at 2s, doubles each retry, capped by `RATE_LIMIT_MAX_WAIT_MS` at the call site. */
+function rateLimitBackoffMs(attempt: number): number {
+  return 2000 * 2 ** (attempt - 1)
+}
+
+/**
+ * Resolves once `ms` elapses or `signal` aborts, whichever comes first —
+ * used for a rate-limit wait, which (unlike a round's own timeout) has no
+ * provider request in flight to race against, just a deliberate pause.
+ * Returns the real elapsed time so the caller can extend `state.deadlineAt`
+ * by exactly what was actually waited, not the originally intended amount,
+ * on the rare case a Stop click cuts the wait short.
+ */
+function sleepAbortable(ms: number, signal: AbortSignal): Promise<number> {
+  const start = Date.now()
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve(0)
+      return
+    }
+    const cleanup = (): void => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+    }
+    const onAbort = (): void => {
+      cleanup()
+      resolve(Date.now() - start)
+    }
+    const timer = setTimeout(() => {
+      cleanup()
+      resolve(Date.now() - start)
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
 
 /** See `capRepeatedToolResults` below. */
 const MAX_KEPT_RESULTS_PER_TOOL = 3
@@ -433,6 +482,8 @@ interface RunState {
   deadlineAt: number
   /** How many round-timeouts in a row have just happened at this nesting level — reset to 0 the moment a round actually completes, incremented on each timeout. Grows the next round's timeout budget (see `startRoundTimer`) so a retry gets more room than the attempt that just wasn't enough, instead of blindly repeating the same losing timeout forever. */
   consecutiveRoundTimeouts: number
+  /** Same idea as `consecutiveRoundTimeouts` above, but for a distinct trigger (TASKS.md #91): a provider-confirmed rate-limit error (429), not a hang. Deliberately separate accounting — a rate-limit wait must never be mistaken for, or share a budget with, a genuinely stuck round. Reset to 0 the moment a round actually completes. */
+  consecutiveRateLimitRetries: number
 }
 
 const MIN_MAX_OUTPUT_TOKENS = 4096 // today's original flat value — kept as the floor, not the ceiling
@@ -618,7 +669,8 @@ export class Orchestrator {
       outputTokens: 0,
       maxOutputTokens,
       deadlineAt: Date.now() + TURN_DEADLINE_MS,
-      consecutiveRoundTimeouts: 0
+      consecutiveRoundTimeouts: 0,
+      consecutiveRateLimitRetries: 0
     }
 
     if (forcedRole) {
@@ -661,13 +713,7 @@ export class Orchestrator {
       // TASKS.md #102: nothing ever ran past the classify pre-pass, so
       // there's genuinely nothing else to persist for this turn — same
       // top-level "stopped, no answer" note as runLoop's own abort branches.
-      const message = 'This request was stopped before producing a response. No answer was given.'
-      yield { kind: 'stream', event: { type: 'warning', message, failureCategory: 'stopped_by_user' } }
-      yield {
-        kind: 'message',
-        role: 'assistant',
-        content: [{ type: 'warning', message, failureCategory: 'stopped_by_user' }]
-      }
+      yield* this.emitStoppedNoAnswer(undefined)
       yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, undefined, true) }
       return
     }
@@ -850,6 +896,13 @@ export class Orchestrator {
         else if (event.type === 'message_stop') stopReason = event.stopReason
       }
     } catch (err) {
+      // TASKS.md #91: a rate limit here falls open the same way a timeout
+      // already does, just below — no retry loop for a one-shot probe (the
+      // real round loop right after this gets the full retry treatment via
+      // handleRateLimitError, and will hit the identical rate limit again
+      // immediately if it's still in effect, at which point it's handled
+      // properly rather than twice over in two different ways here).
+      if (isRateLimitError(err)) return undefined
       if (!roundTimer.signal.aborted) throw err
       // A timed-out classify call falls open exactly like a genuinely
       // malformed one already does (see the no-plan branch below) — it's
@@ -1112,6 +1165,81 @@ export class Orchestrator {
   }
 
   /**
+   * TASKS.md #102's "stopped, no answer" note — a top-level turn (or the
+   * pre-round classify pass) that ends via a genuine user Stop with
+   * literally nothing produced gets this instead of silently leaving
+   * nothing persisted at all. Factored out since it's now emitted from 4
+   * separate call sites: the classify-abort check in `run()`, the two
+   * existing `runLoop` abort shapes, and the rate-limit wait's own abort
+   * check below.
+   */
+  private *emitStoppedNoAnswer(agentRole: AgentRole | undefined): Generator<OrchestratorEvent> {
+    const message = 'This request was stopped before producing a response. No answer was given.'
+    yield { kind: 'stream', event: tagEvent({ type: 'warning', message, failureCategory: 'stopped_by_user' }, agentRole) }
+    yield {
+      kind: 'message',
+      role: 'assistant',
+      content: [{ type: 'warning', message, failureCategory: 'stopped_by_user' }]
+    }
+  }
+
+  /**
+   * TASKS.md #91 — a provider-confirmed rate limit (429), recognized
+   * distinctly rather than surfacing as a generic stream error, gets its
+   * own bounded wait-then-retry, with its own accounting
+   * (`state.consecutiveRateLimitRetries`) deliberately separate from
+   * `consecutiveRoundTimeouts`/`TURN_DEADLINE_MS` — the wait is real,
+   * deliberate time this turn spends *because the provider asked it to*,
+   * not evidence of a hung round, and must not be silently eaten by or
+   * counted against the same wall-clock budget built for that entirely
+   * different failure mode. `state.deadlineAt` is pushed forward by
+   * whatever was actually waited (see the `+=` below) so the rest of the
+   * turn still gets its full, real remaining time afterward.
+   *
+   * All 3 SDK families here (Anthropic, the shared OpenAI-compatible layer,
+   * Google) already retry a 429 internally a couple of times before ever
+   * throwing up to this method at all (see `rate-limit.ts`'s own doc
+   * comment) — reaching here means that was already exhausted, so this is
+   * deliberately a second, longer-patience layer on top, not a duplicate of
+   * what the SDK already does.
+   *
+   * Throws (ending the turn, same as any other genuine failure — flows into
+   * TASKS.md #102's `communication_failure` handling) once
+   * `MAX_RATE_LIMIT_RETRIES` is exhausted, with a clear, specific message
+   * rather than letting the last attempt's raw SDK error speak for itself.
+   */
+  private async *handleRateLimitError(
+    err: unknown,
+    state: RunState,
+    agentRole: AgentRole | undefined,
+    isTopLevel: boolean
+  ): AsyncGenerator<OrchestratorEvent, 'retry' | 'stopped'> {
+    if (state.consecutiveRateLimitRetries >= MAX_RATE_LIMIT_RETRIES) {
+      throw new Error(
+        `The provider says you've hit its rate limit, and it was still in effect after ${MAX_RATE_LIMIT_RETRIES} retries — try again in a few minutes.`
+      )
+    }
+    state.consecutiveRateLimitRetries++
+    const suggested = retryAfterMsFromError(err)
+    const waitMs = Math.min(suggested ?? rateLimitBackoffMs(state.consecutiveRateLimitRetries), RATE_LIMIT_MAX_WAIT_MS)
+    // "The provider says..." — mirrors #80's own lesson about honest
+    // wording: this is the provider's own rate limit, not a bug in this app.
+    const message =
+      `The provider says you've hit its rate limit — waiting ${Math.round(waitMs / 1000)}s before retrying ` +
+      `(attempt ${state.consecutiveRateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}).`
+    yield { kind: 'stream', event: tagEvent({ type: 'warning', message }, agentRole) }
+
+    const waited = await sleepAbortable(waitMs, this.signal)
+    if (this.signal.aborted) {
+      if (isTopLevel) yield* this.emitStoppedNoAnswer(agentRole)
+      yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, agentRole, isTopLevel) }
+      return 'stopped'
+    }
+    state.deadlineAt += waited
+    return 'retry'
+  }
+
+  /**
    * The shared round-loop: streams one provider turn, handles any resulting
    * tool calls (delegate or registry), and repeats until the model stops
    * calling tools or the shared round budget is exhausted. Used both for
@@ -1205,6 +1333,18 @@ export class Orchestrator {
           yield { kind: 'stream', event: outEvent }
         }
       } catch (err) {
+        // TASKS.md #91 — checked before anything else in this block: a
+        // provider-confirmed rate limit (429) is a genuine thrown error
+        // (roundTimer.signal.aborted is normally false for it — the
+        // underlying HTTP call actually completed, our own signal didn't
+        // fire), so it must be intercepted here, before the "not our own
+        // abort, rethrow unchanged" check right below would otherwise
+        // immediately rethrow it as a generic failure.
+        if (isRateLimitError(err)) {
+          const outcome = yield* this.handleRateLimitError(err, state, agentRole, isTopLevel)
+          if (outcome === 'stopped') return { text: assistantText, isError: true }
+          continue // 'retry' — same round, from the top of the while loop (roundTimer.clear() in `finally` below still runs first)
+        }
         // The signal is the source of truth for "was this a user-requested
         // stop" — every provider SDK throws its own differently-shaped abort
         // error, and pattern-matching on error names/types across all 4
@@ -1223,16 +1363,7 @@ export class Orchestrator {
           // persisted at all (not even a warning), so the same question
           // just kept getting silently resent as unanswered "real" context
           // on every later call.
-          if (isTopLevel && !assistantText && toolCalls.length === 0) {
-            const message =
-              'This request was stopped before producing a response. No answer was given.'
-            yield { kind: 'stream', event: tagEvent({ type: 'warning', message, failureCategory: 'stopped_by_user' }, agentRole) }
-            yield {
-              kind: 'message',
-              role: 'assistant',
-              content: [{ type: 'warning', message, failureCategory: 'stopped_by_user' }]
-            }
-          }
+          if (isTopLevel && !assistantText && toolCalls.length === 0) yield* this.emitStoppedNoAnswer(agentRole)
           yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, agentRole, isTopLevel) }
           return { text: assistantText, isError: true }
         }
@@ -1276,15 +1407,7 @@ export class Orchestrator {
         // TASKS.md #102: same top-level-only "stopped, no answer" note as
         // the catch-based shape 1 above — this condition already implies
         // both `isTopLevel` doesn't need re-checking for content emptiness.
-        if (isTopLevel) {
-          const message = 'This request was stopped before producing a response. No answer was given.'
-          yield { kind: 'stream', event: tagEvent({ type: 'warning', message, failureCategory: 'stopped_by_user' }, agentRole) }
-          yield {
-            kind: 'message',
-            role: 'assistant',
-            content: [{ type: 'warning', message, failureCategory: 'stopped_by_user' }]
-          }
-        }
+        if (isTopLevel) yield* this.emitStoppedNoAnswer(agentRole)
         yield {
           kind: 'stream',
           event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, agentRole, isTopLevel)
@@ -1310,10 +1433,12 @@ export class Orchestrator {
         continue
       }
 
-      // The round actually completed (whether or not it timed out on a
-      // *previous* attempt) — the next round starts a fresh escalation from
-      // here, not compounding on unrelated future slowness.
+      // The round actually completed (whether or not it timed out, or hit a
+      // rate limit, on a *previous* attempt) — the next round starts a
+      // fresh escalation from here, not compounding on unrelated future
+      // slowness/rate-limiting.
       state.consecutiveRoundTimeouts = 0
+      state.consecutiveRateLimitRetries = 0
 
       if (roundUsage) {
         state.inputTokens += roundUsage.inputTokens
@@ -1721,7 +1846,8 @@ export class Orchestrator {
       // wall-clock turn deadline is the whole turn's, shared with every
       // other delegate call in it.
       deadlineAt: state.deadlineAt,
-      consecutiveRoundTimeouts: 0
+      consecutiveRoundTimeouts: 0,
+      consecutiveRateLimitRetries: 0
     }
     const maxRounds = agent.maxRounds ?? MAX_TOTAL_ROUNDS
 

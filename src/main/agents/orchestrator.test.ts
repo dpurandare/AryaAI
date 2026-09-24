@@ -2121,6 +2121,275 @@ describe('Orchestrator (integration, mocked provider)', () => {
         text: 'Reporting back what the Email specialist managed.'
       })
     }, 20000)
+
+    describe('rate limiting (TASKS.md #91) — nested here for the shared fake-timer setup and TURN_DEADLINE_MS helpers', () => {
+      const RATE_LIMIT_MAX_WAIT_MS = 2 * 60 * 1000
+      const MAX_RATE_LIMIT_RETRIES = 5
+
+      it('retries a rate-limited round and succeeds once the provider stops 429-ing, with a distinct, honest warning', async () => {
+        const registry = buildRegistry()
+        const agents = createAgents(registry)
+        const provider = new MockProvider([
+          { throwRateLimit: {} },
+          { text: 'Hello!', stopReason: 'end_turn' }
+        ])
+        const orchestrator = new Orchestrator(
+          provider,
+          'mock-model',
+          agents,
+          'You are Sachivji.',
+          registry.list(),
+          autoApprove(),
+          ctx,
+          signal,
+          { planningEnabled: false }
+        )
+
+        const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+        await vi.advanceTimersByTimeAsync(60_000) // comfortably past the first (2s) backoff
+        const events = await resultPromise
+        const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+        expect(provider.requests).toHaveLength(2)
+        const warning = streamEvents.find((e) => e.type === 'warning')
+        expect(warning).toBeDefined()
+        expect((warning as { message: string }).message).toMatch(/rate limit/i)
+        expect((warning as { message: string }).message).toMatch(/attempt 1\/5/i)
+        expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hello!' })
+        expect(streamEvents.at(-1)).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
+      })
+
+      it("respects the provider's own Retry-After header exactly, not the default backoff", async () => {
+        const registry = buildRegistry()
+        const agents = createAgents(registry)
+        const provider = new MockProvider([
+          { throwRateLimit: { headers: { 'retry-after': '5' } } },
+          { text: 'Hello!', stopReason: 'end_turn' }
+        ])
+        const orchestrator = new Orchestrator(
+          provider,
+          'mock-model',
+          agents,
+          'You are Sachivji.',
+          registry.list(),
+          autoApprove(),
+          ctx,
+          signal,
+          { planningEnabled: false }
+        )
+
+        const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+        await vi.advanceTimersByTimeAsync(4_999)
+        expect(provider.requests).toHaveLength(1) // not retried yet — hasn't waited the real 5s
+        await vi.advanceTimersByTimeAsync(2)
+        const events = await resultPromise
+        const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+        expect(provider.requests).toHaveLength(2)
+        const warning = streamEvents.find((e) => e.type === 'warning')
+        expect((warning as { message: string }).message).toMatch(/waiting 5s/i)
+      })
+
+      it('falls back to exponential backoff when the provider gives no Retry-After at all (the real shape of a Google/@google-genai rate-limit error)', async () => {
+        const registry = buildRegistry()
+        const agents = createAgents(registry)
+        const provider = new MockProvider([{ throwRateLimit: {} }, { text: 'Hello!', stopReason: 'end_turn' }])
+        const orchestrator = new Orchestrator(
+          provider,
+          'mock-model',
+          agents,
+          'You are Sachivji.',
+          registry.list(),
+          autoApprove(),
+          ctx,
+          signal,
+          { planningEnabled: false }
+        )
+
+        const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+        await vi.advanceTimersByTimeAsync(1_999) // under the first backoff step (2s)
+        expect(provider.requests).toHaveLength(1)
+        await vi.advanceTimersByTimeAsync(2)
+        await resultPromise
+        expect(provider.requests).toHaveLength(2)
+      })
+
+      it('caps a single wait at RATE_LIMIT_MAX_WAIT_MS even when Retry-After asks for much longer', async () => {
+        const registry = buildRegistry()
+        const agents = createAgents(registry)
+        const provider = new MockProvider([
+          { throwRateLimit: { headers: { 'retry-after': '600' } } }, // 10 minutes asked for
+          { text: 'Hello!', stopReason: 'end_turn' }
+        ])
+        const orchestrator = new Orchestrator(
+          provider,
+          'mock-model',
+          agents,
+          'You are Sachivji.',
+          registry.list(),
+          autoApprove(),
+          ctx,
+          signal,
+          { planningEnabled: false }
+        )
+
+        const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+        await vi.advanceTimersByTimeAsync(RATE_LIMIT_MAX_WAIT_MS - 1)
+        expect(provider.requests).toHaveLength(1)
+        await vi.advanceTimersByTimeAsync(2)
+        await resultPromise
+        expect(provider.requests).toHaveLength(2) // retried at the 2-minute cap, not after the full 10 minutes asked for
+      })
+
+      it(`gives up after ${MAX_RATE_LIMIT_RETRIES} retries with a clear, specific message — not the raw SDK error, and it becomes a real communication_failure note (TASKS.md #102)`, async () => {
+        const registry = buildRegistry()
+        const agents = createAgents(registry)
+        const provider = new MockProvider(
+          Array.from({ length: MAX_RATE_LIMIT_RETRIES + 1 }, () => ({ throwRateLimit: {} }) as const)
+        )
+        const orchestrator = new Orchestrator(
+          provider,
+          'mock-model',
+          agents,
+          'You are Sachivji.',
+          registry.list(),
+          autoApprove(),
+          ctx,
+          signal,
+          { planningEnabled: false }
+        )
+
+        // Exhausted retries throw a genuine error out of orchestrator.run()
+        // (same as any other real failure — see "a genuine provider error
+        // still propagates" above); `ipc/register.ts`'s own outer catch is
+        // what turns this into a persisted `communication_failure` note
+        // (TASKS.md #102) — a separate layer this orchestrator-level test
+        // doesn't exercise.
+        const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+        // Attached immediately, before advancing any timers — otherwise the
+        // promise can reject during the loop below with no handler
+        // attached yet, tripping Node's unhandled-rejection warning even
+        // though the test itself still passes.
+        const rejection = expect(resultPromise).rejects.toThrow(
+          new RegExp(`still in effect after ${MAX_RATE_LIMIT_RETRIES} retries`, 'i')
+        )
+        for (let i = 0; i < MAX_RATE_LIMIT_RETRIES; i++) {
+          await vi.advanceTimersByTimeAsync(RATE_LIMIT_MAX_WAIT_MS + 1_000)
+        }
+        await rejection
+        expect(provider.requests).toHaveLength(MAX_RATE_LIMIT_RETRIES + 1) // the initial attempt + every retry, no more
+      })
+
+      it('a Stop click during a rate-limit wait ends the turn immediately with a "stopped, no answer" note, not a generic error', async () => {
+        const registry = buildRegistry()
+        const agents = createAgents(registry)
+        const controller = new AbortController()
+        const provider = new MockProvider([
+          { throwRateLimit: {} },
+          { text: 'Should never be reached.', stopReason: 'end_turn' }
+        ])
+        const orchestrator = new Orchestrator(
+          provider,
+          'mock-model',
+          agents,
+          'You are Sachivji.',
+          registry.list(),
+          autoApprove(),
+          ctx,
+          controller.signal,
+          { planningEnabled: false }
+        )
+
+        const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+        // Let the round actually throw the rate-limit error and start its wait first.
+        await vi.advanceTimersByTimeAsync(0)
+        controller.abort()
+        const events = await resultPromise
+        const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+        expect(provider.requests).toHaveLength(1) // never actually retried
+        expect(streamEvents).toContainEqual({ type: 'message_stop', stopReason: 'aborted' })
+        expect(streamEvents).toContainEqual({
+          type: 'warning',
+          message: 'This request was stopped before producing a response. No answer was given.',
+          failureCategory: 'stopped_by_user'
+        })
+      })
+
+      it('a rate-limit wait extends the turn deadline rather than being silently eaten by it', async () => {
+        // Burns down the shared 15-minute deadline almost entirely via
+        // ordinary round-timeouts (the exact same helper the deadline tests
+        // above already rely on), leaving only the final hang's own advance
+        // worth of "real" budget. That remainder is then covered instead by
+        // enough rate-limited retries (each capped at RATE_LIMIT_MAX_WAIT_MS)
+        // to sum to at least as much wall-clock time. If `state.deadlineAt`
+        // were NOT pushed forward by each wait (the bug this guards
+        // against), the loop would stop attempting new rounds partway
+        // through these retries — landing in the "took too long" wrap-up —
+        // and the final scripted success below would never be reached.
+        const advances = hangRoundAdvancesToDeadline()
+        const withoutLast = advances.slice(0, -1)
+        const lastAdvance = advances[advances.length - 1]
+        const retriesNeeded = Math.ceil(lastAdvance / RATE_LIMIT_MAX_WAIT_MS)
+        expect(retriesNeeded).toBeLessThanOrEqual(MAX_RATE_LIMIT_RETRIES) // sanity-check the test's own premise against today's constants
+
+        const registry = buildRegistry()
+        const agents = createAgents(registry)
+        const provider = new MockProvider([
+          ...withoutLast.map(() => ({ hang: true }) as const),
+          ...Array.from({ length: retriesNeeded }, () => ({ throwRateLimit: {} }) as const),
+          { text: 'Finally succeeded once the rate limit cleared.', stopReason: 'end_turn' as const }
+        ])
+        const orchestrator = new Orchestrator(
+          provider,
+          'mock-model',
+          agents,
+          'You are Sachivji.',
+          registry.list(),
+          autoApprove(),
+          ctx,
+          signal,
+          { planningEnabled: false }
+        )
+
+        const resultPromise = collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+        for (const advance of withoutLast) await vi.advanceTimersByTimeAsync(advance)
+        for (let i = 0; i < retriesNeeded; i++) await vi.advanceTimersByTimeAsync(RATE_LIMIT_MAX_WAIT_MS + 1_000)
+        const events = await resultPromise
+        const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+        expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Finally succeeded once the rate limit cleared.' })
+      }, 20000)
+
+      it('classifyAndPlan falls open on a rate limit exactly like it already does on a timeout — no retry loop for a one-shot probe', async () => {
+        const registry = buildRegistry()
+        const agents = createAgents(registry)
+        const provider = new MockProvider([
+          { throwRateLimit: {} }, // the classify pre-pass itself
+          { text: 'Hello!', stopReason: 'end_turn' } // the real round right after, proceeding as "simple"
+        ])
+        const orchestrator = new Orchestrator(
+          provider,
+          'mock-model',
+          agents,
+          'You are Sachivji.',
+          registry.list(),
+          autoApprove(),
+          ctx,
+          signal,
+          { planningEnabled: true }
+        )
+
+        // Bypasses the classify-gate (#95) deliberately — see the note on
+        // the first test in the classify-and-plan describe block.
+        const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+        const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+        expect(provider.requests).toHaveLength(2) // classify (fails open immediately, no retry) + the one real round
+        expect(streamEvents.some((e) => e.type === 'plan')).toBe(false)
+        expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hello!' })
+      })
+    })
   })
 
   describe('tool execution timeout (a stuck tool.execute() with no timeout of its own, found live)', () => {

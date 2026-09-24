@@ -21,6 +21,8 @@ export interface ScriptedTurn {
   usage?: { inputTokens: number; outputTokens: number }
   /** Throws instead of streaming anything — every real SDK throws its own differently-shaped error when the request's AbortSignal fires mid-call; the orchestrator is expected to tell that apart from a genuine failure via `request.signal.aborted`, not by inspecting the error itself. */
   throwError?: string
+  /** Throws a rate-limit-shaped error (a real `.status === 429`, optionally real `.headers` for `Retry-After`) — matches the actual `APIError`/`ApiError` shape all 3 real SDK families throw (see `rate-limit.ts`'s own doc comment), for exercising `handleRateLimitError` (TASKS.md #91). */
+  throwRateLimit?: { message?: string; headers?: Record<string, string> }
   /**
    * Simulates a round that never produces anything on its own — the stream
    * just never resolves until `request.signal` fires (a round-timeout or a
@@ -111,6 +113,16 @@ export class MockProvider implements ModelProvider {
 
     if (turn.throwError) {
       throw new Error(turn.throwError)
+    }
+
+    if (turn.throwRateLimit) {
+      const err = new Error(turn.throwRateLimit.message ?? 'Rate limit exceeded') as Error & {
+        status: number
+        headers?: Headers
+      }
+      err.status = 429
+      if (turn.throwRateLimit.headers) err.headers = new Headers(turn.throwRateLimit.headers)
+      throw err
     }
 
     if (turn.hang) {
