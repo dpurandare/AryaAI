@@ -106,4 +106,29 @@ describe('McpManager', () => {
   it('getStatus returns undefined for an unknown server', () => {
     expect(new McpManager().getStatus('nope')).toBeUndefined()
   })
+
+  it('disconnectAll closes every connected server\'s client and unregisters all their tools — the app-quit cleanup path (TASKS.md #86)', async () => {
+    mockListServerConfigs.mockReturnValue([configA, configB])
+    const closeA = vi.fn().mockResolvedValue(undefined)
+    const closeB = vi.fn().mockResolvedValue(undefined)
+    mockConnectMcpServer.mockImplementation(async (config: McpServerConfig) => {
+      if (config.id === 'a') return { client: { close: closeA }, tools: [fakeTool('mcp__fs__read_file')] }
+      return { client: { close: closeB }, tools: [fakeTool('mcp__broken__ping')] }
+    })
+
+    const manager = new McpManager()
+    await manager.connectAll(registry)
+    manager.disconnectAll(registry)
+
+    expect(closeA).toHaveBeenCalledTimes(1)
+    expect(closeB).toHaveBeenCalledTimes(1)
+    expect(registry.get('mcp__fs__read_file')).toBeUndefined()
+    expect(registry.get('mcp__broken__ping')).toBeUndefined()
+    expect(manager.getStatus('a')).toBeUndefined()
+    expect(manager.getStatus('b')).toBeUndefined()
+  })
+
+  it('disconnectAll is a no-op when nothing is connected', () => {
+    expect(() => new McpManager().disconnectAll(registry)).not.toThrow()
+  })
 })

@@ -47,6 +47,24 @@ export class McpManager {
     this.servers.delete(id)
   }
 
+  /**
+   * Closes every connected server's client — for a `stdio` server, this is
+   * what actually kills its underlying child process (`StdioClientTransport`
+   * closes the process's stdin, and well-behaved servers exit on stdin-end,
+   * same as the manual `disconnect()` path above already relies on). Must be
+   * called on app shutdown: found live, not assumed — with no shutdown hook
+   * calling this, every quit or dev-mode main-process restart left each
+   * `stdio` server's child process (e.g. `gbrain serve`) running as an
+   * orphan, and a strict-single-writer server like gbrain's PGLite-backed
+   * brain then refused the *next* launch's fresh connection outright
+   * ("already open through gbrain serve (MCP, PID ...)"). Iterates a
+   * snapshot of the ids (not the live Map) since `disconnect()` mutates
+   * `this.servers` as it goes.
+   */
+  disconnectAll(registry: ToolRegistry): void {
+    for (const id of [...this.servers.keys()]) this.disconnect(id, registry)
+  }
+
   getStatus(id: string): McpServerStatusInfo | undefined {
     const managed = this.servers.get(id)
     if (!managed) return undefined

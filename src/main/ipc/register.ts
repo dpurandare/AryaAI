@@ -159,6 +159,19 @@ export function registerIpcHandlers(): void {
     console.error('Failed to connect configured MCP servers:', err)
   })
 
+  // Found live, not assumed: with no shutdown hook, every quit (and every
+  // dev-mode main-process restart) left each `stdio` MCP server's spawned
+  // child process running as an orphan — a strict-single-writer server
+  // (e.g. gbrain, whose local brain is backed by a single-connection PGLite
+  // datastore) then refused its *next* launch's fresh connection outright,
+  // reporting the previous, orphaned process's PID as already holding the
+  // lock. `before-quit` covers the well-behaved quit path (menu quit,
+  // window-all-closed's app.quit(), Cmd/Ctrl+Q); an unclean kill (SIGKILL,
+  // a crash) still can't be caught by any in-process hook — same residual
+  // gap as any other child-process cleanup on a hard kill, not specific to
+  // MCP.
+  app.on('before-quit', () => mcpManager.disconnectAll(toolRegistry))
+
   // Synchronous, unlike MCP connect above — no network/process involved,
   // saved queries are just settings data, so there's nothing to await.
   savedQueryManager.syncAll(toolRegistry)
