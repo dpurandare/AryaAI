@@ -230,7 +230,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
     const result = streamEvents.find((e) => e.type === 'tool_result')
 
-    expect(result).toMatchObject({ type: 'tool_result', isError: true, content: 'The user denied this tool call.' })
+    expect(result).toMatchObject({ type: 'tool_result', isError: true, content: '[Rejected by user] The user denied this tool call.' })
     await expect(readFile(join(root, 'denied.txt'), 'utf-8')).rejects.toThrow()
   })
 
@@ -275,7 +275,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
     const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
     const writeResult = streamEvents.find((e) => e.type === 'tool_result' && e.toolUseId === 'call_write')
-    expect(writeResult).toMatchObject({ isError: true, content: 'The user denied this tool call.' })
+    expect(writeResult).toMatchObject({ isError: true, content: '[Rejected by user] The user denied this tool call.' })
 
     // The whole run must still end cleanly — same "exactly one untagged,
     // non-tool_use message_stop, and it's the very last event" shape as the
@@ -491,9 +491,13 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
     // The round's own `status` event (yielded before the provider call that
     // then throws) still comes through — only the provider call itself is
-    // short-circuited by the already-aborted signal.
+    // short-circuited by the already-aborted signal. The warning is TASKS.md
+    // #102: a top-level turn stopped with literally nothing produced gets an
+    // explicit "stopped, no answer" note, so this doesn't get silently
+    // resent as unanswered "real" context on the next send.
     expect(streamEvents).toEqual([
       { type: 'status', message: 'Model (mock-model) is thinking… (round 1/20)' },
+      { type: 'warning', message: 'This request was stopped before producing a response. No answer was given.', failureCategory: 'stopped_by_user' },
       { type: 'message_stop', stopReason: 'aborted' }
     ])
   })
@@ -721,7 +725,12 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
       const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
-      expect(streamEvents).toEqual([{ type: 'message_stop', stopReason: 'aborted' }])
+      // TASKS.md #102: nothing ran past the classify pre-pass, so a
+      // "stopped, no answer" note is expected here too.
+      expect(streamEvents).toEqual([
+        { type: 'warning', message: 'This request was stopped before producing a response. No answer was given.', failureCategory: 'stopped_by_user' },
+        { type: 'message_stop', stopReason: 'aborted' }
+      ])
       expect(provider.requests).toHaveLength(1)
     })
 
@@ -1892,7 +1901,18 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
       expect(streamEvents).toContainEqual({ type: 'message_stop', stopReason: 'aborted' })
-      expect(streamEvents.some((e) => e.type === 'warning')).toBe(false) // no "took too long" — this wasn't a timeout
+      // No "took too long" timeout warning — this wasn't a timeout. The
+      // "stopped, no answer" warning (TASKS.md #102) is expected, though —
+      // a top-level turn that produced literally nothing still gets that
+      // explicit note so it isn't silently resent as unanswered context.
+      expect(streamEvents.some((e) => e.type === 'warning' && /took too long|not a tool being stuck/i.test(e.message))).toBe(
+        false
+      )
+      expect(streamEvents).toContainEqual({
+        type: 'warning',
+        message: 'This request was stopped before producing a response. No answer was given.',
+        failureCategory: 'stopped_by_user'
+      })
       expect(provider.requests).toHaveLength(1) // never reached the 2nd scripted turn
     })
 
@@ -1974,7 +1994,16 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
       expect(streamEvents).toContainEqual({ type: 'message_stop', stopReason: 'aborted' })
-      expect(streamEvents.some((e) => e.type === 'warning')).toBe(false)
+      // Same as the "hung round" Stop test above: no timeout warning, but
+      // the "stopped, no answer" note (TASKS.md #102) is expected.
+      expect(streamEvents.some((e) => e.type === 'warning' && /took too long|not a tool being stuck/i.test(e.message))).toBe(
+        false
+      )
+      expect(streamEvents).toContainEqual({
+        type: 'warning',
+        message: 'This request was stopped before producing a response. No answer was given.',
+        failureCategory: 'stopped_by_user'
+      })
       expect(provider.requests).toHaveLength(1) // never reached the 2nd scripted turn
     })
 

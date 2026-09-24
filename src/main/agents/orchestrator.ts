@@ -658,6 +658,16 @@ export class Orchestrator {
     // signal already aborted before the user even sent this turn is a real,
     // if rare, case that existing behavior already covers).
     if (shouldClassify && this.signal.aborted) {
+      // TASKS.md #102: nothing ever ran past the classify pre-pass, so
+      // there's genuinely nothing else to persist for this turn — same
+      // top-level "stopped, no answer" note as runLoop's own abort branches.
+      const message = 'This request was stopped before producing a response. No answer was given.'
+      yield { kind: 'stream', event: { type: 'warning', message, failureCategory: 'stopped_by_user' } }
+      yield {
+        kind: 'message',
+        role: 'assistant',
+        content: [{ type: 'warning', message, failureCategory: 'stopped_by_user' }]
+      }
       yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, undefined, true) }
       return
     }
@@ -1207,6 +1217,22 @@ export class Orchestrator {
         if (!roundTimer.signal.aborted) throw err
         if (!roundTimer.timedOut()) {
           // A real user Stop click — ends the whole turn now, as before.
+          // TASKS.md #102: when it produced literally nothing AND this is
+          // the top-level turn ending here, persist an explicit "stopped by
+          // the user, no answer" note — previously this case left nothing
+          // persisted at all (not even a warning), so the same question
+          // just kept getting silently resent as unanswered "real" context
+          // on every later call.
+          if (isTopLevel && !assistantText && toolCalls.length === 0) {
+            const message =
+              'This request was stopped before producing a response. No answer was given.'
+            yield { kind: 'stream', event: tagEvent({ type: 'warning', message, failureCategory: 'stopped_by_user' }, agentRole) }
+            yield {
+              kind: 'message',
+              role: 'assistant',
+              content: [{ type: 'warning', message, failureCategory: 'stopped_by_user' }]
+            }
+          }
           yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, agentRole, isTopLevel) }
           return { text: assistantText, isError: true }
         }
@@ -1247,6 +1273,18 @@ export class Orchestrator {
         // catch. Narrowed to "no real content produced" so a round that
         // actually finished at the same instant Stop happened to be clicked
         // still gets to keep its real answer instead of being discarded.
+        // TASKS.md #102: same top-level-only "stopped, no answer" note as
+        // the catch-based shape 1 above — this condition already implies
+        // both `isTopLevel` doesn't need re-checking for content emptiness.
+        if (isTopLevel) {
+          const message = 'This request was stopped before producing a response. No answer was given.'
+          yield { kind: 'stream', event: tagEvent({ type: 'warning', message, failureCategory: 'stopped_by_user' }, agentRole) }
+          yield {
+            kind: 'message',
+            role: 'assistant',
+            content: [{ type: 'warning', message, failureCategory: 'stopped_by_user' }]
+          }
+        }
         yield {
           kind: 'stream',
           event: tagMessageStop({ type: 'message_stop', stopReason: 'aborted' }, agentRole, isTopLevel)
@@ -1292,8 +1330,16 @@ export class Orchestrator {
         // discarded; this just tells the user/caller the round was cut off
         // before it necessarily finished.
         const message = `This response was cut off after reaching the ${state.maxOutputTokens}-token output limit for this round — it may be incomplete.`
-        assistantBlocks.push({ type: 'warning', message, agentRole })
-        yield { kind: 'stream', event: tagEvent({ type: 'warning', message }, agentRole) }
+        // Only a whole-turn failure (TASKS.md #102) when there's no partial
+        // text either AND this is the top-level turn ending here (this
+        // branch always returns immediately below — see the `stopReason !==
+        // 'tool_use'` check) — a cut-off response that still has real
+        // partial content, or a nested specialist's own truncated round
+        // (the outer turn can still produce a real final answer afterward),
+        // both stay ordinary, kept-in-context warnings.
+        const failureCategory = isTopLevel && !assistantText ? 'no_answer' : undefined
+        assistantBlocks.push({ type: 'warning', message, agentRole, failureCategory })
+        yield { kind: 'stream', event: tagEvent({ type: 'warning', message, failureCategory }, agentRole) }
       } else if (!assistantText && toolCalls.length === 0) {
         // A second, distinct empty-response shape from the max_tokens one
         // above — found live against gpt-oss/Ollama on a long, tool-heavy
@@ -1310,8 +1356,12 @@ export class Orchestrator {
         const message =
           'The model produced no visible output for this response (no text, no tool call) — a known quirk ' +
           'with local reasoning models on longer or more complex requests. Try asking again.'
-        assistantBlocks.push({ type: 'warning', message, agentRole })
-        yield { kind: 'stream', event: tagEvent({ type: 'warning', message }, agentRole) }
+        // Always a whole-turn failure when it's the top level (this branch
+        // always returns immediately below, same reasoning as max_tokens
+        // above) — TASKS.md #102.
+        const failureCategory = isTopLevel ? 'no_answer' : undefined
+        assistantBlocks.push({ type: 'warning', message, agentRole, failureCategory })
+        yield { kind: 'stream', event: tagEvent({ type: 'warning', message, failureCategory }, agentRole) }
       }
       const inputByCallId = new Map<string, Record<string, unknown>>()
       for (const call of toolCalls) {
@@ -1546,7 +1596,12 @@ export class Orchestrator {
         hasValidation: tool.validate !== undefined
       })
       if (!decision.approved) {
-        return { content: 'The user denied this tool call.', isError: true }
+        // Bracket convention matches the other whole-turn-failure qualifiers
+        // (TASKS.md #102) for consistency — this one was already reaching
+        // the model correctly before (a tool_result, unlike a `warning`
+        // block, was never stripped from the wire format), so no other
+        // change needed here.
+        return { content: '[Rejected by user] The user denied this tool call.', isError: true }
       }
       input = decision.input ?? input
     }

@@ -31,7 +31,30 @@ export type ContentBlock =
    * degraded rather than pretending the result is complete/normal.
    * Persisted like `text`/`tool_use` so it survives a session reload.
    */
-  | { type: 'warning'; message: string; agentRole?: AgentRole }
+  | {
+      type: 'warning'
+      message: string
+      agentRole?: AgentRole
+      /**
+       * Set only when this warning represents the *entire turn* producing no
+       * real answer at all — TASKS.md #102, found live: a thrown provider
+       * error, a Stop click before anything was produced, or an empty/no-
+       * output round all used to leave either nothing persisted or a bare
+       * warning, and the user's original question kept getting silently
+       * resent as unanswered "real" context on every later call, forever
+       * (confirmed live: 4 identical retries in a row each resending the
+       * whole growing, still-unanswered history). `prepare-context.ts`'s
+       * `removeFailedTurns` strips a whole turn tagged with this from what's
+       * sent to the model on every *subsequent* call — never from what's
+       * persisted/shown, same "only affects what's sent" convention as
+       * every other trimming pass in this codebase. Left `undefined` for
+       * every purely informational warning (a context-trim notice, a deck-
+       * autosave notice, a plan-truncation notice, a partial/cut-off
+       * response that still has real usable content) — those still count as
+       * legitimate history and are never stripped by this mechanism.
+       */
+      failureCategory?: 'communication_failure' | 'stopped_by_user' | 'no_answer'
+    }
 
 export interface Message {
   role: 'user' | 'assistant'
@@ -66,8 +89,8 @@ export type StreamEvent =
    */
   | { type: 'context_window'; tokens: number; isEstimate: boolean }
   | { type: 'error'; message: string }
-  /** Live counterpart of `ContentBlock`'s `warning` — see its doc comment. Streamed immediately and also included in the `kind: 'message'` event that gets persisted, exactly like `tool_use`/`text`. */
-  | { type: 'warning'; message: string; agentRole?: AgentRole }
+  /** Live counterpart of `ContentBlock`'s `warning` — see its doc comment, including `failureCategory`. Streamed immediately and also included in the `kind: 'message'` event that gets persisted, exactly like `tool_use`/`text`. */
+  | { type: 'warning'; message: string; agentRole?: AgentRole; failureCategory?: 'communication_failure' | 'stopped_by_user' | 'no_answer' }
   /**
    * A human-readable "what's happening right now" hint, sent once per round
    * right before the provider call that produces it — not persisted, purely

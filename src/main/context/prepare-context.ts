@@ -73,6 +73,70 @@ function splitIntoTurns(messages: Message[]): Message[][] {
   return turns
 }
 
+/** A turn whose only assistant content is a whole-turn-failure warning (see `ContentBlock`'s `failureCategory` doc comment) — produced literally nothing else, not even partial text or a tool call. */
+function failedTurnWarning(turn: Message[]): Extract<ContentBlock, { type: 'warning' }> | undefined {
+  const assistantBlocks = turn.filter((m) => m.role === 'assistant').flatMap((m) => m.content)
+  if (assistantBlocks.some((b) => b.type === 'text' || b.type === 'tool_use')) return undefined
+  const warning = assistantBlocks.find((b): b is Extract<ContentBlock, { type: 'warning' }> => b.type === 'warning' && Boolean(b.failureCategory))
+  return warning
+}
+
+/**
+ * Whole-turn failures (TASKS.md #102, found live: a thrown provider error, a
+ * Stop click before anything was produced, or an empty-output round all used
+ * to leave the user's original question sitting in history with no reply,
+ * silently resent as unanswered "real" context on every later call —
+ * confirmed live as 4 identical retries in a row, each resending the whole
+ * still-growing, still-unanswered history) are never silently resent
+ * verbatim, repeat after repeat. But per explicit direction, genuine failure
+ * information isn't discarded either — feeding the model *some* signal
+ * about what went wrong can help it choose a different approach next time,
+ * so this distinguishes two cases rather than a blanket strip:
+ *
+ *  - An **isolated** single failed turn is kept, but converted into real
+ *    `text` content — a plain `warning` block is normally stripped from the
+ *    wire format entirely by every provider adapter (`warning -> null`),
+ *    which would otherwise make even a deliberately-kept failure invisible
+ *    to the model.
+ *  - A **run of 2+ consecutive** failed turns (the actual "repeated
+ *    failures" case that motivated this) is collapsed into one synthetic
+ *    turn: the most recent attempt's own question, plus a single
+ *    consolidated note ("attempted N times, failed each time — most recent
+ *    reason: ..."), instead of resending N near-identical, still-unanswered
+ *    exchanges in full.
+ *
+ * Only ever affects what's *sent* — the original turns stay exactly as
+ * persisted in SQLite and shown in the UI transcript, same convention as
+ * every other trimming pass in this codebase.
+ */
+export function collapseFailedTurns(messages: Message[]): Message[] {
+  const turns = splitIntoTurns(messages)
+  const result: Message[][] = []
+  let i = 0
+  while (i < turns.length) {
+    const warning = failedTurnWarning(turns[i])
+    if (!warning) {
+      result.push(turns[i])
+      i++
+      continue
+    }
+    const runStart = i
+    while (i < turns.length && failedTurnWarning(turns[i])) i++
+    const run = turns.slice(runStart, i)
+    const lastQuestion = run[run.length - 1][0] // always the real user message — see splitIntoTurns
+    if (run.length === 1) {
+      result.push([lastQuestion, { role: 'assistant', content: [{ type: 'text', text: `[Previous attempt failed — ${warning.message}]` }] }])
+    } else {
+      const lastReason = failedTurnWarning(run[run.length - 1])?.message ?? warning.message
+      const summary =
+        `[This request was attempted ${run.length} times in a row and failed to produce an answer each time. ` +
+        `Most recent reason: ${lastReason}]`
+      result.push([lastQuestion, { role: 'assistant', content: [{ type: 'text', text: summary }] }])
+    }
+  }
+  return result.flat()
+}
+
 /**
  * The context window to budget against, tried in order: (1) a provider's
  * own *live* figure (today only Ollama's `loadedContextWindow` — the
@@ -162,5 +226,5 @@ export async function prepareConversation(
   provider: ModelProvider,
   overhead?: TurnOverhead
 ): Promise<SlidingWindowResult> {
-  return applySlidingWindow(trimToolResults(messages), model, provider, overhead)
+  return applySlidingWindow(collapseFailedTurns(trimToolResults(messages)), model, provider, overhead)
 }

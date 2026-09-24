@@ -380,11 +380,22 @@ export function registerIpcHandlers(): void {
       activeStreams.set(streamId, controller)
       runChat(sessionId, text, streamId, sender, forcedRole, controller.signal)
         .catch((err: unknown) => {
-          emit(sender, {
-            streamId,
-            sessionId,
-            event: { type: 'error', message: err instanceof Error ? err.message : String(err) }
-          })
+          const errorMessage = err instanceof Error ? err.message : String(err)
+          emit(sender, { streamId, sessionId, event: { type: 'error', message: errorMessage } })
+          // TASKS.md #102, found live: a thrown error here (a real provider
+          // failure — auth, network, rate limit) previously left NOTHING
+          // persisted for this turn at all, not even a warning — the user's
+          // message had already been inserted (see runChat, before
+          // orchestrator.run() is ever called), so it just sat in history
+          // with no reply, silently resent as unanswered "real" context on
+          // every later send. `collapseFailedTurns` (prepare-context.ts)
+          // is what keeps this from bloating unbounded on a repeated retry.
+          const message = `This request failed before completing — ${errorMessage}. No answer was given.`
+          const record = insertMessage(sessionId, 'assistant', [
+            { type: 'warning', message, failureCategory: 'communication_failure' }
+          ])
+          enqueueMessage(record.id, sessionId, record.content)
+          emit(sender, { streamId, sessionId, event: { type: 'warning', message, failureCategory: 'communication_failure' } })
         })
         .finally(() => activeStreams.delete(streamId))
       return { streamId }

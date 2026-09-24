@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Message, ModelProvider } from '../providers/types'
-import { applySlidingWindow, prepareConversation, trimToolResults, type TurnOverhead } from './prepare-context'
+import { applySlidingWindow, collapseFailedTurns, prepareConversation, trimToolResults, type TurnOverhead } from './prepare-context'
 
 const OVERHEAD_MARKER = 'SYS-PROMPT-MARKER'
 
@@ -222,6 +222,109 @@ describe('applySlidingWindow', () => {
   })
 })
 
+function failedTurn(question: string, category: 'communication_failure' | 'stopped_by_user' | 'no_answer', reason: string): Message[] {
+  return [userTurn(question), { role: 'assistant', content: [{ type: 'warning', message: reason, failureCategory: category }] }]
+}
+
+function answeredTurn(question: string, answer: string): Message[] {
+  return [userTurn(question), { role: 'assistant', content: [{ type: 'text', text: answer }] }]
+}
+
+describe('collapseFailedTurns (TASKS.md #102)', () => {
+  it('leaves an ordinary answered turn untouched', () => {
+    const turn = answeredTurn('hi', 'hello!')
+    expect(collapseFailedTurns(turn)).toEqual(turn)
+  })
+
+  it('leaves an ordinary informational warning (no failureCategory) untouched — e.g. a context-trim notice on a turn that still has a real answer', () => {
+    const turn: Message[] = [
+      userTurn('hi'),
+      {
+        role: 'assistant',
+        content: [
+          { type: 'warning', message: 'This conversation has grown long enough...' },
+          { type: 'text', text: 'hello!' }
+        ]
+      }
+    ]
+    expect(collapseFailedTurns(turn)).toEqual(turn)
+  })
+
+  it('converts an isolated failed turn into real, model-visible text instead of a warning block', () => {
+    // A plain `warning` block is stripped from the wire format entirely by
+    // every provider adapter — this must become real `text` content for a
+    // deliberately-kept single failure to actually reach the model.
+    const turn = failedTurn('Tell me about Electron.', 'communication_failure', 'Rate limit exceeded.')
+    const result = collapseFailedTurns(turn)
+    expect(result).toHaveLength(2)
+    expect(result[0]).toEqual(userTurn('Tell me about Electron.'))
+    expect(result[1]).toEqual({
+      role: 'assistant',
+      content: [{ type: 'text', text: '[Previous attempt failed — Rate limit exceeded.]' }]
+    })
+  })
+
+  it('collapses a run of 2+ consecutive failed turns into one synthetic turn, not N near-identical resends', () => {
+    // Reproduces the real bug: the same question retried 4 times in a row,
+    // each attempt failing outright.
+    const messages = [
+      ...failedTurn('Tell me about Electron.', 'communication_failure', 'Rate limit exceeded.'),
+      ...failedTurn('Tell me about Electron.', 'no_answer', 'The model produced no visible output.'),
+      ...failedTurn('Tell me about Electron.', 'stopped_by_user', 'This request was stopped before producing a response. No answer was given.'),
+      ...failedTurn('Tell me about Electron.', 'communication_failure', 'Service unavailable.')
+    ]
+    const result = collapseFailedTurns(messages)
+    expect(result).toHaveLength(2) // one synthetic turn, not 8 messages
+    expect(result[0]).toEqual(userTurn('Tell me about Electron.'))
+    expect(result[1]).toMatchObject({ role: 'assistant' })
+    const text = result[1].content[0]
+    expect(text.type).toBe('text')
+    if (text.type !== 'text') throw new Error('unreachable')
+    expect(text.text).toContain('attempted 4 times in a row')
+    expect(text.text).toContain('Service unavailable.') // most recent reason, not the first
+  })
+
+  it('does not collapse across a successful turn in between — two separate isolated failures, not one run', () => {
+    const messages = [
+      ...failedTurn('Tell me about Electron.', 'communication_failure', 'Rate limit exceeded.'),
+      ...answeredTurn('What is Node.js?', 'Node.js is a JavaScript runtime.'),
+      ...failedTurn('Tell me about Electron.', 'no_answer', 'The model produced no visible output.')
+    ]
+    const result = collapseFailedTurns(messages)
+    // Each isolated failure converted individually (2 turns), the real
+    // answer preserved untouched in between (1 turn) = 3 turns, 6 messages.
+    expect(result).toHaveLength(6)
+    expect(result[2]).toEqual(userTurn('What is Node.js?'))
+    expect(result[3]).toEqual({ role: 'assistant', content: [{ type: 'text', text: 'Node.js is a JavaScript runtime.' }] })
+  })
+
+  it('a turn with real partial text alongside a warning is never treated as a failed turn, even with max_tokens-style wording', () => {
+    // Mirrors orchestrator.ts's own rule: failureCategory is only ever set
+    // when there is no real text/tool_use at all — a cut-off-but-partially-
+    // useful response must stay exactly as normal kept-in-context content.
+    const turn: Message[] = [
+      userTurn('Summarize this long document.'),
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Here is a partial summary before being cut off...' },
+          { type: 'warning', message: 'This response was cut off after reaching the token limit.' }
+        ]
+      }
+    ]
+    expect(collapseFailedTurns(turn)).toEqual(turn)
+  })
+
+  it('a real tool_use/tool_result exchange in a turn is never treated as failed, even if a warning is also present', () => {
+    const turn: Message[] = [
+      userTurn('write a file'),
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'c1', name: 'write_file', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'c1', content: 'done' }] }
+    ]
+    expect(collapseFailedTurns(turn)).toEqual(turn)
+  })
+})
+
 describe('prepareConversation', () => {
   it('trims tool results and applies the sliding window together', async () => {
     const big = 'y'.repeat(5000)
@@ -238,5 +341,25 @@ describe('prepareConversation', () => {
     expect(toolResult.type).toBe('tool_result')
     if (toolResult.type !== 'tool_result') throw new Error('unreachable')
     expect(toolResult.content.length).toBeLessThan(big.length)
+  })
+
+  it('collapses repeated failed retries before sending, reproducing the real bug live-verified against Groq (TASKS.md #102)', async () => {
+    // The exact real-world shape: the same question sent 4 times in a row,
+    // each attempt failing, before a 5th attempt (the current one, not yet
+    // in `messages`) finally succeeds.
+    const messages = [
+      ...failedTurn('Tell me about Electron application development framework.', 'communication_failure', 'Rate limit exceeded.'),
+      ...failedTurn('Tell me about Electron application development framework.', 'no_answer', 'The model produced no visible output.'),
+      ...failedTurn('Tell me about Electron application development framework.', 'stopped_by_user', 'This request was stopped before producing a response. No answer was given.'),
+      ...failedTurn('Tell me about Electron application development framework.', 'communication_failure', 'Rate limit exceeded.')
+    ]
+    const provider = fakeProvider(() => 10) // comfortably under budget either way — isolates collapseFailedTurns' own effect
+    const result = await prepareConversation(messages, 'claude-sonnet-5', provider)
+
+    expect(result.messages).toHaveLength(2) // one synthetic turn, not 4 (8 messages)
+    const summary = result.messages[1].content[0]
+    expect(summary.type).toBe('text')
+    if (summary.type !== 'text') throw new Error('unreachable')
+    expect(summary.text).toContain('attempted 4 times in a row')
   })
 })
