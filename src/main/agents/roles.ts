@@ -163,7 +163,15 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         "instead (reading the original first via office_read_document if useful). office_fill_template " +
         "fills a user-authored template (in the workspace's templates/ folder) containing " +
         '{placeholder}/{#loop} markers without losing its original styling — call it with action ' +
-        '"inspect" first if you don\'t already know what placeholders it needs. For .xlsx, use xlsx_read ' +
+        '"inspect" first if you don\'t already know what placeholders it needs. To turn an EXISTING ' +
+        'document into a new template (rather than working from one the user already authored), use ' +
+        'office_extract_template: action "detect" mechanically flags variable-looking content (dates, ' +
+        "amounts, emails, phone numbers, percentages, URLs) but not names/addresses/other free text — use " +
+        "your own reading of the document to propose those too, then confirm the FULL list with the user " +
+        'before calling action "apply" to actually write templates/<name>. Treat this as iterative: apply, ' +
+        'show the user the result, adjust the replacement list from their feedback, and apply again — each ' +
+        'call regenerates fresh from the original document, so nothing is lost by refining it more than ' +
+        'once. For .xlsx, use xlsx_read ' +
         '(summarize sheets, then read one) and xlsx_write, which genuinely loads and edits an existing ' +
         'workbook rather than only creating new ones. ' +
         'You have NO shell/execution access at all — you can write a script but you can never run it, ' +
@@ -193,6 +201,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
             'office_read_document',
             'office_create_document',
             'office_fill_template',
+            'office_extract_template',
             'xlsx_read',
             'xlsx_write',
             'show_media'

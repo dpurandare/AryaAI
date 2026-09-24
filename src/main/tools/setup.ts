@@ -24,6 +24,7 @@ import { gitCloneRepoTool, gitExecTool } from './git'
 import { githubCliTool } from './github-cli'
 import {
   officeCreateDocumentTool,
+  officeExtractTemplateTool,
   officeFillTemplateTool,
   officeReadDocumentTool,
   xlsxReadTool,
@@ -91,6 +92,7 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(officeReadDocumentTool)
   registry.register(officeCreateDocumentTool)
   registry.register(officeFillTemplateTool)
+  registry.register(officeExtractTemplateTool)
   registry.register(xlsxReadTool)
   registry.register(xlsxWriteTool)
   registry.register(dbCreateConnectionTool)
