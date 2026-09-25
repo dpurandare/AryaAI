@@ -8,6 +8,11 @@ version is still `0`.
 
 ## [Unreleased]
 
+### Fixed
+
+- A task that needed to run Python could fail with "Python is not available" even though the workspace already had a working virtual environment (`venv/`) with the packages installed: nothing told the agent about it, and a bare `python` doesn't exist on many systems. `shell_execute` now activates the workspace's `venv/` automatically whenever it exists, so `python` and `pip` resolve to it; and when Python is missing with no venv, the result says how to create one instead of leaving the agent to conclude it cannot run Python (#107).
+- `write_file` could silently overwrite a real Word/Excel/PowerPoint/PDF/image file with plain text, corrupting it. It now refuses binary formats and names the right tool to use instead (#107).
+
 ## [0.2.1] - 2026-09-25
 
 ### Fixed

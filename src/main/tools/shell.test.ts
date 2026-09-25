@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -83,5 +83,57 @@ describe('shell_execute', () => {
     // own side effect (the file it would have written after sleeping) never
     // happens, proving the child process itself stopped.
     await expect(readFile(join(root, 'out.txt'), 'utf-8')).rejects.toThrow()
+  })
+})
+
+// Hard-wired workspace venv (found live: the agent ran `python`, got exit 127, and gave up although the workspace had a working venv). Uses a fake `venv/bin/python` shell script, so POSIX only — the platform branches are covered by python-env.test.ts.
+describe.skipIf(isWindows)('shell_execute + workspace venv', () => {
+  let root: string
+  let ctx: ToolContext
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'sachiv-shell-venv-'))
+    ctx = { workspaceGuard: new WorkspaceGuard(root), currentSessionId: 'test-session' }
+  })
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  async function makeVenv(): Promise<void> {
+    await mkdir(join(root, 'venv', 'bin'), { recursive: true })
+    const py = join(root, 'venv', 'bin', 'python')
+    await writeFile(py, '#!/bin/sh\necho "VENV_PYTHON $@"\n')
+    await chmod(py, 0o755)
+  }
+
+  it('resolves a bare `python` to the workspace venv, without the model asking for it', async () => {
+    await makeVenv()
+    const result = await shellExecuteTool.execute({ command: 'python chart.py' }, ctx)
+    expect(result).toContain('exit code: 0')
+    expect(result).toContain('VENV_PYTHON chart.py')
+  })
+
+  it('exposes VIRTUAL_ENV and puts the venv first on PATH for every command', async () => {
+    await makeVenv()
+    const result = await shellExecuteTool.execute({ command: 'echo "$VIRTUAL_ENV|${PATH%%:*}"' }, ctx)
+    expect(result).toContain(`${join(root, 'venv')}|${join(root, 'venv', 'bin')}`)
+  })
+
+  it('leaves the environment alone when the workspace has no venv', async () => {
+    const result = await shellExecuteTool.execute({ command: 'echo "$PATH"' }, ctx)
+    expect(result).not.toContain(join(root, 'venv'))
+  })
+
+  it('adds a bootstrap hint when python is missing and there is no venv to fall back on', async () => {
+    const result = await shellExecuteTool.execute({ command: 'python-does-not-exist chart.py' }, ctx)
+    expect(result).toContain('exit code: 127')
+    expect(result).toContain('hint:')
+    expect(result).toContain('python3 -m venv venv')
+  })
+
+  it('does not add the hint for an unrelated missing command', async () => {
+    const result = await shellExecuteTool.execute({ command: 'definitely-not-a-command' }, ctx)
+    expect(result).not.toContain('hint:')
   })
 })

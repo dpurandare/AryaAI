@@ -1,4 +1,5 @@
 import { exec } from 'node:child_process'
+import { looksLikePythonNotFound, pythonNotFoundHint, withWorkspaceVenv } from './python-env'
 import type { Tool } from './types'
 
 const TIMEOUT_MS = 30_000
@@ -9,7 +10,8 @@ export const shellExecuteTool: Tool = {
   description:
     'Run a shell command. The process starts in the workspace root, but this is not a sandbox — ' +
     'a command can still read/write outside the workspace (e.g. via an absolute path or "cd .."). ' +
-    "That's why every call requires human approval first.",
+    "That's why every call requires human approval first. If the workspace has a `venv/`, it is " +
+    'activated automatically: `python` and `pip` resolve to it (its packages are already installed).',
   inputSchema: {
     type: 'object',
     properties: { command: { type: 'string', description: 'The shell command to run' } },
@@ -27,20 +29,23 @@ export const shellExecuteTool: Tool = {
     const command = String(input.command ?? '')
     if (!command.trim()) throw new Error('No command given.')
 
+    const { env, active: venvActive } = withWorkspaceVenv(ctx.workspaceGuard.root, process.env)
+
     return new Promise((resolvePromise, reject) => {
       exec(
         command,
-        { cwd: ctx.workspaceGuard.root, timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER_BYTES, signal },
+        { cwd: ctx.workspaceGuard.root, env, timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER_BYTES, signal },
         (error, stdout, stderr) => {
           if (error && typeof error.code !== 'number') {
             // Spawn-level failure (e.g. couldn't launch a shell at all), not a nonzero exit code.
             reject(error)
             return
           }
-          const exitCode = error?.code ?? 0
+          const exitCode = typeof error?.code === 'number' ? error.code : 0
           const parts = [`exit code: ${exitCode}`]
           if (stdout.trim()) parts.push(`stdout:\n${stdout}`)
           if (stderr.trim()) parts.push(`stderr:\n${stderr}`)
+          if (!venvActive && looksLikePythonNotFound(exitCode, stderr)) parts.push(pythonNotFoundHint())
           resolvePromise(parts.join('\n\n'))
         }
       )

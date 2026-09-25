@@ -43,6 +43,34 @@ describe('file-ops tools', () => {
       ).rejects.toThrow(/outside the workspace/)
     })
 
+    // Found live (the Northwind bar-chart session): write_file overwrote a real .docx made by office_create_document with 174 characters of markdown.
+    it('refuses to overwrite an existing .docx with text, leaving the real file untouched', async () => {
+      const real = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff])
+      await mkdir(join(root, 'documents'), { recursive: true })
+      await writeFile(join(root, 'documents', 'report.docx'), real)
+      await expect(writeFileTool.execute({ path: 'documents/report.docx', content: '# Report' }, ctx)).rejects.toThrow(/corrupt a \.docx/)
+      expect(Buffer.compare(await readFile(join(root, 'documents', 'report.docx')), real)).toBe(0)
+    })
+
+    it('names the right tool for each kind of binary format', async () => {
+      await expect(writeFileTool.execute({ path: 'a.docx', content: 'x' }, ctx)).rejects.toThrow(/office_create_document/)
+      await expect(writeFileTool.execute({ path: 'a.xlsx', content: 'x' }, ctx)).rejects.toThrow(/xlsx_write/)
+      await expect(writeFileTool.execute({ path: 'a.pptx', content: 'x' }, ctx)).rejects.toThrow(/pptx_save_deck/)
+      await expect(writeFileTool.execute({ path: 'chart.png', content: 'x' }, ctx)).rejects.toThrow(/shell_execute/)
+    })
+
+    it('matches the extension case-insensitively and writes nothing for a refused path', async () => {
+      await expect(writeFileTool.execute({ path: 'Report.DOCX', content: 'x' }, ctx)).rejects.toThrow(/corrupt/)
+      await expect(readFile(join(root, 'Report.DOCX'), 'utf-8')).rejects.toThrow()
+      await expect(readFile(join(root, 'documents', 'Report.DOCX'), 'utf-8')).rejects.toThrow()
+    })
+
+    it('still writes ordinary text formats, including ones that live under documents/ or resources/', async () => {
+      for (const path of ['notes.md', 'data.csv', 'script.py', 'diagram.svg', 'page.html']) {
+        await expect(writeFileTool.execute({ path, content: 'text' }, ctx)).resolves.toContain('Wrote')
+      }
+    })
+
     it('is marked as mutating', () => {
       expect(writeFileTool.mutates).toBe(true)
     })
