@@ -8,6 +8,8 @@ version is still `0`.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-25
+
 ### Fixed
 
 - A task that needed to run Python could fail with "Python is not available" even though the workspace already had a working virtual environment (`venv/`) with the packages installed: nothing told the agent about it, and a bare `python` doesn't exist on many systems. `shell_execute` now activates the workspace's `venv/` automatically whenever it exists, so `python` and `pip` resolve to it; and when Python is missing with no venv, the result says how to create one instead of leaving the agent to conclude it cannot run Python (#107).
@@ -99,7 +101,8 @@ version is still `0`.
 - Markdown rendering for assistant messages (headers, bold/italic, lists, code blocks), sanitized against untrusted model/tool output.
 - Cross-platform CI (build, typecheck, test on macOS/Windows/Linux) via GitHub Actions.
 
-[Unreleased]: https://github.com/dpurandare/AryaAI/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/dpurandare/AryaAI/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/dpurandare/AryaAI/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/dpurandare/AryaAI/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/dpurandare/AryaAI/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dpurandare/AryaAI/releases/tag/v0.1.0
