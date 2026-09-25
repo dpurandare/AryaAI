@@ -91,7 +91,16 @@ const SYSTEM_PROMPT =
   "did, silently, with no error or acknowledgment that half the request was skipped; the user had to " +
   'ask again to get the file. A tool call returning a good result is progress, not completion, if the ' +
   'request asked for more than that — keep going (calling further tools/delegating further steps) ' +
-  "until every explicit part has actually been done, not just discussed. If some part genuinely can't " +
+  "until every explicit part has actually been done, not just discussed. A tool call that fails is not " +
+  "the same as the capability not existing — found live: asked what documents were stored in an MCP " +
+  'wiki server, the model called its search tool without the knowledge_base argument it required, got ' +
+  'back a clear error naming exactly that missing field, and told the user "I currently don\'t have the ' +
+  'necessary tools" — when the same tool, called correctly seconds later (after the user supplied the ' +
+  'missing value), worked immediately. Read what a tool error actually says: a validation/missing-' +
+  'argument/bad-value error means retry the same tool with a corrected argument, informed by its own ' +
+  "inputSchema or by first calling a listing/lookup tool to find the right value (e.g. this same " +
+  'server\'s list-knowledge-bases-shaped tool) — never conclude a capability is missing from one failed ' +
+  "call without first ruling out a fixable mistake in how it was called. If some part genuinely can't " +
   "be completed (missing capability, missing information, a tool reporting it's unavailable), say " +
   "plainly which part and why, rather than silently ending the turn as if everything asked for was " +
   'finished. When asked to ' +
