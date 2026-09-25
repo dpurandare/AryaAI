@@ -77,29 +77,47 @@ const INTERRUPTED_TOOL_RESULT =
   '[No result was recorded for this tool call — the app was closed or the request was interrupted before it finished. ' +
   'Its outcome is unknown; do not assume it succeeded or failed.]'
 
+function toolUseIds(m: Message): string[] {
+  return m.content.flatMap((b) => (b.type === 'tool_use' ? [b.id] : []))
+}
+
+/** True for an assistant/user message that only a delegated specialist could have produced, judged by the `agentRole` marker `ContentBlock` documents ("set means a specialist produced this block"). */
+function isSpecialistAssistantMessage(m: Message): boolean {
+  return (
+    m.role === 'assistant' &&
+    m.content.length > 0 &&
+    m.content.every((b) => b.type === 'warning' || ((b.type === 'text' || b.type === 'tool_use') && Boolean(b.agentRole)))
+  )
+}
+
 /**
- * Every `tool_use` must be answered by a `tool_result` in the message
- * immediately after it — every provider's wire format (Anthropic's
- * `tool_use`/`tool_result`, OpenAI-compatible `tool_calls`/`tool`, Google's
- * function call/response) rejects a history with an unanswered one. Found
- * live: quitting the app (or abandoning a stream) while a tool call was in
- * flight persisted the assistant's `tool_use` but never a matching
- * `tool_result`, and because every later send replays the full history, that
- * one dangling block made *every* subsequent message in the session fail with
- * the same provider 400 ("Not the same number of function calls and
- * responses") — permanently wedged. Audited against the real DB: 3 of 5
- * sessions had it, for built-in `delegate_to_*` tools as well as MCP ones.
+ * Stage 1 — a delegate call's result is persisted *after* the specialist's own
+ * messages. A specialist runs in its own nested conversation (`dispatchDelegate`)
+ * and every message it yields is saved to the same flat session table as it
+ * happens, so the stored order is:
  *
- * Synthesizes an explicit error `tool_result` for each unanswered `tool_use`
- * (rather than stripping the call) so the model still sees that it tried
- * something and that the outcome is unknown. Merged into the following
- * tool_result message when there is a partial answer (parallel calls where
- * only some finished), otherwise inserted as its own message directly after
- * the assistant message — a pure-tool_result message stays in the same turn
- * for `splitIntoTurns`, so the sliding window can't separate the pair.
- * Only affects what's sent; SQLite and the UI transcript are untouched.
+ *   assistant  tool_use delegate_to_x        <- the parent's call
+ *   assistant  tool_use write_file           <- the specialist's own (agentRole set)
+ *   user       tool_result (write_file)
+ *   assistant  text                          <- the specialist's own
+ *   user       tool_result (delegate_to_x)   <- the parent's answer, now non-adjacent
+ *
+ * The parent's *live* conversation is fine (its delegate result follows its call
+ * directly; the nested run never enters it). Only replay from SQLite is wrong,
+ * and every provider rejects it: the delegate call looks unanswered, and its real
+ * result looks like a `tool` message answering nothing — found live, a session
+ * failed on every send after its first delegation with "messages with role
+ * 'tool' must be a response to a preceeding message with 'tool_calls'". Audited
+ * against the real DB: 4 of 6 sessions had this shape.
+ *
+ * The specialist's messages were never part of what the parent saw, and the
+ * delegate result already carries its final text, so they are dropped from the
+ * replayed history — but only when provably nested (every assistant message in
+ * the gap carries `agentRole`, every result in it answers a call made inside it).
+ * Anything that doesn't prove out is left for stages 2 and 3, which always
+ * produce a wire-valid history.
  */
-export function repairDanglingToolUses(messages: Message[]): Message[] {
+function dropNestedDelegateMessages(messages: Message[]): Message[] {
   const result: Message[] = []
   let i = 0
   while (i < messages.length) {
@@ -107,7 +125,62 @@ export function repairDanglingToolUses(messages: Message[]): Message[] {
     result.push(m)
     i++
     if (m.role !== 'assistant') continue
-    const useIds = m.content.flatMap((b) => (b.type === 'tool_use' ? [b.id] : []))
+    const ids = new Set(toolUseIds(m))
+    if (ids.size === 0) continue
+    const next = messages[i]
+    // Already answered in place — nothing nested to remove.
+    if (next && next.role === 'user' && isPureToolResult(next) && next.content.some((b) => b.type === 'tool_result' && ids.has(b.toolUseId))) continue
+
+    let j = i
+    while (j < messages.length && !(messages[j].role === 'user' && isPureToolResult(messages[j]) && messages[j].content.some((b) => b.type === 'tool_result' && ids.has(b.toolUseId)))) {
+      // A real user message is a turn boundary; a delegate can't span one.
+      if (messages[j].role === 'user' && !isPureToolResult(messages[j])) {
+        j = messages.length
+        break
+      }
+      j++
+    }
+    if (j >= messages.length || j === i) continue
+
+    const gap = messages.slice(i, j)
+    const nestedCallIds = new Set(gap.flatMap(toolUseIds))
+    const provablyNested = gap.every((g) =>
+      g.role === 'assistant'
+        ? isSpecialistAssistantMessage(g)
+        : isPureToolResult(g) && g.content.every((b) => b.type !== 'tool_result' || nestedCallIds.has(b.toolUseId))
+    )
+    if (provablyNested) i = j
+  }
+  return result
+}
+
+/**
+ * Stage 2 — every `tool_use` must be answered by a `tool_result` in the message
+ * immediately after it (Anthropic's `tool_use`/`tool_result`, OpenAI-compatible
+ * `tool_calls`/`tool`, Google's function call/response all reject otherwise).
+ * Found live: quitting the app (or abandoning a stream) while a tool call was
+ * in flight persisted the assistant's `tool_use` but never a matching
+ * `tool_result`, and since every later send replays the full history, that one
+ * dangling block made every subsequent message in the session fail with the
+ * provider's own 400 ("Not the same number of function calls and responses").
+ *
+ * Synthesizes an explicit error `tool_result` for each unanswered `tool_use`
+ * (rather than stripping the call) so the model still sees that it tried
+ * something and that the outcome is unknown. Merged into the following
+ * tool_result message when there is a partial answer (parallel calls where only
+ * some finished), otherwise inserted as its own message directly after the
+ * assistant message — a pure-tool_result message stays in the same turn for
+ * `splitIntoTurns`, so the sliding window can't separate the pair.
+ */
+function synthesizeMissingResults(messages: Message[]): Message[] {
+  const result: Message[] = []
+  let i = 0
+  while (i < messages.length) {
+    const m = messages[i]
+    result.push(m)
+    i++
+    if (m.role !== 'assistant') continue
+    const useIds = toolUseIds(m)
     if (useIds.length === 0) continue
 
     const answered = new Set<string>()
@@ -136,6 +209,44 @@ export function repairDanglingToolUses(messages: Message[]): Message[] {
     }
   }
   return result
+}
+
+/**
+ * Stage 3 — the mirror invariant: a `tool_result` must answer a `tool_use` in
+ * the assistant message right before it. Anything else is dropped (a message
+ * left empty is dropped entirely) — an orphan result is a guaranteed 400 from
+ * every provider and carries nothing the model can use. This is the backstop
+ * for whatever shape stages 1 and 2 didn't anticipate, so a session can never
+ * be wedged by a stray result.
+ */
+function dropOrphanResults(messages: Message[]): Message[] {
+  const result: Message[] = []
+  let ownerIds = new Set<string>()
+  for (const m of messages) {
+    if (m.role === 'assistant') {
+      ownerIds = new Set(toolUseIds(m))
+      result.push(m)
+      continue
+    }
+    if (!m.content.some((b) => b.type === 'tool_result')) {
+      if (!isPureToolResult(m)) ownerIds = new Set()
+      result.push(m)
+      continue
+    }
+    const kept = m.content.filter((b) => b.type !== 'tool_result' || ownerIds.has(b.toolUseId))
+    if (kept.length > 0) result.push(kept.length === m.content.length ? m : { ...m, content: kept })
+  }
+  return result
+}
+
+/**
+ * Makes the replayed history satisfy the tool-call pairing rule every provider
+ * enforces, in both directions (no unanswered `tool_use`, no orphan
+ * `tool_result`). Only affects what's sent — SQLite and the UI transcript are
+ * untouched, same convention as every other pass here.
+ */
+export function repairToolPairs(messages: Message[]): Message[] {
+  return dropOrphanResults(synthesizeMissingResults(dropNestedDelegateMessages(messages)))
 }
 
 /** A turn whose only assistant content is a whole-turn-failure warning (see `ContentBlock`'s `failureCategory` doc comment) — produced literally nothing else, not even partial text or a tool call. */
@@ -291,5 +402,5 @@ export async function prepareConversation(
   provider: ModelProvider,
   overhead?: TurnOverhead
 ): Promise<SlidingWindowResult> {
-  return applySlidingWindow(collapseFailedTurns(trimToolResults(repairDanglingToolUses(messages))), model, provider, overhead)
+  return applySlidingWindow(collapseFailedTurns(trimToolResults(repairToolPairs(messages))), model, provider, overhead)
 }

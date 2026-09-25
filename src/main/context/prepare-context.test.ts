@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { toOpenAIMessages } from '../providers/openai-compatible'
 import type { Message, ModelProvider } from '../providers/types'
-import { applySlidingWindow, collapseFailedTurns, prepareConversation, repairDanglingToolUses, trimToolResults, type TurnOverhead } from './prepare-context'
+import { applySlidingWindow, collapseFailedTurns, prepareConversation, repairToolPairs, trimToolResults, type TurnOverhead } from './prepare-context'
 
 const OVERHEAD_MARKER = 'SYS-PROMPT-MARKER'
 
@@ -325,7 +326,7 @@ describe('collapseFailedTurns (TASKS.md #102)', () => {
   })
 })
 
-describe('repairDanglingToolUses', () => {
+describe('repairToolPairs', () => {
   const use = (id: string): Message => ({ role: 'assistant', content: [{ type: 'tool_use', id, name: 'some_tool', input: {} }] })
 
   it('leaves a fully answered tool_use/tool_result exchange untouched', () => {
@@ -335,12 +336,12 @@ describe('repairDanglingToolUses', () => {
       { role: 'user', content: [{ type: 'tool_result', toolUseId: 'c1', content: 'ok' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'done' }] }
     ]
-    expect(repairDanglingToolUses(messages)).toEqual(messages)
+    expect(repairToolPairs(messages)).toEqual(messages)
   })
 
   it('synthesizes an error tool_result for a tool_use left dangling by an abandoned stream, ahead of the next real user message', () => {
     const messages: Message[] = [userTurn('list them'), use('c1'), userTurn('hello?')]
-    const repaired = repairDanglingToolUses(messages)
+    const repaired = repairToolPairs(messages)
     expect(repaired).toHaveLength(4)
     expect(repaired[2]).toMatchObject({
       role: 'user',
@@ -350,7 +351,7 @@ describe('repairDanglingToolUses', () => {
   })
 
   it('repairs a dangling tool_use at the very end of history', () => {
-    const repaired = repairDanglingToolUses([userTurn('go'), use('c1')])
+    const repaired = repairToolPairs([userTurn('go'), use('c1')])
     expect(repaired).toHaveLength(3)
     expect(repaired[2].content[0]).toMatchObject({ type: 'tool_result', toolUseId: 'c1', isError: true })
   })
@@ -364,7 +365,7 @@ describe('repairDanglingToolUses', () => {
       ] },
       { role: 'user', content: [{ type: 'tool_result', toolUseId: 'a', content: 'ok' }] }
     ]
-    const repaired = repairDanglingToolUses(messages)
+    const repaired = repairToolPairs(messages)
     expect(repaired).toHaveLength(3)
     expect(repaired[2].content).toEqual([
       { type: 'tool_result', toolUseId: 'a', content: 'ok' },
@@ -374,7 +375,7 @@ describe('repairDanglingToolUses', () => {
 
   it('does not mutate its input', () => {
     const messages: Message[] = [userTurn('go'), use('c1')]
-    repairDanglingToolUses(messages)
+    repairToolPairs(messages)
     expect(messages).toHaveLength(2)
   })
 
@@ -386,19 +387,162 @@ describe('repairDanglingToolUses', () => {
   })
 })
 
+describe('repairToolPairs — nested delegate replay and orphan results', () => {
+  /** OpenAI-compatible pairing rule, checked on the real wire format: a tool message must directly follow an assistant tool_calls message that names its id, and every tool_call needs a tool message in the run right after it. Returns every violation. */
+  function wireViolations(messages: Message[]): string[] {
+    const wire = toOpenAIMessages(undefined, messages) as { role: string; tool_call_id?: string; tool_calls?: { id: string }[] }[]
+    const out: string[] = []
+    wire.forEach((m, i) => {
+      if (m.role === 'tool') {
+        let j = i - 1
+        while (j >= 0 && wire[j].role === 'tool') j--
+        if (!wire[j]?.tool_calls?.some((t) => t.id === m.tool_call_id)) out.push(`orphan tool result ${m.tool_call_id}`)
+      } else if (m.role === 'assistant' && m.tool_calls) {
+        const answered = new Set<string>()
+        for (let j = i + 1; j < wire.length && wire[j].role === 'tool'; j++) answered.add(wire[j].tool_call_id ?? '')
+        for (const t of m.tool_calls) if (!answered.has(t.id)) out.push(`unanswered tool_call ${t.id}`)
+      }
+    })
+    return out
+  }
+
+  const callDelegate = (id: string, role?: 'coding' | 'terminal-devops'): Message => ({
+    role: 'assistant',
+    content: [{ type: 'tool_use', id, name: 'delegate_to_coding', input: { task: 't' }, agentRole: role }]
+  })
+  const result = (id: string, content = 'ok'): Message => ({ role: 'user', content: [{ type: 'tool_result', toolUseId: id, content }] })
+
+  // The exact shape found live in the session "How many customers are there in northwind database?" — the specialist's messages sit between the delegate call and its result.
+  const nestedDelegate = (): Message[] => [
+    userTurn('build charts'),
+    callDelegate('D1'),
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'W1', name: 'write_file', input: {}, agentRole: 'coding' }] },
+    result('W1', 'wrote it'),
+    { role: 'assistant', content: [{ type: 'text', text: 'I created create_charts.py', agentRole: 'coding' }] },
+    result('D1', 'I created create_charts.py'),
+    { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] }
+  ]
+
+  it('reproduces the real failure: the raw stored history is wire-invalid', () => {
+    expect(wireViolations(nestedDelegate())).toEqual(['unanswered tool_call D1', 'orphan tool result D1'])
+  })
+
+  it('drops the specialist\'s nested messages so the delegate result directly follows its call', () => {
+    const repaired = repairToolPairs(nestedDelegate())
+    expect(repaired).toEqual([
+      userTurn('build charts'),
+      callDelegate('D1'),
+      result('D1', 'I created create_charts.py'),
+      { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] }
+    ])
+    expect(wireViolations(repaired)).toEqual([])
+  })
+
+  it('handles a delegate that itself delegates (two levels of nesting)', () => {
+    const messages: Message[] = [
+      userTurn('go'),
+      callDelegate('D1'),
+      callDelegate('D2', 'coding'),
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'S1', name: 'shell_execute', input: {}, agentRole: 'terminal-devops' }] },
+      result('S1'),
+      { role: 'assistant', content: [{ type: 'text', text: 'ran it', agentRole: 'terminal-devops' }] },
+      result('D2'),
+      { role: 'assistant', content: [{ type: 'text', text: 'coding done', agentRole: 'coding' }] },
+      result('D1')
+    ]
+    const repaired = repairToolPairs(messages)
+    expect(repaired).toEqual([userTurn('go'), callDelegate('D1'), result('D1')])
+    expect(wireViolations(repaired)).toEqual([])
+  })
+
+  it('handles a delegate called in parallel with an ordinary tool, answered together in one result message', () => {
+    const messages: Message[] = [
+      userTurn('go'),
+      { role: 'assistant', content: [
+        { type: 'tool_use', id: 'D1', name: 'delegate_to_coding', input: {} },
+        { type: 'tool_use', id: 'R1', name: 'read_file', input: {} }
+      ] },
+      { role: 'assistant', content: [{ type: 'text', text: 'nested', agentRole: 'coding' }] },
+      { role: 'user', content: [
+        { type: 'tool_result', toolUseId: 'D1', content: 'delegate done' },
+        { type: 'tool_result', toolUseId: 'R1', content: 'file text' }
+      ] }
+    ]
+    const repaired = repairToolPairs(messages)
+    expect(repaired).toHaveLength(3)
+    expect(wireViolations(repaired)).toEqual([])
+  })
+
+  it('handles several sequential delegations in one history', () => {
+    const one = nestedDelegate().slice(1, 6)
+    const repaired = repairToolPairs([userTurn('a'), ...one, userTurn('b'), ...one.map((m) => JSON.parse(JSON.stringify(m).replace(/D1/g, 'D9').replace(/W1/g, 'W9')) as Message)])
+    expect(wireViolations(repaired)).toEqual([])
+    expect(repaired.filter((m) => m.content.some((b) => b.type === 'tool_use' && b.name === 'write_file'))).toHaveLength(0)
+  })
+
+  it('falls back to a wire-valid history when the gap is NOT provably nested (no agentRole markers, e.g. sessions saved before they existed)', () => {
+    const untagged: Message[] = [
+      userTurn('go'),
+      callDelegate('D1'),
+      { role: 'assistant', content: [{ type: 'text', text: 'something' }] },
+      result('D1')
+    ]
+    const repaired = repairToolPairs(untagged)
+    expect(wireViolations(repaired)).toEqual([])
+    // Nothing that could be real content was dropped: the assistant text survives.
+    expect(repaired.some((m) => m.content.some((b) => b.type === 'text' && b.text === 'something'))).toBe(true)
+  })
+
+  it('never removes across a real user message — a delegate cannot span a turn boundary', () => {
+    const messages: Message[] = [userTurn('a'), callDelegate('D1'), userTurn('b'), { role: 'assistant', content: [{ type: 'text', text: 'hi', agentRole: 'coding' }] }, result('D1')]
+    const repaired = repairToolPairs(messages)
+    expect(wireViolations(repaired)).toEqual([])
+    expect(repaired.some((m) => m.role === 'user' && m.content.some((b) => b.type === 'text' && b.text === 'b'))).toBe(true)
+  })
+
+  it('drops an orphan tool_result that answers nothing, and the message if that leaves it empty', () => {
+    const messages: Message[] = [userTurn('go'), { role: 'assistant', content: [{ type: 'text', text: 'hi' }] }, result('GHOST'), userTurn('next')]
+    const repaired = repairToolPairs(messages)
+    expect(repaired).toEqual([userTurn('go'), { role: 'assistant', content: [{ type: 'text', text: 'hi' }] }, userTurn('next')])
+  })
+
+  it('keeps the valid results in a message and drops only the orphan one', () => {
+    const messages: Message[] = [
+      userTurn('go'),
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'A', name: 't', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'A', content: 'ok' }, { type: 'tool_result', toolUseId: 'GHOST', content: 'x' }] }
+    ]
+    const repaired = repairToolPairs(messages)
+    expect(repaired[2].content).toEqual([{ type: 'tool_result', toolUseId: 'A', content: 'ok' }])
+  })
+
+  it('is idempotent — repairing an already-repaired history changes nothing', () => {
+    const once = repairToolPairs(nestedDelegate())
+    expect(repairToolPairs(once)).toEqual(once)
+  })
+
+  it('does not mutate its input', () => {
+    const messages = nestedDelegate()
+    const snapshot = JSON.stringify(messages)
+    repairToolPairs(messages)
+    expect(JSON.stringify(messages)).toBe(snapshot)
+  })
+})
+
 describe('prepareConversation', () => {
   it('trims tool results and applies the sliding window together', async () => {
     const big = 'y'.repeat(5000)
     const messages: Message[] = [
       userTurn('old'),
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'x', name: 'read_file', input: {} }] },
       { role: 'user', content: [{ type: 'tool_result', toolUseId: 'x', content: big }] },
       userTurn('new')
     ]
     const provider = fakeProvider(() => 0) // always under budget -> only trimming should apply
     const result = await prepareConversation(messages, 'claude-sonnet-5', provider)
-    expect(result.messages).toHaveLength(3)
+    expect(result.messages).toHaveLength(4)
     expect(result.droppedTurns).toEqual([])
-    const toolResult = result.messages[1].content[0]
+    const toolResult = result.messages[2].content[0]
     expect(toolResult.type).toBe('tool_result')
     if (toolResult.type !== 'tool_result') throw new Error('unreachable')
     expect(toolResult.content.length).toBeLessThan(big.length)
