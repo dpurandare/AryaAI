@@ -445,6 +445,34 @@ Notes:
   `distribution` map onto Developer.
 - A tool may belong to more than one role (xlsx above, core tools).
 
+### 4.3 Workspace runtime (Python) — from the Northwind chart session
+
+Found live: the workspace already had a working `venv/` and the agent still
+reported "Python is not available", because nothing in the app knew the venv
+existed. Hotfix #107 hard-wires it into `shell_execute` (activated in code
+whenever present, plus a bootstrap hint when it is not). The redesign should
+make it a first-class part of the Developer role rather than a shell trick:
+
+- **Managed runtime.** The workspace owns one venv (`venv/` today). A
+  `python_run` tool (Developer role, not core) resolves the interpreter itself
+  — never `python` vs `python3` guesswork — runs a workspace script, and
+  **creates the venv on demand** (with the normal confirmation dialog) when
+  missing. Package installs are a separate, confirmed action
+  (`pip install …` into the venv only).
+- **Reports what it produced.** It returns the files the script created or
+  changed, which is exactly the `artifacts` field of the handoff contract
+  (5.1) — derived in code, not claimed by the model.
+- **Write and run in one role.** Developer both writes the script and runs it,
+  removing the "coding says it can't execute / a separate step never ran"
+  failure by construction (a plan with a code step and no run step becomes
+  impossible to express, not merely discouraged).
+- **A venv is not a sandbox.** It isolates packages, not the filesystem;
+  `shell_execute` and any script can still read and write anywhere the user
+  can. Real confinement (a container or OS-level sandbox, or at minimum path
+  confinement for scripts) is a separate, larger item and is **not** implied by
+  this section. Until then the confirmation dialog remains the safety
+  boundary, and the tool descriptions must keep saying "not a sandbox".
+
 ---
 
 ## 5. Cross-role behaviour (new — what revision 1 missed)
@@ -934,3 +962,35 @@ use it to seed the hot core, not to finalise it.
 | 3 | `mcp__llmwiki__search` (removed server) | 1 |
 | 2 | `office_create_document`, `search_history`, `parse_html`, `db_create_connection` | 1–2 |
 | 1 | `git_clone_repo`, `db_save_query`, `mcp__llmwiki__list_knowledge_bases`, each `delegate_to_*` (3) | 1 |
+
+## Appendix D — end-to-end acceptance scenarios
+
+Real prompts that failed in production, kept as acceptance tests for the
+redesign (routing evaluation, open question 7 / risk gate 2). Each lists what
+"done" means — a check on the *outcome*, not on which role was chosen.
+
+**D1 — Northwind charts in a Word document** (session 9bb34344, 2026-09-25).
+Prompt: *"I need you to create a word document that shows bar charts for top 10
+customers every year from the Northwind database. Plan the activities well and
+make sure the document has the required bar charts."*
+
+What went wrong (all observed): the first plan was [Data, Coding, Coding] with
+no run step; the coding role said it "cannot execute code" (true for that role,
+misleading to the user); the one shell call used `python` (not found) and the
+agent gave up despite a working workspace venv; the top level later claimed it
+cannot execute code although it can; the Data role wrote three `energy_wiki`
+pages nobody asked for (every MCP tool is attached to 5 roles) and ran nine SQL
+statements including three failed `CREATE VIEW`s; a real .docx was overwritten
+with markdown text by `write_file` (guarded since #107).
+
+Done means, checked mechanically:
+1. A `.docx` exists in the workspace and **opens** (valid package) and contains
+   **three embedded images**, one per year (1996, 1997, 1998).
+2. The chart data matches a fresh query of the database (not transcribed
+   numbers that could drift).
+3. The script was **actually executed** by the system (a recorded run with exit
+   code 0), and its outputs are listed as artifacts of that step.
+4. **No unrequested side effects**: no wiki pages, no database views created.
+5. No step reports success on the strength of "I wrote a script that would…".
+6. A user asking "can you run Python?" gets **yes**, with the workspace venv
+   named — from `describe_capabilities`, not from the model's memory.
