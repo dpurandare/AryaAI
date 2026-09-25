@@ -8,6 +8,8 @@ version is still `0`.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-25
+
 ### Added
 
 - Rebranded from "Sachiv" to "Sachivji" everywhere user-facing, including the dev-mode Electron process/Dock identity (packaged builds were already correctly named).
@@ -26,6 +28,11 @@ version is still `0`.
 - Collapsible tool-call output: a global toggle (status-bar button, or Cmd+O on macOS / Ctrl+O elsewhere — the same convention as Claude Code) shows/hides the full body of each tool result, defaulting to collapsed (a compact ✓/✗ indicator per call) so the transcript doesn't look noisy by default; live agent status messages now include real round-progress (`round N/12`) instead of a bare "thinking"; the assistant reply bubble is noticeably wider (92% vs. 70% for user messages) to use the available space better.
 - A default email account: with more than one account configured (Settings > Email accounts), one can be marked default, and `send_email`'s `connection` becomes optional — omitting it uses the default (or the sole configured account, when there's only one), and the confirmation dialog names the real resolved sending account before anything is sent.
 - A generic/custom SMTP email provider (host/port/TLS given directly) in Settings > Email accounts, alongside Gmail, for any other mail server that supports password-based SMTP auth (Yahoo, iCloud, a company's own mail server, Zoho, and similar). A Microsoft-specific (Office 365/Outlook/Hotmail) app-password provider was evaluated and deliberately left out: Microsoft has fully retired SMTP Basic Auth — app passwords included — for both work/school and personal Microsoft accounts, confirmed against a real account, with no per-account way to turn it back on.
+- Groq and Mistral provider adapters (OpenAI-compatible), plus rate-limit detection with wait-and-retry across every provider.
+- MySQL as a database engine alongside Postgres and SQLite; the Postgres tools were live-verified against a real Pagila database.
+- Inline image display in chat, and Mermaid diagram rendering in Markdown messages.
+- `office_extract_template`: turn an existing document into a reusable template.
+- Tool-output display limits and refined multi-call expand behavior; per-delegate round budgets, inline confirmation UI, workspace file organization by kind, and Excel formatting.
 
 ### Fixed
 
@@ -57,6 +64,12 @@ version is still `0`.
 - A presentation the app reported as "created" could not actually exist anywhere in the workspace, with no error shown — an in-progress deck's state lived only in memory for the duration of one chat turn, so any turn that ended without an explicit save silently discarded the whole thing. The app now auto-saves any in-progress deck under a clearly-labeled fallback name if the turn ends before it was saved, with a message explaining what happened.
 - A slide composed via the presentation-builder could end up with duplicated text/charts after a failed element was fixed and retried — the first, invalid attempt had already partially applied to the real slide with no way to undo it. Every element in a slide is now validated before any of them are applied, so a rejected call never leaves anything partial behind.
 - An image element referencing a file that doesn't exist in the workspace used to fail only much later, at save time, with a bare "file not found" far from the actual mistake — now rejected immediately, by name, when the slide is composed.
+- A tool call interrupted mid-flight (app quit or an abandoned stream) left an unanswered `tool_use` in the saved history, which made every later message in that session fail with the provider's own 400 — permanently. History is now repaired when it is prepared for sending, with an explicit "no result recorded" error result, so a session can no longer be wedged this way (#103).
+- Whole-turn failures were silently resent as unanswered context on every later send; they are now collapsed into a single note (#102).
+- The model treating a failed tool call (e.g. a missing required argument) as proof the capability didn't exist; the system prompt now tells it to read the error and retry with a corrected argument (#86).
+- MCP stdio servers left running as orphaned processes after the app quit; every connection is now closed on quit (#86).
+- Orchestrator hardening from an external code review: mid-turn context re-fitting, output-token budgeting that accounts for prompt overhead, MCP tools reaching delegated specialists, and Anthropic input-token accounting (#93–#100).
+- A real turn-hanging bug in tool execution and a round-timeout gap for Ollama/OpenAI-compatible providers.
 
 ## [0.1.0] - 2026-09-08
 
@@ -74,5 +87,6 @@ version is still `0`.
 - Markdown rendering for assistant messages (headers, bold/italic, lists, code blocks), sanitized against untrusted model/tool output.
 - Cross-platform CI (build, typecheck, test on macOS/Windows/Linux) via GitHub Actions.
 
-[Unreleased]: https://github.com/dpurandare/AryaAI/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dpurandare/AryaAI/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dpurandare/AryaAI/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dpurandare/AryaAI/releases/tag/v0.1.0
