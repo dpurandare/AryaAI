@@ -73,6 +73,71 @@ function splitIntoTurns(messages: Message[]): Message[][] {
   return turns
 }
 
+const INTERRUPTED_TOOL_RESULT =
+  '[No result was recorded for this tool call — the app was closed or the request was interrupted before it finished. ' +
+  'Its outcome is unknown; do not assume it succeeded or failed.]'
+
+/**
+ * Every `tool_use` must be answered by a `tool_result` in the message
+ * immediately after it — every provider's wire format (Anthropic's
+ * `tool_use`/`tool_result`, OpenAI-compatible `tool_calls`/`tool`, Google's
+ * function call/response) rejects a history with an unanswered one. Found
+ * live: quitting the app (or abandoning a stream) while a tool call was in
+ * flight persisted the assistant's `tool_use` but never a matching
+ * `tool_result`, and because every later send replays the full history, that
+ * one dangling block made *every* subsequent message in the session fail with
+ * the same provider 400 ("Not the same number of function calls and
+ * responses") — permanently wedged. Audited against the real DB: 3 of 5
+ * sessions had it, for built-in `delegate_to_*` tools as well as MCP ones.
+ *
+ * Synthesizes an explicit error `tool_result` for each unanswered `tool_use`
+ * (rather than stripping the call) so the model still sees that it tried
+ * something and that the outcome is unknown. Merged into the following
+ * tool_result message when there is a partial answer (parallel calls where
+ * only some finished), otherwise inserted as its own message directly after
+ * the assistant message — a pure-tool_result message stays in the same turn
+ * for `splitIntoTurns`, so the sliding window can't separate the pair.
+ * Only affects what's sent; SQLite and the UI transcript are untouched.
+ */
+export function repairDanglingToolUses(messages: Message[]): Message[] {
+  const result: Message[] = []
+  let i = 0
+  while (i < messages.length) {
+    const m = messages[i]
+    result.push(m)
+    i++
+    if (m.role !== 'assistant') continue
+    const useIds = m.content.flatMap((b) => (b.type === 'tool_use' ? [b.id] : []))
+    if (useIds.length === 0) continue
+
+    const answered = new Set<string>()
+    const following: Message[] = []
+    while (i < messages.length && messages[i].role === 'user' && isPureToolResult(messages[i])) {
+      for (const b of messages[i].content) if (b.type === 'tool_result') answered.add(b.toolUseId)
+      following.push(messages[i])
+      i++
+    }
+    const missing = useIds.filter((id) => !answered.has(id))
+    if (missing.length === 0) {
+      result.push(...following)
+      continue
+    }
+    const synthesized: ContentBlock[] = missing.map((id) => ({
+      type: 'tool_result',
+      toolUseId: id,
+      content: INTERRUPTED_TOOL_RESULT,
+      isError: true
+    }))
+    if (following.length === 0) {
+      result.push({ role: 'user', content: synthesized })
+    } else {
+      const [first, ...rest] = following
+      result.push({ ...first, content: [...first.content, ...synthesized] }, ...rest)
+    }
+  }
+  return result
+}
+
 /** A turn whose only assistant content is a whole-turn-failure warning (see `ContentBlock`'s `failureCategory` doc comment) — produced literally nothing else, not even partial text or a tool call. */
 function failedTurnWarning(turn: Message[]): Extract<ContentBlock, { type: 'warning' }> | undefined {
   const assistantBlocks = turn.filter((m) => m.role === 'assistant').flatMap((m) => m.content)
@@ -226,5 +291,5 @@ export async function prepareConversation(
   provider: ModelProvider,
   overhead?: TurnOverhead
 ): Promise<SlidingWindowResult> {
-  return applySlidingWindow(collapseFailedTurns(trimToolResults(messages)), model, provider, overhead)
+  return applySlidingWindow(collapseFailedTurns(trimToolResults(repairDanglingToolUses(messages))), model, provider, overhead)
 }

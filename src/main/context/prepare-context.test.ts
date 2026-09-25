@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Message, ModelProvider } from '../providers/types'
-import { applySlidingWindow, collapseFailedTurns, prepareConversation, trimToolResults, type TurnOverhead } from './prepare-context'
+import { applySlidingWindow, collapseFailedTurns, prepareConversation, repairDanglingToolUses, trimToolResults, type TurnOverhead } from './prepare-context'
 
 const OVERHEAD_MARKER = 'SYS-PROMPT-MARKER'
 
@@ -322,6 +322,67 @@ describe('collapseFailedTurns (TASKS.md #102)', () => {
       { role: 'user', content: [{ type: 'tool_result', toolUseId: 'c1', content: 'done' }] }
     ]
     expect(collapseFailedTurns(turn)).toEqual(turn)
+  })
+})
+
+describe('repairDanglingToolUses', () => {
+  const use = (id: string): Message => ({ role: 'assistant', content: [{ type: 'tool_use', id, name: 'some_tool', input: {} }] })
+
+  it('leaves a fully answered tool_use/tool_result exchange untouched', () => {
+    const messages: Message[] = [
+      userTurn('go'),
+      use('c1'),
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'c1', content: 'ok' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'done' }] }
+    ]
+    expect(repairDanglingToolUses(messages)).toEqual(messages)
+  })
+
+  it('synthesizes an error tool_result for a tool_use left dangling by an abandoned stream, ahead of the next real user message', () => {
+    const messages: Message[] = [userTurn('list them'), use('c1'), userTurn('hello?')]
+    const repaired = repairDanglingToolUses(messages)
+    expect(repaired).toHaveLength(4)
+    expect(repaired[2]).toMatchObject({
+      role: 'user',
+      content: [{ type: 'tool_result', toolUseId: 'c1', isError: true }]
+    })
+    expect(repaired[3]).toEqual(userTurn('hello?'))
+  })
+
+  it('repairs a dangling tool_use at the very end of history', () => {
+    const repaired = repairDanglingToolUses([userTurn('go'), use('c1')])
+    expect(repaired).toHaveLength(3)
+    expect(repaired[2].content[0]).toMatchObject({ type: 'tool_result', toolUseId: 'c1', isError: true })
+  })
+
+  it('fills in only the missing result when parallel calls were partially answered, merging into the existing result message', () => {
+    const messages: Message[] = [
+      userTurn('go'),
+      { role: 'assistant', content: [
+        { type: 'tool_use', id: 'a', name: 't', input: {} },
+        { type: 'tool_use', id: 'b', name: 't', input: {} }
+      ] },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'a', content: 'ok' }] }
+    ]
+    const repaired = repairDanglingToolUses(messages)
+    expect(repaired).toHaveLength(3)
+    expect(repaired[2].content).toEqual([
+      { type: 'tool_result', toolUseId: 'a', content: 'ok' },
+      expect.objectContaining({ type: 'tool_result', toolUseId: 'b', isError: true })
+    ])
+  })
+
+  it('does not mutate its input', () => {
+    const messages: Message[] = [userTurn('go'), use('c1')]
+    repairDanglingToolUses(messages)
+    expect(messages).toHaveLength(2)
+  })
+
+  it('keeps the synthesized result in the same turn, so the sliding window never separates the pair', async () => {
+    const messages: Message[] = [userTurn('old'), use('c1'), userTurn('new')]
+    const { messages: sent } = await prepareConversation(messages, 'gpt-4', fakeProvider(() => 0))
+    const useIdx = sent.findIndex((m) => m.content.some((b) => b.type === 'tool_use'))
+    expect(sent[useIdx + 1].content[0]).toMatchObject({ type: 'tool_result', toolUseId: 'c1' })
   })
 })
 
