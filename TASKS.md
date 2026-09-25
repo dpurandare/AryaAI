@@ -61,6 +61,9 @@ The order we'll actually build in, referencing item numbers below. Everything st
   - **Verified**: 11 new tests (real-shape reproduction asserting the raw history is wire-invalid, then repaired; two-level nesting; parallel delegate + ordinary tool; sequential delegations; the untagged-fallback case for sessions saved before `agentRole` markers existed; turn-boundary safety; orphan drop; idempotence; no mutation), plus a reusable OpenAI-wire pairing checker in the test file. One pre-existing test fixture (a bare `tool_result` with no call) was itself the orphan shape and was corrected. 866/866 full suite, typecheck clean. Also run through the full `prepareConversation` for all 6 real sessions, including with a tiny context budget forcing the sliding window to drop turns: 0 violations in both, against 11 raw.
   - **Not covered / next**: the root cause — persisting nested messages interleaved in the parent's stream — is unchanged; this repairs at replay. A proper fix (tagging nested messages so the transcript and replay both know, or the handoff contract in `design-discussion.md` §5.1) belongs to the redesign. Not yet re-verified live in the running app (needs a restart).
 
+- [x] 106. Release 0.2.1 — Implemented 2026-09-25
+  - Hotfix for #105 (delegated turns wedging a session on the next send), cut from the `v0.2.0` tag on `hotfix/0.2.1`: bumped `package.json`, the lockfile's root entries and the MCP client's `clientInfo.version` to 0.2.1 and added a `[0.2.1]` CHANGELOG section. 866/866 tests, typecheck clean. As with #104, pushing the `v0.2.1` tag triggers `release.yml` (3-platform build + a draft GitHub Release to review and publish manually). The draft `v0.2.0` release contains the #105 bug and should not be published.
+
 ## Provider adapter layer
 - [x] 14. Unified `ModelProvider` interface (messages, streaming events, tool schema)
 - [x] 15. Anthropic adapter (streaming, token counting, model listing)

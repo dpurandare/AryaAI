@@ -8,6 +8,13 @@ version is still `0`.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-25
+
+### Fixed
+
+- A session could become permanently unusable after its first delegation to a specialist: every later message failed with the provider's own 400 ("messages with role 'tool' must be a response to a preceeding message with 'tool_calls'"). The specialist's own messages are saved between the delegate call and its result, so the saved history looked malformed when replayed to the provider. History is now repaired when it is prepared for sending — the specialist's nested messages are dropped from the replay (the delegate's result already carries their outcome), a genuinely unanswered call gets an explicit "no result recorded" error result, and any result that answers no call is removed. Nothing saved or shown in the chat transcript changes (#105).
+- Corrects 0.2.0's fix for interrupted tool calls (#103), which repaired only genuinely unanswered calls and so did not cover delegated turns.
+
 ## [0.2.0] - 2026-09-25
 
 ### Added
@@ -87,6 +94,7 @@ version is still `0`.
 - Markdown rendering for assistant messages (headers, bold/italic, lists, code blocks), sanitized against untrusted model/tool output.
 - Cross-platform CI (build, typecheck, test on macOS/Windows/Linux) via GitHub Actions.
 
-[Unreleased]: https://github.com/dpurandare/AryaAI/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/dpurandare/AryaAI/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/dpurandare/AryaAI/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/dpurandare/AryaAI/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dpurandare/AryaAI/releases/tag/v0.1.0

@@ -69,7 +69,7 @@ export async function connectMcpServer(
   config: McpServerConfig,
   token: string | undefined
 ): Promise<{ client: Client; tools: Tool[] }> {
-  const client = new Client({ name: 'sachiv', version: '0.2.0' })
+  const client = new Client({ name: 'sachiv', version: '0.2.1' })
   const transport = buildTransport(config, token)
   await client.connect(transport)
 
