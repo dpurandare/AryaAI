@@ -527,6 +527,14 @@ prerequisite — see Track A in section 10):
 - **Reports what it produced.** It returns the files the script created or
   changed, which is exactly the `artifacts` field of the handoff contract
   (5.1) — derived in code, not claimed by the model.
+- **Takes a script path or a source body, not a shell string.** D2 (Appendix D)
+  showed the model sending compound Python through `python -c "…"` and pasting
+  multi-line code as a shell command, ~10 failed retries in a row. Accepting the
+  code as a file or a body parameter removes the quoting failure entirely.
+- **Charts into Word need a route.** No Office tool embeds images today; D2's
+  agent had to fake it. Either the run uses `python-docx` (needs the base
+  package list to include it — it is a candidate above) or an image-capable
+  Office tool is added. Decide when the Developer role is specified.
 - **Write and run in one role.** Developer both writes the script and runs it,
   removing the "coding says it can't execute / a separate step never ran"
   failure by construction (a plan with a code step and no run step becomes
@@ -1120,3 +1128,64 @@ Done means, checked mechanically:
 5. No step reports success on the strength of "I wrote a script that would…".
 6. A user asking "can you run Python?" gets **yes**, with the workspace venv
    named — from `describe_capabilities`, not from the model's memory.
+
+**D2 — Northwind column charts in a Word file, second attempt** (session
+9a7fdb57, 2026-09-26, run **after** the #107 venv hard-wiring was live).
+Prompt: *"We need to find top 10 customers for each year and create column
+charts for each year. I am referring to Northwind database. We want these
+charts to be added to a Word file and saved. Plan the activities before
+executing."* Follow-up after the first turn: *"You can execute Python code. Run
+the scripts and complete the task."*
+
+What went wrong (all observed in the transcript):
+
+1. **The venv was used; the failure is behavioural.** `python` and `python3`
+   both resolved to `<workspace>/venv` (a matplotlib traceback shows
+   `venv/lib/python3.12/site-packages`), so #107 does what it was built to do.
+   Making the venv available did not make the agent *use it well*.
+2. **Turn 1 again produced no execution.** Plan [Data, Coding, Coding,
+   Distribution]; the coding role said "I cannot execute code directly", pasted
+   scripts into chat, and the Distribution step told the user to run them.
+   No script file was written, nothing was run. Same failure as D1 — the plan
+   still has no run step and the coding role's "no shell" disclaimer leaks to
+   the user.
+3. **The real data was dropped at the handoff.** The Data step returned 30 real
+   rows (1996–1998). The Coding step received only the Data step's prose
+   summary, wrote *"Sample data structure assumed"*, and invented
+   `Customer A … Customer J` for years **2020/2021** — Northwind has no such
+   years. Every chart produced is fabricated. This is the failure the typed
+   handoff (5.1) exists to prevent: rows must travel as an artifact, not be
+   re-typed from a summary.
+4. **Shell misuse, repeated ten times.** After "you can execute Python", the
+   router sent Python as `python -c "…; with …; for …"` one-liners (invalid
+   syntax: compound statements cannot follow `;`), then pasted multi-line
+   Python directly as the shell command (`/bin/sh: import: not found`). It
+   retried near-identical variants ~10 times without ever writing a `.py` file.
+   This is the repetition shape of #86 in a new tool; a `python_run` that takes
+   a script path or source body (4.3) removes the shell-quoting failure mode.
+5. **No tool can embed an image in a `.docx`.** `office_create_document`
+   takes headings and paragraphs only, so even a correct run had no way to put
+   the charts in the document. The agent then called `office_fill_template`
+   with `{"charts": []}` (a no-op), and zipped the loose PNGs and the chart-less
+   `.docx` into a package. The only real path today is `python-docx` in a
+   script — which is why the run tool matters — or a new image-capable Office
+   tool.
+6. **It reported success on a chart-less result.** The final message said "The
+   task has been successfully completed!", hid the gap in item 3 of its own
+   list ("charts were not added … let me know"), and offered the zip as the
+   deliverable.
+
+Done means, in addition to D1's checks:
+1. Chart data is **read from the query result artifact** (or re-queried in the
+   script), never typed by the model; a check compares a chart's values to a
+   fresh query.
+2. When the user says "run it" (or the plan has a code step), the script is
+   written to a file and executed by `python_run`; a shell one-liner of
+   compound Python is not an accepted way to do it.
+3. The `.docx` contains the charts as embedded images — via `python-docx` in the
+   run, or an image-capable Office tool. Verified by opening the package.
+4. A step that produced no chart in the document **cannot** report `status:
+   done`; the handoff contract's status comes from code-derived artifacts
+   (5.1), not from the model's closing sentence.
+5. A repeated identical failure (same tool, same error class, ≥3 times) stops
+   and reports rather than looping.
