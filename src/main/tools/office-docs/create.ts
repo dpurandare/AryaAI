@@ -12,10 +12,10 @@ import {
   WidthType
 } from 'docx'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, extname, relative } from 'node:path'
+import { dirname, extname } from 'node:path'
 import pptxgen from 'pptxgenjs'
 import type { Tool } from '../types'
-import { resolveNewFilePath } from '../workspace-layout'
+import { resolveNewFilePath, workspaceRelativePath } from '../workspace-layout'
 
 interface DocxTable {
   headers?: string[]
@@ -334,6 +334,6 @@ export const officeCreateDocumentTool: Tool = {
       const slides = Array.isArray(input.slides) ? (input.slides as PptxSlide[]) : []
       await buildPptx(absPath, title, slides)
     }
-    return `Created ${relative(ctx.workspaceGuard.root, absPath)}.`
+    return `Created ${workspaceRelativePath(ctx.workspaceGuard.root, absPath)}.`
   }
 }

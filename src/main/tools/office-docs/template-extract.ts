@@ -1,9 +1,10 @@
 import ExcelJS from 'exceljs'
 import JSZip from 'jszip'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { basename, extname, join, relative } from 'node:path'
+import { basename, extname, join } from 'node:path'
 import PizZip from 'pizzip'
 import type { Tool } from '../types'
+import { workspaceRelativePath } from '../workspace-layout'
 import { extractDocxRuns, extractPptxRuns } from './extract'
 import { detectPlaceholderCandidates, type PlaceholderCandidate } from './placeholder-detect'
 
@@ -303,6 +304,6 @@ export const officeExtractTemplateTool: Tool = {
     const warning = unmatched.length
       ? `\n\nWarning: ${unmatched.length} replacement(s) matched nothing (text not found verbatim in a single run/cell — check for typos or a phrase split across multiple runs): ${unmatched.map((r) => `"${r.text}"`).join(', ')}`
       : ''
-    return `Template written to ${relative(ctx.workspaceGuard.root, outputAbsPath)}.\n${summary}${warning}`
+    return `Template written to ${workspaceRelativePath(ctx.workspaceGuard.root, outputAbsPath)}.\n${summary}${warning}`
   }
 }

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WorkspaceGuard } from '../security/workspace-guard'
-import { classifyManagedFolder, resolveNewFilePath } from './workspace-layout'
+import { classifyManagedFolder, resolveNewFilePath, workspaceRelativePath } from './workspace-layout'
 
 describe('classifyManagedFolder', () => {
   it('classifies code, document, and resource extensions correctly', () => {
@@ -69,5 +69,12 @@ describe('resolveNewFilePath', () => {
 
   it('respects the workspace boundary', () => {
     expect(() => resolveNewFilePath(guard, '../escape.py')).toThrow(/workspace boundary/)
+  })
+})
+
+describe('workspaceRelativePath', () => {
+  it('reports a workspace-relative path with forward slashes on every platform', () => {
+    const root = join('base', 'ws')
+    expect(workspaceRelativePath(root, join(root, 'documents', 'report.docx'))).toBe('documents/report.docx')
   })
 })

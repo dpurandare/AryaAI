@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, extname, relative } from 'node:path'
+import { dirname, extname } from 'node:path'
 import type { Tool } from './types'
-import { resolveNewFilePath } from './workspace-layout'
+import { resolveNewFilePath, workspaceRelativePath } from './workspace-layout'
 
 const MAX_READ_BYTES = 200_000
 
@@ -120,6 +120,6 @@ export const writeFileTool: Tool = {
     const path = resolveNewFilePath(ctx.workspaceGuard, String(input.path ?? ''))
     await mkdir(dirname(path), { recursive: true })
     await writeFile(path, content, 'utf-8')
-    return `Wrote ${content.length} characters to ${relative(ctx.workspaceGuard.root, path)}.`
+    return `Wrote ${content.length} characters to ${workspaceRelativePath(ctx.workspaceGuard.root, path)}.`
   }
 }

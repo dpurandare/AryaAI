@@ -92,3 +92,13 @@ export function resolveNewFilePath(workspaceGuard: WorkspaceGuard, relPath: stri
 
   return workspaceGuard.assertWithinWorkspace(join(folder, relPath))
 }
+
+/**
+ * A path relative to the workspace root, always with forward slashes — what
+ * tools report back to the model. The prompts and folder conventions all use
+ * `/`, so on Windows a `documents\report.docx` result would be inconsistent
+ * with them (and with `python_run`, which already reports `/`).
+ */
+export function workspaceRelativePath(root: string, absPath: string): string {
+  return relative(root, absPath).split(sep).join('/')
+}

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
-import { dirname, relative } from 'node:path'
+import { dirname } from 'node:path'
 import pptxgen from 'pptxgenjs'
 import type { Tool, ToolContext } from '../types'
-import { resolveNewFilePath } from '../workspace-layout'
+import { resolveNewFilePath, workspaceRelativePath } from '../workspace-layout'
 import { applyElement, validateElement, type SlideElementInput } from './elements'
 
 function requireDecks(ctx: ToolContext): Map<string, { pres: pptxgen; slides: pptxgen.Slide[] }> {
@@ -148,7 +148,7 @@ export const pptxSaveDeckTool: Tool = {
     await mkdir(dirname(absPath), { recursive: true })
     await deck.pres.writeFile({ fileName: absPath })
     requireDecks(ctx).delete(deck.id)
-    const savedRelPath = relative(ctx.workspaceGuard.root, absPath)
+    const savedRelPath = workspaceRelativePath(ctx.workspaceGuard.root, absPath)
     return `Saved ${savedRelPath} (${deck.slides.length} slide(s)).`
   }
 }
