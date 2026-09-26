@@ -10,6 +10,20 @@ import type { ModelProvider, ToolDefinition } from '../providers/types'
 import { SHOW_MEDIA_MARKER, type ShowMediaPayload } from '../tools/show-media'
 import type { Tool, ToolContext } from '../tools/types'
 import { buildRoleDigest, type ConfigurationCounts } from './capabilities'
+import {
+  diffSnapshots,
+  formatDelegateResult,
+  formatInputs,
+  isCapturableDataTool,
+  MAX_DATA_FILES_PER_DELEGATE,
+  parseHandoffTag,
+  pruneHandoffDirs,
+  saveHandoffData,
+  snapshotWorkspace,
+  type DelegateResult,
+  type HandoffDataFile,
+  type HandoffItem
+} from './handoff'
 
 export interface Agent {
   role: AgentRole
@@ -487,6 +501,30 @@ interface RunState {
   consecutiveRoundTimeouts: number
   /** Same idea as `consecutiveRoundTimeouts` above, but for a distinct trigger (TASKS.md #91): a provider-confirmed rate-limit error (429), not a hang. Deliberately separate accounting — a rate-limit wait must never be mistaken for, or share a budget with, a genuinely stuck round. Reset to 0 the moment a round actually completes. */
   consecutiveRateLimitRetries: number
+  /** Turn-wide handoff bookkeeping, shared by reference with every nested delegate's state (see `HandoffState`). */
+  handoff: HandoffState
+}
+
+/**
+ * Real outputs of earlier delegates in this turn (design-discussion.md 5.1). One object per turn,
+ * shared by reference between a run's state and its nested delegates' states, so a later step is
+ * handed the files an earlier step produced and the data it retrieved — not just its prose summary.
+ */
+interface HandoffState {
+  /** Names this turn's capture folder (`.sachiv-handoff/<turnId>/`). */
+  turnId: string
+  items: HandoffItem[]
+  /** Numbers the captured data files across the turn so names never collide. */
+  seq: number
+  /** How many times a step has been auto-redirected to another role after an `out_of_scope` answer — capped at one per turn so two roles cannot ping-pong. */
+  redirects: number
+}
+
+/** What `dispatchDelegate` returns: the text the caller folds into the conversation, plus the typed result behind it. */
+interface DelegateOutcome {
+  content: string
+  isError: boolean
+  result?: DelegateResult
 }
 
 const MIN_MAX_OUTPUT_TOKENS = 4096 // today's original flat value — kept as the floor, not the ceiling
@@ -507,6 +545,9 @@ interface Plan {
  * context-bloat failure it exists to prevent (a large `search_history` step
  * result was what triggered the original hallucinated-tool-call bug). */
 const STEP_RESULT_CONTEXT_CAP = 2000
+
+/** Captured handoff data older than this is deleted at the start of a turn. */
+const HANDOFF_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
  * A hard ceiling on how many steps a single classify-and-plan pass can hand
@@ -678,8 +719,12 @@ export class Orchestrator {
       maxOutputTokens,
       deadlineAt: Date.now() + TURN_DEADLINE_MS,
       consecutiveRoundTimeouts: 0,
-      consecutiveRateLimitRetries: 0
+      consecutiveRateLimitRetries: 0,
+      handoff: { turnId: randomUUID().slice(0, 8), items: [], seq: 0, redirects: 0 }
     }
+    // Old captured-data folders are only useful within (roughly) the turn that made them.
+    const workspaceRoot = this.toolContext.workspaceGuard?.root
+    if (workspaceRoot) void pruneHandoffDirs(workspaceRoot, HANDOFF_RETENTION_MS)
 
     if (forcedRole) {
       const agent = this.agents.get(forcedRole)
@@ -987,25 +1032,44 @@ export class Orchestrator {
 
     for (const [index, step] of plan.steps.entries()) {
       yield { kind: 'stream', event: { type: 'plan_step_start', index } }
-      const result = yield* this.dispatchDelegate(step.role, { task: step.description }, conversation, state)
-      yield { kind: 'stream', event: { type: 'plan_step_done', index, isError: result.isError } }
+      let role = step.role
+      let outcome = yield* this.dispatchDelegate(role, { task: step.description }, conversation, state)
 
-      const trimmed =
-        result.content.length > STEP_RESULT_CONTEXT_CAP
-          ? result.content.slice(0, STEP_RESULT_CONTEXT_CAP) + '\n[...truncated for context budget...]'
-          : result.content
-      // `result.isError` used to only reach the renderer (the plan_step_done
-      // event just above, for its ✓/✗ UI) — the text below, the only copy
-      // of this step's outcome any later step or the final synthesis round
-      // actually sees, formatted a failure identically to a real result.
-      // Nothing distinguished "here is your data" from "here is why I
-      // couldn't get your data" except the prose itself, which a later step
-      // has no structural reason to scrutinize — it could just as easily
-      // treat an error string as content to summarize/write into a report.
-      // The explicit (FAILED...) marker is what a step actually reacts to.
-      const stepLabel = `[Plan step ${index + 1} — ${AGENT_ROLE_LABELS[step.role]}]${
-        result.isError ? ' (FAILED — no usable result)' : ''
-      }`
+      // out_of_scope → redirect ONCE per turn to the role the specialist named (5.2). A second
+      // out_of_scope, or a suggestion that is not a real role, is left as-is for the final round to explain.
+      const suggested = outcome.result?.suggestedRole
+      if (
+        outcome.result?.status === 'out_of_scope' &&
+        suggested &&
+        suggested !== role &&
+        this.agents.has(suggested as AgentRole) &&
+        state.handoff.redirects < 1
+      ) {
+        state.handoff.redirects++
+        yield { kind: 'stream', event: { type: 'status', message: `${AGENT_ROLE_LABELS[role]} handed this to ${AGENT_ROLE_LABELS[suggested as AgentRole]}…` } }
+        role = suggested as AgentRole
+        outcome = yield* this.dispatchDelegate(role, { task: step.description }, conversation, state)
+      }
+      yield { kind: 'stream', event: { type: 'plan_step_done', index, isError: outcome.isError } }
+
+      // Truncate only the specialist's own text: the app-derived sections (files, captured data, status)
+      // are appended after it and must never be the part that gets cut.
+      const d = outcome.result
+      const trimmed = d
+        ? formatDelegateResult({ ...d, summary: d.summary.length > STEP_RESULT_CONTEXT_CAP ? d.summary.slice(0, STEP_RESULT_CONTEXT_CAP) + '\n[...truncated for context budget...]' : d.summary })
+        : outcome.content
+      // `outcome.isError` used to only reach the renderer (the plan_step_done event just above, for its
+      // ✓/✗ UI) — the text below, the only copy of this step's outcome any later step or the final
+      // synthesis round actually sees, formatted a failure identically to a real result. The explicit
+      // (FAILED...) marker is what a step actually reacts to.
+      const marker = outcome.isError
+        ? ' (FAILED — no usable result)'
+        : d?.status === 'needs_input'
+          ? ' (NEEDS INPUT — plan paused)'
+          : d?.status === 'out_of_scope'
+            ? ' (OUT OF SCOPE — not done)'
+            : ''
+      const stepLabel = `[Plan step ${index + 1} — ${AGENT_ROLE_LABELS[role]}]${marker}`
       const stepMessage: Message = {
         role: 'user',
         content: [
@@ -1017,6 +1081,10 @@ export class Orchestrator {
       }
       yield { kind: 'message', role: 'user', content: stepMessage.content }
       conversation.push(stepMessage)
+
+      // A step that cannot continue without the user makes every later step meaningless (they would
+      // run on missing input). Stop the plan here; the final round below asks the user the question.
+      if (d?.status === 'needs_input') break
     }
 
     yield* this.runLoop(
@@ -1525,9 +1593,9 @@ export class Orchestrator {
         let content: string
         let isError: boolean
         if (delegateRole) {
-          const result = yield* this.dispatchDelegate(delegateRole, input, conversationBeforeThisRound, state)
-          content = result.content
-          isError = result.isError
+          const outcome = yield* this.dispatchDelegate(delegateRole, input, conversationBeforeThisRound, state)
+          content = outcome.content
+          isError = outcome.isError
         } else {
           const result = await this.dispatchTool(call.id, call.name, input, toolByName)
           content = result.content
@@ -1703,6 +1771,12 @@ export class Orchestrator {
   }
 
   /** A specialist's own tool calls (e.g. Coding calling write_file) still go through normal confirmation. */
+  /** The first specialist whose tool list contains `name`, or undefined — used to turn "Unknown tool" into "that tool belongs to <role>". */
+  private roleOwningTool(name: string): AgentRole | undefined {
+    for (const agent of this.agents.values()) if (agent.tools.some((t) => t.name === name)) return agent.role
+    return undefined
+  }
+
   private async dispatchTool(
     toolUseId: string,
     name: string,
@@ -1711,7 +1785,15 @@ export class Orchestrator {
   ): Promise<{ content: string; isError: boolean; image?: { path: string; mimeType: string; dataBase64: string } }> {
     const tool = toolByName.get(name)
     if (!tool) {
-      return { content: `Unknown tool "${name}".`, isError: true }
+      // A tool that exists but belongs to a specialist (the router no longer carries every tool, and a
+      // replayed history may contain calls to tools it doesn't have) gets a redirect, not a dead end.
+      const owner = this.roleOwningTool(name)
+      return {
+        content: owner
+          ? `Tool "${name}" is not available here — it belongs to the ${AGENT_ROLE_LABELS[owner]} specialist. Call delegate_to_${owner.replace(/-/g, '_')} with the task instead.`
+          : `Unknown tool "${name}".`,
+        isError: true
+      }
     }
 
     const mutates = typeof tool.mutates === 'function' ? tool.mutates(input) : tool.mutates
@@ -1840,14 +1922,16 @@ export class Orchestrator {
     input: Record<string, unknown>,
     conversation: Message[],
     state: RunState
-  ): AsyncGenerator<OrchestratorEvent, { content: string; isError: boolean }> {
+  ): AsyncGenerator<OrchestratorEvent, DelegateOutcome> {
     const agent = this.agents.get(role)
     if (!agent) return { content: `Unknown agent role "${role}".`, isError: true }
 
     const task = String(input.task ?? '')
+    // The real outputs of earlier delegates this turn (files they produced, data they retrieved) are
+    // appended to the brief by the app — typed inputs, not something the router has to remember to pass.
     const taskMessage: Message = {
       role: 'user',
-      content: [{ type: 'text', text: `[Orchestrator -> ${AGENT_ROLE_LABELS[role]}]: ${task}` }]
+      content: [{ type: 'text', text: `[Orchestrator -> ${AGENT_ROLE_LABELS[role]}]: ${task}${formatInputs(state.handoff.items)}` }]
     }
     // `isolated` (#77) controls conversation scoping only — this brief alone
     // vs. the whole parent conversation. The round *budget* is always its
@@ -1872,27 +1956,66 @@ export class Orchestrator {
       // other delegate call in it.
       deadlineAt: state.deadlineAt,
       consecutiveRoundTimeouts: 0,
-      consecutiveRateLimitRetries: 0
+      consecutiveRateLimitRetries: 0,
+      handoff: state.handoff
     }
     const maxRounds = agent.maxRounds ?? MAX_TOTAL_ROUNDS
 
+    // Artifacts are derived, not claimed: diff the workspace around the run. Skipped for isolated
+    // single-purpose roles (slides, email) and roles with no tools, where there is nothing to find.
+    const root = this.toolContext.workspaceGuard?.root
+    const trackFiles = Boolean(root) && !agent.isolated && agent.tools.length > 0
+    const before = trackFiles ? await snapshotWorkspace(root as string) : undefined
+
+    const toolNames = new Map<string, string>()
+    const dataFiles: HandoffDataFile[] = []
+
     try {
-      const result = yield* this.runLoop(
-        agent.systemPrompt,
-        agent.tools,
-        nestedConversation,
-        nestedState,
-        role,
-        [],
-        false,
-        maxRounds
-      )
+      // Driven by hand (not `yield*`) so the nested run's tool results can be observed and the
+      // data-producing ones saved for later steps, while every event still reaches the caller unchanged.
+      const gen = this.runLoop(agent.systemPrompt, agent.tools, nestedConversation, nestedState, role, [], false, maxRounds)
+      let next = await gen.next()
+      while (!next.done) {
+        const event = next.value
+        if (event.kind === 'stream') {
+          const e = event.event
+          if (e.type === 'tool_use_start') toolNames.set(e.id, e.name)
+          else if (e.type === 'tool_result' && !e.isError && root && dataFiles.length < MAX_DATA_FILES_PER_DELEGATE) {
+            const name = toolNames.get(e.toolUseId)
+            if (name && isCapturableDataTool(name)) {
+              const saved = await saveHandoffData(root, state.handoff.turnId, ++state.handoff.seq, name, e.content)
+              if (saved) dataFiles.push(saved)
+            }
+          }
+        }
+        yield event
+        next = await gen.next()
+      }
+      const loopResult = next.value
       // The round ceiling is its own fresh pool per delegate call, but real
       // token cost never is — roll up into the parent's cumulative totals
       // so session_usage/the context meter still see the true full cost.
       state.inputTokens += nestedState.inputTokens
       state.outputTokens += nestedState.outputTokens
-      return { content: result.text || '(no response)', isError: result.isError }
+
+      const tag = parseHandoffTag(loopResult.text || '')
+      const diff = before && root ? diffSnapshots(before, await snapshotWorkspace(root)) : undefined
+      const artifacts = diff ? [...diff.created, ...diff.modified] : []
+      // status: code decides failure; the model only ever chooses the two judgment cases, and only on a clean end.
+      const status = loopResult.isError ? 'failed' : (tag.status ?? 'done')
+      const result: DelegateResult = {
+        role,
+        status,
+        summary: tag.text || (tag.detail ?? '') || '(no response)',
+        artifacts,
+        dataFiles,
+        blocker: tag.detail,
+        suggestedRole: tag.suggestedRole,
+        isError: status === 'failed'
+      }
+      for (const d of dataFiles) state.handoff.items.push({ fromRole: role, kind: 'data', path: d.path, note: `${d.tool}: ${d.summary}` })
+      for (const p of artifacts.slice(0, 30)) state.handoff.items.push({ fromRole: role, kind: 'file', path: p, note: 'created or changed by this step' })
+      return { content: formatDelegateResult(result), isError: result.isError, result }
     } catch (err) {
       return { content: err instanceof Error ? err.message : String(err), isError: true }
     }

@@ -17,6 +17,8 @@ version is still `0`.
 - A new `describe_capabilities` tool lets the assistant list, from live data, which specialists and tools it has, which databases / APIs / email accounts / MCP servers are configured, whether Python scripts can be run, and which actions ask for confirmation — so "what can you do?" is answered from facts, not memory.
 - A permanent prompt-size test records the fixed per-request token cost and fails if it grows unnoticed.
 
+- **Specialists now hand each other real results.** The full result of a data-producing call (SQL rows, parsed files, API responses) is saved to a workspace file and given to the next specialist as an input, so it works from the actual data instead of a summary; the files a specialist really created or changed are detected by the app and listed as verified; a specialist can say it needs information from you (the plan pauses and you are asked) or that a request belongs to another specialist (redirected once). A tool that belongs to a specialist now answers "call delegate_to_<role>" instead of "Unknown tool".
+
 ### Changed
 
 - **Specialist roles were reorganised.** *Developer* now both writes and runs code (it absorbed Terminal/DevOps and Distribution), so a task like "make a chart script and run it" is one job instead of a write step with no run step. New narrow specialists: *History Analyst*, *Data Processor*, *Document Creator* and *Configurator*; *Data Access* also owns external-API calls. The tool no specialist previously owned (`mcp_create_connection`) now has a home. Delegated turns are smaller (Researcher ~56%, Developer ~45% fewer prompt tokens). Existing sessions still display and replay correctly.

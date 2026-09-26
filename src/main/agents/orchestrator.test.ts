@@ -11,7 +11,7 @@ import { readFileTool, listDirectoryTool, writeFileTool } from '../tools/file-op
 import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from '../tools/deck'
 import { officeReadDocumentTool } from '../tools/office-docs/read'
 import { showMediaTool } from '../tools/show-media'
-import type { ToolContext } from '../tools/types'
+import type { Tool, ToolContext } from '../tools/types'
 import { createAgents } from './roles'
 import { Orchestrator, type Agent, type ConfirmDecision, type OrchestratorEvent, type ToolConfirmRequest } from './orchestrator'
 
@@ -3252,6 +3252,229 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
       const text = await officeReadDocumentTool.execute({ path: 'documents/deck.pptx' }, deckCtx)
       expect(text).toContain('Hello')
+    })
+  })
+
+  describe('typed handoff between specialists (design step 3, Appendix D2)', () => {
+    const rows = JSON.stringify(
+      Array.from({ length: 30 }, (_, i) => ({ Year: 1996 + (i % 3), CustomerID: `C${i}`, TotalSales: i * 100.5 })),
+      null,
+      2
+    )
+    const fakeSql: Tool = {
+      name: 'db_execute_sql',
+      description: 'fake',
+      inputSchema: { type: 'object', properties: {} },
+      mutates: false,
+      execute: async () => `30 row(s):\n${rows}`
+    }
+    const withSql = (): ToolRegistry => {
+      const registry = buildRegistry()
+      registry.register(fakeSql)
+      return registry
+    }
+    const planOf = (...steps: Array<[string, string]>): ScriptedTurn => ({
+      text: JSON.stringify({ complexity: 'compound', steps: steps.map(([role, description]) => ({ role, description })) }),
+      stopReason: 'end_turn'
+    })
+    const run = async (turns: ScriptedTurn[], registry: ToolRegistry = withSql()) => {
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: true
+      })
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+      const userTexts = events
+        .filter((e) => e.kind === 'message' && e.role === 'user')
+        .flatMap((e) => (e.kind === 'message' ? e.content : []))
+        .flatMap((c) => (c.type === 'text' ? [c.text] : []))
+      return { provider, events, userTexts }
+    }
+    // The recorded `messages` array is the live conversation (replies are appended to it after the call), so
+    // find the delegate's brief by its content rather than by position.
+    const lastUserText = (req: { messages: Message[] }): string => {
+      const texts = req.messages.flatMap((m) => m.content.flatMap((c) => (c.type === 'text' && c.text.startsWith('[Orchestrator ->') ? [c.text] : [])))
+      return texts.at(-1) ?? ''
+    }
+
+    it('D2: the real rows a Data step retrieved reach the next step as a FILE named in its brief — not as a summary it can only guess from', async () => {
+      const { provider, userTexts } = await run([
+        planOf(['data', 'top 10 customers per year'], ['coding', 'chart them']),
+        { toolCalls: [{ id: 'q1', name: 'db_execute_sql', input: { sql: 'select ...' } }] }, // Data round 1: the query
+        { text: 'Retrieved the top customers for 1996-1998.', stopReason: 'end_turn' }, // Data round 2: prose summary only
+        { text: 'Charting from the file.', stopReason: 'end_turn' }, // Coding
+        { text: 'Charts are described above.', stopReason: 'end_turn' } // final synthesis
+      ])
+
+      // requests: [0] classify, [1] data r1, [2] data r2, [3] coding, [4] final
+      const codingBrief = lastUserText(provider.requests[3])
+      expect(codingBrief).toContain('[Orchestrator -> Developer]: chart them')
+      expect(codingBrief).toMatch(/Inputs from earlier in this turn/)
+      const m = /Data from data: (\.sachiv-handoff\/[^ ]+\.json) — db_execute_sql: 30 rows/.exec(codingBrief)
+      expect(m, 'the brief must name the captured data file').not.toBeNull()
+
+      // The file really holds all 30 rows the query returned.
+      const saved = await readFile(join(root, m![1]), 'utf-8')
+      expect(saved.startsWith('30 row(s):')).toBe(true)
+      expect(JSON.parse(saved.slice(saved.indexOf('\n') + 1))).toHaveLength(30)
+
+      // ...and the plan-step message the final round sees also names it, past the summary.
+      expect(userTexts.find((t) => t.includes('[Plan step 1 — Data Access]'))).toContain('Data captured for later steps: .sachiv-handoff/')
+    })
+
+    it('lists the files a step actually created, derived from the workspace — including ones a script wrote, not just a tool call', async () => {
+      const registry = withSql()
+      registry.register({
+        name: 'shell_execute',
+        description: 'fake shell that runs a script which writes files',
+        inputSchema: { type: 'object', properties: {} },
+        mutates: false,
+        execute: async () => {
+          await writeFile(join(root, 'chart_1996.png'), 'png-bytes')
+          await writeFile(join(root, 'chart_1997.png'), 'png-bytes')
+          return 'exit code: 0'
+        }
+      })
+      const { userTexts } = await run(
+        [
+          planOf(['coding', 'draw the charts and run the script'], ['research', 'find the caption text']),
+          { toolCalls: [{ id: 's1', name: 'shell_execute', input: { command: 'python make.py' } }] },
+          { text: 'Ran it.', stopReason: 'end_turn' },
+          { text: 'Caption found.', stopReason: 'end_turn' },
+          { text: 'Done.', stopReason: 'end_turn' }
+        ],
+        registry
+      )
+      const step = userTexts.find((t) => t.includes('[Plan step 1 — Developer]')) ?? ''
+      expect(step).toContain('Files created or changed (verified by the app, not self-reported): chart_1996.png, chart_1997.png')
+    })
+
+    it('does not list a file the specialist merely CLAIMS to have made', async () => {
+      const { userTexts } = await run([
+        planOf(['coding', 'make the chart'], ['research', 'find a caption']),
+        { text: 'I have created chart.png and report.docx for you!', stopReason: 'end_turn' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'ok', stopReason: 'end_turn' }
+      ])
+      const step = userTexts.find((t) => t.includes('[Plan step 1 — Developer]')) ?? ''
+      expect(step).toContain('I have created chart.png')
+      expect(step).not.toContain('Files created or changed')
+    })
+
+    it('needs_input pauses the plan: later steps do not run on missing input, and the step says so', async () => {
+      const { provider, userTexts } = await run([
+        planOf(['data', 'get the sales figures'], ['coding', 'write a report']),
+        { text: 'There are two databases.\n[handoff: needs_input] Which database should I use?', stopReason: 'end_turn' },
+        { text: 'Which database should I use?', stopReason: 'end_turn' } // final round asks the user
+      ])
+      expect(provider.requests).toHaveLength(3) // classify, data, final — the coding step never ran
+      const step = userTexts.find((t) => t.includes('[Plan step 1 — Data Access]')) ?? ''
+      expect(step).toContain('(NEEDS INPUT — plan paused)')
+      expect(step).toContain('Which database should I use?')
+      expect(step).not.toContain('[handoff:') // the tag itself is stripped from what later rounds see
+      expect(userTexts.some((t) => t.includes('[Plan step 2'))).toBe(false)
+    })
+
+    it('out_of_scope redirects the step ONCE to the role the specialist named', async () => {
+      const { provider, userTexts } = await run([
+        planOf(['coding', 'total the sales by year'], ['research', 'find a caption']),
+        { text: 'That needs a database query.\n[handoff: out_of_scope -> data] SQL work', stopReason: 'end_turn' },
+        { text: 'Sales by year: 1996=5.', stopReason: 'end_turn' }, // Data Access picks it up
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'Here you go.', stopReason: 'end_turn' }
+      ])
+      expect(provider.requests).toHaveLength(5) // classify, coding, data (redirect), research, final
+      expect(lastUserText(provider.requests[2])).toContain('[Orchestrator -> Data Access]: total the sales by year')
+      const step = userTexts.find((t) => t.includes('[Plan step 1')) ?? ''
+      expect(step).toMatch(/^\[Plan step 1 — Data Access\]:/) // labelled with the role that actually did it
+      expect(userTexts.some((t) => t.includes('[Plan step 2 — Researcher]'))).toBe(true) // the plan carried on afterwards
+      expect(step).toContain('Sales by year: 1996=5.')
+    })
+
+    it('a second out_of_scope is NOT redirected again (no ping-pong) and is reported as not done', async () => {
+      const { provider, userTexts } = await run([
+        planOf(['coding', 'do the thing'], ['research', 'find a caption']),
+        { text: 'Not mine.\n[handoff: out_of_scope -> data]', stopReason: 'end_turn' },
+        { text: 'Not mine either.\n[handoff: out_of_scope -> coding]', stopReason: 'end_turn' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'Neither role could do it.', stopReason: 'end_turn' }
+      ])
+      expect(provider.requests).toHaveLength(5) // classify, coding, data, research, final — coding is NOT called a second time
+      const step = userTexts.find((t) => t.includes('[Plan step 1')) ?? ''
+      expect(step).toContain('(OUT OF SCOPE — not done)')
+    })
+
+    it('ignores a suggested role that does not exist instead of redirecting into nothing', async () => {
+      const { provider } = await run([
+        planOf(['coding', 'do the thing'], ['research', 'find a caption']),
+        { text: 'Not mine.\n[handoff: out_of_scope -> wizard]', stopReason: 'end_turn' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'ok', stopReason: 'end_turn' }
+      ])
+      expect(provider.requests).toHaveLength(4) // classify, coding, research, final — no redirect into a role that does not exist
+    })
+
+    it('an ordinary reply with no tag, no files and no data is passed through exactly as before', async () => {
+      const { userTexts } = await run([
+        planOf(['research', 'find X'], ['research', 'find Y']),
+        { text: 'X is 5.', stopReason: 'end_turn' },
+        { text: 'Y is 6.', stopReason: 'end_turn' },
+        { text: 'done', stopReason: 'end_turn' }
+      ])
+      expect(userTexts.find((t) => t.includes('[Plan step 1'))).toBe('[Plan step 1 — Researcher]: find X\n\nResult:\nX is 5.')
+    })
+
+    it('a failed specialist is status failed (set in code), regardless of what it wrote', async () => {
+      const { userTexts, events } = await run([
+        planOf(['data', 'get figures'], ['research', 'find a caption']),
+        { throwError: 'Unknown data connection "sales_db".' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'Could not get the figures.', stopReason: 'end_turn' }
+      ])
+      expect(userTexts.find((t) => t.includes('[Plan step 1'))).toContain('(FAILED — no usable result)')
+      expect(events.filter((e) => e.kind === 'stream').map((e) => e.event)).toContainEqual({ type: 'plan_step_done', index: 0, isError: true })
+    })
+
+    it('the same handoff applies without a plan: a second delegate in the same turn is handed the first one\'s captured data', async () => {
+      const registry = withSql()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'd1', name: 'delegate_to_data', input: { task: 'get the rows' } }] }, // router round 1
+        { toolCalls: [{ id: 'q1', name: 'db_execute_sql', input: {} }] }, // data r1
+        { text: 'Got them.', stopReason: 'end_turn' }, // data r2
+        { toolCalls: [{ id: 'd2', name: 'delegate_to_coding', input: { task: 'chart them' } }] }, // router round 2
+        { text: 'Charted.', stopReason: 'end_turn' }, // coding
+        { text: 'All done.', stopReason: 'end_turn' } // router final
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'chart the sales' }] }])
+      const codingBrief = lastUserText(provider.requests[4])
+      expect(codingBrief).toContain('[Orchestrator -> Developer]: chart them')
+      expect(codingBrief).toMatch(/Data from data: \.sachiv-handoff\/.+\.json — db_execute_sql: 30 rows/)
+    })
+
+    it('a tool the router does not carry but a specialist owns gets a redirect to that specialist, not a dead end', async () => {
+      const registry = withSql()
+      registry.register({ name: 'shell_execute', description: 'fake', inputSchema: { type: 'object', properties: {} }, mutates: false, execute: async () => 'x' })
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'c1', name: 'shell_execute', input: {} }] },
+        { text: 'I will delegate.', stopReason: 'end_turn' }
+      ])
+      // The router's own tool list deliberately lacks shell_execute (as after the slim-router step).
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list().filter((t) => t.name !== 'shell_execute'), autoApprove(), ctx, signal)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'run it' }] }])
+      const result = events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'tool_result' ? [e.event.content] : []))[0]
+      expect(result).toContain('belongs to the Developer specialist')
+      expect(result).toContain('delegate_to_coding')
+    })
+
+    it('a tool nobody owns is still just "Unknown tool"', async () => {
+      const registry = withSql()
+      const provider = new MockProvider([{ toolCalls: [{ id: 'c1', name: 'no_such_tool', input: {} }] }, { text: 'ok', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'x' }] }])
+      const result = events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'tool_result' ? [e.event.content] : []))[0]
+      expect(result).toBe('Unknown tool "no_such_tool".')
     })
   })
 })

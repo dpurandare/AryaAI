@@ -2,6 +2,7 @@ import { ROLE_MANIFEST, type AgentRole } from '@shared/agents'
 import type { ToolRegistry } from '../tools/registry'
 import type { Tool } from '../tools/types'
 import type { Agent } from './orchestrator'
+import { HANDOFF_TAG_INSTRUCTION } from './handoff'
 
 /** Routing summary for a role — the manifest (shared/agents.ts) is the single source; only prompts and tools live in this file. */
 function summaryOf(id: AgentRole): string {
@@ -163,7 +164,9 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'Python. If a run fails, read the error, fix the script, and run it again — do not repeat the ' +
         'same failing command. If Python is not available at all, the shell says so: tell the user ' +
         'plainly and point them to Settings > Runtime rather than trying to install Python yourself. ' +
-        'Use the real data you were given, or read it yourself from a file — never invent sample or ' +
+        'Use the real data you were given, or read it yourself from a file — when your brief lists "Inputs from ' +
+        'earlier in this turn", those files hold the real rows: read them (in your script too) instead of retyping numbers. ' +
+        'Never invent sample or ' +
         'placeholder data to fill a gap. If the data you need was not passed to you (only a summary ' +
         'of it was), say exactly that instead of making numbers up. To put charts or images into a ' +
         'Word document: draw them with matplotlib, then build the .docx with python-docx in the same ' +
@@ -418,7 +421,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     "— don't silently stop as if the whole request is done just because the part you could do went well."
   for (const agent of agents) {
     if (agent.role !== 'planning' && agent.role !== 'page-creator') {
-      agent.systemPrompt += COMPLETENESS_NOTE
+      agent.systemPrompt += COMPLETENESS_NOTE + HANDOFF_TAG_INSTRUCTION
     }
   }
 

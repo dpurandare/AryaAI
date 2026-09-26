@@ -53,7 +53,9 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
  *   router still carries the full registry — that is step 4), classify 833 (+55: live availability + the values-not-summaries rule);
  *   roles planning 59 / research 1,236 / history-analyst 411 / coding (Developer) 2,099 / data (Data Access) 2,513 / data-processor 1,808 /
  *   document-creator 2,216 / configurator 1,114 / page-creator 795 / email 535.
- * The saving is on DELEGATED turns (Researcher -56%, Developer -45%). Ceilings sit ~2% above. Lower them as later steps land.
+ * After step 3 (typed handoff): every specialist prompt gained the ~79-token `[handoff: ...]` instruction (research 1,315 / history 490 /
+ * coding 2,211 — that plus a ~33-token "read the inputs files" line / data 2,592 / data-processor 1,887 / document-creator 2,295 /
+ * configurator 1,193 / email 614); router and classify unchanged. The saving is on DELEGATED turns (Researcher -56%, Developer -45%). Ceilings sit ~2% above. Lower them as later steps land.
  * Print the live numbers with `PRINT_BUDGET=1 npx vitest run src/main/agents/prompt-budget`.
  */
 const CEILINGS = {
@@ -62,15 +64,15 @@ const CEILINGS = {
   routerBare: 10800,
   classifyPrompt: 850,
   'role:planning': 65,
-  'role:research': 1260,
-  'role:history-analyst': 420,
-  'role:coding': 2150,
-  'role:data': 2570,
-  'role:data-processor': 1850,
-  'role:document-creator': 2260,
-  'role:configurator': 1140,
+  'role:research': 1340,
+  'role:history-analyst': 500,
+  'role:coding': 2260,
+  'role:data': 2640,
+  'role:data-processor': 1920,
+  'role:document-creator': 2340,
+  'role:configurator': 1220,
   'role:page-creator': 820,
-  'role:email': 550
+  'role:email': 630
 } as const
 
 function measure(): Record<keyof typeof CEILINGS, number> {
