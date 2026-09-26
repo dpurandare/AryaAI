@@ -1,7 +1,12 @@
-import type { AgentRole } from '@shared/agents'
+import { ROLE_MANIFEST, type AgentRole } from '@shared/agents'
 import type { ToolRegistry } from '../tools/registry'
 import type { Tool } from '../tools/types'
 import type { Agent } from './orchestrator'
+
+/** Routing summary for a role — the manifest (shared/agents.ts) is the single source; only prompts and tools live in this file. */
+function summaryOf(id: AgentRole): string {
+  return ROLE_MANIFEST.find((r) => r.id === id)!.summary
+}
 
 function pickTools(registry: ToolRegistry, names: string[]): Tool[] {
   return names.map((name) => registry.get(name)).filter((tool): tool is Tool => tool !== undefined)
@@ -66,7 +71,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
   const agents: Agent[] = [
     {
       role: 'planning',
-      summary: 'Breaks a complex or ambiguous request into a clear, ordered set of concrete steps.',
+      summary: summaryOf('planning'),
       systemPrompt:
         'You are the Planning specialist for Sachivji, a local-first AI assistant. Break the request ' +
         'down into a clear, ordered, actionable plan. You have no tools of your own yet — produce the ' +
@@ -75,7 +80,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     },
     {
       role: 'research',
-      summary: 'Gathers and synthesizes information relevant to the request.',
+      summary: summaryOf('research'),
       systemPrompt:
         'You are the Research specialist for Sachivji. Use web_search to look things up — when a Tavily ' +
         "key is configured (Settings > Web search) it's a real search API with real ranked results and " +
@@ -146,7 +151,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     },
     {
       role: 'coding',
-      summary: 'Reads, writes, and organizes files in the workspace to implement changes.',
+      summary: summaryOf('coding'),
       systemPrompt:
         "You are the Coding specialist for Sachivji. Read, write, and organize files inside the user's " +
         'workspace to implement the requested change. Always explain what you changed and why. Use ' +
@@ -212,7 +217,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     },
     {
       role: 'terminal-devops',
-      summary: 'Runs shell commands and AWS/Azure/GCP CLI operations.',
+      summary: summaryOf('terminal-devops'),
       systemPrompt:
         'You are the Terminal/DevOps specialist for Sachivji. You can run shell commands (shell_execute, ' +
         "scoped to the workspace as cwd but not otherwise sandboxed) and cloud CLI commands via aws_cli/" +
@@ -232,7 +237,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     },
     {
       role: 'data',
-      summary: 'Introspects and queries configured database connections.',
+      summary: summaryOf('data'),
       systemPrompt:
         'You are the Data specialist for Sachivji. Use db_list_connections to see what data connections ' +
         'are configured (in Settings > Data sources) — its output includes a quick table-name hint per ' +
@@ -286,7 +291,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     },
     {
       role: 'distribution',
-      summary: 'Packages, publishes, and ships work (releases, deployment).',
+      summary: summaryOf('distribution'),
       systemPrompt:
         'You are the Distribution specialist for Sachivji. Use github_cli (the "gh" CLI — issues, PRs, ' +
         'releases, repo operations) for GitHub work; it assumes gh is already installed and ' +
@@ -299,7 +304,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     },
     {
       role: 'page-creator',
-      summary: 'Designs and builds one slide of a presentation, given a brief for that slide.',
+      summary: summaryOf('page-creator'),
       // Isolated per #77/#78: gets only its own task/brief (not the deck-
       // planning conversation, the top-level's own reasoning, or any other
       // slide's content) and a round budget decoupled from the shared
@@ -336,7 +341,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     },
     {
       role: 'email',
-      summary: 'Drafts and sends an email given a loose brief (recipients, what it should say).',
+      summary: summaryOf('email'),
       // Isolated per #77: a fully-specified send has no real dependency on
       // the rest of the conversation beyond the brief it's handed, and a
       // bounded, cheap round cap is enough for draft-then-send.

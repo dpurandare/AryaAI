@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
 import type { AgentRole } from '@shared/agents'
-import { AGENT_ROLE_LABELS, AGENT_ROLES } from '@shared/agents'
+import { AGENT_ROLE_LABELS, PLANNABLE_ROLES } from '@shared/agents'
 import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
 import { evaluateClassifyGate, shouldSampleForCalibration, type ClassifyGateVerdict } from './classify-gate'
 import { CONTEXT_BUDGET_FRACTION, overheadTokens, resolveContextWindow } from '../context/prepare-context'
@@ -519,7 +519,7 @@ const STEP_RESULT_CONTEXT_CAP = 2000
  */
 const MAX_PLAN_STEPS = 5
 
-const VALID_STEP_ROLES = new Set<string>(AGENT_ROLES)
+const VALID_STEP_ROLES = new Set<string>(PLANNABLE_ROLES)
 
 /** Fails open to `undefined` (treated as "simple" by the caller) on any parse/shape problem — a broken classifier response must never block the turn it's meant to help. */
 function parsePlan(text: string): { plan: Plan; truncated: boolean } | undefined {
@@ -1035,7 +1035,7 @@ export class Orchestrator {
    * can actually do it.
    */
   private buildClassifySystemPrompt(): string {
-    // Filtered to AGENT_ROLES, same set VALID_STEP_ROLES validates a
+    // Filtered to PLANNABLE_ROLES, same set VALID_STEP_ROLES validates a
     // parsed plan's steps against (parsePlan) — `this.agents` itself has
     // every role including page-creator, which is deliberately NOT a valid
     // plan-step target (see shared/agents.ts's own doc comment: isolated,
@@ -1045,7 +1045,7 @@ export class Orchestrator {
     // the whole plan — wasted, confusing classify calls that were never
     // going to produce a usable plan either way.
     const specialists = [...this.agents.values()]
-      .filter((a) => (AGENT_ROLES as readonly string[]).includes(a.role))
+      .filter((a) => (PLANNABLE_ROLES as readonly string[]).includes(a.role))
       .map((a) => `- ${a.role}: ${a.summary}${a.tools.length === 0 ? ' (no tools of its own — reasoning/text only)' : ''}`)
       .join('\n')
     return (

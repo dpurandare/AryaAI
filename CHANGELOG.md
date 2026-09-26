@@ -14,8 +14,12 @@ version is still `0`.
 
 - First run now includes a Python setup step: Continue is available once the environment is ready, or you can choose "Continue without Python". README documents Python 3.10+ as a prerequisite, and the Linux `.deb` now depends on `python3` and `python3-venv`.
 
+- A new `describe_capabilities` tool lets the assistant list, from live data, which specialists and tools it has, which databases / APIs / email accounts / MCP servers are configured, whether Python scripts can be run, and which actions ask for confirmation — so "what can you do?" is answered from facts, not memory.
+- A permanent prompt-size test records the fixed per-request token cost and fails if it grows unnoticed.
+
 ### Changed
 
+- Specialist roles are now defined in one manifest (labels, summaries, picker / plan flags, examples) instead of several parallel lists. No routing behaviour change.
 - The message an agent gets when `python` is not found now points at Settings > Runtime instead of asking it to build a virtual environment itself.
 
 ## [0.2.2] - 2026-09-25
