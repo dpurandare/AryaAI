@@ -1,5 +1,6 @@
 import { ROLE_MANIFEST } from '@shared/agents'
 import type { Message, ModelProvider, ToolDefinition } from '../providers/types'
+import { isFatalProviderError } from './paced-provider'
 
 /**
  * Routing evaluation for the slim router (design-discussion.md risk gate 2, open question 7).
@@ -121,6 +122,9 @@ async function decide(
         }
       }
     } catch (err) {
+      // A request that can never fit, or an exhausted daily quota, would fail every remaining case the same way: end the run (the caller keeps
+      // the outcomes so far) instead of recording 40 identical errors.
+      if (isFatalProviderError(err)) throw err
       return { choice: { type: 'error', message: err instanceof Error ? err.message : String(err) }, rounds: round, explored }
     }
     if (calls.size === 0) return { choice: answered ? { type: 'answer', excerpt: text.replace(/\s+/g, ' ').trim().slice(0, 140) } : { type: 'error', message: 'no output' }, rounds: round, explored }
@@ -183,13 +187,18 @@ export async function runRoutingEval(
     outcomes.push(outcome)
     onOutcome?.(outcome, i, cases.length)
   }
+  return summarizeOutcomes(provider.id, model, outcomes)
+}
+
+/** Builds the report from outcomes — also used for a PARTIAL run that ended on a provider limit. */
+export function summarizeOutcomes(providerId: string, model: string, outcomes: RoutingOutcome[]): RoutingReport {
   const byRole: Record<string, [number, number]> = {}
   for (const o of outcomes) {
     const e = (byRole[o.case.expectedRole] ??= [0, 0])
     e[1]++
     if (o.correct) e[0]++
   }
-  return { provider: provider.id, model, outcomes, correct: outcomes.filter((o) => o.correct).length, total: outcomes.length, byRole, exploredFirst: outcomes.filter((o) => o.explored.length > 0).length }
+  return { provider: providerId, model, outcomes, correct: outcomes.filter((o) => o.correct).length, total: outcomes.length, byRole, exploredFirst: outcomes.filter((o) => o.explored.length > 0).length }
 }
 
 export function describeChoice(c: Choice): string {

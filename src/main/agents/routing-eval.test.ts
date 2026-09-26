@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ROLE_MANIFEST } from '@shared/agents'
 import { MockProvider } from '../../../test/support/mock-provider'
 import { collapseUnavailableToolCalls } from '../context/prepare-context'
+import { RequestTooLargeError } from './paced-provider'
 import {
   buildRoutingCases,
   formatRoutingReport,
@@ -10,6 +11,7 @@ import {
   roleFromDelegateName,
   runReplayProbe,
   runRoutingEval,
+  summarizeOutcomes,
   type EvalSetup
 } from './routing-eval'
 
@@ -171,6 +173,38 @@ describe('runRoutingEval with follow-through (--rounds)', () => {
     ])
     const report = await runRoutingEval(provider, 'm', withInfo, [c], undefined, 3)
     expect(report.outcomes[0]).toMatchObject({ correct: true, rounds: 1, choice: { type: 'delegate', role: 'data-processor' } })
+  })
+})
+
+describe('a provider limit that waiting cannot fix ends the run', () => {
+  it('a request that can never fit stops the whole evaluation (not one error per remaining case), and the outcomes so far survive', async () => {
+    const good = new MockProvider([{ toolCalls: [{ id: '1', name: 'delegate_to_data', input: {} }] }])
+    let calls = 0
+    const provider = {
+      id: 'fake',
+      displayName: 'Fake',
+      listModels: async () => [],
+      countTokens: async () => 0,
+      stream(req: Parameters<typeof good.stream>[0]) {
+        calls++
+        if (calls === 1) return good.stream(req)
+        throw new RequestTooLargeError('too big', 6000, 12000)
+      }
+    }
+    const seen: string[] = []
+    const two = [
+      { prompt: 'a', expectedRole: 'data', kind: 'example' as const, from: 'data' },
+      { prompt: 'b', expectedRole: 'data', kind: 'example' as const, from: 'data' },
+      { prompt: 'c', expectedRole: 'data', kind: 'example' as const, from: 'data' }
+    ]
+    await expect(runRoutingEval(provider as never, 'm', setup, two, undefined, 1, (o) => seen.push(o.case.prompt))).rejects.toBeInstanceOf(RequestTooLargeError)
+    expect(seen).toEqual(['a']) // case a finished; b hit the limit; c was never tried
+    expect(calls).toBe(2)
+  })
+
+  it('summarizeOutcomes builds a report from a partial list', () => {
+    const r = summarizeOutcomes('p', 'm', [{ case: { prompt: 'a', expectedRole: 'data', kind: 'example', from: 'data' }, choice: { type: 'delegate', role: 'data' }, correct: true, rounds: 1, explored: [] }])
+    expect(r).toMatchObject({ correct: 1, total: 1, byRole: { data: [1, 1] }, exploredFirst: 0 })
   })
 })
 

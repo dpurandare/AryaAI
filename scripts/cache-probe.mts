@@ -20,6 +20,7 @@ import { OllamaProvider } from '../src/main/providers/ollama'
 import { OpenAIProvider } from '../src/main/providers/openai'
 import type { ModelProvider } from '../src/main/providers/types'
 import { createDescribeCapabilitiesTool } from '../src/main/agents/capabilities'
+import { isFatalProviderError, withPacing } from '../src/main/agents/paced-provider'
 import { Orchestrator } from '../src/main/agents/orchestrator'
 import { createAgents } from '../src/main/agents/roles'
 import { selectRouterTools } from '../src/main/agents/router-tools'
@@ -66,7 +67,14 @@ const tools = [...routerTools.map((t) => ({ name: t.name, description: t.descrip
 console.log(`Router: ${has('--full') ? 'FULL registry' : 'SLIM'}; ${tools.length} tools; ${calls} identical calls to ${providerId} / ${model}.`)
 if (has('--dry')) process.exit(0)
 
-const provider = makeProvider(providerId)
+const numFlag = (name: string): number | undefined => {
+  const f = flags.find((x) => x.startsWith(`--${name}=`))
+  return f ? Number(f.slice(name.length + 3)) : undefined
+}
+// Free tiers: --pace-ms=N spaces calls, --tpm=N keeps a token-per-minute budget, --pace waits out 429s as the provider asks.
+const provider = numFlag('pace-ms') !== undefined || numFlag('tpm') !== undefined || has('--pace')
+  ? withPacing(makeProvider(providerId), { minIntervalMs: numFlag('pace-ms'), tokensPerMinute: numFlag('tpm'), onWait: (ms, why) => console.error(`  … waiting ${(ms / 1000).toFixed(1)}s (${why})`) })
+  : makeProvider(providerId)
 for (let i = 1; i <= calls; i++) {
   const t0 = performance.now()
   let ttft: number | undefined
@@ -84,6 +92,10 @@ for (let i = 1; i <= calls; i++) {
     }
     console.log(`  call ${i}: first token ${((ttft ?? 0) / 1000).toFixed(1)}s, total ${((performance.now() - t0) / 1000).toFixed(1)}s, input ${input}, cached ${cached}${input ? ` (${Math.round((cached / input) * 100)}%)` : ''}, output ${outTokens}`)
   } catch (err) {
+    if (isFatalProviderError(err)) {
+      console.log(`  call ${i}: STOPPED by a provider limit: ${err.message}`)
+      break
+    }
     console.log(`  call ${i}: ERROR ${err instanceof Error ? err.message : String(err)}`)
   }
 }

@@ -13,6 +13,9 @@
  *   MISTRAL_API_KEY=...   npx vite-node --config vitest.config.ts scripts/routing-eval.mts -- mistral codestral-latest --probe-only
  *   npx vite-node --config vitest.config.ts scripts/routing-eval.mts -- ollama llama3.1 --dry                                # build everything, call no model
  *
+ * Rate limits (Groq, Mistral, any free tier): --pace-ms=N (min gap between calls), --tpm=N (tokens per minute budget, from actual usage), --max-wait-s=N
+ * (longest wait accepted before the run stops as "quota window"; default 120), --from=N (resume at case N), or plain --pace to only wait out 429s.
+ *
  * Flags: --core=a,b,c (slim router with exactly that hot core instead of the default), --full (evaluate the full-registry router instead of the slim one), --probe-only, --skip-probe, --rounds=N (answer exploration tools and let the model continue, default 1), --dry, --limit=N (an evenly
  * spread subset — a 27B local model takes ~50 s per case). Progress is printed per case, so a long run can be cut short and still read.
  * Keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY (or GEMINI_API_KEY), GROQ_API_KEY, MISTRAL_API_KEY. Ollama needs none.
@@ -41,7 +44,8 @@ import { Orchestrator } from '../src/main/agents/orchestrator'
 import { createAgents } from '../src/main/agents/roles'
 import { ROUTER_CORE_TOOLS, selectRouterTools } from '../src/main/agents/router-tools'
 import { SYSTEM_PROMPT } from '../src/main/agents/system-prompt'
-import { buildRoutingCases, describeChoice, formatRoutingReport, replayProbeHistory, runReplayProbe, runRoutingEval, type EvalSetup } from '../src/main/agents/routing-eval'
+import { isFatalProviderError, withPacing } from '../src/main/agents/paced-provider'
+import { buildRoutingCases, describeChoice, formatRoutingReport, replayProbeHistory, runReplayProbe, runRoutingEval, summarizeOutcomes, type EvalSetup, type RoutingOutcome } from '../src/main/agents/routing-eval'
 import { collapseUnavailableToolCalls } from '../src/main/context/prepare-context'
 import { createDefaultRegistry } from '../src/main/tools/setup'
 
@@ -51,6 +55,10 @@ if (!providerId || !model) {
   process.exit(2)
 }
 const has = (f: string): boolean => flags.includes(f)
+const num = (name: string): number | undefined => {
+  const f = flags.find((x) => x.startsWith(`--${name}=`))
+  return f ? Number(f.slice(name.length + 3)) : undefined
+}
 const rounds = Number(flags.find((f) => f.startsWith('--rounds='))?.slice('--rounds='.length) ?? 1)
 
 function key(...names: string[]): string {
@@ -122,7 +130,10 @@ const limitFlag = flags.find((f) => f.startsWith('--limit='))
 const limit = limitFlag ? Number(limitFlag.slice('--limit='.length)) : undefined
 // An evenly spread subset, so a --limit run still covers many roles rather than just the first few.
 const all = buildRoutingCases()
-const cases = limit ? all.filter((_, i) => i % Math.max(1, Math.floor(all.length / limit)) === 0).slice(0, limit) : all
+const spread = limit ? all.filter((_, i) => i % Math.max(1, Math.floor(all.length / limit)) === 0).slice(0, limit) : all
+// --from=N resumes at case N (1-based) — after a run ended on a daily quota, continue tomorrow without repeating the finished cases.
+const firstCase = (num('from') ?? 1) - 1
+const cases = spread.slice(firstCase)
 console.log(`Router: ${has('--full') ? 'FULL registry' : 'SLIM'} — ${routerTools.length} direct tools + ${orchestrator.buildDelegateToolDefinitions().length} delegate tools; ${cases.length} routing cases; up to ${rounds} round(s) per case${rounds > 1 ? ' (exploration tools answered from a fake workspace)' : ''}.`)
 if (has('--dry')) {
   for (const c of cases) console.log(`  [${c.kind}] → ${c.expectedRole}: ${c.prompt}`)
@@ -130,21 +141,48 @@ if (has('--dry')) {
   process.exit(0)
 }
 
-const provider = makeProvider(providerId)
+// Free / low tiers (Groq, Mistral) limit call frequency, tokens per minute and request size: --pace-ms spaces calls, --tpm keeps a sliding
+// one-minute token budget from ACTUAL usage, and a 429 is waited out as the provider asks. A request that can never fit, or a daily quota
+// that asks for hours, ends the run and prints what was measured so far (resume with --from=N).
+const pace = num('pace-ms') !== undefined || num('tpm') !== undefined || has('--pace')
+const paced = pace
+  ? withPacing(makeProvider(providerId), {
+      minIntervalMs: num('pace-ms'),
+      tokensPerMinute: num('tpm'),
+      maxWaitMs: (num('max-wait-s') ?? 120) * 1000,
+      maxRetries: num('max-retries'),
+      onWait: (ms, why) => console.error(`  … waiting ${(ms / 1000).toFixed(1)}s (${why})`)
+    })
+  : undefined
+const provider = paced ?? makeProvider(providerId)
+const finished: RoutingOutcome[] = []
+function printPacing(): void {
+  if (paced) console.log(`\nPacing: ${paced.stats.calls} calls, ${paced.stats.retries} rate-limit retries, ${(paced.stats.waitedMs / 1000).toFixed(0)}s spent waiting.`)
+}
+function stopOnLimit(err: unknown): never {
+  if (!isFatalProviderError(err)) throw err
+  console.log(`\nSTOPPED by a provider limit: ${err.message}`)
+  if (finished.length) console.log('\nPartial result (' + finished.length + ' cases finished before the limit):\n' + formatRoutingReport(summarizeOutcomes(providerId, model, finished)))
+  printPacing()
+  console.log(`Resume with --from=${firstCase + finished.length + 1} once the limit allows.`)
+  process.exit(3)
+}
 
 if (!has('--skip-probe')) {
 console.log('\nReplay probe (gate 1) — history contains a completed call to xlsx_write, which is NOT in the request tool list:')
 const raw = replayProbeHistory()
 const probeTools = setup.tools.filter((t) => t.name === 'shell_execute' || t.name === 'read_file')
-for (const r of await runReplayProbe(provider, model, raw, collapseUnavailableToolCalls(raw, new Set(probeTools.map((t) => t.name))), probeTools)) {
+for (const r of await runReplayProbe(provider, model, raw, collapseUnavailableToolCalls(raw, new Set(probeTools.map((t) => t.name))), probeTools).catch(stopOnLimit)) {
   console.log(`  ${r.variant.padEnd(10)} ${r.accepted ? 'accepted' : 'REJECTED'}${r.error ? ` — ${r.error.slice(0, 200)}` : ''}`)
 }
 }
 
 if (!has('--probe-only')) {
   console.log('\nRouting evaluation (gate 2) — first round only, no tools executed:')
-  const report = await runRoutingEval(provider, model, setup, cases, undefined, rounds, (o, i, n) =>
-    console.log(`  ${String(i + 1).padStart(2)}/${n} ${o.correct ? 'ok  ' : 'MISS'} [${o.case.kind}] "${o.case.prompt.slice(0, 70)}" → expected ${o.case.expectedRole}, got ${describeChoice(o.choice)}${o.explored.length ? ` (after ${o.explored.join(', ')})` : ''}`)
-  )
+  const report = await runRoutingEval(provider, model, setup, cases, undefined, rounds, (o, i, n) => {
+    finished.push(o)
+    console.log(`  ${String(i + 1 + firstCase).padStart(2)}/${n + firstCase} ${o.correct ? 'ok  ' : 'MISS'} [${o.case.kind}] "${o.case.prompt.slice(0, 70)}" → expected ${o.case.expectedRole}, got ${describeChoice(o.choice)}${o.explored.length ? ` (after ${o.explored.join(', ')})` : ''}`)
+  }).catch(stopOnLimit)
   console.log('\n' + formatRoutingReport(report))
+  printPacing()
 }

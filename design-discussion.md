@@ -910,19 +910,21 @@ before step 1 as their own release. Order inside the track:
 1. **Per-provider replay compatibility** for history containing calls to
    tools not in the current request's tool list (Anthropic, OpenAI-compatible
    incl. Mistral and Groq, Google, Ollama).
-   **Resolved by construction, verified on three providers.** The slim router never sends such a call: it replays it as text
+   **Resolved by construction, verified on four providers.** The slim router never sends such a call: it replays it as text
    (`collapseUnavailableToolCalls`, unit-tested to keep the pairing invariant), so whether a provider tolerates the raw form no longer
-   matters. Probe run (`scripts/routing-eval.mts`): **Ollama / qwen3.8-custom, Google / gemini-3.5-flash-lite and OpenAI / gpt-4o-mini each
-   accepted both the raw and the collapsed history.** Anthropic, Groq and Mistral have not been probed. The collapsed form is the only one that must always be
+   matters. Probe run (`scripts/routing-eval.mts`): **Ollama / qwen3.8-custom, Google / gemini-3.5-flash-lite, OpenAI / gpt-4o-mini and Mistral / codestral-latest each
+   accepted both the raw and the collapsed history.** Anthropic and Groq have not been probed (Groq's daily allowance ran out first). The collapsed form is the only one that must always be
    accepted.
 2. **Multi-model routing evaluation** — codestral, gpt-oss, Gemini flash-lite,
    Groq, an Anthropic model — using the role examples / non-examples (3.2) and
    real prompts from the session DB.
-   **Partly resolved, model-dependent (Appendix E).** Two provider families: Google (`gemini-3.5-flash-lite`, `gemini-3.5-flash`) and OpenAI
-   (`gpt-4o-mini`), plus one partial local run. On the same 43 cases with follow-through the slim router is better than the full one on two
-   models and worse on one (42 vs 37, 35 vs 33, and 27 vs 31), and the models fail differently: Gemini's slim failure mode is a reflex to
-   explore with the core file tools before delegating; OpenAI's is asking a clarifying question on an underspecified case (scored as a miss).
-   Anthropic, Groq and Mistral not run; repeat runs not done.
+   **Partly resolved, model-dependent (Appendix E).** Four provider families: Google (`gemini-3.5-flash-lite`, `gemini-3.5-flash`), OpenAI
+   (`gpt-4o-mini`), Mistral (`codestral-latest`, `ministral-8b-latest`) and Groq (`openai/gpt-oss-120b`, partial), plus one partial local run. On
+   the same 43 cases with follow-through the slim router is better than the full one on three models, level on one and worse on two, and the
+   models fail differently: Gemini explores with the core file tools before delegating; OpenAI asks clarifying questions on underspecified cases
+   (scored as a miss); `ministral-8b` uses `planning` as a catch-all delegate; on Groq the slim router is undermined by **the provider rejecting
+   any call to a tool that was not in the request** (10–12 of 43 cases). **The full router cannot run at all on Groq's free tier** (it needs
+   ~9.2K tokens; the limit is 8K per minute). Anthropic not run; repeat runs not done.
 3. **Caching economics** — measure the real cost and latency effect per
    provider before claiming savings, and confirm the tool list is
    byte-stable across requests.
@@ -931,7 +933,7 @@ before step 1 as their own release. Order inside the track:
    11,580 tokens cached from the second call) — evidence that the byte-stable prefix pays off — but not on `gemini-3.5-flash-lite`, and not for
    the slim prefix (3,107 tokens: below Gemini's minimum).** Local-model latency showed nothing either way. **Anthropic caching has still never
    run against the real API** (no Anthropic key is configured), and money saved is unmeasured. **OpenAI's automatic caching works on both
-   prefixes** (97–99% of the prompt cached, including the 2.5K slim prefix).
+   prefixes** (97–99% of the prompt cached, including the 2.5K slim prefix), and **so does Mistral's** (99–100% on two of three calls, best-effort).
 4. **Classify-prompt migration** — hand-written role facts replaced by the
    generated digest (3.6), verified on real compound prompts.
    **Done in step 2** (generated digest with live availability, unit-tested); **not verified on real compound prompts with a real model.**
@@ -1405,3 +1407,51 @@ one sample each (the slim router was run twice: 35 both times, with a different 
 OpenAI caches automatically for a prefix of 1,024 tokens or more, **so the slim prefix caches too** (unlike Gemini). Caveat: these calls ran minutes after
 the routing runs sent the same prefix, so even "call 1" hit a warm cache — a cold first-call cost was not measured; the single 0% call on
 the slim prefix shows cache hits are best-effort.
+
+**Runs 14–24 — 2026-09-26, Mistral and Groq (free / low tiers), via `scripts/with-app-key.cjs`.** These providers forced the harness to live
+within real limits, so first what was found and then how.
+
+*What the accounts allow (read from the API's own quota headers and errors, with one tiny request per model):*
+
+| Provider / model | Result |
+|---|---|
+| Mistral `mistral-medium-3.5` (**the model configured in Sachivji**), `mistral-small-latest`, `mistral-medium-latest` | **Request quota of 0 per minute** (`x-ratelimit-limit-req-minute: 0`, HTTP 429, code 1300): every call fails; no pacing can help |
+| Mistral `mistral-large-latest` | HTTP 403 `tier_not_allowed` |
+| Mistral `codestral-latest` | usable: 125 requests/min, 625K tokens/min |
+| Mistral `open-mistral-nemo` / `ministral-8b-latest` | usable: 188 requests/min, 625K tokens/min |
+| Groq `openai/gpt-oss-120b` (configured) and `-20b` | usable: **8,000 tokens/min, 1,000 requests/day, 200,000 tokens/day** (the last confirmed in a 429: "Limit 200000, Used 199841") |
+| Groq `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `qwen/qwen3-32b`, `kimi-k2-instruct` | 404 — not available to this account |
+
+*How the harness works within the limits (`agents/paced-provider.ts`, tested with a fake clock; flags `--pace-ms`, `--tpm`, `--max-wait-s`,
+`--max-retries`, `--from`):* calls are spaced (`--pace-ms`); a sliding one-minute token window over the **actual** usage of each call keeps a
+run under a tokens-per-minute budget (`--tpm`); a 429 is waited out as the provider says (`Retry-After` header, or "try again in 7.5s" in the
+message); a request that can **never** fit — HTTP 413, a context-length error, or Groq's "Limit 8000 … Requested 9224" — ends the run at once with
+the numbers instead of looping; a wait longer than `--max-wait-s` (a daily quota) also ends it, printing the partial result and the
+`--from=N` to resume at. A capacity check (`--full --limit=1`) records "does not fit" as data with one call. Bug found by the tests: Groq puts
+"Used" between "Limit" and "Requested", which the first version of the pattern missed.
+
+*Mistral (`--pace-ms=600`; zero rate-limit retries — the waits were only the spacing):*
+
+| Model | Router (prefix tokens, Mistral's count) | Correct | Explored first | ~Router-input tokens |
+|---|---|---|---|---|
+| `codestral-latest` | Full (12,334) | 34 | 2 | 555K |
+| `codestral-latest` | Slim (3,363) | 39 | 4 | 158K |
+| `codestral-latest` | Slim, no file tools | 39 | 7 | 161K |
+| `ministral-8b-latest` | Full | 34 | 1 | 542K |
+| `ministral-8b-latest` | Slim | 30 | 14 | 201K |
+
+`codestral-latest` is the model the original Northwind failures ran on. It does better on the slim router (39) than the full one (34) — the full
+router's 6 misses are mostly direct answers. `ministral-8b` is worse on slim: it often delegates to `planning` as a catch-all. Mistral **caches
+automatically** (codestral: 99% of the slim and 100% of the full prefix on two of three calls, 0–27% on the third: best-effort, and warm from the
+routing runs).
+
+*Groq `openai/gpt-oss-120b` (`--tpm=7000 --pace-ms=1000`, zero 429 retries until the daily limit):*
+- **The full router does not fit:** "Request needs ~9224 tokens but the limit is 8000 per minute" — not a matter of pacing. With this tier
+  the app's default router cannot work at all; only a smaller router can.
+- **Slim, core without file tools:** 22/43 correct, 10 explored first, 55 calls, 1,358 s spent waiting to stay under the token budget.
+- **Slim, default core:** 20/39 (four cases not run: the 200K-token daily limit was exhausted after ~110 calls across the two runs).
+- **The dominant failure is not routing but a hard provider error in 10–12 cases:** `Tool call validation failed: … attempted to call tool
+  'db_count_rows' which was not in request.tools` (also `db_execute_sql`, `db_list_connections`, `db_introspect_schema`). Groq validates the
+  model's tool calls **server-side against the request's tool list and rejects the whole request** with HTTP 400, so the app's usual recovery — answer
+  "that tool belongs to <role> — call `delegate_to_<role>`" — never gets the chance. Most other misses are clarifying questions.
+  The raw error body was not captured (the daily limit was reached first): TASKS #136.

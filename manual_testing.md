@@ -181,11 +181,11 @@ E="./node_modules/electron/dist/electron --no-sandbox scripts/with-app-key.cjs"
 R="npx vite-node --config vitest.config.ts scripts/routing-eval.mts --"
 $E openai   -- $R openai <model> --rounds=3            # slim router (default core)
 $E openai   -- $R openai <model> --rounds=3 --full     # full-registry router, for comparison
-$E mistral  -- $R mistral codestral-latest --rounds=3
-$E groq     -- $R groq <model> --rounds=3
+$E mistral  -- $R mistral codestral-latest --rounds=3 --pace-ms=600      # NOT mistral-medium-3.5: that model has a request quota of 0 on the account tested
+$E groq     -- $R groq openai/gpt-oss-120b --rounds=3 --pace-ms=1000 --tpm=7000   # slim only: the full router exceeds Groq's 8K tokens/min. 200K tokens/day: about 60 calls
 $E openai   -- $R openai <model> --rounds=3 --core=describe_capabilities,shell_execute,write_file,web_search   # core without read_file / list_directory
 ```
-Results so far are in `design-discussion.md` Appendix E (Google models only).
+Results so far are in `design-discussion.md` Appendix E (Google, OpenAI, Mistral, Groq). Free tiers: the script waits out rate limits itself (`--pace-ms`, `--tpm`); it stops with a partial result and a `--from=N` resume point when a daily quota or a size limit ends the run.
 Paste the "Replay probe" and "Misses" parts of the output into the report. Add `--limit=12` to keep it short.
 
 ---
