@@ -386,6 +386,15 @@
     disabled: 'Turned off'
   }
 
+  // --- Slim router (design-discussion.md step 4; experimental, off by default) ---
+  const SLIM_ROUTER_SETTING_KEY = 'slimRouter'
+  let slimRouter = $state(false)
+  window.sachiv.getSetting(SLIM_ROUTER_SETTING_KEY).then((v) => (slimRouter = v === 'true'))
+  async function setSlimRouter(on: boolean): Promise<void> {
+    slimRouter = on
+    await window.sachiv.setSetting(SLIM_ROUTER_SETTING_KEY, on ? 'true' : 'false')
+  }
+
   // --- Secret storage backend (TASKS.md #75) ---
   let secretStorageMode = $state<'keychain' | 'file'>('keychain')
   let secretStorageEnvPath = $state('')
@@ -973,6 +982,19 @@
     {:else}
       <p class="status">Checking…</p>
     {/if}
+
+    <hr />
+
+    <h2>Slim router <span class="status">(experimental)</span></h2>
+    <p class="status">
+      Sends the assistant a much smaller request each time (about 2,800 tokens instead of about 10,800) by keeping only a few
+      everyday tools directly and reaching everything else through the specialists. Applies to your next message. Routing quality
+      has not yet been evaluated across models, so leave this off unless you are testing it.
+    </p>
+    <label class="checkbox-row">
+      <input type="checkbox" checked={slimRouter} onchange={(e) => setSlimRouter(e.currentTarget.checked)} />
+      Use the slim router
+    </label>
 
     <hr />
 

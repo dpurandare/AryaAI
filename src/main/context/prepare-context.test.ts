@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { toOpenAIMessages } from '../providers/openai-compatible'
+import type { ContentBlock } from '@shared/protocol'
 import type { Message, ModelProvider } from '../providers/types'
-import { applySlidingWindow, collapseFailedTurns, migrateLegacyDelegateNames, prepareConversation, repairToolPairs, trimToolResults, type TurnOverhead } from './prepare-context'
+import { applySlidingWindow, collapseFailedTurns, collapseUnavailableToolCalls, migrateLegacyDelegateNames, prepareConversation, repairToolPairs, trimToolResults, type TurnOverhead } from './prepare-context'
 
 const OVERHEAD_MARKER = 'SYS-PROMPT-MARKER'
 
@@ -594,5 +595,85 @@ describe('migrateLegacyDelegateNames', () => {
     const messages: Message[] = [call('delegate_to_terminal_devops')]
     migrateLegacyDelegateNames(messages)
     expect(messages[0].content[0]).toMatchObject({ name: 'delegate_to_terminal_devops' })
+  })
+})
+
+describe('collapseUnavailableToolCalls (slim router: no provider is shown a call to a tool it was not given)', () => {
+  const call = (id: string, name: string, input: Record<string, unknown> = {}): ContentBlock => ({ type: 'tool_use', id, name, input })
+  const result = (id: string, content: string, isError = false): ContentBlock => ({ type: 'tool_result', toolUseId: id, content, isError })
+  const available = new Set(['shell_execute', 'delegate_to_data'])
+
+  it('returns the SAME array when every call is to an available tool', () => {
+    const messages: Message[] = [
+      { role: 'assistant', content: [call('a', 'shell_execute', { command: 'ls' })] },
+      { role: 'user', content: [result('a', 'ok')] }
+    ]
+    expect(collapseUnavailableToolCalls(messages, available)).toBe(messages)
+  })
+
+  it('turns a call to an unavailable tool AND its result into text, so no tool_use/tool_result for it remains', () => {
+    const out = collapseUnavailableToolCalls(
+      [
+        { role: 'assistant', content: [call('x', 'xlsx_write', { path: 'a.xlsx' })] },
+        { role: 'user', content: [result('x', 'Wrote 3 rows.')] }
+      ],
+      available
+    )
+    expect(out[0].content).toEqual([{ type: 'text', text: '[earlier: called xlsx_write({"path":"a.xlsx"})]' }])
+    expect(out[1].content).toEqual([{ type: 'text', text: '[earlier result of xlsx_write: Wrote 3 rows.]' }])
+    expect(out.flatMap((m) => m.content).some((b) => b.type === 'tool_use' || b.type === 'tool_result')).toBe(false)
+  })
+
+  it('a mixed turn keeps the available call paired and puts converted results AFTER the real tool_result (Anthropic wants tool_results first)', () => {
+    const out = collapseUnavailableToolCalls(
+      [
+        { role: 'assistant', content: [{ type: 'text', text: 'Doing two things.' }, call('gone', 'xlsx_write'), call('kept', 'shell_execute', { command: 'ls' })] },
+        { role: 'user', content: [result('gone', 'done'), result('kept', 'files')] }
+      ],
+      available
+    )
+    expect(out[0].content.map((b) => b.type)).toEqual(['text', 'text', 'tool_use']) // order preserved, only the absent call converted
+    expect(out[0].content[2]).toMatchObject({ type: 'tool_use', id: 'kept', name: 'shell_execute' })
+    expect(out[1].content.map((b) => b.type)).toEqual(['tool_result', 'text'])
+    expect(out[1].content[0]).toMatchObject({ toolUseId: 'kept' })
+  })
+
+  it('keeps the wire-format invariant the providers enforce: every remaining tool_use has its tool_result and vice versa', () => {
+    const out = collapseUnavailableToolCalls(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'go' }] },
+        { role: 'assistant', content: [call('1', 'db_execute_sql'), call('2', 'shell_execute')] },
+        { role: 'user', content: [result('1', 'rows'), result('2', 'ok')] },
+        { role: 'assistant', content: [call('3', 'delegate_to_data')] },
+        { role: 'user', content: [result('3', 'x')] }
+      ],
+      available
+    )
+    const uses = out.flatMap((m) => m.content.flatMap((b) => (b.type === 'tool_use' ? [b.id] : [])))
+    const results = out.flatMap((m) => m.content.flatMap((b) => (b.type === 'tool_result' ? [b.toolUseId] : [])))
+    expect(uses.sort()).toEqual(['2', '3'])
+    expect(results.sort()).toEqual(['2', '3'])
+  })
+
+  it('marks an errored result, truncates long ones, and shortens a long input', () => {
+    const out = collapseUnavailableToolCalls(
+      [
+        { role: 'assistant', content: [call('e', 'api_call', { body: 'x'.repeat(400) })] },
+        { role: 'user', content: [result('e', 'y'.repeat(900), true)] }
+      ],
+      available
+    )
+    const callText = (out[0].content[0] as { text: string }).text
+    const resText = (out[1].content[0] as { text: string }).text
+    expect(callText.length).toBeLessThan(220)
+    expect(callText).toContain('…')
+    expect(resText).toMatch(/^\[earlier result of api_call \(error\): y{500}…\]$/)
+  })
+
+  it('preserves the agentRole tag on a converted call (the UI chip and nested-message repair key on it) and does not mutate its input', () => {
+    const messages: Message[] = [{ role: 'assistant', content: [{ type: 'tool_use', id: 'n', name: 'xlsx_write', input: {}, agentRole: 'coding' }] }]
+    const out = collapseUnavailableToolCalls(messages, available)
+    expect(out[0].content[0]).toMatchObject({ type: 'text', agentRole: 'coding' })
+    expect(messages[0].content[0]).toMatchObject({ type: 'tool_use', name: 'xlsx_write' })
   })
 })

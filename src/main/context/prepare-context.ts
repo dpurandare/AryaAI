@@ -267,6 +267,60 @@ export function migrateLegacyDelegateNames(messages: Message[]): Message[] {
 }
 
 /**
+ * Replays calls to tools that are NOT in the request's tool list as compact text.
+ *
+ * The slim router (design-discussion.md 3.1) carries only a hot core, so earlier turns' history
+ * can contain calls to tools the current request does not define — the model may copy such a call
+ * and get "Unknown tool", and some providers may reject a `tool_use` for a tool absent from the
+ * request. Rather than verify every provider (risk gate 1), make it moot: no provider is ever
+ * shown a call to a tool it was not given. The call and its result become plain text in place
+ * ("[earlier: called xlsx_write(...) -> ok]"), so the model still knows what happened.
+ *
+ * Pairing stays valid: a converted `tool_use` and its `tool_result` both become text, and any
+ * text produced from results is placed AFTER the remaining `tool_result` blocks of that message
+ * (Anthropic requires tool_result blocks first). Replay-only — the stored transcript and the UI
+ * are untouched, same convention as every other pass here. Returns the input array when nothing
+ * needs converting.
+ */
+export function collapseUnavailableToolCalls(messages: Message[], availableTools: ReadonlySet<string>): Message[] {
+  const absent = new Map<string, string>() // tool_use id -> tool name
+  for (const m of messages) {
+    for (const b of m.content) if (b.type === 'tool_use' && !availableTools.has(b.name)) absent.set(b.id, b.name)
+  }
+  if (absent.size === 0) return messages
+
+  const compact = (input: Record<string, unknown>): string => {
+    const json = JSON.stringify(input)
+    return json.length > 160 ? json.slice(0, 160) + '…' : json
+  }
+  return messages.map((m) => {
+    if (!m.content.some((b) => (b.type === 'tool_use' && absent.has(b.id)) || (b.type === 'tool_result' && absent.has(b.toolUseId)))) return m
+    const convert = (b: ContentBlock): ContentBlock | undefined => {
+      if (b.type === 'tool_use' && absent.has(b.id)) {
+        return { type: 'text', text: `[earlier: called ${b.name}(${compact(b.input)})]`, ...(b.agentRole ? { agentRole: b.agentRole } : {}) }
+      }
+      if (b.type === 'tool_result' && absent.has(b.toolUseId)) {
+        const body = b.content.length > 500 ? b.content.slice(0, 500) + '…' : b.content
+        return { type: 'text', text: `[earlier result of ${absent.get(b.toolUseId)}${b.isError ? ' (error)' : ''}: ${body}]` }
+      }
+      return undefined
+    }
+    // Assistant messages: convert in place, so the model's own text keeps its order.
+    if (m.role === 'assistant') return { ...m, content: m.content.map((b) => convert(b) ?? b) }
+    // User messages: remaining tool_results first, converted ones after them (Anthropic requires tool_result blocks first).
+    const kept: ContentBlock[] = []
+    const asText: ContentBlock[] = []
+    for (const b of m.content) {
+      const c = convert(b)
+      if (c) asText.push(c)
+      else kept.push(b)
+    }
+    const content = [...kept, ...asText]
+    return { ...m, content }
+  })
+}
+
+/**
  * Makes the replayed history satisfy the tool-call pairing rule every provider
  * enforces, in both directions (no unanswered `tool_use`, no orphan
  * `tool_result`). Only affects what's sent — SQLite and the UI transcript are

@@ -3468,6 +3468,29 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(result).toContain('delegate_to_coding')
     })
 
+    it('logs real tool calls with who made them — the router itself vs a specialist — and never an unknown tool (keeps the slim router\'s hot core honest)', async () => {
+      const registry = withSql()
+      const agents = createAgents(registry)
+      const logged: Array<{ tool: string; agentRole: string }> = []
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'r1', name: 'read_file', input: { path: 'a.txt' } }, { id: 'u1', name: 'no_such_tool', input: {} }] }, // router: one real, one unknown
+        { toolCalls: [{ id: 'd1', name: 'delegate_to_data', input: { task: 'rows' } }] }, // router delegates
+        { toolCalls: [{ id: 'q1', name: 'db_execute_sql', input: {} }] }, // specialist's own call
+        { text: 'Got them.', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      await writeFile(join(root, 'a.txt'), 'hello')
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: false,
+        logToolUse: (sample) => logged.push(sample)
+      })
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      expect(logged).toEqual([
+        { tool: 'read_file', agentRole: 'router' },
+        { tool: 'db_execute_sql', agentRole: 'data' }
+      ])
+    })
+
     it('a tool nobody owns is still just "Unknown tool"', async () => {
       const registry = withSql()
       const provider = new MockProvider([{ toolCalls: [{ id: 'c1', name: 'no_such_tool', input: {} }] }, { text: 'ok', stopReason: 'end_turn' }])

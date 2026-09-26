@@ -848,6 +848,9 @@ Each step ships on its own and is checked against measured numbers.
 4. **Slim the router.** Remove the full registry, keep the hot core (3.1).
    **Release gate: do not ship until step 3 is done and the four risk gates
    below are resolved.**
+   **Status — built 2026-09-26 (TASKS #116), behind a default-OFF setting (`slimRouter`, Settings > Slim router, "experimental"). The release gates below are NOT all cleared, so it is not the default.**
+   - *What exists:* `selectRouterTools` (`agents/router-tools.ts`) gives the router a hot core — `describe_capabilities`, `shell_execute`, `read_file`, `list_directory`, `write_file`, `web_search` (771 tokens; cap 1,200, enforced by the budget test) — plus the tools no specialist owns (the three deck tools) and MCP tools (until step 5); everything else is reached through a delegate tool. `collapseUnavailableToolCalls` (`context/prepare-context.ts`) replays an earlier call to a tool that is not in the request as plain text, so **no provider is ever shown a call to a tool it was not given**. A `tool_usage_log` table records real calls (router vs specialist) so the core can be revised from data. `scripts/routing-eval.mts` + `agents/routing-eval.ts` run gates 1 and 2 against any provider from environment keys.
+   - *Measured:* slim router fixed cost **2,847 tokens vs 10,806** for the full-registry router (-74%): prompt 862 + 1,985 schema tokens.
 5. **MCP as deferred capability** (MCP Operator role, length-capped
    instructions).
 6. **Skills, only where step 2's measurement warrants** (Document Creator,
@@ -870,19 +873,29 @@ before step 1 as their own release. Order inside the track:
   steps 1–2 and on the handoff contract's `artifacts` field (step 3), so it
   lands with those, not with A1–A3.
 
-**Risk gates for step 4** — kept visible, each to be resolved and not deferred:
+**Risk gates for step 4** — kept visible, each to be resolved and not deferred.
+*Status as of 2026-09-26 (step 4 built, slim router default OFF):*
 
 1. **Per-provider replay compatibility** for history containing calls to
    tools not in the current request's tool list (Anthropic, OpenAI-compatible
    incl. Mistral and Groq, Google, Ollama).
+   **Resolved by construction, verified on one provider only.** The slim router never sends such a call: it replays it as text
+   (`collapseUnavailableToolCalls`, unit-tested to keep the pairing invariant), so whether a provider tolerates the raw form no longer
+   matters. Probe run (`scripts/routing-eval.mts`): **Ollama / qwen3.8-custom accepted both the raw and the collapsed history**; the other
+   providers (Anthropic, OpenAI, Google, Groq, Mistral) have not been probed — the script does it with your key. The collapsed form is the
+   only one that must always be accepted.
 2. **Multi-model routing evaluation** — codestral, gpt-oss, Gemini flash-lite,
    Groq, an Anthropic model — using the role examples / non-examples (3.2) and
    real prompts from the session DB.
+   **NOT resolved.** One local model, partial run (Appendix E): 16 of the first 21 cases judged correct, but the *kind* of correct matters
+   and there are two real warnings — see Appendix E. Needs the other models and the remaining cases.
 3. **Caching economics** — measure the real cost and latency effect per
    provider before claiming savings, and confirm the tool list is
    byte-stable across requests.
+   **NOT done** (needs real provider billing / usage numbers; belongs with step 7). What is measured is *size*, not cost or latency.
 4. **Classify-prompt migration** — hand-written role facts replaced by the
    generated digest (3.6), verified on real compound prompts.
+   **Done in step 2** (generated digest with live availability, unit-tested); **not verified on real compound prompts with a real model.**
 
 ---
 
@@ -1201,3 +1214,32 @@ Done means, in addition to D1's checks:
    (5.1), not from the model's closing sentence.
 5. A repeated identical failure (same tool, same error class, ≥3 times) stops
    and reports rather than looping.
+
+## Appendix E — routing evaluation runs
+
+Produced by `scripts/routing-eval.mts` (first round only; no tool is executed; cases come from each role's `examples` / `notExamples`
+in the manifest). Non-deterministic — treat as a measurement, not a verdict.
+
+**Run 1 — 2026-09-26, Ollama / `qwen3.8-custom` (27B, local), SLIM router (9 direct tools + 10 delegate tools). Partial: 21 of 39 cases**
+(planning, research, history, coding, data, and the first document/data-processor cases; the rest were not reached — about 2.5 minutes
+per case on this machine, so the run was stopped).
+
+| Result | Cases | Detail |
+|---|---|---|
+| Correct, delegated to the expected role | 8 | history ×4 (all), data ×3 (all), planning ×1 |
+| Correct, planner answered in text | 1 | (allowed for the reasoning-only Planner) |
+| Correct, handled with `web_search` directly | 3 | appropriate: it is a core tool and Researcher's own |
+| Credited, but only weakly: `list_directory` | 4 | "run the test suite", "write a script … and run it", "run analysis.py", "create a GitHub release" — the model **explored the directory instead of delegating to the Developer**; my rule credits it because `list_directory` is owned by that role, but it did not start the job |
+| Missed | 5 | "summarise what this article says" → `list_directory`; "save these findings into a Word document" → answered in text; "write a one-page Word summary" → `list_directory`; "call the weather API" → `describe_capabilities`; "redo that analysis for a different region" → History Analyst (arguably reasonable — the case itself is ambiguous) |
+
+What this suggests (one model, partial — not conclusions):
+
+- **Delegation to the *data* and *history* roles is reliable; delegation of file/code/document work is not.** The model treats the router's
+  file tools as the default first move.
+- **`list_directory` may be a bad core member:** it invites exploring instead of delegating (real usage was only 3 calls). Worth trying
+  the core without it — and without `read_file` — before the slim router is ever the default.
+- **A slim router cannot write a Word document itself**, so when the model skips the Document Creator it simply answers in text (2 of 2
+  document cases). With the full-registry router the same model would at least have had the Office tools to hand. This is the concrete
+  cost of slimming that the token numbers do not show, and the reason the slim router stays opt-in.
+
+Not yet run: the same cases against the full-registry router on this model (for a like-for-like comparison), the remaining 18 cases, and any other model.

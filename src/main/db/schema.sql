@@ -41,6 +41,17 @@ CREATE TABLE IF NOT EXISTS classify_gate_log (
   created_at INTEGER NOT NULL
 );
 
+-- Real tool calls, by tool and by who made them (the router, or a specialist role). Purely local. Its
+-- job is to keep the slim router's hot core honest (design-discussion.md 3.1): a tool belongs in the
+-- core only when the data says it is used, so this replaces a one-day sample with running counts.
+CREATE TABLE IF NOT EXISTS tool_usage_log (
+  id TEXT PRIMARY KEY,
+  tool_name TEXT NOT NULL,
+  agent_role TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tool_usage_log_tool ON tool_usage_log(tool_name);
+
 -- search_history: which (provider, model) — and the dimension it produced —
 -- the current message_chunk_vectors index was built with. A single row
 -- (id=1). message_chunk_vectors (a sqlite-vec vec0 table) can't be declared

@@ -49,7 +49,7 @@ import {
   setDefaultEmailConnection
 } from '../data/email-connections'
 import { verifyEmailConnection } from '../tools/email/transport'
-import { prepareConversation, resolveContextWindow } from '../context/prepare-context'
+import { collapseUnavailableToolCalls, prepareConversation, resolveContextWindow } from '../context/prepare-context'
 import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/config'
 import { McpManager } from '../mcp/manager'
 import { openDriver } from '../tools/db/driver-factory'
@@ -68,6 +68,7 @@ import {
 } from '../tools/setup'
 import type { ToolContext } from '../tools/types'
 import {
+  delegateToolName,
   Orchestrator,
   type ConfirmDecision,
   type ToolConfirmRequest,
@@ -77,6 +78,8 @@ import {
 import { createAgents } from '../agents/roles'
 import { SYSTEM_PROMPT } from '../agents/system-prompt'
 import { createDescribeCapabilitiesTool } from '../agents/capabilities'
+import { selectRouterTools } from '../agents/router-tools'
+import { logToolUse } from '../db/tool-usage-log'
 
 const providerRegistry = createDefaultProviderRegistry()
 
@@ -92,6 +95,13 @@ const agents = createAgents(toolRegistry)
 const mcpManager = new McpManager()
 const savedQueryManager = new SavedQueryToolManager()
 let toolContext: ToolContext | undefined
+
+/**
+ * Settings key: `'true'` turns on the slim router (design-discussion.md step 4): the top-level assistant carries only a hot core of tools
+ * plus delegate tools, and earlier turns' calls to tools it no longer has are replayed as text. **Off by default** — the design makes this
+ * a release gate (per-provider replay check, multi-model routing evaluation, caching economics); see scripts/routing-eval.mts.
+ */
+export const SLIM_ROUTER_SETTING_KEY = 'slimRouter'
 
 /** Settings key: `'true'` when the user chose to continue without Python (design-discussion.md section 4.3). */
 export const PYTHON_RUNTIME_DISABLED_SETTING_KEY = 'pythonRuntimeDisabled'
@@ -555,7 +565,9 @@ async function runChat(
   // Trims oversized tool results and drops the oldest turns once the loaded
   // history is getting close to the model's context window — operates only
   // on what's about to be sent, never on what's persisted/displayed.
-  const { messages: conversation, droppedTurns, contextWindow } = await prepareConversation(priorTurns, model, provider, {
+  const slimRouter = getSetting(SLIM_ROUTER_SETTING_KEY) === 'true'
+  const routerTools = slimRouter ? selectRouterTools(toolRegistry.list(), agents) : toolRegistry.list()
+  const prepared = await prepareConversation(priorTurns, model, provider, {
     system: SYSTEM_PROMPT,
     // The top-level round's real tool list — matches what's actually about
     // to be sent alongside this conversation (built just below via the
@@ -563,8 +575,13 @@ async function runChat(
     // synthetic tools the Orchestrator adds internally per specialist —
     // those are few and small next to the full registry, and not known
     // until the Orchestrator itself is constructed a few lines down.
-    tools: toolRegistry.list()
+    tools: routerTools
   })
+  const { droppedTurns, contextWindow } = prepared
+  // Slim router: no provider is ever shown an earlier call to a tool that is not in this request's tool list (replay-only).
+  const conversation = slimRouter
+    ? collapseUnavailableToolCalls(prepared.messages, new Set([...routerTools.map((t) => t.name), ...[...agents.keys()].map(delegateToolName)]))
+    : prepared.messages
   // Once per turn, not per round — tells the renderer's context meter the
   // real window this turn was budgeted against (a live Ollama reading when
   // available) instead of it falling back to its own static guess, which
@@ -607,7 +624,7 @@ async function runChat(
     model,
     agents,
     SYSTEM_PROMPT,
-    toolRegistry.list(),
+    routerTools,
     makeConfirmTool(sender, streamId, sessionId),
     {
       ...toolContext,
@@ -626,6 +643,7 @@ async function runChat(
       // result alongside the deterministic gate's own verdict, so the
       // gate's accuracy can be measured before it's ever widened.
       logClassifyGateSample: logClassifyGateSample,
+      logToolUse,
       // Live configuration for the classifier's role digest (a plan must not route to a role with nothing configured).
       getConfiguration: () => ({
         databases: listConnections().length,

@@ -20,6 +20,7 @@ const { createAgents } = await import('./roles')
 const { Orchestrator } = await import('./orchestrator')
 const { SYSTEM_PROMPT } = await import('./system-prompt')
 const { createDescribeCapabilitiesTool } = await import('./capabilities')
+const { ROUTER_CORE_TOKEN_CAP, ROUTER_CORE_TOOLS, selectRouterTools } = await import('./router-tools')
 
 /**
  * The permanent prompt-budget test (design-discussion.md order-of-work step 1;
@@ -62,6 +63,9 @@ const CEILINGS = {
   routerPrompt: 880,
   routerToolSchemas: 10100,
   routerBare: 11000,
+  slimRouterToolSchemas: 2050,
+  slimRouterBare: 2900,
+  routerCore: 800,
   classifyPrompt: 850,
   'role:planning': 65,
   'role:research': 1340,
@@ -104,10 +108,16 @@ function measure(): Record<keyof typeof CEILINGS, number> {
 
   const routerPrompt = tokens(orchestrator.buildOrchestratorSystemPrompt())
   const routerToolSchemas = schemaTokens([...registry.toDefinitions(), ...orchestrator.buildDelegateToolDefinitions()])
+  const slimTools = selectRouterTools(registry.list(), agents)
+  const slimRouterToolSchemas = schemaTokens([...slimTools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })), ...orchestrator.buildDelegateToolDefinitions()])
+  const routerCore = schemaTokens(ROUTER_CORE_TOOLS.map((n) => registry.get(n)!).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })))
   const result: Record<string, number> = {
     routerPrompt,
     routerToolSchemas,
     routerBare: routerPrompt + routerToolSchemas,
+    slimRouterToolSchemas,
+    slimRouterBare: routerPrompt + slimRouterToolSchemas,
+    routerCore,
     classifyPrompt: tokens(orchestrator.buildClassifySystemPrompt())
   }
   for (const [role, agent] of agents) {
@@ -128,6 +138,10 @@ describe('prompt budget (no conversation, no MCP servers)', () => {
     const ceiling = CEILINGS[key]
     expect(measured[key], `${key} grew past its ceiling (${ceiling}); trim it, or raise the ceiling deliberately with the reason`).toBeLessThanOrEqual(ceiling)
     expect(measured[key], `${key} is well under its ceiling (${ceiling}) — lower the ceiling so the saving cannot regress`).toBeGreaterThan(ceiling * 0.9)
+  })
+
+  it(`the hot core stays under the design's ${ROUTER_CORE_TOKEN_CAP}-token cap (3.1: usage-backed AND budget-safe)`, () => {
+    expect(measured.routerCore).toBeLessThanOrEqual(ROUTER_CORE_TOKEN_CAP)
   })
 
   it('every role in the manifest is measured', () => {

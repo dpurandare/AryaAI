@@ -442,7 +442,7 @@ function collapseOldestToolResultsToFit(
   return working
 }
 
-function delegateToolName(role: AgentRole): string {
+export function delegateToolName(role: AgentRole): string {
   return DELEGATE_PREFIX + role.replace(/-/g, '_')
 }
 
@@ -642,6 +642,11 @@ export class Orchestrator {
        * "email it to X" to a role with no account to send from. Absent (tests) = assume every role's requirements are met.
        */
       getConfiguration?: () => ConfigurationCounts
+      /**
+       * Called for every real tool call (`agentRole` undefined = the router itself). Local usage counts keep the slim router's hot
+       * core honest (design 3.1). Optional/no-op by default — this file stays DB-free (see this class's own doc comment).
+       */
+      logToolUse?: (sample: { tool: string; agentRole: string }) => void
     } = { planningEnabled: false }
   ) {}
 
@@ -1598,6 +1603,7 @@ export class Orchestrator {
           isError = outcome.isError
         } else {
           const result = await this.dispatchTool(call.id, call.name, input, toolByName)
+          if (toolByName.has(call.name)) this.options.logToolUse?.({ tool: call.name, agentRole: agentRole ?? 'router' })
           content = result.content
           isError = result.isError
           // TASKS.md #82 — a real `image` block, never sent back to the
