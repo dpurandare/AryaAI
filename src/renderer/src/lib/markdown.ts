@@ -45,17 +45,26 @@ const ALLOWED_TAGS = [
 ]
 
 /**
- * Math delimiters this model actually emits — `\(...\)` inline, `\[...\]`
- * and `$$...$$` block (confirmed live against real output, e.g. a physics
- * problem's worked solution). Deliberately no bare single-`$...$` support:
- * that's the classic false-positive source ("costs $5 to $10" isn't math),
- * and nothing observed from this app's providers actually emits it.
+ * Math delimiters the models emit — `\(...\)` inline, `\[...\]` and `$$...$$` block (confirmed live against real output, e.g. a physics
+ * problem's worked solution).
  */
 const MATH_PATTERNS: { regex: RegExp; displayMode: boolean }[] = [
   { regex: /\$\$([\s\S]+?)\$\$/g, displayMode: true },
   { regex: /\\\[([\s\S]+?)\\\]/g, displayMode: true },
   { regex: /\\\(([\s\S]+?)\\\)/g, displayMode: false }
 ]
+
+/**
+ * Bare single-`$...$` inline math — what several models (seen live: a Data Access answer full of `$613,898,527\text{ kWh}$`) use instead of
+ * `\(...\)`. It used to be left out because of the classic false positive ("costs $5 to $10" is not math), so it is accepted only under
+ * Pandoc's rules, which keep prices out: the opening `$` must be followed by a non-space, the closing `$` must be preceded by a non-space and
+ * must NOT be followed by a digit, and neither may be a backslash-escaped `\$`. "$5 to $10" fails (a space before the second `$`), so does
+ * "$5-$10" (a digit after it). One line only. Never applied inside code (see `extractMath`).
+ */
+const SINGLE_DOLLAR_MATH = /(?<![\\$])\$(?=[^\s$])((?:\\.|[^$\\\n])+?)(?<=[^\s\\])\$(?![\d$])/g
+
+/** Markdown code fences and inline code spans, kept out of the single-`$` pass — `awk '{print $1}' | sort $2` is shell, not math. */
+const CODE_SEGMENT = /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`)/
 
 // Private-Use-Area characters bracketing the index — not valid in any real
 // text a model would produce, so this can never collide with an ordinary
@@ -82,36 +91,42 @@ const PLACEHOLDER_RE = new RegExp(`${PH_START}(\\d+)${PH_END}`, 'g')
  */
 function extractMath(text: string): { text: string; blocks: string[] } {
   const blocks: string[] = []
+  const renderToPlaceholder = (source: string, displayMode: boolean): string => {
+    let html: string
+    try {
+      // A bare `%` is LaTeX's comment character — it swallows everything
+      // to end-of-line, including the closing `}` of an enclosing
+      // \text{...}. Found live: gpt-oss wrote `\text{ (130 %)}` for a
+      // percentage, which KaTeX correctly rejected as "Unexpected end of
+      // input in a macro argument, expected '}'", rendering as a visible
+      // raw-LaTeX error instead of the number. Models reliably write a
+      // literal `%` for "percent" without escaping it, so repair that one
+      // specific, extremely common mistake before parsing rather than
+      // showing every percentage as a parse error — an already-escaped
+      // `\%` is left alone.
+      const escaped = source.replace(/(?<!\\)%/g, '\\%')
+      // trust: false (the default) keeps commands like \href/\includegraphics
+      // inert — this text is untrusted model output, not authored LaTeX.
+      html = katex.renderToString(escaped, { displayMode, throwOnError: false, trust: false, output: 'html' })
+    } catch {
+      // KaTeX's own parse errors are normally caught internally by
+      // throwOnError:false and rendered as a visible red error span —
+      // this is a last-resort net for anything that still throws, so a
+      // single bad equation can't break the whole message.
+      html = ''
+    }
+    const index = blocks.push(html) - 1
+    return `${PH_START}${index}${PH_END}`
+  }
   let result = text
   for (const { regex, displayMode } of MATH_PATTERNS) {
-    result = result.replace(regex, (_match, source: string) => {
-      let html: string
-      try {
-        // A bare `%` is LaTeX's comment character — it swallows everything
-        // to end-of-line, including the closing `}` of an enclosing
-        // \text{...}. Found live: gpt-oss wrote `\text{ (130 %)}` for a
-        // percentage, which KaTeX correctly rejected as "Unexpected end of
-        // input in a macro argument, expected '}'", rendering as a visible
-        // raw-LaTeX error instead of the number. Models reliably write a
-        // literal `%` for "percent" without escaping it, so repair that one
-        // specific, extremely common mistake before parsing rather than
-        // showing every percentage as a parse error — an already-escaped
-        // `\%` is left alone.
-        const escaped = source.replace(/(?<!\\)%/g, '\\%')
-        // trust: false (the default) keeps commands like \href/\includegraphics
-        // inert — this text is untrusted model output, not authored LaTeX.
-        html = katex.renderToString(escaped, { displayMode, throwOnError: false, trust: false, output: 'html' })
-      } catch {
-        // KaTeX's own parse errors are normally caught internally by
-        // throwOnError:false and rendered as a visible red error span —
-        // this is a last-resort net for anything that still throws, so a
-        // single bad equation can't break the whole message.
-        html = ''
-      }
-      const index = blocks.push(html) - 1
-      return `${PH_START}${index}${PH_END}`
-    })
+    result = result.replace(regex, (_match, source: string) => renderToPlaceholder(source, displayMode))
   }
+  // Single-$ inline math, on the parts of the text that are not code (split() with a capture group puts the code segments at odd indices).
+  result = result
+    .split(CODE_SEGMENT)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(SINGLE_DOLLAR_MATH, (_m, source: string) => renderToPlaceholder(source, false))))
+    .join('')
   return { text: result, blocks }
 }
 

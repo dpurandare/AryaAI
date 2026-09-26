@@ -72,6 +72,53 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('class="katex"')
   })
 
+  it('renders bare $...$ inline math (real Data Access answer for GJ01-WIND) with no stray dollar signs or LaTeX source left over', () => {
+    const { html } = renderMarkdown(
+      [
+        '* **Total Actual Generation**: $\\approx 613,898,527\\text{ kWh}$ (~$613.90\\text{ GWh}$)',
+        '* **Capacity (POI Limit)**: $300,000\\text{ kW}$ ($300\\text{ MW}$)',
+        '* **Target Mentioned**: $\\sim 470\\text{ GWh/year}$',
+        '* by about **$143.90\\text{ GWh}$** (~**$30.6\\%$ higher** than the target).',
+        '',
+        '$$\\text{PLF} = \\frac{a}{b} \\approx \\mathbf{23.32\\%}$$'
+      ].join('\n')
+    )
+    expect(html.match(/class="katex"/g)?.length).toBe(8) // 7 inline + the one inside the display block
+    expect(html).toContain('katex-display')
+    expect(html).not.toContain('katex-error')
+    expect(html).not.toContain('\\text')
+    expect(html).not.toContain('\\frac')
+    // The KaTeX markup carries the real text ("613,898,527", "kWh") — and no literal "$" delimiters remain outside it.
+    expect(html.replace(/<[^>]*>/g, '')).not.toMatch(/\$/)
+  })
+
+  it('still leaves prices alone with bare-$ math on (Pandoc rules: no space after the opening $, no space before / digit after the closing $)', () => {
+    for (const text of [
+      'It costs $5 to $10, depending on size.',
+      'Between $5-$10 per unit.',
+      'Prices: ($5) and ($6) respectively.',
+      'You pay $5,000 vs $6,000 a year.',
+      'Escaped \\$5 and \\$10 stay literal.'
+    ]) {
+      const { html } = renderMarkdown(text)
+      expect(html, text).not.toContain('class="katex"')
+      expect(html, text).toContain('$')
+    }
+  })
+
+  it('does not turn dollar signs in inline code or a code fence into math (shell snippets)', () => {
+    const inline = renderMarkdown('Run `awk \'{print $1"$2}\' file` then `echo $A$B`.').html
+    expect(inline).not.toContain('class="katex"')
+    expect(inline).toContain('$1"$2')
+    const fenced = renderMarkdown('```bash\necho "$A"$B"\nprint $x$\n```').html
+    expect(fenced).not.toContain('class="katex"')
+    expect(fenced).toContain('$x$')
+  })
+
+  it('does not let bare-$ math span lines', () => {
+    expect(renderMarkdown('first $x\nsecond y$ end').html).not.toContain('class="katex"')
+  })
+
   it('does not mistake plain currency amounts for math (no bare $...$ support)', () => {
     const { html } = renderMarkdown('It costs $5 to $10, depending on size.')
     expect(html).toContain('$5 to $10')
