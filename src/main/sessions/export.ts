@@ -3,7 +3,7 @@ import type { IpcMainEvent } from 'electron'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
-import { AGENT_ROLE_LABELS } from '@shared/agents'
+import { roleLabel } from '@shared/agents'
 import type { ContentBlock } from '@shared/protocol'
 import { IpcChannel, type SessionExportResult } from '@shared/ipc-contract'
 import { listMessages, type MessageRecord } from '../db/messages'
@@ -16,11 +16,11 @@ function isPureToolResult(message: MessageRecord): boolean {
 
 function blockToMarkdown(block: ContentBlock): string {
   if (block.type === 'text') {
-    const prefix = block.agentRole ? `*${AGENT_ROLE_LABELS[block.agentRole]} agent:* ` : ''
+    const prefix = block.agentRole ? `*${roleLabel(block.agentRole)} agent:* ` : ''
     return `${prefix}${block.text}`
   }
   if (block.type === 'tool_use') {
-    const prefix = block.agentRole ? `*${AGENT_ROLE_LABELS[block.agentRole]} agent* ` : ''
+    const prefix = block.agentRole ? `*${roleLabel(block.agentRole)} agent* ` : ''
     return `> ${prefix}🔧 **${block.name}**(${JSON.stringify(block.input)})`
   }
   if (block.type === 'warning') {

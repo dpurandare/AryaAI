@@ -868,6 +868,18 @@ Each step ships on its own and is checked against measured numbers.
    - *Not done:* real-API verification of Anthropic caching (mocked SDK only); a cost model that prices cached input; the `SYSTEM_PROMPT` diet; lazy schema loading.
 
 
+   **Widening `AgentRole` to a validated string — done 2026-09-26 (TASKS #119)**, the groundwork the step-1 note ("id as a validated string")
+   and section 11 call for; no file-loaded roles yet. `AgentRole` is now `string`; `BuiltinRoleId` (closed union, for code that must be
+   exhaustive over built-ins) and `LegacyRoleId` remain. `isValidRoleId` (lower-case letters / digits / single hyphens, starts with a letter,
+   ≤ 40 chars — no underscores, so `delegate_to_<id>` maps back to exactly one id) and `explainInvalidRoleId` (reserved sentinels `router` /
+   `auto` / `orchestrator` …, the whole `delegate*` namespace, built-in and retired ids — user roles extend the set, never replace a
+   built-in — and duplicates) are shared by the manifest lint, the IPC boundary and the future loader. `roleLabel(id)` replaces every direct
+   label lookup and **humanizes an id that no longer resolves** ("sql-reporter" → "Sql Reporter") so a chip is never blank (11.4). A pinned
+   role that does not resolve now **falls back to Auto with a persisted notice** instead of throwing (11.4); a malformed pin arriving over
+   IPC is treated as no pin. *Still to do for section 11:* the file format and loader, a runtime role registry (the manifest and
+   `AGENT_ROLES` / `PLANNABLE_ROLES` are still static module constants, so a user role cannot yet appear in the picker or as a plan
+   target), the Settings "Roles" panel, and the load-time lint with token-cost warnings.
+
 **Track A — workspace runtime (parallel, independent of steps 1–7).**
 `ensureWorkspace(root)` and the Python prerequisite (4.3) touch startup,
 set-root, onboarding and Settings, not roles or prompts, so they can ship

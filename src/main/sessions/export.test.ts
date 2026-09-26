@@ -95,6 +95,21 @@ describe('sessionToMarkdown', () => {
     expect(sessionToMarkdown(session, messages)).toContain('*Developer agent:* Writing the file now.')
   })
 
+  it('labels a block from a role that no longer resolves with a humanized id, never "undefined" (a deleted user-defined role)', () => {
+    const messages: MessageRecord[] = [
+      {
+        id: 'm1',
+        sessionId: 's1',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Here is the report.', agentRole: 'sql-reporter' }],
+        createdAt: 1
+      }
+    ]
+    const md = sessionToMarkdown(session, messages)
+    expect(md).toContain('*Sql Reporter agent:* Here is the report.')
+    expect(md).not.toContain('undefined')
+  })
+
   it('renders a tool_use block as a fenced call and does not give a pure tool_result message its own heading', () => {
     const messages: MessageRecord[] = [
       {

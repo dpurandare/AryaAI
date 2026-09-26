@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
   import MarkdownText from './MarkdownText.svelte'
-  import { AGENT_ROLE_LABELS } from '@shared/agents'
+  import { roleLabel } from '@shared/agents'
   import type { MessageDto } from '@shared/ipc-contract'
 
   let title = $state('Chat export')
@@ -48,7 +48,7 @@
     {#each message.content as block, i (i)}
       {#if block.type === 'text'}
         {#if block.agentRole}
-          <div class="agent-chip">{AGENT_ROLE_LABELS[block.agentRole]} agent</div>
+          <div class="agent-chip">{roleLabel(block.agentRole)} agent</div>
         {/if}
         <MarkdownText text={block.text} />
       {:else if block.type === 'tool_use'}

@@ -265,8 +265,50 @@ export const LEGACY_ROLE_LABELS = {
   distribution: 'Distribution'
 } as const
 
-/** Every specialist role id. Derived from the manifest — persisted `agentRole` values stay valid because ids are unchanged. */
-export type AgentRole = (typeof ROLE_MANIFEST)[number]['id'] | keyof typeof LEGACY_ROLE_LABELS
+/**
+ * A role id. A **validated string**, not a closed union: today every id in circulation is a built-in (or a retired one that survives
+ * only in saved sessions), but user-defined roles loaded from files (design-discussion.md section 11) will bring ids the compiler
+ * cannot know. Anything that must be exhaustive over the *built-in* roles uses `BuiltinRoleId`; anything that meets an id at runtime
+ * — a persisted `agentRole`, a pinned mode, a planner's answer — treats it as an open string and validates it with `isValidRoleId`
+ * or looks it up (`roleMeta`, `roleLabel`), never assuming it is one of ours.
+ */
+export type AgentRole = string
+
+/** The built-in roles' ids — a closed set, for code that must be exhaustive over them. */
+export type BuiltinRoleId = (typeof ROLE_MANIFEST)[number]['id']
+
+/** Ids of roles retired by an earlier redesign step; they survive only as labels for old sessions. */
+export type LegacyRoleId = keyof typeof LEGACY_ROLE_LABELS
+
+/** Lower-case letters and digits, single hyphens between them, starting with a letter. No underscores: `delegate_to_<id>` must map back to exactly one id. */
+const ROLE_ID_PATTERN = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/
+export const MAX_ROLE_ID_LENGTH = 40
+
+/**
+ * Ids a role may never take: they are used as sentinels elsewhere (`router` tags the top-level assistant in the usage log, `auto` is the
+ * picker's "no pin", `orchestrator` names the top level in the role examples), or would collide with the delegate-tool namespace
+ * (anything starting `delegate`).
+ */
+const RESERVED_ROLE_IDS: ReadonlySet<string> = new Set(['auto', 'router', 'orchestrator', 'default', 'none', 'all'])
+
+/** Whether `id` is well-formed as a role id (shape only — not whether such a role exists). */
+export function isValidRoleId(id: unknown): id is string {
+  return typeof id === 'string' && id.length <= MAX_ROLE_ID_LENGTH && ROLE_ID_PATTERN.test(id)
+}
+
+/**
+ * Why `id` cannot be used as the id of a NEW role, or `undefined` if it can. `takenIds` is every id already in use; built-in ids are
+ * always taken (user roles extend the set, they do not replace a built-in — design 11, open question 8).
+ */
+export function explainInvalidRoleId(id: unknown, takenIds: Iterable<string> = []): string | undefined {
+  if (typeof id !== 'string' || !id) return 'A role id must be a non-empty string.'
+  if (id.length > MAX_ROLE_ID_LENGTH) return `A role id is at most ${MAX_ROLE_ID_LENGTH} characters.`
+  if (!ROLE_ID_PATTERN.test(id)) return 'A role id is lower-case letters, digits and single hyphens, starting with a letter (no underscores or spaces).'
+  if (RESERVED_ROLE_IDS.has(id) || id.startsWith('delegate')) return `"${id}" is reserved.`
+  if (BY_ID.has(id) || id in LEGACY_ROLE_LABELS) return `"${id}" is a built-in role id.`
+  for (const t of takenIds) if (t === id) return `A role with id "${id}" already exists.`
+  return undefined
+}
 
 const BY_ID: ReadonlyMap<string, RoleMeta> = new Map(ROLE_MANIFEST.map((r) => [r.id, r]))
 
@@ -293,8 +335,27 @@ export const AGENT_ROLES: readonly AgentRole[] = ROLE_MANIFEST.filter((r) => r.p
  */
 export const PLANNABLE_ROLES: readonly AgentRole[] = ROLE_MANIFEST.filter((r) => r.plannable).map((r) => r.id)
 
-/** Human-readable label per role — used by the router's own system prompt and the renderer's mode picker/role chips, so the two stay in sync. */
-export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
-  ...(Object.fromEntries(ROLE_MANIFEST.map((r) => [r.id, r.label])) as Record<(typeof ROLE_MANIFEST)[number]['id'], string>),
+/**
+ * Built-in and retired role labels. Look labels up with `roleLabel`, not by indexing this: an id can be anything at runtime.
+ */
+export const AGENT_ROLE_LABELS: Readonly<Record<string, string>> = {
+  ...(Object.fromEntries(ROLE_MANIFEST.map((r) => [r.id, r.label])) as Record<BuiltinRoleId, string>),
   ...LEGACY_ROLE_LABELS
+}
+
+/**
+ * The label for any role id. A role that no longer resolves — a persisted `agentRole` from a user-defined role that was since deleted or
+ * disabled, or a future id this build has not heard of — gets a humanized id ("sql-reporter" → "Sql Reporter") instead of `undefined`
+ * (design 11.4), so a transcript never shows a blank chip.
+ */
+export function roleLabel(id: string): string {
+  const known = AGENT_ROLE_LABELS[id]
+  if (known) return known
+  return (
+    id
+      .split(/[-_\s]+/)
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ') || 'Unknown'
+  )
 }

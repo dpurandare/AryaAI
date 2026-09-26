@@ -1,6 +1,6 @@
 import type { RuntimeState } from '@shared/runtime'
 import type { AgentRole } from '@shared/agents'
-import { roleMeta } from '@shared/agents'
+import { roleLabel, roleMeta } from '@shared/agents'
 import type { ToolRegistry } from '../tools/registry'
 import type { Tool } from '../tools/types'
 import type { Agent } from './orchestrator'
@@ -91,7 +91,7 @@ export function buildCapabilities(input: CapabilitiesInput): string {
     const own = agent.tools.filter((t) => !isMcp(t)).map((t) => t.name)
     const mcpCount = agent.tools.filter(isMcp).length
     const toolText = own.length === 0 && mcpCount === 0 ? 'no tools (reasoning only)' : list(own) + (mcpCount ? `${own.length ? ', plus ' : ''}${mcpCount} MCP tools` : '')
-    out.push(`- ${meta?.label ?? agent.role} (${delegateName(agent.role)}): ${meta?.description ?? agent.summary} Tools: ${toolText}.`)
+    out.push(`- ${meta?.label ?? roleLabel(agent.role)} (${delegateName(agent.role)}): ${meta?.description ?? agent.summary} Tools: ${toolText}.`)
   }
 
   const direct = tools.filter((t) => !isMcp(t)).map((t) => t.name)

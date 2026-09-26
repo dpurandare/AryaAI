@@ -356,27 +356,20 @@ describe('Orchestrator (integration, mocked provider)', () => {
     expect(streamEvents.at(-1)).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
   })
 
-  it('run() throws for an unknown forced role (observed on the first iteration)', async () => {
+  it('an unknown pinned role falls back to Auto with a visible, persisted notice — it no longer fails the turn (design 11.4)', async () => {
     const registry = buildRegistry()
     const agents = createAgents(registry)
-    const provider = new MockProvider([])
-    const orchestrator = new Orchestrator(
-      provider,
-      'mock-model',
-      agents,
-      'You are Sachivji.',
-      registry.list(),
-      autoApprove(),
-      ctx,
-      signal
-    )
+    const provider = new MockProvider([{ text: 'Hello from Auto.', stopReason: 'end_turn' }])
+    const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
 
-    const iterable = orchestrator.run(
-      [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
-      'not-a-real-role' as never
-    )
-    const iterator = iterable[Symbol.asyncIterator]()
-    await expect(iterator.next()).rejects.toThrow(/Unknown agent role/)
+    const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], 'sql-reporter')
+
+    const warning = events.find((e) => e.kind === 'stream' && e.event.type === 'warning')
+    expect(warning && warning.kind === 'stream' && warning.event.type === 'warning' ? warning.event.message : '').toMatch(/pinned "Sql Reporter" agent is not available.*using Auto instead/)
+    expect(events.some((e) => e.kind === 'message' && e.role === 'assistant' && e.content.some((c) => c.type === 'warning'))).toBe(true)
+    // ...and the turn ran normally as Auto: the router's own prompt and delegate tools, and an ordinary reply.
+    expect(provider.requests[0].tools?.some((t) => t.name === 'delegate_to_coding')).toBe(true)
+    expect(events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'text_delta' ? [e.event.text] : [])).join('')).toBe('Hello from Auto.')
   })
 
   it('forcedRole runs that specialist directly with no routing/delegate call', async () => {

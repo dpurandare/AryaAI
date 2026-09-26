@@ -4,7 +4,7 @@
   import ContextMeter from './ContextMeter.svelte'
   import MarkdownText from './MarkdownText.svelte'
   import ToolConfirmDialog from './ToolConfirmDialog.svelte'
-  import { AGENT_ROLES, AGENT_ROLE_LABELS, type AgentRole } from '@shared/agents'
+  import { AGENT_ROLES, roleLabel, type AgentRole } from '@shared/agents'
   import { parseSearchHistoryResult } from '../search-history-result'
   import type { ToolConfirmRequestPayload, LimitReachedRequestPayload } from '@shared/ipc-contract'
 
@@ -208,11 +208,11 @@
   }
 
   function modeLabel(role: AgentRole | null): string {
-    return role ? AGENT_ROLE_LABELS[role] : 'Auto'
+    return role ? roleLabel(role) : 'Auto'
   }
 
   function limitReachedMessage(limit: LimitReachedRequestPayload): string {
-    const who = limit.agentRole ? `The ${AGENT_ROLE_LABELS[limit.agentRole]} specialist` : 'This turn'
+    const who = limit.agentRole ? `The ${roleLabel(limit.agentRole)} specialist` : 'This turn'
     return limit.reason === 'time'
       ? `${who} has been working for a while without finishing. Give it more time, or stop here?`
       : `${who} has used all ${limit.maxRounds} steps available without finishing. Allow more steps, or stop here?`
@@ -287,7 +287,7 @@
                 <span class="plan-step-icon"
                   >{status === 'done' ? '✓' : status === 'error' ? '✗' : status === 'running' ? '⋯' : '○'}</span
                 >
-                <span class="plan-step-role">{AGENT_ROLE_LABELS[step.role]}</span>
+                <span class="plan-step-role">{roleLabel(step.role)}</span>
                 <span class="plan-step-desc">{step.description}</span>
               </div>
             {/each}
@@ -296,7 +296,7 @@
         {#each message.segments as segment, i (segment.id)}
           {@const prevRole = i > 0 ? message.segments[i - 1].agentRole : undefined}
           {#if segment.agentRole && segment.agentRole !== prevRole}
-            <div class="agent-chip">{AGENT_ROLE_LABELS[segment.agentRole]} agent</div>
+            <div class="agent-chip">{roleLabel(segment.agentRole)} agent</div>
           {/if}
           {#if segment.kind === 'tool' && segment.toolCall}
             {@const isDelegate = segment.toolCall.name.startsWith('delegate_to_')}
@@ -390,7 +390,7 @@
                      target role (not the raw "Working...") is the orchestrator's own routing
                      decision surfacing as a real, live status instead of another dead pause. -->
                 <div class="tool-result pending">
-                  Delegating to {(AGENT_ROLE_LABELS as Record<string, string>)[delegateRole] ?? delegateRole} agent…
+                  Delegating to {roleLabel(delegateRole)} agent…
                 </div>
               {/if}
             </div>

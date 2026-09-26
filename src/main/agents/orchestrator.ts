@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
 import type { AgentRole } from '@shared/agents'
-import { AGENT_ROLE_LABELS, PLANNABLE_ROLES } from '@shared/agents'
+import { PLANNABLE_ROLES, roleLabel } from '@shared/agents'
 import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
 import { evaluateClassifyGate, shouldSampleForCalibration, type ClassifyGateVerdict } from './classify-gate'
 import { CONTEXT_BUDGET_FRACTION, overheadTokens, resolveContextWindow } from '../context/prepare-context'
@@ -731,11 +731,19 @@ export class Orchestrator {
     const workspaceRoot = this.toolContext.workspaceGuard?.root
     if (workspaceRoot) void pruneHandoffDirs(workspaceRoot, HANDOFF_RETENTION_MS)
 
-    if (forcedRole) {
-      const agent = this.agents.get(forcedRole)
-      if (!agent) throw new Error(`Unknown agent role "${forcedRole}".`)
-      const systemPrompt = agent.systemPrompt + this.buildForcedModeNotice(forcedRole)
-      yield* this.runLoop(systemPrompt, agent.tools, conversation, state, forcedRole, [], true)
+    // A pinned role that does not resolve — a user-defined role since deleted or disabled, or a stale pin — falls back to Auto with a
+    // visible notice instead of failing the turn (design 11.4). Roles are an open string set now, so this can genuinely happen.
+    let pinned = forcedRole
+    if (pinned && !this.agents.has(pinned)) {
+      const message = `The pinned "${roleLabel(pinned)}" agent is not available (it may have been removed or disabled) — using Auto instead.`
+      yield { kind: 'stream', event: { type: 'warning', message } }
+      yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message }] }
+      pinned = null
+    }
+    if (pinned) {
+      const agent = this.agents.get(pinned) as Agent
+      const systemPrompt = agent.systemPrompt + this.buildForcedModeNotice(pinned)
+      yield* this.runLoop(systemPrompt, agent.tools, conversation, state, pinned, [], true)
       return
     }
 
@@ -1051,7 +1059,7 @@ export class Orchestrator {
         state.handoff.redirects < 1
       ) {
         state.handoff.redirects++
-        yield { kind: 'stream', event: { type: 'status', message: `${AGENT_ROLE_LABELS[role]} handed this to ${AGENT_ROLE_LABELS[suggested as AgentRole]}…` } }
+        yield { kind: 'stream', event: { type: 'status', message: `${roleLabel(role)} handed this to ${roleLabel(suggested as AgentRole)}…` } }
         role = suggested as AgentRole
         outcome = yield* this.dispatchDelegate(role, { task: step.description }, conversation, state)
       }
@@ -1074,7 +1082,7 @@ export class Orchestrator {
           : d?.status === 'out_of_scope'
             ? ' (OUT OF SCOPE — not done)'
             : ''
-      const stepLabel = `[Plan step ${index + 1} — ${AGENT_ROLE_LABELS[role]}]${marker}`
+      const stepLabel = `[Plan step ${index + 1} — ${roleLabel(role)}]${marker}`
       const stepMessage: Message = {
         role: 'user',
         content: [
@@ -1182,11 +1190,11 @@ export class Orchestrator {
   private buildForcedModeNotice(currentRole: AgentRole): string {
     const others = [...this.agents.values()]
       .filter((a) => a.role !== currentRole)
-      .map((a) => `- ${AGENT_ROLE_LABELS[a.role]}: ${a.summary}`)
+      .map((a) => `- ${roleLabel(a.role)}: ${a.summary}`)
       .join('\n')
     return (
       '\n\n---\n' +
-      `You are currently pinned to the ${AGENT_ROLE_LABELS[currentRole]} specialist only (the ` +
+      `You are currently pinned to the ${roleLabel(currentRole)} specialist only (the ` +
       'composer\'s "Agent:" selector, bottom-left, is set away from "Auto") — you cannot hand off to ' +
       'another specialist yourself right now, even when one clearly fits the request better, and you ' +
       "have no delegate tools available. If the user's request needs a capability outside your own " +
@@ -1217,14 +1225,14 @@ export class Orchestrator {
     const activity = localRound === 1 ? 'thinking' : 'reviewing tool results'
     const progress = `(round ${state.roundsUsed}/${maxRounds})`
     return agentRole
-      ? `${AGENT_ROLE_LABELS[agentRole]} agent is ${activity}… ${progress}`
+      ? `${roleLabel(agentRole)} agent is ${activity}… ${progress}`
       : `Model (${this.model}) is ${activity}… ${progress}`
   }
 
   private buildDelegateToolDefinitions(): ToolDefinition[] {
     return [...this.agents.values()].map((a) => ({
       name: delegateToolName(a.role),
-      description: `Hand off to the ${AGENT_ROLE_LABELS[a.role]} specialist: ${a.summary}`,
+      description: `Hand off to the ${roleLabel(a.role)} specialist: ${a.summary}`,
       inputSchema: {
         type: 'object',
         properties: { task: { type: 'string', description: 'What the specialist should do' } },
@@ -1796,7 +1804,7 @@ export class Orchestrator {
       const owner = this.roleOwningTool(name)
       return {
         content: owner
-          ? `Tool "${name}" is not available here — it belongs to the ${AGENT_ROLE_LABELS[owner]} specialist. Call delegate_to_${owner.replace(/-/g, '_')} with the task instead.`
+          ? `Tool "${name}" is not available here — it belongs to the ${roleLabel(owner)} specialist. Call delegate_to_${owner.replace(/-/g, '_')} with the task instead.`
           : `Unknown tool "${name}".`,
         isError: true
       }
@@ -1937,7 +1945,7 @@ export class Orchestrator {
     // appended to the brief by the app — typed inputs, not something the router has to remember to pass.
     const taskMessage: Message = {
       role: 'user',
-      content: [{ type: 'text', text: `[Orchestrator -> ${AGENT_ROLE_LABELS[role]}]: ${task}${formatInputs(state.handoff.items)}` }]
+      content: [{ type: 'text', text: `[Orchestrator -> ${roleLabel(role)}]: ${task}${formatInputs(state.handoff.items)}` }]
     }
     // `isolated` (#77) controls conversation scoping only — this brief alone
     // vs. the whole parent conversation. The round *budget* is always its

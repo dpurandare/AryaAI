@@ -1,4 +1,4 @@
-import type { RoleMeta } from './agents'
+import { isValidRoleId, type RoleMeta } from './agents'
 
 /**
  * Validation for role records (design-discussion.md 3.2): a role's `summary` is
@@ -21,8 +21,6 @@ export interface RoleLintIssue {
   rule: string
   message: string
 }
-
-const ID_PATTERN = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/
 
 /** Roughly 30 tokens of English. */
 export const MAX_SUMMARY_WORDS = 30
@@ -56,7 +54,7 @@ export function lintRoleStructure(roles: readonly RoleMeta[]): RoleLintIssue[] {
   const seen = new Set<string>()
   for (const r of roles) {
     const add = (rule: string, message: string): void => void issues.push({ role: r.id, rule, message })
-    if (!ID_PATTERN.test(r.id)) add('id-format', `id "${r.id}" must be lower-case letters, digits and single hyphens`)
+    if (!isValidRoleId(r.id)) add('id-format', `id "${r.id}" must be lower-case letters, digits and single hyphens`)
     if (seen.has(r.id)) add('id-unique', `duplicate id "${r.id}"`)
     seen.add(r.id)
     if (!r.label.trim()) add('label', 'label is empty')

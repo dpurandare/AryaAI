@@ -23,7 +23,7 @@ import {
   type SearchHistoryStatusDto,
   type SessionTitleUpdatedPayload
 } from '@shared/ipc-contract'
-import type { AgentRole } from '@shared/agents'
+import { isValidRoleId, type AgentRole } from '@shared/agents'
 import type { RuntimeState } from '@shared/runtime'
 import { createSession, listSessions, deleteSession, getSession, updateSessionTitle, titleFromMessage } from '../db/sessions'
 import { insertMessage, listMessages } from '../db/messages'
@@ -401,7 +401,9 @@ export function registerIpcHandlers(): void {
       // never race ahead of this being in the map.
       const controller = new AbortController()
       activeStreams.set(streamId, controller)
-      runChat(sessionId, text, streamId, sender, forcedRole, controller.signal)
+      // The renderer is a separate process: a pinned role arrives as an arbitrary value. Anything that is not a well-formed role id is
+      // treated as "no pin" here; a well-formed id that does not resolve is handled (fallback to Auto + notice) by the orchestrator.
+      runChat(sessionId, text, streamId, sender, isValidRoleId(forcedRole) ? forcedRole : null, controller.signal)
         .catch((err: unknown) => {
           const errorMessage = err instanceof Error ? err.message : String(err)
           emit(sender, { streamId, sessionId, event: { type: 'error', message: errorMessage } })
