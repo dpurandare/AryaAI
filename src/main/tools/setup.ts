@@ -31,6 +31,7 @@ import {
   xlsxWriteTool
 } from './office-docs'
 import { ToolRegistry } from './registry'
+import { pythonRunTool } from './python-run'
 import { shellExecuteTool } from './shell'
 import type { ToolContext } from './types'
 import { webSearchTool } from './web-search'
@@ -66,6 +67,7 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(listDirectoryTool)
   registry.register(writeFileTool)
   registry.register(shellExecuteTool)
+  registry.register(pythonRunTool)
   registry.register(awsCliTool)
   registry.register(azureCliTool)
   registry.register(gcloudCliTool)

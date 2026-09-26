@@ -27,6 +27,12 @@ export interface ToolContext {
    * around it. Optional/absent in tests that don't need deck tools.
    */
   activeDecks?: Map<string, { pres: pptxgen; slides: pptxgen.Slide[] }>
+  /**
+   * Live state of the workspace's managed Python runtime (`runtime/workspace-runtime.ts`), read by `python_run` so it can say
+   * "Python is turned off" / "still being set up" instead of failing obscurely. Optional/absent in tests, where the tool falls
+   * back to checking for the venv on disk.
+   */
+  runtimeState?: () => import('@shared/runtime').RuntimeState | undefined
 }
 
 /**

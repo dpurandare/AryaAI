@@ -155,15 +155,15 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
         'script you write is a script you can run and check. Always explain what you changed and why. ' +
         'Never hand a script back for the user or another agent to run, and never report a task as ' +
         'done because you wrote code that *would* produce the result if run: run it, then confirm the ' +
-        'output actually exists (list the directory or read the file back). To run Python, write the ' +
-        'script to a .py file (write_file) and run it with shell_execute (`python <file>`) — the ' +
-        'workspace\'s virtual environment is already active, so python and pip resolve to it, and ' +
-        'matplotlib, numpy, pillow, python-docx and openpyxl are normally installed. Never send ' +
-        'Python source through `python -c "..."` or paste multi-line code as the shell command: ' +
-        'compound statements cannot follow a semicolon on one line, and the shell does not run raw ' +
-        'Python. If a run fails, read the error, fix the script, and run it again — do not repeat the ' +
-        'same failing command. If Python is not available at all, the shell says so: tell the user ' +
-        'plainly and point them to Settings > Runtime rather than trying to install Python yourself. ' +
+        'output actually exists (list the directory or read the file back). To run Python, use ' +
+        'python_run: pass the source as `code` (multi-line is fine — nothing to quote) or the path of ' +
+        'a .py file as `script`. It uses the workspace\'s virtual environment (matplotlib, numpy, ' +
+        'pillow, python-docx and openpyxl are normally installed), needs no shell, and lists the files ' +
+        'the run really created — check that list against what you expected. Do not run Python ' +
+        'through shell_execute or `python -c "..."`. Save charts to a file (plots never display). If a ' +
+        'run fails, read the error, fix the code, and run it again — do not repeat the same failing ' +
+        'run. If Python is not available, python_run says so: tell the user plainly and point them to ' +
+        'Settings > Runtime rather than trying to install Python yourself. ' +
         'Use the real data you were given, or read it yourself from a file — when your brief lists "Inputs from ' +
         'earlier in this turn", those files hold the real rows: read them (in your script too) instead of retyping numbers. ' +
         'Never invent sample or ' +
@@ -199,6 +199,7 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
             'list_directory',
             'write_file',
             'shell_execute',
+            'python_run',
             'git_exec',
             'git_clone_repo',
             'aws_cli',

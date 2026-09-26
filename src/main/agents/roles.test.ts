@@ -90,7 +90,7 @@ describe('createAgents', () => {
     // Terminal/DevOps and Distribution into one role makes "write it, never run it" impossible to
     // express, not merely discouraged.
     const registry = new ToolRegistry()
-    for (const n of ['read_file', 'write_file', 'shell_execute', 'git_exec', 'github_cli', 'aws_cli', 'show_media', 'db_execute_sql', 'office_create_document']) {
+    for (const n of ['read_file', 'write_file', 'shell_execute', 'python_run', 'git_exec', 'github_cli', 'aws_cli', 'show_media', 'db_execute_sql', 'office_create_document']) {
       registry.register(fakeTool(n))
     }
     const agents = createAgents(registry)
@@ -98,7 +98,7 @@ describe('createAgents', () => {
     const names = dev.tools.map((t) => t.name)
 
     it('has a shell, git, cloud CLIs and GitHub — and no database or Office tools', () => {
-      expect(names).toEqual(expect.arrayContaining(['shell_execute', 'write_file', 'git_exec', 'github_cli', 'aws_cli', 'show_media']))
+      expect(names).toEqual(expect.arrayContaining(['shell_execute', 'python_run', 'write_file', 'git_exec', 'github_cli', 'aws_cli', 'show_media']))
       expect(names).not.toContain('db_execute_sql')
       expect(names).not.toContain('office_create_document')
     })
@@ -106,13 +106,16 @@ describe('createAgents', () => {
     it('is told it can run what it writes, and never to claim done without checking the output exists', () => {
       expect(dev.systemPrompt).toMatch(/you have a shell/i)
       expect(dev.systemPrompt).toMatch(/confirm the output actually exists/i)
-      expect(dev.systemPrompt).not.toMatch(/NO shell/i)
+      expect(dev.systemPrompt).toMatch(/lists the files the run really created/i)
+      expect(dev.systemPrompt).not.toMatch(/NO shell\/execution access/)
       expect(dev.systemPrompt).not.toMatch(/delegate_to_terminal_devops/i)
     })
 
-    it('is told not to send Python through `python -c` or paste multi-line code as a shell command (the D2 loop)', () => {
-      expect(dev.systemPrompt).toMatch(/Never send Python source through `python -c/)
-      expect(dev.systemPrompt).toMatch(/write the script to a \.py file/i)
+    it('is told to run Python with python_run (code or script, no shell) and NOT through the shell or `python -c` (the D2 loop)', () => {
+      expect(dev.systemPrompt).toMatch(/use python_run/)
+      expect(dev.systemPrompt).toMatch(/pass the source as `code`/)
+      expect(dev.systemPrompt).toMatch(/Do not run Python through shell_execute or `python -c/)
+      expect(dev.systemPrompt).toMatch(/do not repeat the same failing run/i)
     })
 
     it('is told never to invent sample data, and how to put charts into Word (python-docx) since office_create_document cannot', () => {

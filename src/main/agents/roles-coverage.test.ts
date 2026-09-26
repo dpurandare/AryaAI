@@ -42,6 +42,7 @@ describe('tool ownership across roles', () => {
   it('a tool may be shared, but the SQL/API/Office/shell tools each have a single home', () => {
     const owners = (tool: string): string[] => [...agents.values()].filter((a) => a.tools.some((t) => t.name === tool)).map((a) => a.role)
     expect(owners('shell_execute')).toEqual(['coding'])
+    expect(owners('python_run')).toEqual(['coding'])
     expect(owners('db_execute_sql')).toEqual(['data'])
     expect(owners('office_create_document')).toEqual(['document-creator'])
     expect(owners('send_email')).toEqual(['email'])

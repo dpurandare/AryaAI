@@ -17,6 +17,7 @@ version is still `0`.
 - A new `describe_capabilities` tool lets the assistant list, from live data, which specialists and tools it has, which databases / APIs / email accounts / MCP servers are configured, whether Python scripts can be run, and which actions ask for confirmation — so "what can you do?" is answered from facts, not memory.
 - A permanent prompt-size test records the fixed per-request token cost and fails if it grows unnoticed.
 
+- New `python_run` tool: the Developer runs Python by passing the source (or a `.py` path) directly — no shell quoting — in the workspace's virtual environment, and gets back the exit code, output, and the list of files the run really created (found by the app). You approve every run and see the code first. Charts and Word documents built with matplotlib and python-docx work end to end.
 - **Specialists now hand each other real results.** The full result of a data-producing call (SQL rows, parsed files, API responses) is saved to a workspace file and given to the next specialist as an input, so it works from the actual data instead of a summary; the files a specialist really created or changed are detected by the app and listed as verified; a specialist can say it needs information from you (the plan pauses and you are asked) or that a request belongs to another specialist (redirected once). A tool that belongs to a specialist now answers "call delegate_to_<role>" instead of "Unknown tool".
 
 ### Changed

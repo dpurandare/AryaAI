@@ -527,6 +527,7 @@ prerequisite — see Track A in section 10):
 - **Reports what it produced.** It returns the files the script created or
   changed, which is exactly the `artifacts` field of the handoff contract
   (5.1) — derived in code, not claimed by the model.
+- **Implemented 2026-09-26 (TASKS #115): `python_run`** (`tools/python-run.ts`, Developer role, registered in the default registry). Takes `code` (source, saved to `code/run_<time>.py`) or `script` (an existing `.py`), plus `args` and a timeout; launches the workspace venv's interpreter directly (`execFile`, no shell), so there is nothing to quote. It sets `MPLBACKEND=Agg` (a stray `plt.show()` cannot open a window or hang), returns exit code / stdout / stderr (tails kept) and the files the run created or changed, found by the same workspace-snapshot diff the handoff uses. It honours the runtime state (off / still being set up / missing Python → a clear message pointing at Settings > Runtime, no venv building). The confirmation dialog shows the code that will run. A user Stop is distinguished from a timeout. Not a sandbox. *Not done:* the image-capable Office tool alternative (charts into Word go through python-docx in a run, verified end to end: a real `.docx` with three embedded images).
 - **Takes a script path or a source body, not a shell string.** D2 (Appendix D)
   showed the model sending compound Python through `python -c "…"` and pasting
   multi-line code as a shell command, ~10 failed retries in a row. Accepting the

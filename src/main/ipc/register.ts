@@ -614,6 +614,7 @@ async function runChat(
       currentSessionId: sessionId,
       registerSavedQuery: (query) => savedQueryManager.register(query, toolRegistry),
       connectMcpServer: (id) => mcpManager.reconnect(id, toolRegistry),
+      runtimeState: () => workspaceRuntime.getState(),
       activeDecks
     },
     signal,

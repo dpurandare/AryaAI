@@ -58,10 +58,10 @@ function runtimeLine(runtime: RuntimeState | null | undefined, root: string): st
   switch (runtime.status) {
     case 'ready':
       return (
-        `Python: AVAILABLE${runtime.pythonVersion ? ` (${runtime.pythonVersion})` : ''}. Scripts run through shell_execute ` +
-        `with the workspace virtual environment (${venv}) already active, so plain \`python\` and \`pip\` resolve to it` +
+        `Python: AVAILABLE${runtime.pythonVersion ? ` (${runtime.pythonVersion})` : ''}. Scripts run with python_run (source or a .py path — no shell quoting; it lists the files the run created) ` +
+        `in the workspace virtual environment (${venv}), which shell_execute also has active, so plain \`python\` and \`pip\` resolve to it` +
         (runtime.packages === 'installing' ? ' (base packages are still installing)' : '') +
-        '. You CAN write a script and run it; each shell command asks the user for confirmation.'
+        '. You CAN write a script and run it; every run asks the user for confirmation.'
       )
     case 'creating':
       return 'Python: being set up right now — try again in a minute.'

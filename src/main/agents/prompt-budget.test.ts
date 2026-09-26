@@ -60,13 +60,13 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
  */
 const CEILINGS = {
   routerPrompt: 880,
-  routerToolSchemas: 9900,
-  routerBare: 10800,
+  routerToolSchemas: 10100,
+  routerBare: 11000,
   classifyPrompt: 850,
   'role:planning': 65,
   'role:research': 1340,
   'role:history-analyst': 500,
-  'role:coding': 2260,
+  'role:coding': 2500,
   'role:data': 2640,
   'role:data-processor': 1920,
   'role:document-creator': 2340,
