@@ -80,11 +80,11 @@ export const ROLE_MANIFEST = [
     plannable: true,
     examples: [
       'Find recent news about renewable energy policy in the EU',
-      'Summarise what this article says about battery storage costs'
+      'Summarise the article at https://example.com/battery-storage-costs'
     ],
     notExamples: [
       'What did we conclude about the Q3 forecast last week? [history-analyst]',
-      'Save these findings into a Word document [document-creator]',
+      "Write the sentence 'Solar tariffs fell 5% in Q3' into a new Word document [document-creator]",
       'Call the weather API for the next three days [data]'
     ]
   },
@@ -103,7 +103,7 @@ export const ROLE_MANIFEST = [
     ],
     notExamples: [
       'Find the latest news on the Pune solar project [research]',
-      'Redo that analysis for a different region [data]'
+      'How many Northwind customers are in Germany? [data]'
     ]
   },
   {
@@ -121,7 +121,7 @@ export const ROLE_MANIFEST = [
       'Create a GitHub release for v1.4 with these notes'
     ],
     notExamples: [
-      'Write a one-page Word summary of these findings [document-creator]',
+      'Write a one-page Word summary of our Q3 launch plan [document-creator]',
       'How many customers are in the Northwind database? [data]'
     ]
   },
@@ -137,7 +137,7 @@ export const ROLE_MANIFEST = [
     requiresAnyOf: ['database', 'api'],
     examples: [
       'How many customers are there in the Northwind database?',
-      'Show the top 10 customers by sales for each year',
+      'Show the top 10 customers by sales for each year from the Northwind database',
       'Call the weather API for the next three days in Pune'
     ],
     notExamples: [
@@ -173,11 +173,11 @@ export const ROLE_MANIFEST = [
     pickable: true,
     plannable: true,
     examples: [
-      'Create a Word document summarising these findings with headings and bullets',
-      'Fill our invoice template with these customer details'
+      'Create a Word document titled Team Update with a heading and three bullets about our launch plan',
+      'Fill invoice_template.docx with customer Acme Corp, amount 1200 and date 1 October'
     ],
     notExamples: [
-      'Generate bar charts from this data and put them in a Word file [coding]',
+      'Generate bar charts from sales_2024.csv and put them in a Word file [coding]',
       'Read the numbers out of this Excel sheet [data-processor]'
     ]
   },
@@ -245,10 +245,10 @@ export const ROLE_MANIFEST = [
     requiresAnyOf: ['email'],
     examples: [
       'Email the team that the monthly report is ready',
-      'Send Priya a short summary of the invoice discussion'
+      'Email priya@example.com to say the invoice is approved'
     ],
     notExamples: [
-      'Write a blog post about our launch [document-creator]',
+      'Write a blog post about our launch and save it as a Word document [document-creator]',
       'Find out who our largest customer is, then email them [data, then email]'
     ]
   }

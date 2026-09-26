@@ -53,6 +53,10 @@ export interface RoutingOutcome {
   case: RoutingCase
   choice: Choice
   correct: boolean
+  /** Rounds the model took to reach its decisive choice (1 = decided at once). */
+  rounds: number
+  /** Names of exploration tools it called first. */
+  explored: string[]
 }
 
 const DELEGATE_PREFIX = 'delegate_to_'
@@ -67,6 +71,12 @@ export function roleFromDelegateName(name: string): string | undefined {
 export interface EvalSetup {
   system: string
   tools: ToolDefinition[]
+  /**
+   * Read-only exploration tools the evaluation ANSWERS instead of scoring, so a model that looks around first ("what is in this folder?",
+   * "what can I do?") is judged on where it goes next. Maps a tool name to the result to hand back. Absent = one round only (the old
+   * behaviour: whatever the model calls first is its choice).
+   */
+  infoTools?: Record<string, (input: Record<string, unknown>) => string>
   /** tool name -> role that owns it, so a router that handles a request with its own core tool can be judged fairly. */
   toolOwner: (toolName: string) => string | undefined
 }
@@ -83,21 +93,64 @@ export function isCorrect(choice: Choice, expectedRole: string, toolOwner: EvalS
   return false
 }
 
-async function firstChoice(provider: ModelProvider, model: string, setup: EvalSetup, prompt: string, signal?: AbortSignal): Promise<Choice> {
+async function decide(
+  provider: ModelProvider,
+  model: string,
+  setup: EvalSetup,
+  prompt: string,
+  maxRounds: number,
+  signal?: AbortSignal
+): Promise<{ choice: Choice; rounds: number; explored: string[] }> {
   const messages: Message[] = [{ role: 'user', content: [{ type: 'text', text: prompt }] }]
-  try {
+  const explored: string[] = []
+  const info = setup.infoTools ?? {}
+  for (let round = 1; round <= maxRounds; round++) {
+    const calls = new Map<string, { name: string; json: string; thoughtSignature?: string }>()
     let answered = false
-    for await (const ev of provider.stream({ model, system: setup.system, messages, tools: setup.tools, maxTokens: 1024, signal })) {
-      if (ev.type === 'tool_use_start') {
-        const role = roleFromDelegateName(ev.name)
-        return role ? { type: 'delegate', role } : { type: 'tool', name: ev.name }
+    let text = ''
+    try {
+      for await (const ev of provider.stream({ model, system: setup.system, messages, tools: setup.tools, maxTokens: 1024, signal })) {
+        if (ev.type === 'tool_use_start') calls.set(ev.id, { name: ev.name, json: '', thoughtSignature: ev.thoughtSignature })
+        else if (ev.type === 'tool_use_delta') {
+          const c = calls.get(ev.id)
+          if (c) c.json += ev.partialInput
+        } else if (ev.type === 'text_delta') {
+          answered = true
+          text += ev.text
+        }
       }
-      if (ev.type === 'text_delta') answered = true
+    } catch (err) {
+      return { choice: { type: 'error', message: err instanceof Error ? err.message : String(err) }, rounds: round, explored }
     }
-    return answered ? { type: 'answer' } : { type: 'error', message: 'no output' }
-  } catch (err) {
-    return { type: 'error', message: err instanceof Error ? err.message : String(err) }
+    if (calls.size === 0) return { choice: answered ? { type: 'answer' } : { type: 'error', message: 'no output' }, rounds: round, explored }
+
+    // The first call that is NOT an exploration tool is the decisive choice.
+    const entries = [...calls.entries()]
+    const decisive = entries.find(([, c]) => !(c.name in info) || round === maxRounds)
+    if (decisive) {
+      const name = decisive[1].name
+      const role = roleFromDelegateName(name)
+      return { choice: role ? { type: 'delegate', role } : { type: 'tool', name }, rounds: round, explored }
+    }
+    // Every call was exploration: answer them and let the model continue.
+    const parse = (json: string): Record<string, unknown> => {
+      try {
+        return JSON.parse(json || '{}') as Record<string, unknown>
+      } catch {
+        return {}
+      }
+    }
+    messages.push({
+      role: 'assistant',
+      content: [...(text ? [{ type: 'text' as const, text }] : []), ...entries.map(([id, c]) => ({ type: 'tool_use' as const, id, name: c.name, input: parse(c.json), ...(c.thoughtSignature ? { thoughtSignature: c.thoughtSignature } : {}) }))]
+    })
+    messages.push({
+      role: 'user',
+      content: entries.map(([id, c]) => ({ type: 'tool_result' as const, toolUseId: id, content: info[c.name](parse(c.json)) }))
+    })
+    for (const [, c] of entries) explored.push(c.name)
   }
+  return { choice: { type: 'error', message: 'no decision' }, rounds: maxRounds, explored }
 }
 
 export interface RoutingReport {
@@ -108,6 +161,8 @@ export interface RoutingReport {
   total: number
   /** Per expected role: [correct, total]. */
   byRole: Record<string, [number, number]>
+  /** Cases where the model explored (listed a folder, asked what it can do) before deciding — extra rounds and tokens even when it ends up right. */
+  exploredFirst: number
 }
 
 export async function runRoutingEval(
@@ -116,13 +171,14 @@ export async function runRoutingEval(
   setup: EvalSetup,
   cases = buildRoutingCases(),
   signal?: AbortSignal,
+  maxRounds = 1,
   /** Called as each case finishes — a real model can take a minute per case, so a run must show progress and survive being cut short. */
   onOutcome?: (outcome: RoutingOutcome, index: number, total: number) => void
 ): Promise<RoutingReport> {
   const outcomes: RoutingOutcome[] = []
   for (const [i, c] of cases.entries()) {
-    const choice = await firstChoice(provider, model, setup, c.prompt, signal)
-    const outcome: RoutingOutcome = { case: c, choice, correct: isCorrect(choice, c.expectedRole, setup.toolOwner) }
+    const { choice, rounds, explored } = await decide(provider, model, setup, c.prompt, maxRounds, signal)
+    const outcome: RoutingOutcome = { case: c, choice, correct: isCorrect(choice, c.expectedRole, setup.toolOwner), rounds, explored }
     outcomes.push(outcome)
     onOutcome?.(outcome, i, cases.length)
   }
@@ -132,15 +188,15 @@ export async function runRoutingEval(
     e[1]++
     if (o.correct) e[0]++
   }
-  return { provider: provider.id, model, outcomes, correct: outcomes.filter((o) => o.correct).length, total: outcomes.length, byRole }
+  return { provider: provider.id, model, outcomes, correct: outcomes.filter((o) => o.correct).length, total: outcomes.length, byRole, exploredFirst: outcomes.filter((o) => o.explored.length > 0).length }
 }
 
 export function describeChoice(c: Choice): string {
-  return c.type === 'delegate' ? `delegate ${c.role}` : c.type === 'tool' ? `tool ${c.name}` : c.type === 'error' ? `error: ${c.message}` : 'answered directly'
+  return c.type === 'delegate' ? `delegate ${c.role}` : c.type === 'tool' ? `tool ${c.name}` : c.type === 'error' ? `error: ${c.message.replace(/\s+/g, ' ').slice(0, 140)}` : 'answered directly'
 }
 
 export function formatRoutingReport(r: RoutingReport): string {
-  const lines = [`Routing evaluation — ${r.provider} / ${r.model}: ${r.correct}/${r.total} correct`]
+  const lines = [`Routing evaluation — ${r.provider} / ${r.model}: ${r.correct}/${r.total} correct` + (r.exploredFirst ? ` (${r.exploredFirst} explored first — extra rounds)` : '')]
   for (const [role, [ok, n]] of Object.entries(r.byRole)) lines.push(`  ${role.padEnd(18)} ${ok}/${n}`)
   const misses = r.outcomes.filter((o) => !o.correct)
   if (misses.length) {

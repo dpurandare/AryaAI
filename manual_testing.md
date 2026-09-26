@@ -172,11 +172,20 @@ Settings > **Slim router** > tick **Use the slim router**. Applies to your next 
 | 8.4 | A follow-up turn in a session whose history has tool calls the slim router doesn't carry (e.g. the Northwind session with `db_execute_sql` calls) | No provider error; the model isn't confused by earlier calls (they are replayed as text). |
 | 8.5 | Ask "what can you do?" | `describe_capabilities` still works. |
 
-If you have API keys for other providers, run the script (it needs no app running):
+You do not need to export any key: the helper below decrypts the ones you already configured in Sachivji (in memory, only for that
+command, redacted from the output). Each run is ONE sample of a non-deterministic model, so run it more than once before believing a
+difference of a few cases.
 ```bash
-ANTHROPIC_API_KEY=... npx vite-node --config vitest.config.ts scripts/routing-eval.mts -- anthropic claude-haiku-4-5-20251001
-OPENAI_API_KEY=...    npx vite-node --config vitest.config.ts scripts/routing-eval.mts -- openai <model> --full   # full-registry router, for comparison
+# Anthropic has no key configured in Sachivji yet — add one in Settings first, or use the env-var form (ANTHROPIC_API_KEY=... npx vite-node ...).
+E="./node_modules/electron/dist/electron --no-sandbox scripts/with-app-key.cjs"
+R="npx vite-node --config vitest.config.ts scripts/routing-eval.mts --"
+$E openai   -- $R openai <model> --rounds=3            # slim router (default core)
+$E openai   -- $R openai <model> --rounds=3 --full     # full-registry router, for comparison
+$E mistral  -- $R mistral codestral-latest --rounds=3
+$E groq     -- $R groq <model> --rounds=3
+$E openai   -- $R openai <model> --rounds=3 --core=describe_capabilities,shell_execute,write_file,web_search   # core without read_file / list_directory
 ```
+Results so far are in `design-discussion.md` Appendix E (Google models only).
 Paste the "Replay probe" and "Misses" parts of the output into the report. Add `--limit=12` to keep it short.
 
 ---
@@ -251,7 +260,7 @@ prompt caching. The trims can only be judged by whether a real model still uses 
 | 11b.3 | "Create a 2-slide .pptx with just titles and bullets" | Works (plain deck). For "a 10-slide presentation with charts" it must use the deck flow instead. |
 | 11b.4 | Template extraction on a `.docx` of yours: "Turn `<file>.docx` into a template" | It runs `detect`, **asks you to confirm the field list** before `apply`, and can be refined. |
 | 11b.5 | **Anthropic only:** run any multi-round task (e.g. 4.x) and watch the context meter | Numbers keep growing sensibly with the conversation. They must **not** collapse to a tiny value after round 2 (that would mean cached tokens aren't being counted). Cost shown is an *upper bound* for Anthropic now. |
-| 11b.6 | **Anthropic / OpenAI:** `npx vite-node --config vitest.config.ts scripts/cache-probe.mts -- anthropic <model>` (keys from env) | Call 1: `cached 0`; calls 2–3: a large cached share and a lower first-token time. If `cached` stays 0, tell me the provider and model. |
+| 11b.6 | **Anthropic / OpenAI:** `$E openai -- npx vite-node --config vitest.config.ts scripts/cache-probe.mts -- openai <model> --full` (same helper as section 8; for Anthropic use an env var until a key is configured) | Call 1: `cached 0`; calls 2–3: a large cached share and a lower first-token time. If `cached` stays 0, tell me the provider and model. |
 
 ---
 

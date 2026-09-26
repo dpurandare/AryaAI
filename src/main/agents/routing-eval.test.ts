@@ -29,7 +29,7 @@ describe('buildRoutingCases', () => {
   })
 
   it('turns non-examples into cases expecting the role named in the bracket, with the bracket removed from the prompt', () => {
-    expect(cases).toContainEqual({ prompt: 'Save these findings into a Word document', expectedRole: 'document-creator', kind: 'notExample', from: 'research' })
+    expect(cases).toContainEqual({ prompt: "Write the sentence 'Solar tariffs fell 5% in Q3' into a new Word document", expectedRole: 'document-creator', kind: 'notExample', from: 'research' })
     expect(cases.every((c) => !c.prompt.includes('['))).toBe(true)
   })
 
@@ -105,6 +105,65 @@ describe('runRoutingEval', () => {
     const text = formatRoutingReport(await runRoutingEval(provider, 'm', setup, [cases[0]]))
     expect(text).toContain('mock / m: 0/1 correct')
     expect(text).toContain('"How many customers?" → expected data, got delegate coding')
+  })
+})
+
+describe('runRoutingEval with follow-through (--rounds)', () => {
+  const info = { list_directory: () => 'notes.txt\nsales.csv', describe_capabilities: () => 'You can do many things.' }
+  const withInfo: EvalSetup = { ...setup, infoTools: info }
+  const c = { prompt: 'Summarise sales.csv', expectedRole: 'data-processor', kind: 'example' as const, from: 'data-processor' }
+
+  it('a model that explores first and then delegates correctly is judged on the delegation, and the exploration is reported', async () => {
+    const provider = new MockProvider([
+      { toolCalls: [{ id: '1', name: 'list_directory', input: {} }] },
+      { toolCalls: [{ id: '2', name: 'delegate_to_data_processor', input: { task: 'x' } }] }
+    ])
+    const report = await runRoutingEval(provider, 'm', withInfo, [c], undefined, 3)
+    expect(report.outcomes[0]).toMatchObject({ correct: true, rounds: 2, explored: ['list_directory'], choice: { type: 'delegate', role: 'data-processor' } })
+    expect(report.exploredFirst).toBe(1)
+    expect(formatRoutingReport(report)).toContain('1 explored first')
+  })
+
+  it('hands the exploration result back to the model as a proper tool_use / tool_result pair', async () => {
+    const provider = new MockProvider([
+      { toolCalls: [{ id: 'x1', name: 'list_directory', input: { path: '.' } }] },
+      { text: 'ok', stopReason: 'end_turn' }
+    ])
+    await runRoutingEval(provider, 'm', withInfo, [c], undefined, 3)
+    const second = provider.requests[1].messages
+    expect(second.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
+    expect(second[1].content[0]).toMatchObject({ type: 'tool_use', id: 'x1', name: 'list_directory', input: { path: '.' } })
+    expect(second[2].content[0]).toEqual({ type: 'tool_result', toolUseId: 'x1', content: 'notes.txt\nsales.csv' })
+  })
+
+  it('echoes a tool call\'s thoughtSignature back on the next round (Gemini 3 rejects a follow-up without it: HTTP 400 "missing a thought_signature")', async () => {
+    const provider = new MockProvider([{ toolCalls: [{ id: 'g1', name: 'list_directory', input: {}, thoughtSignature: 'SIG-123' }] }, { text: 'ok', stopReason: 'end_turn' }])
+    await runRoutingEval(provider, 'm', withInfo, [c], undefined, 3)
+    expect(provider.requests[1].messages[1].content[0]).toMatchObject({ type: 'tool_use', id: 'g1', thoughtSignature: 'SIG-123' })
+  })
+
+  it('a model that keeps exploring is not scored correct: on the last round the exploration call itself is its choice', async () => {
+    const provider = new MockProvider([
+      { toolCalls: [{ id: '1', name: 'list_directory', input: {} }] },
+      { toolCalls: [{ id: '2', name: 'describe_capabilities', input: {} }] },
+      { toolCalls: [{ id: '3', name: 'list_directory', input: {} }] }
+    ])
+    const report = await runRoutingEval(provider, 'm', withInfo, [c], undefined, 3)
+    expect(report.outcomes[0]).toMatchObject({ correct: false, rounds: 3, choice: { type: 'tool', name: 'list_directory' } })
+  })
+
+  it('with the default single round, the first call is the choice — the old behaviour, unchanged', async () => {
+    const provider = new MockProvider([{ toolCalls: [{ id: '1', name: 'list_directory', input: {} }] }])
+    const report = await runRoutingEval(provider, 'm', withInfo, [c])
+    expect(report.outcomes[0]).toMatchObject({ rounds: 1, explored: [], choice: { type: 'tool', name: 'list_directory' } })
+  })
+
+  it('a delegate call made alongside an exploration call is the decisive choice', async () => {
+    const provider = new MockProvider([
+      { toolCalls: [{ id: '1', name: 'list_directory', input: {} }, { id: '2', name: 'delegate_to_data_processor', input: { task: 'x' } }] }
+    ])
+    const report = await runRoutingEval(provider, 'm', withInfo, [c], undefined, 3)
+    expect(report.outcomes[0]).toMatchObject({ correct: true, rounds: 1, choice: { type: 'delegate', role: 'data-processor' } })
   })
 })
 

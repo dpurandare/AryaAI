@@ -910,20 +910,26 @@ before step 1 as their own release. Order inside the track:
 1. **Per-provider replay compatibility** for history containing calls to
    tools not in the current request's tool list (Anthropic, OpenAI-compatible
    incl. Mistral and Groq, Google, Ollama).
-   **Resolved by construction, verified on one provider only.** The slim router never sends such a call: it replays it as text
+   **Resolved by construction, verified on two providers.** The slim router never sends such a call: it replays it as text
    (`collapseUnavailableToolCalls`, unit-tested to keep the pairing invariant), so whether a provider tolerates the raw form no longer
-   matters. Probe run (`scripts/routing-eval.mts`): **Ollama / qwen3.8-custom accepted both the raw and the collapsed history**; the other
-   providers (Anthropic, OpenAI, Google, Groq, Mistral) have not been probed — the script does it with your key. The collapsed form is the
-   only one that must always be accepted.
+   matters. Probe run (`scripts/routing-eval.mts`): **Ollama / qwen3.8-custom and Google / gemini-3.5-flash-lite each accepted both the raw and
+   the collapsed history.** Anthropic, OpenAI, Groq and Mistral have not been probed. The collapsed form is the only one that must always be
+   accepted.
 2. **Multi-model routing evaluation** — codestral, gpt-oss, Gemini flash-lite,
    Groq, an Anthropic model — using the role examples / non-examples (3.2) and
    real prompts from the session DB.
-   **NOT resolved.** One local model, partial run (Appendix E): 16 of the first 21 cases judged correct, but the *kind* of correct matters
-   and there are two real warnings — see Appendix E. Needs the other models and the remaining cases.
+   **Partly resolved, model-dependent (Appendix E).** One provider family (Google: `gemini-3.5-flash-lite` and `gemini-3.5-flash`), plus one
+   partial local run. On the same 43 cases with follow-through the slim router is better than the full one on one model and worse on the other
+   (42 vs 37, and 27 vs 31), and the main slim failure mode is a reflex to explore with the core file tools before delegating. Anthropic,
+   OpenAI, Groq and Mistral not run; repeat runs not done.
 3. **Caching economics** — measure the real cost and latency effect per
    provider before claiming savings, and confirm the tool list is
    byte-stable across requests.
-   **Partly measured, not resolved.** Built in step 7: Anthropic prompt caching, cache-aware usage accounting, byte-stability tests, and `scripts/cache-probe.mts` (same request repeated; prints first-token time, input tokens, cached tokens per call — run it with your keys). Real data so far is one local model only (Appendix E, run 2): the prompt-size effect on latency there is within the noise of a thinking model's generation time, so it shows nothing either way. **Money** saved on Anthropic/OpenAI is still unmeasured — that needs your billing figures.
+   **Partly measured, not resolved.** Built in step 7: Anthropic prompt caching, cache-aware usage accounting, byte-stability tests, and
+   `scripts/cache-probe.mts`. Measured (Appendix E): **Gemini implicit caching works on `gemini-3.5-flash` for the full router prefix (69% of
+   11,580 tokens cached from the second call) — evidence that the byte-stable prefix pays off — but not on `gemini-3.5-flash-lite`, and not for
+   the slim prefix (3,107 tokens: below Gemini's minimum).** Local-model latency showed nothing either way. **Anthropic caching has still never
+   run against the real API** (no Anthropic key is configured), and money saved is unmeasured.
 4. **Classify-prompt migration** — hand-written role facts replaced by the
    generated digest (3.6), verified on real compound prompts.
    **Done in step 2** (generated digest with live availability, unit-tested); **not verified on real compound prompts with a real model.**
@@ -1318,3 +1324,50 @@ tokens of the full router cost roughly 2–3 seconds of prefill, small next to t
 model; the 15.0 s outlier had 32 output tokens against 12). **No evidence here that slimming or caching changes latency materially for a
 local model** — the case for the slim router rests on token count, cost on providers without strong caching, and tool-selection quality,
 not on speed. The token-cost side on Anthropic / OpenAI is unmeasured.
+
+**Runs 3–8 — 2026-09-26, Google Gemini, via `scripts/with-app-key.cjs` (the key from Sachivji's own secret store, redacted from all output).**
+
+*Harness changes made for these runs:* (1) **follow-through** (`--rounds=N`): exploration tools (`list_directory`, `read_file`,
+`describe_capabilities`) are answered — `describe_capabilities` with the real generated text, the folder listing and file contents from a small
+fixed fake workspace — and the model continues; only its first *decisive* choice (a delegate, or any non-exploration tool) is scored, and
+"explored first" is reported separately. (2) A bug in the first follow-through attempt — the evaluation dropped each tool call's
+`thoughtSignature`, so Gemini 3 answered every second round with HTTP 400 — fixed and tested (the app itself preserves it). (3) Nine
+of the 43 manifest cases were **underspecified** ("summarise *these findings*", with no findings; "email Priya a summary of the invoice
+*discussion*", which really is a History Analyst request) and were made self-contained; the changed cases account for part of the score
+difference between the first and later runs. (4) `--core=a,b,c` evaluates a slim router with a different hot core.
+
+*Replay probe (gate 1):* `gemini-3.5-flash-lite` accepted both the raw and the collapsed history.
+
+*Routing, 43 cases, up to 3 rounds, one sample each (noise is a few cases):*
+
+| Router | flash-lite: correct / explored first / ~router-input tokens | flash: correct / explored first / ~tokens |
+|---|---|---|
+| Full registry (12.3K prefix) | 37 / 13 / 694K | 31 / 18 / 833K |
+| Slim, default core (3.1K prefix) | 42 / 17 / 195K | 27 / 30 / 292K |
+| Slim, core without `read_file` + `list_directory` (~3.0K) | 39 / 7 / 149K | 31 / 14 / 182K |
+
+(Token figures = rounds × prefix size only; conversation growth and tool results are not counted. Even counting every extra exploration
+round the slim router used about 21–35% of the full router's router-input tokens.)
+
+What the runs show — and do not:
+- **Accuracy is model-dependent, not clearly better or worse for slim.** The stronger model did worse on the default slim core (27) than on
+  the full one (31); the smaller one did better (42 vs 37). With n = 43 and one sample each, differences of 3–4 cases are noise.
+- **The slim failure mode is exploration.** On the default core the models reach for `read_file` / `list_directory` even for planning and
+  email requests (30 of 43 explored first on flash) and sometimes run out of rounds without delegating. **Removing those two tools from the
+  core roughly halves exploration (30 → 14, 17 → 7) and brings flash back to the full router's 31**, at a lower prefix cost; flash-lite
+  moved 42 → 39, within noise. This is the evidence for TASKS #122; the default core has **not** been changed.
+- Caveats: the fake workspace lists files (`report.md`, `notes.txt`) that can invite reading; a model that calls a tool it was not given
+  (it happened with `read_file` on the reduced core) is scored as that choice, whereas the product would answer "that tool belongs to
+  <role> — call `delegate_to_<role>`"; the two `mcp-operator` cases cannot pass (no MCP server is connected here); `describe_capabilities`
+  was called first for many data / connection / email requests on the smaller model — the router-prompt sentence about "whether you can
+  do something" may be inviting it.
+
+*Caching probe (`scripts/cache-probe.mts`, identical request repeated four times):*
+
+| Model | Router prefix | Cached tokens |
+|---|---|---|
+| gemini-3.5-flash-lite | slim 3,107 | 0 |
+| gemini-3.5-flash-lite | full 11,580 | 0 (latency flat, ~1.1 s) |
+| gemini-3.5-flash | full 11,580 | **8,012 (69%) from call 2 on** |
+| gemini-3.5-flash | slim 3,107 | 0 (below Gemini's minimum size) |
+| gemini-2.5-flash | — | not available to new API users (HTTP 404) |

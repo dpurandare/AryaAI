@@ -134,10 +134,13 @@ export class GoogleProvider implements ModelProvider, EmbeddingProvider {
       }
 
       if (chunk.usageMetadata) {
+        // Gemini caches a byte-stable prefix implicitly and reports the cached share here; `promptTokenCount` already includes it.
+        const cached = chunk.usageMetadata.cachedContentTokenCount ?? 0
         yield {
           type: 'usage',
           inputTokens: chunk.usageMetadata.promptTokenCount ?? 0,
-          outputTokens: chunk.usageMetadata.candidatesTokenCount ?? 0
+          outputTokens: chunk.usageMetadata.candidatesTokenCount ?? 0,
+          ...(cached > 0 ? { cacheReadTokens: cached } : {})
         }
       }
 

@@ -70,6 +70,19 @@ describe('GoogleProvider', () => {
     ])
   })
 
+  it('reports the cached part of the prompt (Gemini implicit caching) without changing inputTokens, and omits the key when nothing was cached', async () => {
+    mockGenerateContentStream.mockResolvedValueOnce(
+      fakeStream([{ candidates: [{ finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 3000, candidatesTokenCount: 4, cachedContentTokenCount: 2500 } }])
+    )
+    const provider = new GoogleProvider('key')
+    expect(await collect(provider.stream({ model: 'gemini-flash-latest', messages: [], maxTokens: 10 }))).toContainEqual({ type: 'usage', inputTokens: 3000, outputTokens: 4, cacheReadTokens: 2500 })
+
+    mockGenerateContentStream.mockResolvedValueOnce(
+      fakeStream([{ candidates: [{ finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 2, cachedContentTokenCount: 0 } }])
+    )
+    expect(await collect(provider.stream({ model: 'gemini-flash-latest', messages: [], maxTokens: 10 }))).toContainEqual({ type: 'usage', inputTokens: 50, outputTokens: 2 })
+  })
+
   it('streams a tool call whose finishReason arrives in a later, call-free chunk (the real shape, confirmed live)', async () => {
     mockGenerateContentStream.mockResolvedValue(
       fakeStream([

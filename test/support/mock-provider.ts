@@ -11,6 +11,8 @@ export interface ScriptedToolCall {
   input: Record<string, unknown>
   /** Overrides `input` as the literal streamed partialInput — for exercising malformed-JSON handling. */
   rawInput?: string
+  /** Opaque per-call signature Gemini 3 requires echoed back — emitted on `tool_use_start` like the real Google adapter does. */
+  thoughtSignature?: string
 }
 
 export interface ScriptedTurn {
@@ -156,7 +158,7 @@ export class MockProvider implements ModelProvider {
     }
 
     for (const call of turn.toolCalls ?? []) {
-      yield { type: 'tool_use_start', id: call.id, name: call.name }
+      yield { type: 'tool_use_start', id: call.id, name: call.name, ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {}) }
       yield { type: 'tool_use_delta', id: call.id, partialInput: call.rawInput ?? JSON.stringify(call.input) }
     }
 
