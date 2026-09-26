@@ -1,9 +1,12 @@
 # Sachivji — role overhaul & lazy capability loading (design discussion)
 
-Status: **discussion draft, revision 2 — nothing implemented.** Written
-2026-09-25 from a live investigation (a session where the model answered
-"List all tools available to you" with "I don't have the necessary tools"),
-followed by a measured audit of what Sachivji actually sends to the LLM.
+Status: **implemented on branch `design_change` (2026-09-26), pending real-model verification.** Every step of the order of work (section 10)
+is built except step 6 (skills — not warranted by the measurements) and the slim router (step 4) ships **default off** because its release gates
+are not cleared. Task-level status and open work: `TASKS.md`, section "Redesign" (#110–#134); manual test plan: `manual_testing.md`. Everything
+was verified with mocked models, isolated live runs of the app and one local Ollama model — **no cloud model has run any of it**. The rest of this
+document is the design as written (revisions 1–4) with a **Status** note under each step that was built. Written 2026-09-25 from a live
+investigation (a session where the model answered "List all tools available to you" with "I don't have the necessary tools"), followed by a
+measured audit of what Sachivji actually sends to the LLM.
 
 **What changed in revision 2** (after a critical review of revision 1):
 
@@ -772,31 +775,39 @@ core, and rises for multi-domain requests.
 1. **Which tools are hot?** Data-driven, but the sample is small. Proposal:
    ship the core in Appendix-C order, log real tool usage going forward, and
    revise. Is the SQL trio in the core?
+   **Status:** the SQL trio stayed OUT of the core (approved default); the core is `describe_capabilities`, `shell_execute`, `read_file`, `list_directory`, `write_file`, `web_search` (771 tokens). The usage log exists (`tool_usage_log`); revising the core from data is TASKS #122.
 2. **Context per hop.** Isolated (brief + artifact paths) by default for
    pipeline steps, or full parent history by default? Isolation saves tokens
    but a role that needs earlier conversation context will miss it.
+   **Status: open** — unchanged; TASKS #125.
 3. **Can the router load capabilities itself** (no delegation) for small,
    frequent ones? Only relevant if skills are built.
+   **Status:** moot — skills were not built (TASKS #128).
 4. **Are skills user-extensible** (a workspace `skills/` directory)? Gives
    users their own procedures, but makes skill quality and the tools a skill
    may grant a product/safety question.
+   **Status:** moot for now (TASKS #128); user-defined *roles* are built (section 11, #126).
 5. **History Analyst: role or core tool?** Cheap as a role; if it never needs
    more than `search_history`, a core tool is simpler.
+   **Decided:** a role (`history-analyst`).
 6. **Where does confirmation policy live?** Today per tool; a role or skill
    could declare it (e.g. Developer: all mutating calls confirm).
+   **Status: open** — still per tool; a role file cannot change it (by design, section 11.1).
 7. **How is routing evaluated?** Proposal: replay real prompts from the
    session DB per provider, checking (a) correct role or core tool chosen,
    (b) no unnecessary delegation, (c) no dropped sub-task on multi-step
    requests.
+   **Status:** the harness is built (`scripts/routing-eval.mts`, Appendix E); one partial run on one local model; the real evaluation is TASKS #120.
 8. **User-defined roles (section 11):**
    - **Decided (2026-09-25):** roles the user places in the roles folder
      themselves load **enabled by default**. Roles arriving through any future
      import/share feature are a separate case and still load disabled until
      reviewed.
-   - Still open: extend-only or allow overriding a built-in id (recommended:
-     extend-only in v1)? Folder location and whether Settings can point
-     elsewhere? Should the same file format also carry skills?
-9. **Python prerequisite (section 4.3):**
+   - **Decided and built (2026-09-26, #126):** **extend-only** (a user role can never take a built-in or retired id); folder `<userData>/roles/`,
+     not configurable; the format is **not** shared with skills (revisit with #128 / #132).
+9. **Python prerequisite (section 4.3) — all decided 2026-09-26 ("defaults are fine") and built (#110, #111):** onboarding gate with a "continue
+   without Python" escape; minimum Python **3.10** (pins chosen to fit it — newer numpy / matplotlib would have needed 3.12 / 3.11); base packages
+   matplotlib, numpy, pillow, python-docx, openpyxl, pinned; visible `<workspace>/venv`; no bundled Python. The original questions follow.
    - **Enforcement.** Onboarding gate with an explicit "continue without
      Python" escape (recommended), or hard-block app start? Chat- and
      DB-only users argue for the gate.
@@ -876,9 +887,7 @@ Each step ships on its own and is checked against measured numbers.
    built-in — and duplicates) are shared by the manifest lint, the IPC boundary and the future loader. `roleLabel(id)` replaces every direct
    label lookup and **humanizes an id that no longer resolves** ("sql-reporter" → "Sql Reporter") so a chip is never blank (11.4). A pinned
    role that does not resolve now **falls back to Auto with a persisted notice** instead of throwing (11.4); a malformed pin arriving over
-   IPC is treated as no pin. *Still to do for section 11:* the file format and loader, a runtime role registry (the manifest and
-   `AGENT_ROLES` / `PLANNABLE_ROLES` are still static module constants, so a user role cannot yet appear in the picker or as a plan
-   target), the Settings "Roles" panel, and the load-time lint with token-cost warnings.
+   IPC is treated as no pin. *Section 11 itself was built afterwards — see the "first slice implemented" status note at the end of section 11 (TASKS #126).*
 
 **Track A — workspace runtime (parallel, independent of steps 1–7).**
 `ensureWorkspace(root)` and the Python prerequisite (4.3) touch startup,

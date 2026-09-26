@@ -1,10 +1,10 @@
 # Manual test plan — the `design_change` branch (redesign steps 1–5 and 7, Track A, user-defined roles)
 
-Everything on this branch was verified with **mocked models** (1,074 automated tests) plus a handful of live checks in an
+Everything on this branch was verified with **mocked models** (1,231 automated tests) plus a handful of live checks in an
 isolated Electron instance and one partial run on a local Ollama model. **No cloud model has run any of it.** That is what this
 plan is for: to find out whether real models actually follow the new roles, the handoff and `python_run`.
 
-Branch: `design_change` (latest commit: step 7). Nothing here is released; `v0.2.1` / `v0.2.2` drafts are unpublished.
+Branch: `design_change` (latest commit: user-defined roles, #126). Nothing here is released; `v0.2.1` / `v0.2.2` drafts are unpublished.
 
 **How to use this:** work top to bottom; `P1` sections are the ones that decide whether the redesign works, `P2` are regression
 checks, `P3` are optional. For each check, note **Pass / Fail / Odd** and paste anything odd into the report template at the

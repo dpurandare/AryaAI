@@ -1,5 +1,13 @@
 # Sachivji — minimum LLM prompt size
 
+> **Historical measurement (2026-09-25) — the numbers below are superseded.** Since then the router prompt moved to
+> `src/main/agents/system-prompt.ts`, the roles were split and MCP moved to the MCP Operator (design steps 2 and 5), and `python_run`,
+> `describe_capabilities` and the handoff were added. The permanent, current measurement is `src/main/agents/prompt-budget.test.ts`
+> (`PRINT_BUDGET=1 npx vitest run src/main/agents/prompt-budget`). As of 2026-09-26 (same estimator): full-registry router **10,610 tokens**
+> (prompt 862 + 9,748 tool schemas), **slim router 2,939**; largest delegated roles Data Access ~2.6K, Developer ~2.5K, Document Creator ~1.9K.
+> Kept for the method and for the MCP cost analysis, which still shows what a large server costs.
+
+
 Measured 2026-09-24, re-measured 2026-09-25 after gbrain and llmwiki were
 removed from the app (only `energy_wiki` remains configured — confirmed
 live via `app_settings.mcpServers` in `~/.config/Sachivji/sachiv.db`).
