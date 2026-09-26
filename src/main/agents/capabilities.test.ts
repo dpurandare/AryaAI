@@ -30,7 +30,7 @@ function input(over: Partial<CapabilitiesInput> = {}): CapabilitiesInput {
   return {
     agents: new Map<AgentRole, Agent>([
       ['planning', agent('planning', [])],
-      ['terminal-devops', agent('terminal-devops', [shell, mcpA, mcpB])],
+      ['coding', agent('coding', [shell, mcpA, mcpB])],
       ['data', agent('data', [sql])]
     ]),
     registry,
@@ -44,9 +44,9 @@ function input(over: Partial<CapabilitiesInput> = {}): CapabilitiesInput {
 describe('buildCapabilities', () => {
   it('lists specialists with their real tools and says reasoning-only roles have none', () => {
     const text = buildCapabilities(input())
-    expect(text).toMatch(/Planning \(delegate_to_planning\).*no tools \(reasoning only\)/)
-    expect(text).toMatch(/Terminal\/DevOps \(delegate_to_terminal_devops\).*Tools: shell_execute, plus 2 MCP tools/)
-    expect(text).toMatch(/Data \(delegate_to_data\).*Tools: db_execute_sql/)
+    expect(text).toMatch(/Planner \(delegate_to_planning\).*no tools \(reasoning only\)/)
+    expect(text).toMatch(/Developer \(delegate_to_coding\).*Tools: shell_execute, plus 2 MCP tools/)
+    expect(text).toMatch(/Data Access \(delegate_to_data\).*Tools: db_execute_sql/)
   })
 
   it('collapses MCP tools per server instead of listing every one', () => {

@@ -29,7 +29,6 @@ export const MAX_SUMMARY_WORDS = 30
 
 const BROAD_WORDS = /\b(anything|everything|all tasks?|any task|general[- ]purpose|general tasks?|whatever)\b/i
 const NON_SCOPE_CUE = /\b(not|never|doesn'?t|does not|cannot|can'?t|no\b|without|only)\b/i
-const HANDOFF_CUE = /(\bhand(?:s|ed)?[- ]?off\b|\bhands?(?: \w+){0,2} (?:to|over)\b|\bgoes to\b|\bgo to\b|\buse\b|\binstead\b|→|->)/i
 
 /** Word-set overlap above which two summaries are considered to compete for the same requests. */
 const OVERLAP_THRESHOLD = 0.6
@@ -83,7 +82,8 @@ export function lintRoutingSummary(role: RoleMeta, siblings: readonly RoleMeta[]
   const mentionsSibling = siblings.some(
     (o) => o.id !== role.id && (s.toLowerCase().includes(o.label.toLowerCase()) || s.toLowerCase().includes(o.id))
   )
-  if (!HANDOFF_CUE.test(s) || !mentionsSibling) add('summary-handoff', 'summary must point at the role that handles the excluded work')
+  // The pointer IS the hand-off: naming the role that takes the excluded work ("Does not X (Role)").
+  if (!mentionsSibling) add('summary-handoff', 'summary must name the role that handles the excluded work')
 
   const mine = words(s)
   for (const o of siblings) {

@@ -33,22 +33,11 @@ export const SYSTEM_PROMPT =
   "call without first ruling out a fixable mistake in how it was called. If some part genuinely can't " +
   "be completed (missing capability, missing information, a tool reporting it's unavailable), say " +
   "plainly which part and why, rather than silently ending the turn as if everything asked for was " +
-  'finished. When asked to ' +
-  'recall something from an earlier conversation, or to compare how a detail changed over time, use ' +
-  "the search_history tool (it searches the user's own past sessions, including this one — useful " +
-  'if this conversation has grown long enough that something earlier may no longer be visible to ' +
-  "you) rather than guessing or claiming you have no memory of past conversations. If it reports no results or " +
-  "that it's unavailable, say so plainly instead of working around it. A request can need more than " +
-  'just retrieving that past context — e.g. "search for the analysis we did for X, and show a ' +
-  'comparison for Y" means finding X via search_history AND THEN actually redoing the analysis for Y ' +
-  "using the same method, presented as a comparison — not just relaying the retrieved excerpt as the " +
-  'whole answer. To set up a new Database, External API, or MCP server connection from details the user ' +
-  'gives you in chat, use db_create_connection/api_create_connection/mcp_create_connection instead of ' +
-  'telling the user to fill out the corresponding Settings form by hand — gather the non-secret details ' +
-  "yourself, but never ask the user to type a password/API key/token/bearer token into chat: the " +
-  "confirmation dialog that appears has its own real password field for that, which never reaches you. " +
-  'Each of these tools tests the connection for real before saving it, so a bad host/credential fails ' +
-  'clearly right away. To build a PowerPoint presentation: call pptx_start_deck once, then for each ' +
+  'finished. To recall something from an earlier conversation, delegate to the History Analyst (or call ' +
+  'search_history directly for a quick lookup). To set up a database, external API or MCP server connection ' +
+  'from details given in chat, delegate to the Configurator — never ask the user to type a password or key ' +
+  "into chat: the confirmation dialog it triggers has its own password field. " +
+  'To build a PowerPoint presentation: call pptx_start_deck once, then for each ' +
   'planned slide call pptx_add_slide and delegate_to_page-creator with a brief for that slide (heading, ' +
   'key content/data points, tone/style notes) — page-creator decides the actual visual design and calls ' +
   "pptx_compose_slide itself; you decide the deck's overall structure/flow/slide order, not what a slide " +

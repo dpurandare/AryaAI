@@ -19,23 +19,50 @@ describe('the real role manifest', () => {
     expect(lintRoleStructure(ROLE_MANIFEST)).toEqual([])
   })
 
-  it('keeps every persisted role id, in the original order', () => {
+  it('every routable role summary is a valid routing contract (non-scope + hand-off, short, not over-broad, no overlap)', () => {
+    // Page Creator is internal (neither pickable nor plannable): the top-level calls it per slide, the
+    // router never chooses it, so it has no routing contract to enforce.
+    const issues = ROLE_MANIFEST.filter((r) => r.pickable || r.plannable).flatMap((r) => lintRoutingSummary(r, ROLE_MANIFEST))
+    expect(issues).toEqual([])
+  })
+
+  it('every "[role]" named in a non-example refers to a real role (or several, or the orchestrator)', () => {
+    const ids = new Set<string>(ROLE_MANIFEST.map((r) => r.id))
+    for (const r of ROLE_MANIFEST) {
+      for (const ex of r.notExamples) {
+        const m = /\[([^\]]+)\]\s*$/.exec(ex)
+        expect(m, `${r.id}: non-example "${ex}" must end with [the role that takes it]`).not.toBeNull()
+        const named = m![1].split(/,| then /).map((x) => x.trim().split(' ')[0]).filter(Boolean)
+        if (named.some((n) => n === 'orchestrator')) continue
+        for (const n of named) expect(ids.has(n), `${r.id}: "${n}" is not a role id`).toBe(true)
+      }
+    }
+  })
+
+  it('keeps the persisted ids `coding` (now Developer) and `data` (now Data Access), in a stable order', () => {
     expect(ROLE_MANIFEST.map((r) => r.id)).toEqual([
-      'planning', 'research', 'coding', 'terminal-devops', 'data', 'distribution', 'page-creator', 'email'
+      'planning', 'research', 'history-analyst', 'coding', 'data', 'data-processor', 'document-creator', 'configurator', 'page-creator', 'email'
     ])
+    expect(roleMeta('coding')?.label).toBe('Developer')
+    expect(roleMeta('data')?.label).toBe('Data Access')
   })
 
   it('derives the picker, plan-target and label lists from it (page-creator is delegate-only)', () => {
-    const expected = ['planning', 'research', 'coding', 'terminal-devops', 'data', 'distribution', 'email']
+    const expected = ['planning', 'research', 'history-analyst', 'coding', 'data', 'data-processor', 'document-creator', 'configurator', 'email']
     expect(AGENT_ROLES).toEqual(expected)
     expect(PLANNABLE_ROLES).toEqual(expected)
-    expect(AGENT_ROLE_LABELS['terminal-devops']).toBe('Terminal/DevOps')
     expect(AGENT_ROLE_LABELS['page-creator']).toBe('Page Creator')
-    expect(Object.keys(AGENT_ROLE_LABELS).sort()).toEqual(ROLE_MANIFEST.map((r) => r.id).sort())
+  })
+
+  it('keeps labels for the retired roles so saved sessions, exports and print views still render them', () => {
+    expect(AGENT_ROLE_LABELS['terminal-devops']).toBe('Terminal/DevOps')
+    expect(AGENT_ROLE_LABELS.distribution).toBe('Distribution')
+    expect(roleMeta('terminal-devops')).toBeUndefined() // not a live role
+    expect(AGENT_ROLES).not.toContain('terminal-devops')
   })
 
   it('looks a role up by id', () => {
-    expect(roleMeta('data')?.label).toBe('Data')
+    expect(roleMeta('data-processor')?.label).toBe('Data Processor')
     expect(roleMeta('nope')).toBeUndefined()
   })
 })

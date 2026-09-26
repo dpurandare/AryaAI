@@ -19,6 +19,8 @@ version is still `0`.
 
 ### Changed
 
+- **Specialist roles were reorganised.** *Developer* now both writes and runs code (it absorbed Terminal/DevOps and Distribution), so a task like "make a chart script and run it" is one job instead of a write step with no run step. New narrow specialists: *History Analyst*, *Data Processor*, *Document Creator* and *Configurator*; *Data Access* also owns external-API calls. The tool no specialist previously owned (`mcp_create_connection`) now has a home. Delegated turns are smaller (Researcher ~56%, Developer ~45% fewer prompt tokens). Existing sessions still display and replay correctly.
+- The planner is told which roles are unavailable (e.g. no email account configured) and that a later step only sees earlier results, so earlier steps must return the actual values.
 - Specialist roles are now defined in one manifest (labels, summaries, picker / plan flags, examples) instead of several parallel lists. No routing behaviour change.
 - The message an agent gets when `python` is not found now points at Settings > Runtime instead of asking it to build a virtual environment itself.
 

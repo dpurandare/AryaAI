@@ -33,6 +33,11 @@ export interface RoleMeta {
   readonly pickable: boolean
   /** A valid classify-and-plan step target. */
   readonly plannable: boolean
+  /**
+   * Live configuration this role is useless without — ANY of these being present is enough (Data Access needs a database OR an API).
+   * Feeds the planner's capability digest, so a plan never routes "email it to X" to a role that has no account to send from.
+   */
+  readonly requiresAnyOf?: readonly ('database' | 'api' | 'email')[]
   /** Real prompts that belong to this role — used by the routing evaluation and the summary lint (design 3.2). */
   readonly examples: readonly string[]
   /** Prompts that LOOK like they belong to this role but do not — each names, in brackets, the role that should take it. */
@@ -41,17 +46,18 @@ export interface RoleMeta {
 
 /**
  * Order matters: it is the order of the mode-picker cycle, the router's
- * roster and the plan-target list. Wording of `summary` is intentionally
- * unchanged from before the manifest existed (step 1 is "no behaviour
- * change"); step 2 rewrites summaries as validated routing contracts.
+ * roster and the plan-target list. Each `summary` is a routing contract — it
+ * says what the role does, what it does NOT do, and who takes that instead —
+ * enforced by `lintRoutingSummary` (shared/role-lint.test.ts).
  */
 export const ROLE_MANIFEST = [
   {
     id: 'planning',
-    label: 'Planning',
-    summary: 'Breaks a complex or ambiguous request into a clear, ordered set of concrete steps.',
+    label: 'Planner',
+    summary:
+      'Turns a complex or ambiguous request into ordered steps. Has no tools and executes nothing — hands each step to Researcher, Developer, Data Access or the other specialists.',
     description:
-      'Reasoning only — has no tools of its own. Turns a large or vague request into an ordered plan of concrete steps that the user or another specialist can follow. It never claims to execute anything.',
+      'Reasoning only — has no tools of its own. Turns a large or vague request into an ordered plan of concrete steps, at role granularity, that the user or another specialist can follow. It never claims to execute anything.',
     pickable: true,
     plannable: true,
     examples: [
@@ -60,100 +66,144 @@ export const ROLE_MANIFEST = [
     ],
     notExamples: [
       'Search the web for solar tariff news [research]',
-      'Run the test suite [terminal-devops]'
+      'Run the test suite [coding]'
     ]
   },
   {
     id: 'research',
-    label: 'Research',
-    summary: 'Gathers and synthesizes information relevant to the request.',
+    label: 'Researcher',
+    summary:
+      'Finds information on the web and reads web pages. Does not recall past conversations (History Analyst), call configured APIs (Data Access) or write files (Developer).',
     description:
-      'Looks things up: web search, fetching and reading web pages, semantic search over your own past conversations, and calling configured external APIs. Synthesizes what it finds with sources; it does not write files or run code.',
+      'Looks things up on the web: web search and fetching and reading web pages, synthesizing what it finds with sources. It does not write files, run code, recall your past conversations, or call your configured external APIs.',
     pickable: true,
     plannable: true,
     examples: [
       'Find recent news about renewable energy policy in the EU',
-      'What did we conclude about the Q3 forecast in an earlier conversation?',
-      'Call the weather API for the next three days in Pune'
+      'Summarise what this article says about battery storage costs'
     ],
     notExamples: [
-      'Save these findings into a Word document [coding]',
-      'Query the sales database for last year [data]'
+      'What did we conclude about the Q3 forecast last week? [history-analyst]',
+      'Save these findings into a Word document [document-creator]',
+      'Call the weather API for the next three days [data]'
+    ]
+  },
+  {
+    id: 'history-analyst',
+    label: 'History Analyst',
+    summary:
+      'Recalls and compares things from earlier conversations, including how a detail changed over time. Does not search the web (Researcher).',
+    description:
+      'Semantic search over your own past sessions (including the current one) to recall what was said or decided, or to compare how a detail changed between conversations. It cannot look anything up online.',
+    pickable: true,
+    plannable: true,
+    examples: [
+      'What did we conclude about the Q3 forecast in an earlier conversation?',
+      'How did the numbers we discussed for the Pune site change between last month and now?'
+    ],
+    notExamples: [
+      'Find the latest news on the Pune solar project [research]',
+      'Redo that analysis for a different region [data]'
     ]
   },
   {
     id: 'coding',
-    label: 'Coding',
-    summary: 'Reads, writes, and organizes files in the workspace to implement changes.',
+    label: 'Developer',
+    summary:
+      'Writes AND runs code (Python in the workspace venv), edits files, uses git, cloud CLIs and GitHub. Not for plain Word documents (Document Creator) or database queries (Data Access).',
     description:
-      'Reads, writes and organizes files in the workspace: source code, Office documents (Word, Excel), data files, images and media, config. Writes scripts but has no shell — running them is Terminal/DevOps.',
+      'Writes and edits code and files in the workspace, and runs them: shell commands and Python scripts (with the workspace virtual environment active), git, the AWS / Azure / Google Cloud CLIs, and GitHub via gh. Because it both writes and runs, "make a chart / a script and run it" is one job for it. Every command and every change asks for confirmation. Not a sandbox.',
     pickable: true,
     plannable: true,
     examples: [
-      'Write a Python script that turns this CSV into a bar chart',
-      'Create a Word document summarising these findings',
-      'Refactor utils.ts to remove the duplicated parsing'
-    ],
-    notExamples: [
-      'Run the script and show me the output [terminal-devops]',
-      'How many customers are in the database? [data]'
-    ]
-  },
-  {
-    id: 'terminal-devops',
-    label: 'Terminal/DevOps',
-    summary: 'Runs shell commands and AWS/Azure/GCP CLI operations.',
-    description:
-      'Runs shell commands in the workspace (including Python scripts, using the workspace virtual environment) and AWS / Azure / Google Cloud CLI commands. Commands ask for confirmation; the shell is scoped to the workspace as its working directory but is not a sandbox.',
-    pickable: true,
-    plannable: true,
-    examples: [
+      'Write a Python script that turns this data into bar charts, run it, and put the charts in a Word file',
       'Run analysis.py and show me the output',
-      'List the S3 buckets in our AWS account'
+      'Create a GitHub release for v1.4 with these notes'
     ],
     notExamples: [
-      'Write a script that parses the log files [coding]',
-      'Publish a GitHub release for v1.4 [distribution]'
+      'Write a one-page Word summary of these findings [document-creator]',
+      'How many customers are in the Northwind database? [data]'
     ]
   },
   {
     id: 'data',
-    label: 'Data',
-    summary: 'Introspects and queries configured database connections.',
+    label: 'Data Access',
+    summary:
+      'Queries configured databases and calls configured external APIs. Not for local files (Data Processor) or for creating connections (Configurator).',
     description:
-      'Explores and queries the database connections configured in Settings > Data sources (list, introspect schema, run SQL, save queries) and parses CSV / JSON / XML files. Mutating SQL asks for confirmation.',
+      'Explores and queries the databases configured in Settings > Data sources (list, introspect schema, run SQL, saved queries) and calls the external APIs configured in Settings > External APIs. Mutating SQL and API calls ask for confirmation. Needs at least one configured connection.',
     pickable: true,
     plannable: true,
+    requiresAnyOf: ['database', 'api'],
     examples: [
       'How many customers are there in the Northwind database?',
-      'Show the top 10 customers by sales for each year'
+      'Show the top 10 customers by sales for each year',
+      'Call the weather API for the next three days in Pune'
     ],
     notExamples: [
-      'Turn those results into a bar chart in a Word file [coding]',
-      'Look up industry benchmarks online [research]'
+      'Total up the amounts column in this CSV file [data-processor]',
+      'Connect to our new Postgres server [configurator]'
     ]
   },
   {
-    id: 'distribution',
-    label: 'Distribution',
-    summary: 'Packages, publishes, and ships work (releases, deployment).',
+    id: 'data-processor',
+    label: 'Data Processor',
+    summary:
+      'Reads, queries and transforms local CSV, JSON, XML and Excel files. Not for databases (Data Access) or general programming (Developer).',
     description:
-      'Ships work through GitHub: issues, pull requests, releases and repository operations via the gh CLI (assumes gh is installed and authenticated).',
+      'Works with structured files on disk or at a URL: summarizes and queries CSV / JSON / XML, appends a record to CSV / JSON, and reads and edits Excel workbooks. It does not run SQL against databases and does not write general-purpose code.',
     pickable: true,
     plannable: true,
     examples: [
-      'Create a GitHub release for v1.4 with these notes',
-      'Open a pull request for this branch'
+      'Summarise the columns in sales_2024.csv',
+      'Add these three rows to the Excel workbook on the Summary sheet'
     ],
     notExamples: [
-      'Run the test suite before releasing [terminal-devops]',
-      'Write the release notes text [coding]'
+      "Query last year's sales from the database [data]",
+      'Write a script that cleans this file and run it [coding]'
+    ]
+  },
+  {
+    id: 'document-creator',
+    label: 'Document Creator',
+    summary:
+      'Creates, fills from templates and reads Word and other Office documents. Cannot run code or draw charts from data (Developer) and cannot edit an existing file in place.',
+    description:
+      'Creates Word and other Office documents from scratch, fills user-authored templates (keeping their styling), turns an existing document into a template, and reads documents. It cannot edit an existing .docx / .pptx in place, cannot embed charts from data on its own (that takes a script — Developer), and does not build presentations (the top-level assistant does, one slide at a time).',
+    pickable: true,
+    plannable: true,
+    examples: [
+      'Create a Word document summarising these findings with headings and bullets',
+      'Fill our invoice template with these customer details'
+    ],
+    notExamples: [
+      'Generate bar charts from this data and put them in a Word file [coding]',
+      'Read the numbers out of this Excel sheet [data-processor]'
+    ]
+  },
+  {
+    id: 'configurator',
+    label: 'Configurator',
+    summary:
+      'Sets up connections to databases, external APIs and MCP servers. Does not query them (Data Access); secrets go through the confirmation dialog, never chat.',
+    description:
+      'Creates connections from details you give in chat: databases, external APIs and MCP servers. Each is tested for real before saving. Passwords, keys and tokens are typed into the confirmation dialog, never into chat. It does not use the connections afterwards.',
+    pickable: true,
+    plannable: true,
+    examples: [
+      'Connect Sachivji to our Postgres reporting database',
+      'Add the weather API at https://api.example.com as an external API'
+    ],
+    notExamples: [
+      'How many rows are in the orders table? [data]',
+      'Send an email to the team [email]'
     ]
   },
   {
     id: 'page-creator',
     label: 'Page Creator',
-    summary: 'Designs and builds one slide of a presentation, given a brief for that slide.',
+    summary:
+      'Designs one slide of a presentation from a brief. Not conversational and never a plan step — the top-level assistant calls it once per slide.',
     description:
       'Isolated, delegate-only specialist: builds exactly one slide of a presentation from a brief. It is not a conversational agent and is not offered in the mode picker or as a plan step; the top-level assistant calls it once per slide.',
     pickable: false,
@@ -167,24 +217,37 @@ export const ROLE_MANIFEST = [
   {
     id: 'email',
     label: 'Email',
-    summary: 'Drafts and sends an email given a loose brief (recipients, what it should say).',
+    summary:
+      'Drafts and sends an email from a brief (recipients, what to say). Does not write documents (Document Creator) or look up addresses (Data Access).',
     description:
-      'Isolated specialist: drafts and sends an email from a short brief using the email accounts configured in Settings. Sending always asks for confirmation.',
+      'Isolated specialist: drafts and sends an email from a short brief using the email accounts configured in Settings. Sending always asks for confirmation. Needs at least one configured email account.',
     pickable: true,
     plannable: true,
+    requiresAnyOf: ['email'],
     examples: [
       'Email the team that the monthly report is ready',
       'Send Priya a short summary of the invoice discussion'
     ],
     notExamples: [
-      'Write a blog post about our launch [coding]',
+      'Write a blog post about our launch [document-creator]',
       'Find out who our largest customer is, then email them [data, then email]'
     ]
   }
 ] as const satisfies readonly RoleMeta[]
 
+/**
+ * Role ids that existed before step 2's split and may still appear on saved
+ * messages (`agentRole` on content blocks). They are NOT agents any more —
+ * `terminal-devops` and `distribution` were merged into Developer (`coding`) —
+ * but old transcripts, exports and print views still look their label up.
+ */
+export const LEGACY_ROLE_LABELS = {
+  'terminal-devops': 'Terminal/DevOps',
+  distribution: 'Distribution'
+} as const
+
 /** Every specialist role id. Derived from the manifest — persisted `agentRole` values stay valid because ids are unchanged. */
-export type AgentRole = (typeof ROLE_MANIFEST)[number]['id']
+export type AgentRole = (typeof ROLE_MANIFEST)[number]['id'] | keyof typeof LEGACY_ROLE_LABELS
 
 const BY_ID: ReadonlyMap<string, RoleMeta> = new Map(ROLE_MANIFEST.map((r) => [r.id, r]))
 
@@ -212,6 +275,7 @@ export const AGENT_ROLES: readonly AgentRole[] = ROLE_MANIFEST.filter((r) => r.p
 export const PLANNABLE_ROLES: readonly AgentRole[] = ROLE_MANIFEST.filter((r) => r.plannable).map((r) => r.id)
 
 /** Human-readable label per role — used by the router's own system prompt and the renderer's mode picker/role chips, so the two stay in sync. */
-export const AGENT_ROLE_LABELS: Record<AgentRole, string> = Object.fromEntries(
-  ROLE_MANIFEST.map((r) => [r.id, r.label])
-) as Record<AgentRole, string>
+export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
+  ...(Object.fromEntries(ROLE_MANIFEST.map((r) => [r.id, r.label])) as Record<(typeof ROLE_MANIFEST)[number]['id'], string>),
+  ...LEGACY_ROLE_LABELS
+}

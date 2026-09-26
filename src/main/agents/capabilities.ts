@@ -136,6 +136,43 @@ export function buildCapabilities(input: CapabilitiesInput): string {
   return out.join('\n')
 }
 
+/** How many of each kind of connection are configured right now — the live state a plan depends on. */
+export interface ConfigurationCounts {
+  databases: number
+  apis: number
+  email: number
+}
+
+/**
+ * Role-granularity digest for the classify-and-plan prompt (design 3.6): one
+ * line per role — id, routing summary, and whether the role is usable right now.
+ * Generated from the same manifest and agents as `describe_capabilities`, so a
+ * role fact is written once (its summary) instead of being re-typed as prose in
+ * the classifier prompt, where it drifts. `config` undefined (unit tests, no
+ * live wiring) means "assume everything a role needs is configured".
+ */
+export function buildRoleDigest(
+  agents: ReadonlyMap<AgentRole, Agent>,
+  roles: readonly string[],
+  config?: ConfigurationCounts
+): string {
+  const have = (kind: 'database' | 'api' | 'email'): boolean =>
+    !config || (kind === 'database' ? config.databases > 0 : kind === 'api' ? config.apis > 0 : config.email > 0)
+  const lines: string[] = []
+  for (const agent of agents.values()) {
+    if (!roles.includes(agent.role)) continue
+    const meta = roleMeta(agent.role)
+    const notes: string[] = []
+    if (agent.tools.length === 0) notes.push('no tools of its own — reasoning/text only')
+    const needs = meta?.requiresAnyOf
+    if (needs && !needs.some(have)) {
+      notes.push(`UNAVAILABLE right now: no ${needs.map((n) => (n === 'database' ? 'database' : n === 'api' ? 'external API' : 'email account')).join(' or ')} is configured`)
+    }
+    lines.push(`- ${agent.role}: ${agent.summary}${notes.length ? ` (${notes.join('; ')})` : ''}`)
+  }
+  return lines.join('\n')
+}
+
 export interface DescribeCapabilitiesDeps {
   getAgents(): ReadonlyMap<AgentRole, Agent>
   getRegistry(): Pick<ToolRegistry, 'list'>

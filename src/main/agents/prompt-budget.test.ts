@@ -14,6 +14,7 @@ vi.mock('electron', () => ({
   }
 }))
 
+import { ROLE_MANIFEST } from '@shared/agents'
 const { createDefaultRegistry } = await import('../tools/setup')
 const { createAgents } = await import('./roles')
 const { Orchestrator } = await import('./orchestrator')
@@ -45,21 +46,29 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
   )
 
 /**
- * Measured 2026-09-26 at step 1 (tiktoken o200k_base): routerPrompt 1228, routerToolSchemas 9391 (built-in tools + describe_capabilities +
- * 8 delegate tools), classify 778, roles 59 / 2803 / 3808 / 755 / 2982 / 241 / 795 / 535. Ceilings sit ~2% above. Lower them as later steps land.
+ * Baseline (step 1, 2026-09-26): routerPrompt 1,228 + routerToolSchemas 9,391 = 10,619; classify 778; roles
+ * planning 59 / research 2,803 / coding 3,808 / terminal-devops 755 / data 2,982 / distribution 241 / page-creator 795 / email 535.
+ * After step 2 (narrow roles, no duplicated roster, generated classify digest), same estimator:
+ *   routerPrompt 862, routerToolSchemas 9,701 (10 delegate tools with contract-style summaries instead of 8), router bare 10,563 (-56: the
+ *   router still carries the full registry — that is step 4), classify 833 (+55: live availability + the values-not-summaries rule);
+ *   roles planning 59 / research 1,236 / history-analyst 411 / coding (Developer) 2,099 / data (Data Access) 2,513 / data-processor 1,808 /
+ *   document-creator 2,216 / configurator 1,114 / page-creator 795 / email 535.
+ * The saving is on DELEGATED turns (Researcher -56%, Developer -45%). Ceilings sit ~2% above. Lower them as later steps land.
  * Print the live numbers with `PRINT_BUDGET=1 npx vitest run src/main/agents/prompt-budget`.
  */
 const CEILINGS = {
-  routerPrompt: 1250,
-  routerToolSchemas: 9600,
-  routerBare: 10850,
-  classifyPrompt: 800,
+  routerPrompt: 880,
+  routerToolSchemas: 9900,
+  routerBare: 10800,
+  classifyPrompt: 850,
   'role:planning': 65,
-  'role:research': 2850,
-  'role:coding': 3900,
-  'role:terminal-devops': 780,
-  'role:data': 3050,
-  'role:distribution': 250,
+  'role:research': 1260,
+  'role:history-analyst': 420,
+  'role:coding': 2150,
+  'role:data': 2570,
+  'role:data-processor': 1850,
+  'role:document-creator': 2260,
+  'role:configurator': 1140,
   'role:page-creator': 820,
   'role:email': 550
 } as const
@@ -120,6 +129,6 @@ describe('prompt budget (no conversation, no MCP servers)', () => {
   })
 
   it('every role in the manifest is measured', () => {
-    expect(Object.keys(measured).filter((k) => k.startsWith('role:')).length).toBe(8)
+    expect(Object.keys(measured).filter((k) => k.startsWith('role:')).map((k) => k.slice(5))).toEqual(ROLE_MANIFEST.map((r) => r.id))
   })
 })

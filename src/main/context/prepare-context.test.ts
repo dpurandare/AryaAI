@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { toOpenAIMessages } from '../providers/openai-compatible'
 import type { Message, ModelProvider } from '../providers/types'
-import { applySlidingWindow, collapseFailedTurns, prepareConversation, repairToolPairs, trimToolResults, type TurnOverhead } from './prepare-context'
+import { applySlidingWindow, collapseFailedTurns, migrateLegacyDelegateNames, prepareConversation, repairToolPairs, trimToolResults, type TurnOverhead } from './prepare-context'
 
 const OVERHEAD_MARKER = 'SYS-PROMPT-MARKER'
 
@@ -566,5 +566,33 @@ describe('prepareConversation', () => {
     expect(summary.type).toBe('text')
     if (summary.type !== 'text') throw new Error('unreachable')
     expect(summary.text).toContain('attempted 4 times in a row')
+  })
+})
+
+describe('migrateLegacyDelegateNames', () => {
+  const call = (name: string, id = 'D1'): Message => ({
+    role: 'assistant',
+    content: [{ type: 'tool_use', id, name, input: { task: 't' }, agentRole: 'terminal-devops' }]
+  })
+
+  it('renames the delegate tools of retired roles (Terminal/DevOps, Distribution) to the Developer on replay', () => {
+    const out = migrateLegacyDelegateNames([call('delegate_to_terminal_devops', 'A'), call('delegate_to_distribution', 'B')])
+    expect(out.flatMap((m) => m.content).map((b) => (b.type === 'tool_use' ? b.name : ''))).toEqual(['delegate_to_coding', 'delegate_to_coding'])
+  })
+
+  it('keeps the tool_use id (so the paired tool_result still matches) and the agentRole tag (so the UI chip is unchanged)', () => {
+    const block = migrateLegacyDelegateNames([call('delegate_to_terminal_devops', 'KEEP')])[0].content[0]
+    expect(block).toMatchObject({ type: 'tool_use', id: 'KEEP', agentRole: 'terminal-devops', name: 'delegate_to_coding' })
+  })
+
+  it('leaves current delegates and ordinary tools alone, and returns the same array when nothing changes', () => {
+    const messages: Message[] = [call('delegate_to_data'), call('shell_execute'), call('delegate_to_coding')]
+    expect(migrateLegacyDelegateNames(messages)).toBe(messages)
+  })
+
+  it('does not mutate its input (the stored transcript must stay as recorded)', () => {
+    const messages: Message[] = [call('delegate_to_terminal_devops')]
+    migrateLegacyDelegateNames(messages)
+    expect(messages[0].content[0]).toMatchObject({ name: 'delegate_to_terminal_devops' })
   })
 })

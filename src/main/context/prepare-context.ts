@@ -240,6 +240,33 @@ function dropOrphanResults(messages: Message[]): Message[] {
 }
 
 /**
+ * Delegate tools that no longer exist because their role was merged into
+ * another (step 2 of design-discussion.md: Terminal/DevOps and Distribution
+ * became the Developer, id `coding`). Saved sessions still contain calls to
+ * them; replaying a call to a tool that is absent from the request's tool list
+ * is a provider-compat risk (design section 8, risk gate 1), and it would show
+ * the model a delegate it can no longer use. Renamed to the current name on
+ * replay only — the stored transcript and the UI keep the original.
+ */
+const LEGACY_DELEGATE_NAMES: Readonly<Record<string, string>> = {
+  delegate_to_terminal_devops: 'delegate_to_coding',
+  delegate_to_distribution: 'delegate_to_coding'
+}
+
+export function migrateLegacyDelegateNames(messages: Message[]): Message[] {
+  let changed = false
+  const result = messages.map((m) => {
+    if (!m.content.some((b) => b.type === 'tool_use' && b.name in LEGACY_DELEGATE_NAMES)) return m
+    changed = true
+    return {
+      ...m,
+      content: m.content.map((b) => (b.type === 'tool_use' && b.name in LEGACY_DELEGATE_NAMES ? { ...b, name: LEGACY_DELEGATE_NAMES[b.name] } : b))
+    }
+  })
+  return changed ? result : messages
+}
+
+/**
  * Makes the replayed history satisfy the tool-call pairing rule every provider
  * enforces, in both directions (no unanswered `tool_use`, no orphan
  * `tool_result`). Only affects what's sent — SQLite and the UI transcript are
@@ -402,5 +429,10 @@ export async function prepareConversation(
   provider: ModelProvider,
   overhead?: TurnOverhead
 ): Promise<SlidingWindowResult> {
-  return applySlidingWindow(collapseFailedTurns(trimToolResults(repairToolPairs(messages))), model, provider, overhead)
+  return applySlidingWindow(
+    collapseFailedTurns(trimToolResults(repairToolPairs(migrateLegacyDelegateNames(messages)))),
+    model,
+    provider,
+    overhead
+  )
 }

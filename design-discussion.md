@@ -828,6 +828,13 @@ Each step ships on its own and is checked against measured numbers.
    the plan stays correct after the role split. The router still carries the
    full registry, so this is low-risk. Measure delegated-turn cost — this is
    the **skill decision gate**.
+   **Status — implemented 2026-09-26 (TASKS #113), with these deviations from the plan above:**
+   - *Role set:* Planner, Researcher, History Analyst, Developer (`coding`, absorbs Terminal/DevOps and Distribution), Data Access (`data`, now also owns the external-API tools), Data Processor, Document Creator, Configurator, Page Creator, Email. **MCP Operator is not created** — MCP tools stay attached to Researcher / Developer / Data Access exactly as before (scoping them is step 5). `terminal-devops` and `distribution` survive only as labels for old sessions (`LEGACY_ROLE_LABELS`); their delegate names are renamed to `delegate_to_coding` on history replay.
+   - *PowerPoint flow stays in `SYSTEM_PROMPT` and at the top level.* Moving it into Document Creator needs a specialist to delegate to Page Creator (nested delegation), which does not exist; `pptx_start_deck` / `pptx_add_slide` / `pptx_save_deck` are the only deliberately router-only tools (asserted in `roles-coverage.test.ts`). Revisit with step 3/4.
+   - *Router prompt diet:* the search_history and connection-setup paragraphs moved into History Analyst / Configurator (one-line pointers remain), and the duplicated roster was dropped (each summary is carried once, in its delegate tool description).
+   - *Classify prompt:* role facts are generated from the manifest (`buildRoleDigest`, with live "UNAVAILABLE right now" state); the hand-written "coding writes, terminal-devops runs" rule is **gone** and reversed — a role that writes AND runs code handles both in one step. Added a rule that a later step only sees earlier steps' written results, so an earlier step must return actual values (an interim guard for D2's fabricated data until step 3's typed artifacts).
+   - *Measured:* router fixed cost is flat (10,619 → 10,563 tokens — it still carries the full registry, step 4); the saving is on delegated turns (Researcher 2,803 → 1,236, Developer 3,808 → 2,099). Largest roles now Data Access 2,513, Document Creator 2,216, Developer 2,099 — the **skill decision gate**: none is heavy enough to justify skills yet.
+   - *Summaries are now validated contracts:* `lintRoutingSummary` runs on the real manifest (non-scope + named hand-off role, <= 30 words, no over-broad wording, no near-duplicates).
 3. **Handoff contract + replay safety** (section 5): the typed delegate
    call/result with `status`, code-derived artifacts, the out-of-scope /
    `needs_input` return path, the redirecting unknown-tool error, and the

@@ -92,7 +92,7 @@ describe('sessionToMarkdown', () => {
         createdAt: 1
       }
     ]
-    expect(sessionToMarkdown(session, messages)).toContain('*Coding agent:* Writing the file now.')
+    expect(sessionToMarkdown(session, messages)).toContain('*Developer agent:* Writing the file now.')
   })
 
   it('renders a tool_use block as a fenced call and does not give a pure tool_result message its own heading', () => {

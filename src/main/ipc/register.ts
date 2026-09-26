@@ -624,7 +624,13 @@ async function runChat(
       // TASKS.md #95, phase 2 — persists every real classify-and-plan
       // result alongside the deterministic gate's own verdict, so the
       // gate's accuracy can be measured before it's ever widened.
-      logClassifyGateSample: logClassifyGateSample
+      logClassifyGateSample: logClassifyGateSample,
+      // Live configuration for the classifier's role digest (a plan must not route to a role with nothing configured).
+      getConfiguration: () => ({
+        databases: listConnections().length,
+        apis: listApiConnections().length,
+        email: listEmailConnections().length
+      })
     }
   )
 

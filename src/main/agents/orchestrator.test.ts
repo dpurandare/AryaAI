@@ -659,6 +659,26 @@ describe('Orchestrator (integration, mocked provider)', () => {
     })
   })
 
+  describe('router prompt (step 2)', () => {
+    it('carries each specialist summary once — in its delegate tool description — not again as a roster in the system prompt', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ text: 'hello', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      const req = provider.requests[0]
+      const summary = agents.get('coding')!.summary
+      expect(req.system).not.toContain(summary)
+      expect(req.system).not.toMatch(/delegate_to_coding\)/)
+      const delegate = req.tools?.find((t) => t.name === 'delegate_to_coding')
+      expect(delegate?.description).toContain(summary)
+      expect(delegate?.description).toContain('Developer')
+      // The trailer still tells the model when to delegate, and points code work at the Developer.
+      expect(req.system).toMatch(/Developer/)
+    })
+  })
+
   describe('classify-and-plan (planningEnabled)', () => {
     it('a simple request costs one extra classify call but otherwise behaves exactly as before', async () => {
       const registry = buildRegistry()
@@ -809,9 +829,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
       const classifySystem = provider.requests[0].system ?? ''
       expect(classifySystem).not.toMatch(/-\s*page-creator:/)
-      expect(classifySystem).toMatch(/deck-building/i)
-      expect(classifySystem).toContain('research')
-      expect(classifySystem).toContain('coding')
+      expect(classifySystem).toMatch(/slide deck\/presentation is never a plan step for any role/i)
+      expect(classifySystem).toContain('- research:')
+      expect(classifySystem).toContain('- coding:')
     })
 
     it('explicitly tells the classifier not to fold "gather info, then save a file" into one research-only step', async () => {
@@ -842,11 +862,14 @@ describe('Orchestrator (integration, mocked provider)', () => {
       await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
 
       const classifySystem = provider.requests[0].system ?? ''
-      expect(classifySystem).toMatch(/write it into a Word document/i)
-      expect(classifySystem).toMatch(/research has no file-writing tools/i)
+      // The role facts are GENERATED from each role's own summary (no hand-written per-role prose):
+      // Research's line says it does not write files, and the rule tells the classifier to honour that.
+      expect(classifySystem).toMatch(/- research: .*Does not .*write files/i)
+      expect(classifySystem).toMatch(/never route a step to a role its summary excludes/i)
+      expect(classifySystem).toMatch(/saved file\/document\/spreadsheet is its own step/i)
     })
 
-    it('explicitly tells the classifier that writing code and running it are two separate steps, not one', async () => {
+    it('tells the classifier that writing code and running it are ONE step for the Developer (Appendix D: no plan with a write step and no run step)', async () => {
       // Found live: "generate a chart image from this data" was classified
       // as a single "coding" step. Coding wrote the Python script, tried to
       // run it directly, hit "Unknown tool" (coding has no shell access at
@@ -877,8 +900,11 @@ describe('Orchestrator (integration, mocked provider)', () => {
       await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
 
       const classifySystem = provider.requests[0].system ?? ''
-      expect(classifySystem).toMatch(/code to be written AND actually run/i)
-      expect(classifySystem).toMatch(/coding has no shell access at all/i)
+      // Step 2 reversed the old rule: Developer writes AND runs, so splitting write-from-run is what's forbidden now.
+      expect(classifySystem).toMatch(/- coding: Writes AND runs code/)
+      expect(classifySystem).toMatch(/writes AND runs code handles both in ONE step/i)
+      expect(classifySystem).not.toMatch(/terminal-devops/)
+      expect(classifySystem).not.toMatch(/no shell access/i)
     })
 
     it('a compound plan dispatches each step to its tagged specialist in order, then synthesizes a final answer', async () => {
@@ -934,14 +960,14 @@ describe('Orchestrator (integration, mocked provider)', () => {
         userMessages.some(
           (e) =>
             e.kind === 'message' &&
-            e.content.some((c) => c.type === 'text' && c.text.includes('[Plan step 1 — Research]') && c.text.includes('X is 5.'))
+            e.content.some((c) => c.type === 'text' && c.text.includes('[Plan step 1 — Researcher]') && c.text.includes('X is 5.'))
         )
       ).toBe(true)
       expect(
         userMessages.some(
           (e) =>
             e.kind === 'message' &&
-            e.content.some((c) => c.type === 'text' && c.text.includes('[Plan step 2 — Data]') && c.text.includes('Y is 10.'))
+            e.content.some((c) => c.type === 'text' && c.text.includes('[Plan step 2 — Data Access]') && c.text.includes('Y is 10.'))
         )
       ).toBe(true)
 
@@ -1038,9 +1064,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const userMessages = events.filter((e) => e.kind === 'message' && e.role === 'user')
       const step1Text = userMessages
         .flatMap((e) => (e.kind === 'message' ? e.content : []))
-        .find((c) => c.type === 'text' && c.text.includes('[Plan step 1 — Data]'))
+        .find((c) => c.type === 'text' && c.text.includes('[Plan step 1 — Data Access]'))
       expect(step1Text && step1Text.type === 'text' ? step1Text.text : '').toMatch(
-        /\[Plan step 1 — Data\] \(FAILED — no usable result\):/
+        /\[Plan step 1 — Data Access\] \(FAILED — no usable result\):/
       )
       expect(
         step1Text && step1Text.type === 'text' ? step1Text.text : ''
@@ -1049,8 +1075,50 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // A step that actually succeeded must NOT get the FAILED marker.
       const step2Text = userMessages
         .flatMap((e) => (e.kind === 'message' ? e.content : []))
-        .find((c) => c.type === 'text' && c.text.includes('[Plan step 2 — Coding]'))
-      expect(step2Text && step2Text.type === 'text' ? step2Text.text : '').toMatch(/^\[Plan step 2 — Coding\]:/)
+        .find((c) => c.type === 'text' && c.text.includes('[Plan step 2 — Developer]'))
+      expect(step2Text && step2Text.type === 'text' ? step2Text.text : '').toMatch(/^\[Plan step 2 — Developer\]:/)
+    })
+
+    it('marks a role UNAVAILABLE in the classifier digest when nothing it needs is configured, and not when it is', async () => {
+      // A plan must not route "email it to X" to a role with no account to send from, or "query the
+      // database" to Data Access with no connection (design 3.6: the digest carries live state).
+      const run = async (config: { databases: number; apis: number; email: number }): Promise<string> => {
+        const registry = buildRegistry()
+        const provider = new MockProvider([
+          { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+          { text: 'ok', stopReason: 'end_turn' }
+        ])
+        const orchestrator = new Orchestrator(
+          provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+          { planningEnabled: true, getConfiguration: () => config }
+        )
+        await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+        return provider.requests[0].system ?? ''
+      }
+
+      const none = await run({ databases: 0, apis: 0, email: 0 })
+      expect(none).toMatch(/- data: .*UNAVAILABLE right now: no database or external API is configured/)
+      expect(none).toMatch(/- email: .*UNAVAILABLE right now: no email account is configured/)
+
+      const apiOnly = await run({ databases: 0, apis: 1, email: 1 })
+      expect(apiOnly).not.toMatch(/- data: .*UNAVAILABLE/) // Data Access needs a database OR an API
+      expect(apiOnly).not.toMatch(/- email: .*UNAVAILABLE/)
+    })
+
+    it('tells the classifier a later step only sees written results, so an earlier step must return the actual values (Appendix D2: fabricated chart data)', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'ok', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true }
+      )
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+      const classifySystem = provider.requests[0].system ?? ''
+      expect(classifySystem).toMatch(/only sees the written result of earlier steps/i)
+      expect(classifySystem).toMatch(/never from assumed or example data/i)
     })
 
     it('malformed classifier JSON fails open to normal behavior instead of crashing the turn', async () => {

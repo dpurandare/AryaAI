@@ -9,6 +9,7 @@ import { isRateLimitError, retryAfterMsFromError } from '../providers/rate-limit
 import type { ModelProvider, ToolDefinition } from '../providers/types'
 import { SHOW_MEDIA_MARKER, type ShowMediaPayload } from '../tools/show-media'
 import type { Tool, ToolContext } from '../tools/types'
+import { buildRoleDigest, type ConfigurationCounts } from './capabilities'
 
 export interface Agent {
   role: AgentRole
@@ -595,6 +596,11 @@ export class Orchestrator {
         classifierComplexity: 'simple' | 'compound' | 'unknown'
         messageLength: number
       }) => void
+      /**
+       * Live configuration counts (databases / APIs / email accounts) for the classifier's role digest, so a plan never routes
+       * "email it to X" to a role with no account to send from. Absent (tests) = assume every role's requirements are met.
+       */
+      getConfiguration?: () => ConfigurationCounts
     } = { planningEnabled: false }
   ) {}
 
@@ -1035,19 +1041,12 @@ export class Orchestrator {
    * can actually do it.
    */
   private buildClassifySystemPrompt(): string {
-    // Filtered to PLANNABLE_ROLES, same set VALID_STEP_ROLES validates a
-    // parsed plan's steps against (parsePlan) — `this.agents` itself has
-    // every role including page-creator, which is deliberately NOT a valid
-    // plan-step target (see shared/agents.ts's own doc comment: isolated,
-    // delegate-only, expects a specific one-slide brief). Listing it here
-    // anyway previously let the classifier believe it was a real option,
-    // even though selecting it would just make parsePlan silently reject
-    // the whole plan — wasted, confusing classify calls that were never
-    // going to produce a usable plan either way.
-    const specialists = [...this.agents.values()]
-      .filter((a) => (PLANNABLE_ROLES as readonly string[]).includes(a.role))
-      .map((a) => `- ${a.role}: ${a.summary}${a.tools.length === 0 ? ' (no tools of its own — reasoning/text only)' : ''}`)
-      .join('\n')
+    // Role facts are GENERATED (buildRoleDigest: each role's own summary + live
+    // availability), not re-typed here as prose that drifts from the role. Only the
+    // roles a plan may target (PLANNABLE_ROLES — the same set `parsePlan` accepts;
+    // page-creator is deliberately not one) are listed. What remains below are
+    // procedural rules, none of which name a specific role's tools.
+    const specialists = buildRoleDigest(this.agents, PLANNABLE_ROLES, this.options.getConfiguration?.())
     return (
       "Before anything else, classify the user's latest request and, only if it genuinely needs more " +
       'than one distinct sub-task, build a short ordered plan for it. You have no tools available for ' +
@@ -1058,28 +1057,22 @@ export class Orchestrator {
       '- "simple": answerable directly, or with at most one tool call or delegation. Use an empty steps ' +
       'array or a single entry.\n' +
       '- "compound": genuinely separate sub-tasks (e.g. two independent lookups, a lookup followed by ' +
-      'a separate calculation, or — found live, a real miss — gathering information and THEN saving/' +
-      'producing a deliverable from it, e.g. "look up X and write it into a Word document/spreadsheet/' +
-      'file") that each need a specialist\'s tools. List each as its own ordered step, tagging the role ' +
-      "whose tools can actually do it — don't route a step needing a tool to a role with no tools, and " +
-      "never fold a whole multi-part request like that into a single step for whichever role matches " +
-      "its first/dominant verb (e.g. routing \"search for X and write it to a Word doc\" entirely to " +
-      'research as one "simple" step) — research has no file-writing tools at all, so the document part ' +
-      'would just silently never happen. Any part of the request that asks for a saved file/document/' +
-      'spreadsheet output is its own step for coding (or whichever role actually has that tool), after ' +
-      "the step(s) that gather what goes into it. If a sub-part needs no tool at all (pure reasoning, or " +
-      "combining results already gathered), don't give it its own step — it belongs in the final answer " +
-      'instead.\n' +
-      'A request needing code to be written AND actually run (e.g. "generate a chart image from this ' +
-      'data") is two separate steps, never one — found live: routed as a single "coding" step, it wrote ' +
-      'a Python script, tried to run it directly, hit "Unknown tool" (coding has no shell access at all), ' +
-      "and reported success anyway without the file ever existing. coding writes the script as its step; " +
-      'a separate, later "terminal-devops" step actually runs it — never assume one role can do both just ' +
-      'because the task reads as one sentence.\n' +
-      'Building a slide deck/presentation is never a plan step for any role, "coding" included — ' +
-      'coding has no deck-building tools at all and falls back to a much worse plain-bullet-list output ' +
-      "if forced into it (found live). Deck-building only happens in the top-level's own final round, " +
-      'directly, via pptx_start_deck + delegate_to_page-creator per slide — never a delegated step. If ' +
+      'a separate calculation, or gathering information and THEN saving/producing a deliverable from it) ' +
+      "that each need a different specialist's tools. List each as its own ordered step, tagging the role " +
+      "whose summary says it can actually do it — never route a step to a role its summary excludes, to a " +
+      'role marked UNAVAILABLE, or to a role with no tools when the step needs a tool. Any part of the ' +
+      'request that asks for a saved file/document/spreadsheet is its own step for the role that creates ' +
+      'that kind of file, after the step(s) that gather what goes into it. If a sub-part needs no tool ' +
+      "at all (pure reasoning, or combining results already gathered), don't give it its own step — it " +
+      'belongs in the final answer instead.\n' +
+      'A role whose summary says it writes AND runs code handles both in ONE step — never split writing ' +
+      'a script from running it into separate steps or roles.\n' +
+      "A later step only sees the written result of earlier steps: when a step needs data an earlier step " +
+      'retrieves (query rows, figures, file contents), word the earlier step so it returns the actual ' +
+      'values, not just a summary, and word the later step as working from those values — never from ' +
+      'assumed or example data.\n' +
+      'Building a slide deck/presentation is never a plan step for any role: it happens in the ' +
+      "top-level's own final round, directly, via pptx_start_deck + delegate_to_page-creator per slide. If " +
       'the request needs research before the deck can be built, plan the research as its own step; leave ' +
       'the actual deck construction out of the plan entirely so it happens in that final round.\n' +
       "Keep the step count small and don't over-decompose a genuinely simple request into multiple " +
@@ -1088,15 +1081,16 @@ export class Orchestrator {
   }
 
   private buildOrchestratorSystemPrompt(): string {
-    const specialists = [...this.agents.values()]
-      .map((a) => `- ${AGENT_ROLE_LABELS[a.role]} (${delegateToolName(a.role)}): ${a.summary}`)
-      .join('\n')
+    // No roster here: each specialist's summary is already carried once, in its delegate
+    // tool's description (buildDelegateToolDefinitions), so repeating it in the system
+    // prompt would just pay for the same text twice on every request.
     return (
       `${this.defaultSystemPrompt}\n\n` +
-      'You can also delegate a step to a specialist by calling its delegate tool when the task clearly ' +
-      'fits one of these roles — especially anything substantial involving code or files, which should ' +
-      `usually go to the Coding specialist rather than being handled directly:\n${specialists}\n\n` +
-      'For simple or general requests, just answer directly (or use your own tools) without delegating.'
+      "You can also delegate a step to a specialist by calling its delegate tool when the task clearly fits " +
+      "one — each tool's description says what that specialist does and does not do. Anything that needs code " +
+      'written AND run, or files created or changed, should usually go to the Developer rather than being ' +
+      'handled directly. For simple or general requests, just answer directly (or use your own tools) ' +
+      'without delegating.'
     )
   }
 
