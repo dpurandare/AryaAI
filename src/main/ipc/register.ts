@@ -24,6 +24,7 @@ import {
   type SessionTitleUpdatedPayload
 } from '@shared/ipc-contract'
 import type { AgentRole } from '@shared/agents'
+import type { RuntimeState } from '@shared/runtime'
 import { createSession, listSessions, deleteSession, getSession, updateSessionTitle, titleFromMessage } from '../db/sessions'
 import { insertMessage, listMessages } from '../db/messages'
 import { enqueueMessage, getEmbeddingConfig, getIndexState, rebuildIndex, runBackfill } from '../search-history/indexer'
@@ -57,6 +58,7 @@ import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
 import { createDefaultProviderRegistry } from '../providers/setup'
 import type { Message, ModelProvider } from '../providers/types'
 import { exportSession } from '../sessions/export'
+import { WorkspaceRuntime } from '../runtime/workspace-runtime'
 import {
   createDefaultRegistry,
   createToolContext,
@@ -149,6 +151,18 @@ const mcpManager = new McpManager()
 const savedQueryManager = new SavedQueryToolManager()
 let toolContext: ToolContext | undefined
 
+/** Settings key: `'true'` when the user chose to continue without Python (design-discussion.md section 4.3). */
+export const PYTHON_RUNTIME_DISABLED_SETTING_KEY = 'pythonRuntimeDisabled'
+
+const workspaceRuntime = new WorkspaceRuntime()
+
+function ensureRuntimeFor(root: string, opts: { repair?: boolean } = {}): Promise<RuntimeState> {
+  return workspaceRuntime.ensureWorkspace(root, {
+    skipPython: getSetting(PYTHON_RUNTIME_DISABLED_SETTING_KEY) === 'true',
+    repair: opts.repair
+  })
+}
+
 const pendingConfirmations = new Map<string, (decision: ConfirmDecision) => void>()
 const pendingLimitDecisions = new Map<string, (decision: LimitDecision) => void>()
 const activeStreams = new Map<string, AbortController>()
@@ -160,6 +174,14 @@ const activeStreams = new Map<string, AbortController>()
  */
 export function registerIpcHandlers(): void {
   toolContext = createToolContext()
+
+  // Folders + the Python venv, created with the workspace (design-discussion.md 4.3).
+  // Fire-and-forget like MCP below — creating a venv and installing packages can
+  // take minutes; the renderer follows progress via RuntimeStateChanged.
+  workspaceRuntime.onChange((state) => {
+    for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IpcChannel.RuntimeStateChanged, state)
+  })
+  void ensureRuntimeFor(toolContext.workspaceGuard.root)
 
   // Fire-and-forget: connecting can involve spawning a process or a network
   // round trip, and shouldn't block app startup. toolRegistry.list() is
@@ -326,7 +348,8 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle(IpcChannel.McpServersReconnect, (_event, id: string) => mcpManager.reconnect(id, toolRegistry))
 
-  ipcMain.handle(IpcChannel.WorkspaceGetRoot, () => toolContext?.workspaceGuard.root ?? defaultWorkspaceRoot())
+  const currentWorkspaceRoot = (): string => toolContext?.workspaceGuard.root ?? defaultWorkspaceRoot()
+  ipcMain.handle(IpcChannel.WorkspaceGetRoot, () => currentWorkspaceRoot())
   ipcMain.handle(IpcChannel.WorkspaceSetRoot, (_event, path: string) => {
     if (!path || !isAbsolute(path)) {
       throw new Error('Workspace root must be a non-empty absolute path.')
@@ -339,6 +362,16 @@ export function registerIpcHandlers(): void {
       // on the very next message with no app restart.
       toolContext.workspaceGuard = new WorkspaceGuard(path)
     }
+    // A venv embeds absolute paths, so a new root needs its own.
+    void ensureRuntimeFor(path)
+  })
+
+  ipcMain.handle(IpcChannel.RuntimeGetState, () => workspaceRuntime.getState() ?? null)
+  ipcMain.handle(IpcChannel.RuntimeEnsure, () => ensureRuntimeFor(currentWorkspaceRoot()))
+  ipcMain.handle(IpcChannel.RuntimeRepair, () => ensureRuntimeFor(currentWorkspaceRoot(), { repair: true }))
+  ipcMain.handle(IpcChannel.RuntimeSetEnabled, (_event, enabled: boolean) => {
+    setSetting(PYTHON_RUNTIME_DISABLED_SETTING_KEY, enabled ? 'false' : 'true')
+    return ensureRuntimeFor(currentWorkspaceRoot())
   })
 
   ipcMain.handle(

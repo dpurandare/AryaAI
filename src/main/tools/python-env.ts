@@ -68,15 +68,17 @@ export function looksLikePythonNotFound(exitCode: number, stderr: string): boole
   return /\bpython3?\b/i.test(stderr) && /not found|not recognized|no such file/i.test(stderr)
 }
 
-/** Appended to a python-not-found result when there is no workspace venv to fall back on, so the model bootstraps one instead of concluding it cannot run Python at all. */
-export function pythonNotFoundHint(platform: NodeJS.Platform = process.platform): string {
-  const create =
-    platform === 'win32'
-      ? 'py -m venv venv && venv\\Scripts\\pip install <packages>'
-      : 'python3 -m venv venv && venv/bin/pip install <packages>'
+/**
+ * Appended to a python-not-found result when the workspace has no usable venv.
+ * The app creates the venv itself (`runtime/workspace-runtime.ts`), so this
+ * points at Settings > Runtime instead of asking the model to bootstrap one —
+ * that would fight the user's "continue without Python" choice and the pinned
+ * base-package list.
+ */
+export function pythonNotFoundHint(): string {
   return (
-    'hint: `python` is not on PATH here and this workspace has no usable `venv/` yet. Running Python IS possible — ' +
-    `create the workspace venv once: \`${create}\` — after that \`python\` and \`pip\` automatically use it. ` +
-    'For a stdlib-only script, `python3` may work directly.'
+    'hint: this workspace has no usable Python environment (`venv/`). Sachivji creates it automatically when Python 3.10+ ' +
+    'is installed on this computer, so either Python is missing, creation failed, or Python was turned off. ' +
+    'Tell the user to open Settings > Runtime to see the state and choose Retry — do not try to install Python or build a venv yourself.'
   )
 }

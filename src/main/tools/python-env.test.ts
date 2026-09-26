@@ -56,9 +56,10 @@ describe('looksLikePythonNotFound / pythonNotFoundHint', () => {
     expect(looksLikePythonNotFound(127, '/bin/sh: 1: foo: not found')).toBe(false)
   })
 
-  it('tells the model that running Python IS possible and how to create the venv, per platform', () => {
-    expect(pythonNotFoundHint('linux')).toContain('python3 -m venv venv')
-    expect(pythonNotFoundHint('linux')).toContain('IS possible')
-    expect(pythonNotFoundHint('win32')).toContain('py -m venv venv')
+  it('points the model at Settings > Runtime instead of asking it to build a venv', () => {
+    const hint = pythonNotFoundHint()
+    expect(hint).toContain('Settings > Runtime')
+    expect(hint).toMatch(/do not try to install Python or build a venv/)
+    expect(hint).not.toContain('-m venv venv')
   })
 })

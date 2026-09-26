@@ -50,6 +50,16 @@ export const IpcChannel = {
   WorkspaceGetRoot: 'workspace:get-root',
   WorkspaceSetRoot: 'workspace:set-root',
 
+  RuntimeGetState: 'runtime:get-state',
+  /** Re-run `ensureWorkspace` (the "Retry" button): finishes a failed package install, or re-detects Python. */
+  RuntimeEnsure: 'runtime:ensure',
+  /** Delete and rebuild `<workspace>/venv` — explicit user action only. */
+  RuntimeRepair: 'runtime:repair',
+  /** Turn the Python runtime on/off ("continue without Python"). */
+  RuntimeSetEnabled: 'runtime:set-enabled',
+  /** Pushed from main whenever the runtime state changes. */
+  RuntimeStateChanged: 'runtime:state-changed',
+
   SecretStorageGetInfo: 'secret-storage:get-info',
   SecretStorageSwitchToFile: 'secret-storage:switch-to-file',
 

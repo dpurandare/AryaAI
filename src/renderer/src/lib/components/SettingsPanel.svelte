@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
+  import type { RuntimeState } from '@shared/runtime'
 
   let {
     providerDisplayName,
@@ -356,6 +357,33 @@
     } finally {
       savingWorkspace = false
     }
+  }
+
+  // --- Python runtime (design-discussion.md 4.3, TASKS.md #110) ---
+  let runtime = $state<RuntimeState | null>(null)
+  let runtimeBusy = $state(false)
+  let showRepairConfirm = $state(false)
+  const runtimeWorking = $derived(runtime?.status === 'creating' || runtime?.packages === 'installing')
+
+  window.sachiv.getRuntimeState().then((s) => (runtime = s))
+  $effect(() => window.sachiv.onRuntimeStateChanged((s) => (runtime = s)))
+
+  async function runtimeAction(action: () => Promise<RuntimeState>): Promise<void> {
+    runtimeBusy = true
+    try {
+      runtime = await action()
+    } finally {
+      runtimeBusy = false
+      showRepairConfirm = false
+    }
+  }
+
+  const runtimeStatusLabel: Record<RuntimeState['status'], string> = {
+    'missing-python': 'Python not found',
+    creating: 'Setting up…',
+    ready: 'Ready',
+    failed: 'Needs attention',
+    disabled: 'Turned off'
   }
 
   // --- Secret storage backend (TASKS.md #75) ---
@@ -896,6 +924,55 @@
         {savingWorkspace ? 'Saving...' : 'Save'}
       </button>
     </div>
+
+    <hr />
+
+    <h2>Python runtime</h2>
+    <p class="status">
+      Agents run scripts (charts, Word/Excel files) in a Python environment stored in the
+      workspace's <code>venv</code> folder. It is created automatically when Python 3.10 or newer is
+      installed. It keeps packages separate but is <strong>not a sandbox</strong> — scripts can still
+      read and write anywhere you can.
+    </p>
+    {#if runtime}
+      <p class="status" class:error={runtime.status === 'failed' || runtime.status === 'missing-python'}>
+        <strong>{runtimeStatusLabel[runtime.status]}</strong>{runtime.pythonVersion ? ` · Python ${runtime.pythonVersion}` : ''}
+        — {runtime.message}
+      </p>
+      {#if runtime.packages === 'adopted'}
+        <p class="status">Packages in an existing environment are yours to manage; Sachivji did not install any.</p>
+      {/if}
+      {#if !showRepairConfirm}
+        <div class="actions">
+          {#if runtime.status === 'disabled'}
+            <button class="primary" disabled={runtimeBusy} onclick={() => runtimeAction(() => window.sachiv.setRuntimeEnabled(true))}>
+              Turn Python on
+            </button>
+          {:else}
+            <button disabled={runtimeBusy || runtimeWorking} onclick={() => runtimeAction(() => window.sachiv.ensureRuntime())}>
+              Retry
+            </button>
+            <button disabled={runtimeBusy || runtimeWorking} onclick={() => (showRepairConfirm = true)}>Repair…</button>
+            <button disabled={runtimeBusy || runtimeWorking} onclick={() => runtimeAction(() => window.sachiv.setRuntimeEnabled(false))}>
+              Turn Python off
+            </button>
+          {/if}
+        </div>
+      {:else}
+        <p class="status">
+          Repair deletes the workspace's <code>venv</code> folder — including any packages you
+          installed into it — and builds a fresh one. Your own files are not touched. Continue?
+        </p>
+        <div class="actions">
+          <button onclick={() => (showRepairConfirm = false)}>Cancel</button>
+          <button class="primary" disabled={runtimeBusy} onclick={() => runtimeAction(() => window.sachiv.repairRuntime())}>
+            Delete and rebuild
+          </button>
+        </div>
+      {/if}
+    {:else}
+      <p class="status">Checking…</p>
+    {/if}
 
     <hr />
 

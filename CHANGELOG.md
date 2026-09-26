@@ -8,6 +8,14 @@ version is still `0`.
 
 ## [Unreleased]
 
+### Added
+
+- The workspace's Python environment is now created automatically together with the workspace folders (`code/`, `documents/`, `resources/`, and `venv/`) when Python 3.10+ is installed, with pinned base packages for charts and Word/Excel files (matplotlib, numpy, pillow, python-docx, openpyxl). Settings > Runtime shows its state and offers Retry, Repair and Turn Python off. Existing environments are adopted, never overwritten.
+
+### Changed
+
+- The message an agent gets when `python` is not found now points at Settings > Runtime instead of asking it to build a virtual environment itself.
+
 ## [0.2.2] - 2026-09-25
 
 ### Fixed

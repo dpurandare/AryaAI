@@ -13,7 +13,7 @@ import type { WorkspaceGuard } from '../security/workspace-guard'
  */
 export type ManagedFolder = 'code' | 'documents' | 'resources'
 
-const MANAGED_FOLDERS: readonly ManagedFolder[] = ['code', 'documents', 'resources']
+export const MANAGED_FOLDERS: readonly ManagedFolder[] = ['code', 'documents', 'resources']
 
 /**
  * Pre-existing, special-purpose folders that predate this convention and must

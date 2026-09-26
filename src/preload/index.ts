@@ -28,6 +28,7 @@ import {
   type ToolValidateResult,
   type SecretStorageInfo
 } from '@shared/ipc-contract'
+import type { RuntimeState } from '@shared/runtime'
 import type { AgentRole } from '@shared/agents'
 
 const api = {
@@ -102,6 +103,17 @@ const api = {
   getWorkspaceRoot: (): Promise<string> => ipcRenderer.invoke(IpcChannel.WorkspaceGetRoot),
   setWorkspaceRoot: (path: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.WorkspaceSetRoot, path),
+
+  getRuntimeState: (): Promise<RuntimeState | null> => ipcRenderer.invoke(IpcChannel.RuntimeGetState),
+  ensureRuntime: (): Promise<RuntimeState> => ipcRenderer.invoke(IpcChannel.RuntimeEnsure),
+  repairRuntime: (): Promise<RuntimeState> => ipcRenderer.invoke(IpcChannel.RuntimeRepair),
+  setRuntimeEnabled: (enabled: boolean): Promise<RuntimeState> =>
+    ipcRenderer.invoke(IpcChannel.RuntimeSetEnabled, enabled),
+  onRuntimeStateChanged: (callback: (state: RuntimeState) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, state: RuntimeState): void => callback(state)
+    ipcRenderer.on(IpcChannel.RuntimeStateChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannel.RuntimeStateChanged, listener)
+  },
 
   getSearchHistoryStatus: (): Promise<SearchHistoryStatusDto> =>
     ipcRenderer.invoke(IpcChannel.SearchHistoryStatus),

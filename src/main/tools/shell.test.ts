@@ -125,11 +125,11 @@ describe.skipIf(isWindows)('shell_execute + workspace venv', () => {
     expect(result).not.toContain(join(root, 'venv'))
   })
 
-  it('adds a bootstrap hint when python is missing and there is no venv to fall back on', async () => {
+  it('points at Settings > Runtime when python is missing and there is no venv to fall back on', async () => {
     const result = await shellExecuteTool.execute({ command: 'python-does-not-exist chart.py' }, ctx)
     expect(result).toContain('exit code: 127')
     expect(result).toContain('hint:')
-    expect(result).toContain('python3 -m venv venv')
+    expect(result).toContain('Settings > Runtime')
   })
 
   it('does not add the hint for an unrelated missing command', async () => {
