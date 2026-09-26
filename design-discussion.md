@@ -910,18 +910,19 @@ before step 1 as their own release. Order inside the track:
 1. **Per-provider replay compatibility** for history containing calls to
    tools not in the current request's tool list (Anthropic, OpenAI-compatible
    incl. Mistral and Groq, Google, Ollama).
-   **Resolved by construction, verified on two providers.** The slim router never sends such a call: it replays it as text
+   **Resolved by construction, verified on three providers.** The slim router never sends such a call: it replays it as text
    (`collapseUnavailableToolCalls`, unit-tested to keep the pairing invariant), so whether a provider tolerates the raw form no longer
-   matters. Probe run (`scripts/routing-eval.mts`): **Ollama / qwen3.8-custom and Google / gemini-3.5-flash-lite each accepted both the raw and
-   the collapsed history.** Anthropic, OpenAI, Groq and Mistral have not been probed. The collapsed form is the only one that must always be
+   matters. Probe run (`scripts/routing-eval.mts`): **Ollama / qwen3.8-custom, Google / gemini-3.5-flash-lite and OpenAI / gpt-4o-mini each
+   accepted both the raw and the collapsed history.** Anthropic, Groq and Mistral have not been probed. The collapsed form is the only one that must always be
    accepted.
 2. **Multi-model routing evaluation** — codestral, gpt-oss, Gemini flash-lite,
    Groq, an Anthropic model — using the role examples / non-examples (3.2) and
    real prompts from the session DB.
-   **Partly resolved, model-dependent (Appendix E).** One provider family (Google: `gemini-3.5-flash-lite` and `gemini-3.5-flash`), plus one
-   partial local run. On the same 43 cases with follow-through the slim router is better than the full one on one model and worse on the other
-   (42 vs 37, and 27 vs 31), and the main slim failure mode is a reflex to explore with the core file tools before delegating. Anthropic,
-   OpenAI, Groq and Mistral not run; repeat runs not done.
+   **Partly resolved, model-dependent (Appendix E).** Two provider families: Google (`gemini-3.5-flash-lite`, `gemini-3.5-flash`) and OpenAI
+   (`gpt-4o-mini`), plus one partial local run. On the same 43 cases with follow-through the slim router is better than the full one on two
+   models and worse on one (42 vs 37, 35 vs 33, and 27 vs 31), and the models fail differently: Gemini's slim failure mode is a reflex to
+   explore with the core file tools before delegating; OpenAI's is asking a clarifying question on an underspecified case (scored as a miss).
+   Anthropic, Groq and Mistral not run; repeat runs not done.
 3. **Caching economics** — measure the real cost and latency effect per
    provider before claiming savings, and confirm the tool list is
    byte-stable across requests.
@@ -929,7 +930,8 @@ before step 1 as their own release. Order inside the track:
    `scripts/cache-probe.mts`. Measured (Appendix E): **Gemini implicit caching works on `gemini-3.5-flash` for the full router prefix (69% of
    11,580 tokens cached from the second call) — evidence that the byte-stable prefix pays off — but not on `gemini-3.5-flash-lite`, and not for
    the slim prefix (3,107 tokens: below Gemini's minimum).** Local-model latency showed nothing either way. **Anthropic caching has still never
-   run against the real API** (no Anthropic key is configured), and money saved is unmeasured.
+   run against the real API** (no Anthropic key is configured), and money saved is unmeasured. **OpenAI's automatic caching works on both
+   prefixes** (97–99% of the prompt cached, including the 2.5K slim prefix).
 4. **Classify-prompt migration** — hand-written role facts replaced by the
    generated digest (3.6), verified on real compound prompts.
    **Done in step 2** (generated digest with live availability, unit-tested); **not verified on real compound prompts with a real model.**
@@ -1371,3 +1373,35 @@ What the runs show — and do not:
 | gemini-3.5-flash | full 11,580 | **8,012 (69%) from call 2 on** |
 | gemini-3.5-flash | slim 3,107 | 0 (below Gemini's minimum size) |
 | gemini-2.5-flash | — | not available to new API users (HTTP 404) |
+
+**Runs 9–13 — 2026-09-26, OpenAI `gpt-4o-mini` (the model configured in Sachivji), via `scripts/with-app-key.cjs`.** Same 43 cases, up to 3 rounds,
+one sample each (the slim router was run twice: 35 both times, with a different set of misses — a direct measure of the noise).
+
+*Replay probe (gate 1):* both the raw and the collapsed history were accepted.
+
+| Router | Prefix tokens (OpenAI's own count) | Correct | Explored first | ~router-input tokens |
+|---|---|---|---|---|
+| Full registry | 8,698 | 33 | 0 | 374K |
+| Slim, default core | 2,512 | 35 | 2 | 115K |
+| Slim, core without `read_file` + `list_directory` | ~2,400 | 34 | 0 | 102K |
+
+- **Accuracy is a wash on this model** (33 / 35 / 34 is inside the noise), and slim used about 27–31% of the full router's input tokens.
+- **Nothing like Gemini's exploration reflex:** at most 2 of 43 requests explored first, so dropping `read_file` / `list_directory` changes
+  little here (35 → 34). The reflex is model-specific.
+- **The misses are mostly clarifying questions, not failures.** 5–7 misses per configuration were "answered directly" — and reading the
+  excerpts (added to the harness for this) they are requests for missing information: "please provide the path to the CSV file", "I need the
+  notes for that release", "provide the values for the three rows", "I need the hostname, port …". That is the right behaviour for an
+  underspecified case ("this file", "these rows") and is scored as a miss; it is **not** the D2 "paste a script and hand it back" failure.
+  So the true routing quality on this model is higher than 35/43 suggests, and several manifest cases are still underspecified.
+- The estimator (tiktoken) over-counts OpenAI's real prompt by about 17% (slim 2,939 estimated vs 2,512 actual; full 10,610 vs 8,698).
+
+*Caching probe (identical request repeated four times):*
+
+| Router prefix | Input tokens | Cached |
+|---|---|---|
+| Slim | 2,512 | 2,432 (97%) on calls 1, 2 and 4; 0 on call 3 |
+| Full | 8,698 | 8,576 (99%) on all four calls |
+
+OpenAI caches automatically for a prefix of 1,024 tokens or more, **so the slim prefix caches too** (unlike Gemini). Caveat: these calls ran minutes after
+the routing runs sent the same prefix, so even "call 1" hit a warm cache — a cold first-call cost was not measured; the single 0% call on
+the slim prefix shows cache hits are best-effort.

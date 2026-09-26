@@ -46,7 +46,8 @@ export function buildRoutingCases(manifest: typeof ROLE_MANIFEST = ROLE_MANIFEST
 export type Choice =
   | { type: 'delegate'; role: string }
   | { type: 'tool'; name: string }
-  | { type: 'answer' }
+  /** `excerpt`: the start of what the model said instead of delegating — so a clarifying question can be told from pasted code. */
+  | { type: 'answer'; excerpt?: string }
   | { type: 'error'; message: string }
 
 export interface RoutingOutcome {
@@ -122,7 +123,7 @@ async function decide(
     } catch (err) {
       return { choice: { type: 'error', message: err instanceof Error ? err.message : String(err) }, rounds: round, explored }
     }
-    if (calls.size === 0) return { choice: answered ? { type: 'answer' } : { type: 'error', message: 'no output' }, rounds: round, explored }
+    if (calls.size === 0) return { choice: answered ? { type: 'answer', excerpt: text.replace(/\s+/g, ' ').trim().slice(0, 140) } : { type: 'error', message: 'no output' }, rounds: round, explored }
 
     // The first call that is NOT an exploration tool is the decisive choice.
     const entries = [...calls.entries()]
@@ -192,7 +193,7 @@ export async function runRoutingEval(
 }
 
 export function describeChoice(c: Choice): string {
-  return c.type === 'delegate' ? `delegate ${c.role}` : c.type === 'tool' ? `tool ${c.name}` : c.type === 'error' ? `error: ${c.message.replace(/\s+/g, ' ').slice(0, 140)}` : 'answered directly'
+  return c.type === 'delegate' ? `delegate ${c.role}` : c.type === 'tool' ? `tool ${c.name}` : c.type === 'error' ? `error: ${c.message.replace(/\s+/g, ' ').slice(0, 140)}` : c.excerpt ? `answered directly: "${c.excerpt}"` : 'answered directly'
 }
 
 export function formatRoutingReport(r: RoutingReport): string {

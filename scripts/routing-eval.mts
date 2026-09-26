@@ -25,7 +25,9 @@
  *
  * Read the result with care: it is ONE sample of a non-deterministic model on 43 cases (differences of a few cases are noise), the "explored
  * first" figure counts requests where the model looked around (listed a folder, asked what it can do) before deciding — extra rounds even
- * when it ends up right — and the two mcp-operator cases cannot pass here because no MCP server is connected in this harness.
+ * when it ends up right — the two mcp-operator cases cannot pass here because no MCP server is connected in this harness, and a CLARIFYING
+ * QUESTION ("which file?", "please provide the rows") is scored as a miss although it is often the right answer to an underspecified case;
+ * the excerpt printed after "answered directly" lets you tell the two apart.
  */
 import { AnthropicProvider } from '../src/main/providers/anthropic'
 import { GoogleProvider } from '../src/main/providers/google'

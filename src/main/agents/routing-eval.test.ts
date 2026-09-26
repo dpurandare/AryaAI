@@ -93,6 +93,13 @@ describe('runRoutingEval', () => {
     expect(provider.requests[0]).toMatchObject({ system: 'You are Sachivji.', messages: [{ role: 'user' }] })
   })
 
+  it('keeps the start of a direct answer, so a clarifying question can be told apart from pasted code', async () => {
+    const provider = new MockProvider([{ text: 'Sure - which file   should\nI use?', stopReason: 'end_turn' }])
+    const report = await runRoutingEval(provider, 'm', setup, [cases[0]])
+    expect(report.outcomes[0].choice).toEqual({ type: 'answer', excerpt: 'Sure - which file should I use?' })
+    expect(formatRoutingReport(report)).toContain('answered directly: "Sure - which file should I use?"')
+  })
+
   it('a provider error becomes an error outcome (counted wrong), not a crash', async () => {
     const provider = new MockProvider([{ throwError: 'rate limited' }])
     const report = await runRoutingEval(provider, 'm', setup, [cases[0]])
