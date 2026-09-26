@@ -16,6 +16,7 @@ version is still `0`.
 
 - A new `describe_capabilities` tool lets the assistant list, from live data, which specialists and tools it has, which databases / APIs / email accounts / MCP servers are configured, whether Python scripts can be run, and which actions ask for confirmation — so "what can you do?" is answered from facts, not memory.
 - Settings > Prompt caching: a switch (on by default) to stop sending Anthropic prompt-cache markers, as a recovery path should the API ever reject them.
+- The Settings page now scrolls across the whole panel (scrollbar at the window's right edge) with its content in a centred column of up to 900px that shrinks with the window, instead of a fixed 640px column pinned to the left.
 - An expanded tool block now shows the tool's full command wrapped over several lines (multi-line scripts and SQL keep their line breaks) instead of a single ellipsised line.
 - A permanent prompt-size test records the fixed per-request token cost and fails if it grows unnoticed.
 

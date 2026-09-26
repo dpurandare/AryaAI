@@ -637,6 +637,7 @@
     </button>
   </div>
   <div class="settings-body">
+    <div class="settings-content">
     <h2>Appearance</h2>
     <p class="status">Choose a light or dark look, or follow your system setting.</p>
     <div class="theme-toggle" role="radiogroup" aria-label="Theme">
@@ -1238,6 +1239,7 @@
     {:else}
       <p class="status">No tools need confirmation yet.</p>
     {/if}
+    </div>
   </div>
 </div>
 
@@ -1271,17 +1273,21 @@
   .back-btn:hover {
     background: var(--panel-hover);
   }
+  /* The scroll container is the whole pane below the header, so its scrollbar sits at the panel's right edge; the content column inside
+     is centred, at most 900px wide and never wider than the panel (it shrinks with the window). */
   .settings-body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     padding: 1.5rem 2rem 3rem;
+    box-sizing: border-box;
+  }
+  .settings-content {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    max-width: 640px;
-    width: 100%;
-    box-sizing: border-box;
+    width: min(900px, 100%);
+    margin: 0 auto;
   }
   h2 {
     margin: 0 0 0.25rem;
