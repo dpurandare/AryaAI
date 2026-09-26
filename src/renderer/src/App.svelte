@@ -103,6 +103,7 @@
   let runtimes = $state<Record<string, SessionRuntime>>({})
   let showSettings = $state(false)
   let showFirstRunSetup = $state(false)
+  let firstRunStep = $state<'secrets' | 'python'>('secrets')
   let firstRunEnvPath = $state('')
   let providers = $state<ProviderDescriptor[]>([])
   let providerId = $state('openai')
@@ -500,20 +501,28 @@
     const anyKeyConfigured = (await Promise.all(allProviders.map((p) => window.sachiv.hasApiKey(p.id)))).some(Boolean)
     if (existingSessions.length === 0 && !anyKeyConfigured) {
       firstRunEnvPath = (await window.sachiv.getSecretStorageInfo()).envFilePath
+      firstRunStep = (await window.sachiv.getSetting(ONBOARDING_SECRETS_KEY)) === 'true' ? 'python' : 'secrets'
       showFirstRunSetup = true
     } else {
       await window.sachiv.setSetting(ONBOARDING_SETTING_KEY, 'true')
     }
   }
 
-  async function completeFirstRun(): Promise<void> {
+  /** Set once the secret-storage choice is made, so quitting during the Python step doesn't ask (or, for "file", re-switch) again. */
+  const ONBOARDING_SECRETS_KEY = 'onboardingSecretsChosen'
+
+  async function secretsChosen(): Promise<void> {
+    await window.sachiv.setSetting(ONBOARDING_SECRETS_KEY, 'true')
+  }
+
+  async function finishOnboarding(): Promise<void> {
     await window.sachiv.setSetting(ONBOARDING_SETTING_KEY, 'true')
     showFirstRunSetup = false
   }
 
   async function chooseFileStorageOnFirstRun(): Promise<void> {
     await window.sachiv.switchSecretStorageToFile()
-    await completeFirstRun()
+    await secretsChosen()
   }
 
   window.sachiv
@@ -594,7 +603,13 @@
 <svelte:window onkeydown={onWindowKeydown} />
 
 {#if showFirstRunSetup}
-  <FirstRunSetup envFilePath={firstRunEnvPath} onChooseKeychain={completeFirstRun} onChooseFile={chooseFileStorageOnFirstRun} />
+  <FirstRunSetup
+    envFilePath={firstRunEnvPath}
+    initialStep={firstRunStep}
+    onChooseKeychain={secretsChosen}
+    onChooseFile={chooseFileStorageOnFirstRun}
+    onFinish={finishOnboarding}
+  />
 {/if}
 
 <div class="titlebar" class:mac={isMac}>

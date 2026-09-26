@@ -1,14 +1,24 @@
 <script lang="ts">
+  import type { RuntimeState } from '@shared/runtime'
+
   let {
     envFilePath,
+    initialStep = 'secrets',
     onChooseKeychain,
-    onChooseFile
+    onChooseFile,
+    onFinish
   }: {
     envFilePath: string
-    onChooseKeychain: () => void
+    /** `'python'` when the secret-storage choice was already made in an earlier launch. */
+    initialStep?: 'secrets' | 'python'
+    onChooseKeychain: () => Promise<void>
     onChooseFile: () => Promise<void>
+    /** Called once the Python runtime is ready, or the user chose to continue without it. */
+    onFinish: () => Promise<void>
   } = $props()
 
+  // svelte-ignore state_referenced_locally
+  let step = $state<'secrets' | 'python'>(initialStep)
   let switching = $state(false)
   let showFileConfirm = $state(false)
 
@@ -16,8 +26,55 @@
     switching = true
     try {
       await onChooseFile()
+      step = 'python'
     } finally {
       switching = false
+    }
+  }
+
+  async function chooseKeychain(): Promise<void> {
+    await onChooseKeychain()
+    step = 'python'
+  }
+
+  // --- Python step: the onboarding gate (design-discussion.md 4.3) ---
+  let runtime = $state<RuntimeState | null>(null)
+  let busy = $state(false)
+
+  window.sachiv.getRuntimeState().then((s) => {
+    if (s) runtime = s
+  })
+  $effect(() => window.sachiv.onRuntimeStateChanged((s) => (runtime = s)))
+
+  // Usable as soon as the venv works; base packages may still be installing in the background.
+  const canContinue = $derived(runtime?.status === 'ready' || runtime?.status === 'disabled')
+  const needsAttention = $derived(runtime?.status === 'missing-python' || runtime?.status === 'failed')
+
+  async function retry(): Promise<void> {
+    busy = true
+    try {
+      runtime = await window.sachiv.ensureRuntime()
+    } finally {
+      busy = false
+    }
+  }
+
+  async function continueWithoutPython(): Promise<void> {
+    busy = true
+    try {
+      await window.sachiv.setRuntimeEnabled(false)
+      await onFinish()
+    } finally {
+      busy = false
+    }
+  }
+
+  async function finish(): Promise<void> {
+    busy = true
+    try {
+      await onFinish()
+    } finally {
+      busy = false
     }
   }
 </script>
@@ -25,42 +82,82 @@
 <div class="screen">
   <div class="panel">
     <h1>Welcome to Sachivji</h1>
-    <p>
-      Before you start, choose where provider API keys and connection secrets (databases, external APIs,
-      MCP servers, email accounts) should be stored. You can leave this on the recommended option — it's
-      what most people want.
-    </p>
 
-    <div class="option">
-      <h2>OS Keychain <span class="badge">Recommended</span></h2>
+    {#if step === 'secrets'}
       <p>
-        Encrypted using your operating system's own secure storage (Keychain on macOS, DPAPI on Windows,
-        libsecret on Linux). Nothing is ever written in plaintext.
+        Before you start, choose where provider API keys and connection secrets (databases, external APIs,
+        MCP servers, email accounts) should be stored. You can leave this on the recommended option — it's
+        what most people want.
       </p>
-      <button class="primary" onclick={onChooseKeychain}>Continue with OS Keychain</button>
-    </div>
 
-    {#if !showFileConfirm}
       <div class="option">
-        <h2>File instead</h2>
+        <h2>OS Keychain <span class="badge">Recommended</span></h2>
         <p>
-          Stores secrets in a plain file at <code>{envFilePath}</code> — useful if OS-native secure
-          storage isn't available on this machine (e.g. a headless Linux box with no keyring running).
-          Less secure than the Keychain: readable by any process/user with access to your files.
+          Encrypted using your operating system's own secure storage (Keychain on macOS, DPAPI on Windows,
+          libsecret on Linux). Nothing is ever written in plaintext.
         </p>
-        <button onclick={() => (showFileConfirm = true)}>Use a file instead</button>
+        <button class="primary" onclick={chooseKeychain}>Continue with OS Keychain</button>
       </div>
+
+      {#if !showFileConfirm}
+        <div class="option">
+          <h2>File instead</h2>
+          <p>
+            Stores secrets in a plain file at <code>{envFilePath}</code> — useful if OS-native secure
+            storage isn't available on this machine (e.g. a headless Linux box with no keyring running).
+            Less secure than the Keychain: readable by any process/user with access to your files.
+          </p>
+          <button onclick={() => (showFileConfirm = true)}>Use a file instead</button>
+        </div>
+      {:else}
+        <div class="option">
+          <h2>Use a file instead?</h2>
+          <p>This is a one-time choice — there's no way to switch back to the Keychain later.</p>
+          <div class="actions">
+            <button onclick={() => (showFileConfirm = false)}>Cancel</button>
+            <button class="primary" disabled={switching} onclick={confirmFile}>
+              {switching ? 'Setting up...' : 'Confirm: use a file'}
+            </button>
+          </div>
+        </div>
+      {/if}
     {:else}
+      <p>
+        Sachivji runs agent-written scripts — charts, Word and Excel files — in a Python environment
+        that it sets up inside your workspace. This needs Python 3.10 or newer installed on this
+        computer. It is not a sandbox: scripts can read and write anywhere you can.
+      </p>
+
       <div class="option">
-        <h2>Use a file instead?</h2>
-        <p>This is a one-time choice — there's no way to switch back to the Keychain later.</p>
+        <h2>
+          Python
+          {#if runtime?.status === 'ready' && runtime.packages !== 'installing'}<span class="badge">Ready</span>{/if}
+        </h2>
+        {#if runtime}
+          <p class:error={needsAttention}>
+            {runtime.message}{runtime.pythonVersion ? ` (Python ${runtime.pythonVersion})` : ''}
+          </p>
+        {:else}
+          <p>Checking…</p>
+        {/if}
         <div class="actions">
-          <button onclick={() => (showFileConfirm = false)}>Cancel</button>
-          <button class="primary" disabled={switching} onclick={confirmFile}>
-            {switching ? 'Setting up...' : 'Confirm: use a file'}
-          </button>
+          {#if needsAttention}
+            <button disabled={busy} onclick={retry}>Retry</button>
+            <button disabled={busy} onclick={continueWithoutPython}>Continue without Python</button>
+          {:else}
+            <button class="primary" disabled={!canContinue || busy} onclick={finish}>
+              {canContinue ? 'Continue' : 'Setting up…'}
+            </button>
+          {/if}
         </div>
       </div>
+      {#if needsAttention}
+        <p>
+          Install Python from python.org (on Debian/Ubuntu: <code>sudo apt install python3 python3-venv</code>),
+          then choose Retry. Without Python, chat, database and Office tools still work; you can turn it on
+          later in Settings &gt; Runtime.
+        </p>
+      {/if}
     {/if}
   </div>
 </div>
@@ -111,6 +208,9 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 1rem;
+  }
+  p.error {
+    color: var(--danger, #e5484d);
   }
   code {
     background: var(--panel-hover);

@@ -12,6 +12,8 @@ version is still `0`.
 
 - The workspace's Python environment is now created automatically together with the workspace folders (`code/`, `documents/`, `resources/`, and `venv/`) when Python 3.10+ is installed, with pinned base packages for charts and Word/Excel files (matplotlib, numpy, pillow, python-docx, openpyxl). Settings > Runtime shows its state and offers Retry, Repair and Turn Python off. Existing environments are adopted, never overwritten.
 
+- First run now includes a Python setup step: Continue is available once the environment is ready, or you can choose "Continue without Python". README documents Python 3.10+ as a prerequisite, and the Linux `.deb` now depends on `python3` and `python3-venv`.
+
 ### Changed
 
 - The message an agent gets when `python` is not found now points at Settings > Runtime instead of asking it to build a virtual environment itself.
