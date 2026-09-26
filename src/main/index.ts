@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/register'
 import { setDbPath } from './db'
+import { getSetting, setSetting } from './db/settings'
+import { attachZoomShortcuts, ZOOM_SETTING_KEY } from './window/zoom'
 import { initUpdater } from './updater'
 
 // On GNOME/Wayland, Electron auto-selects the native Wayland backend, whose
@@ -39,6 +41,12 @@ function createMainWindow(): BrowserWindow {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
+
+  attachZoomShortcuts(
+    mainWindow.webContents,
+    { get: () => getSetting(ZOOM_SETTING_KEY), set: (value) => setSetting(ZOOM_SETTING_KEY, value) },
+    process.platform === 'darwin'
+  )
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)

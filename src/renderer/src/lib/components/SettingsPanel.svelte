@@ -11,8 +11,11 @@
     providers,
     themeMode,
     planningEnabled,
+    leaveRequested = false,
     onSave,
     onClose,
+    onBack,
+    onLeaveResolved,
     onToggleAutoApproveRule,
     onChangeTheme,
     onChangePlanningEnabled
@@ -24,8 +27,16 @@
     providers: ProviderDescriptor[]
     themeMode: ThemeMode
     planningEnabled: boolean
-    onSave: (apiKey: string) => void | Promise<void>
+    /** The user tried to leave Settings (another session, New chat, Back) while entries are unsaved: show the Save / Discard / Cancel prompt. */
+    leaveRequested?: boolean
+    /** `keepOpen`: save without closing Settings (used when saving from the leave prompt). */
+    onSave: (apiKey: string, keepOpen?: boolean) => void | Promise<void>
+    /** Closes Settings unconditionally (the key form's own Cancel/Close). */
     onClose: () => void
+    /** Header "Back to chat": leaves Settings, asking first if anything is unsaved. */
+    onBack: () => void
+    /** Answer to the leave prompt: `true` = go ahead and leave (discarding what's left), `false` = stay in Settings. */
+    onLeaveResolved: (leave: boolean) => void
     onToggleAutoApproveRule: (name: string, value: boolean) => void
     onChangeTheme: (mode: ThemeMode) => void
     onChangePlanningEnabled: (value: boolean) => void
@@ -458,6 +469,70 @@
     }
   }
 
+  // --- Unsaved entries -------------------------------------------------------------------------------------------------
+  // Most settings apply the moment they change (theme, toggles, selects, roles, the embedding model on blur). The exceptions are text
+  // entries with their own Save button — API keys, the "add …" forms, an MCP description being edited and the workspace folder. Those
+  // are what "unsaved" means here: leaving Settings while any is filled in asks first (App.svelte -> `leaveRequested`).
+  type PendingChange = { label: string; save: () => Promise<void> }
+
+  function pendingChanges(): PendingChange[] {
+    const list: PendingChange[] = []
+    if (apiKey.trim()) {
+      list.push({
+        label: `${providerDisplayName} API key`,
+        save: async () => {
+          saving = true
+          try {
+            await onSave(apiKey.trim(), true)
+            apiKey = ''
+          } finally {
+            saving = false
+          }
+        }
+      })
+    }
+    if (embeddingApiKey.trim()) list.push({ label: 'Search-history embedding API key', save: saveEmbeddingKey })
+    if (tavilyApiKey.trim()) list.push({ label: 'Web search (Tavily) API key', save: saveTavilyKey })
+    if (workspaceRootInput.trim() && workspaceRootInput !== workspaceRoot) list.push({ label: 'Workspace folder', save: saveWorkspaceRoot })
+    if (showAddConnection && connName.trim()) list.push({ label: `Data source "${connName.trim()}"`, save: saveConnection })
+    if (showAddMcpServer && mcpName.trim()) list.push({ label: `MCP server "${mcpName.trim()}"`, save: saveMcpServer })
+    const editedServer = editingMcpDescriptionId ? mcpServers.find((s) => s.id === editingMcpDescriptionId) : undefined
+    if (editedServer && editingMcpDescription.trim() !== (editedServer.description ?? '').trim()) {
+      list.push({ label: `Description of MCP server "${editedServer.name}"`, save: () => saveMcpDescription(editedServer) })
+    }
+    if (showAddApiConnection && apiName.trim()) list.push({ label: `API connection "${apiName.trim()}"`, save: saveApiConnection })
+    if (showAddEmailConnection && emailName.trim()) list.push({ label: `Email account "${emailName.trim()}"`, save: saveEmailConnectionWithValidation })
+    return list
+  }
+
+  /** Labels of the unsaved entries (empty = nothing to lose). Called by App.svelte before it navigates away from Settings. */
+  export function getPendingLabels(): string[] {
+    return pendingChanges().map((c) => c.label)
+  }
+
+  let leaveBusy = $state(false)
+  let leaveSaveError = $state('')
+
+  /** Saves every unsaved entry. Whatever cannot be saved (a validation error, a missing field) stays on screen and is named in a banner. */
+  async function saveAllPending(): Promise<void> {
+    leaveBusy = true
+    leaveSaveError = ''
+    try {
+      for (const change of pendingChanges()) {
+        try {
+          await change.save()
+        } catch (err) {
+          leaveSaveError = `${change.label}: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+      const left = pendingChanges().map((c) => c.label)
+      if (left.length > 0 && !leaveSaveError) leaveSaveError = `Could not save: ${left.join(', ')}. Complete or fix ${left.length === 1 ? 'it' : 'them'} below.`
+    } finally {
+      leaveBusy = false
+    }
+    onLeaveResolved(false) // saving keeps you in Settings (as asked); anything left over is still there, with its own error
+  }
+
   // --- Slim router (design-discussion.md step 4; experimental, off by default) ---
   const SLIM_ROUTER_SETTING_KEY = 'slimRouter'
   let slimRouter = $state(false)
@@ -623,7 +698,7 @@
 
 <div class="settings-view">
   <div class="settings-header">
-    <button class="back-btn" onclick={onClose}>
+    <button class="back-btn" onclick={onBack}>
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
         <path
           d="M10 3L5 8l5 5"
@@ -636,6 +711,25 @@
       Back to chat
     </button>
   </div>
+  {#if leaveRequested}
+    <div class="leave-prompt" role="alertdialog" aria-label="Unsaved settings">
+      <p>
+        <strong>You have unsaved entries:</strong>
+        {getPendingLabels().join(' · ')}. Save them before leaving?
+      </p>
+      <div class="actions">
+        <button class="primary" disabled={leaveBusy} onclick={saveAllPending}>{leaveBusy ? 'Saving…' : 'Save and stay here'}</button>
+        <button disabled={leaveBusy} onclick={() => onLeaveResolved(true)}>Discard and leave</button>
+        <button disabled={leaveBusy} onclick={() => onLeaveResolved(false)}>Cancel</button>
+      </div>
+    </div>
+  {/if}
+  {#if leaveSaveError && !leaveRequested}
+    <div class="leave-prompt error" role="alert">
+      <p>{leaveSaveError}</p>
+      <div class="actions"><button onclick={() => (leaveSaveError = '')}>Dismiss</button></div>
+    </div>
+  {/if}
   <div class="settings-body">
     <div class="settings-content">
     <h2>Appearance</h2>
@@ -1288,6 +1382,25 @@
     gap: 0.5rem;
     width: min(900px, 100%);
     margin: 0 auto;
+  }
+  .leave-prompt {
+    flex-shrink: 0;
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel-hover);
+    font-size: 0.85rem;
+  }
+  .leave-prompt p {
+    margin: 0 0 0.5rem;
+    overflow-wrap: anywhere;
+  }
+  .leave-prompt.error {
+    color: var(--danger, #e5484d);
+  }
+  .leave-prompt .actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
   }
   h2 {
     margin: 0 0 0.25rem;

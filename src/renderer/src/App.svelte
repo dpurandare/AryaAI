@@ -485,10 +485,46 @@
     await refreshContextWindow()
   }
 
-  async function saveApiKey(apiKey: string): Promise<void> {
+  async function saveApiKey(apiKey: string, keepOpen = false): Promise<void> {
     await window.sachiv.setApiKey(providerId, apiKey)
     await loadProviderState(providerId)
+    if (!keepOpen) showSettings = false
+  }
+
+  // --- Leaving Settings (session click, New chat, the account row, Back) ---
+  // Settings is a full-pane view, not a dialog, so picking a session from the sidebar has to close it. If something typed into Settings has
+  // not been saved (an API key, an "add …" form — see SettingsPanel's pendingChanges), ask first instead of silently dropping it.
+  type LeaveTarget = { kind: 'chat' } | { kind: 'new' } | { kind: 'session'; id: string }
+  let settingsPanel = $state<{ getPendingLabels(): string[] } | undefined>()
+  let leaveRequest = $state<LeaveTarget | null>(null)
+
+  async function completeLeave(target: LeaveTarget): Promise<void> {
+    leaveRequest = null
     showSettings = false
+    void loadRoleRoster()
+    if (target.kind === 'session') await selectSession(target.id)
+    else if (target.kind === 'new') await newSession()
+  }
+
+  async function requestLeave(target: LeaveTarget): Promise<void> {
+    if (settingsPanel && settingsPanel.getPendingLabels().length > 0) {
+      leaveRequest = target
+      return
+    }
+    await completeLeave(target)
+  }
+
+  function onSidebarSelect(id: string): Promise<void> {
+    return showSettings ? requestLeave({ kind: 'session', id }) : selectSession(id)
+  }
+
+  function onSidebarNew(): Promise<void> {
+    return showSettings ? requestLeave({ kind: 'new' }) : newSession()
+  }
+
+  function toggleSettings(): void {
+    if (showSettings) void requestLeave({ kind: 'chat' })
+    else showSettings = true
   }
 
   async function initProvider(): Promise<void> {
@@ -655,12 +691,12 @@
       {sessions}
       {activeId}
       activity={sessionActivity}
-      onSelect={selectSession}
-      onNew={newSession}
+      onSelect={onSidebarSelect}
+      onNew={onSidebarNew}
       onDelete={removeSession}
       onExport={exportSession}
     />
-    <button class="user-row" onclick={() => (showSettings = true)}>
+    <button class="user-row" aria-expanded={showSettings} title={showSettings ? 'Close settings' : 'Open settings'} onclick={toggleSettings}>
       <span class="avatar">{(userName || '?').charAt(0).toUpperCase()}</span>
       <span class="user-name">{userName || 'Account'}</span>
       <svg class="chevron" width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -680,6 +716,14 @@
   <section>
     {#if showSettings}
       <SettingsPanel
+        bind:this={settingsPanel}
+        leaveRequested={leaveRequest !== null}
+        onBack={() => void requestLeave({ kind: 'chat' })}
+        onLeaveResolved={(leave) => {
+          const target = leaveRequest
+          if (leave && target) void completeLeave(target)
+          else leaveRequest = null
+        }}
         providerDisplayName={providers.find((p) => p.id === providerId)?.displayName ?? providerId}
         providerRequiresApiKey={providers.find((p) => p.id === providerId)?.requiresApiKey ?? true}
         {hasKey}
@@ -868,7 +912,10 @@
   }
   .chevron {
     color: var(--text-muted);
-    flex-shrink: 0;
+    flex-shrink: 0;    transition: transform 0.15s;
+  }
+  .user-row[aria-expanded='true'] .chevron {
+    transform: rotate(180deg);
   }
   .avatar {
     width: 1.6rem;
