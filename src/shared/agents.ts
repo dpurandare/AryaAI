@@ -37,7 +37,7 @@ export interface RoleMeta {
    * Live configuration this role is useless without — ANY of these being present is enough (Data Access needs a database OR an API).
    * Feeds the planner's capability digest, so a plan never routes "email it to X" to a role that has no account to send from.
    */
-  readonly requiresAnyOf?: readonly ('database' | 'api' | 'email')[]
+  readonly requiresAnyOf?: readonly ('database' | 'api' | 'email' | 'mcp')[]
   /** Real prompts that belong to this role — used by the routing evaluation and the summary lint (design 3.2). */
   readonly examples: readonly string[]
   /** Prompts that LOOK like they belong to this role but do not — each names, in brackets, the role that should take it. */
@@ -197,6 +197,25 @@ export const ROLE_MANIFEST = [
     notExamples: [
       'How many rows are in the orders table? [data]',
       'Send an email to the team [email]'
+    ]
+  },
+  {
+    id: 'mcp-operator',
+    label: 'MCP Operator',
+    summary:
+      'Uses the tools of connected MCP servers (wikis, knowledge bases, integrations). Not for the open web (Researcher), databases (Data Access) or past chats (History Analyst).',
+    description:
+      'Uses the tools that your connected MCP servers provide — for example a wiki, a knowledge base or a third-party integration — and nothing else. It is the only specialist that carries MCP tools, so a server with many tools costs nothing for any other request. Which servers are connected, and what each is for (the description you wrote in Settings), is shown to it live. Needs at least one connected server.',
+    pickable: true,
+    plannable: true,
+    requiresAnyOf: ['mcp'],
+    examples: [
+      'Look up the maintenance runbook for the inverter fault in the energy wiki',
+      'Ask the connected knowledge base which documents it holds on grid connection'
+    ],
+    notExamples: [
+      'Search the web for the latest news on grid connection rules [research]',
+      'How many rows are in the maintenance_events table? [data]'
     ]
   },
   {

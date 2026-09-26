@@ -1082,7 +1082,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     it('marks a role UNAVAILABLE in the classifier digest when nothing it needs is configured, and not when it is', async () => {
       // A plan must not route "email it to X" to a role with no account to send from, or "query the
       // database" to Data Access with no connection (design 3.6: the digest carries live state).
-      const run = async (config: { databases: number; apis: number; email: number }): Promise<string> => {
+      const run = async (config: { databases: number; apis: number; email: number; mcp: number }): Promise<string> => {
         const registry = buildRegistry()
         const provider = new MockProvider([
           { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
@@ -1096,13 +1096,15 @@ describe('Orchestrator (integration, mocked provider)', () => {
         return provider.requests[0].system ?? ''
       }
 
-      const none = await run({ databases: 0, apis: 0, email: 0 })
+      const none = await run({ databases: 0, apis: 0, email: 0, mcp: 0 })
       expect(none).toMatch(/- data: .*UNAVAILABLE right now: no database or external API is configured/)
       expect(none).toMatch(/- email: .*UNAVAILABLE right now: no email account is configured/)
+      expect(none).toMatch(/- mcp-operator: .*UNAVAILABLE right now: no MCP server is connected/)
 
-      const apiOnly = await run({ databases: 0, apis: 1, email: 1 })
+      const apiOnly = await run({ databases: 0, apis: 1, email: 1, mcp: 1 })
       expect(apiOnly).not.toMatch(/- data: .*UNAVAILABLE/) // Data Access needs a database OR an API
       expect(apiOnly).not.toMatch(/- email: .*UNAVAILABLE/)
+      expect(apiOnly).not.toMatch(/- mcp-operator: .*UNAVAILABLE/)
     })
 
     it('tells the classifier a later step only sees written results, so an earlier step must return the actual values (Appendix D2: fabricated chart data)', async () => {

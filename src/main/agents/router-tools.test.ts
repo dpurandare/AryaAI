@@ -42,9 +42,12 @@ describe('selectRouterTools (slim router)', () => {
     }
   })
 
-  it('keeps MCP tools (documented feature) until step 5 makes them a deferred capability', () => {
-    const withMcp = [...registry.list(), { ...registry.get('read_file')!, name: 'mcp__wiki__search' }]
-    expect(selectRouterTools(withMcp, agents).map((t) => t.name)).toContain('mcp__wiki__search')
+  it('drops MCP tools too — they belong to the MCP Operator, so a huge server adds nothing to the router', () => {
+    const many = Array.from({ length: 144 }, (_, i) => ({ ...registry.get('read_file')!, name: `mcp__gbrain__tool_${i}`, mcp: { server: 'gbrain' } }))
+    const withMcp = [...registry.list(), ...many]
+    const slim = selectRouterTools(withMcp, agents).map((t) => t.name)
+    expect(slim.some((n) => n.startsWith('mcp__'))).toBe(false)
+    expect(slim).toEqual(names) // byte-for-byte the same router with or without the server
   })
 
   it('the core is small and every core tool really exists in the registry (no stale entries)', () => {
@@ -56,5 +59,9 @@ describe('selectRouterTools (slim router)', () => {
     const carried = new Set(names)
     const owned = new Set([...agents.values()].flatMap((a) => a.tools.map((t) => t.name)))
     for (const t of registry.list()) expect(carried.has(t.name) || owned.has(t.name), `${t.name} is unreachable`).toBe(true)
+    // MCP tools are reachable through the operator once a server is connected.
+    const withMcp = [{ ...registry.get('read_file')!, name: 'mcp__wiki__x' }]
+    const ag = createAgents({ list: () => withMcp, get: (n: string) => withMcp.find((t) => t.name === n) } as never)
+    expect(ag.get('mcp-operator')?.tools.map((t) => t.name)).toEqual(['mcp__wiki__x'])
   })
 })

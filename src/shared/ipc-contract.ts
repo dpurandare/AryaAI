@@ -396,6 +396,9 @@ export interface ValidateEmailConnectionInput {
 export type McpTransport = 'stdio' | 'http'
 export type McpServerStatus = 'connecting' | 'connected' | 'error'
 
+/** Max characters of the user-written MCP server description (Settings, and pre-filled by the Configurator). */
+export const MCP_SERVER_DESCRIPTION_MAX = 200
+
 /** Config metadata plus live connection state — never carries a bearer token. */
 export interface McpServerDto {
   id: string
@@ -406,6 +409,8 @@ export interface McpServerDto {
   env?: Record<string, string>
   url?: string
   hasToken?: boolean
+  /** User-written, length-capped one-liner: what this server is for. The only text about a server the assistant is shown that the user authored. */
+  description?: string
   status: McpServerStatus
   error?: string
   toolCount: number
@@ -421,6 +426,7 @@ export interface SaveMcpServerInput {
   env?: Record<string, string>
   url?: string
   token?: string
+  description?: string
 }
 
 /**

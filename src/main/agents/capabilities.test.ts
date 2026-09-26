@@ -51,8 +51,17 @@ describe('buildCapabilities', () => {
 
   it('collapses MCP tools per server instead of listing every one', () => {
     const text = buildCapabilities(input())
-    expect(text).toContain('MCP servers connected: energy_wiki (2 tools, named mcp__energy_wiki__*)')
+    expect(text).toContain('MCP servers connected (used through the MCP Operator): energy_wiki (2 tools, named mcp__energy_wiki__*)')
     expect(text.split('## Tools you can call directly')[1].split('##')[0]).not.toContain('mcp__')
+  })
+
+  it('shows the USER-written description of each MCP server (the only server text it repeats)', () => {
+    const wiki = (name: string): Tool => ({ ...tool(name), mcp: { server: 'energy_wiki', serverDescription: 'Energy-sector wiki: runbooks' } })
+    const registry = new ToolRegistry()
+    registry.register(wiki('mcp__energy_wiki__search'))
+    registry.register(wiki('mcp__energy_wiki__get_page'))
+    const text = buildCapabilities(input({ registry }))
+    expect(text).toContain('energy_wiki — Energy-sector wiki: runbooks (2 tools, named mcp__energy_wiki__*)')
   })
 
   it('says plainly when nothing is configured, and what to do about it', () => {

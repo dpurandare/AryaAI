@@ -72,6 +72,12 @@ export interface Tool {
    * in the background" for that specific tool.
    */
   execute(input: Record<string, unknown>, ctx: ToolContext, signal?: AbortSignal): Promise<string>
+  /**
+   * Set only on tools discovered from an MCP server (mcp/client.ts). Lets the rest of the app group a
+   * server's tools, and show the user-written server description, without parsing the `mcp__<server>__`
+   * name.
+   */
+  mcp?: { server: string; serverDescription?: string }
   /** True if `execute` actually honors `signal` to stop the underlying work, not just the orchestrator's wait on it. Defaults to false. */
   cancellable?: boolean
 }

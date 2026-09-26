@@ -114,11 +114,16 @@ export function buildCapabilities(input: CapabilitiesInput): string {
       ? `Email accounts: ${connections.email.map((e) => `${e.name} <${e.emailAddress}>${e.isDefault ? ' [default]' : ''}`).join(', ')}.`
       : 'Email accounts: none configured — sending email is not possible until one is added in Settings.'
   )
-  const mcpByServer = new Map<string, number>()
-  for (const t of tools.filter(isMcp)) mcpByServer.set(mcpServerOf(t), (mcpByServer.get(mcpServerOf(t)) ?? 0) + 1)
+  const mcpByServer = new Map<string, { n: number; description?: string }>()
+  for (const t of tools.filter(isMcp)) {
+    const server = t.mcp?.server ?? mcpServerOf(t)
+    const e = mcpByServer.get(server) ?? { n: 0, description: t.mcp?.serverDescription }
+    e.n++
+    mcpByServer.set(server, e)
+  }
   out.push(
     mcpByServer.size
-      ? `MCP servers connected: ${[...mcpByServer].map(([s, n]) => `${s} (${n} tools, named mcp__${s}__*)`).join(', ')}.`
+      ? `MCP servers connected (used through the MCP Operator): ${[...mcpByServer].map(([s, e]) => `${s}${e.description ? ` — ${e.description}` : ''} (${e.n} tools, named mcp__${s}__*)`).join('; ')}.`
       : 'MCP servers connected: none.'
   )
 
@@ -141,6 +146,8 @@ export interface ConfigurationCounts {
   databases: number
   apis: number
   email: number
+  /** Connected MCP servers. */
+  mcp: number
 }
 
 /**
@@ -156,8 +163,8 @@ export function buildRoleDigest(
   roles: readonly string[],
   config?: ConfigurationCounts
 ): string {
-  const have = (kind: 'database' | 'api' | 'email'): boolean =>
-    !config || (kind === 'database' ? config.databases > 0 : kind === 'api' ? config.apis > 0 : config.email > 0)
+  const have = (kind: 'database' | 'api' | 'email' | 'mcp'): boolean =>
+    !config || (kind === 'database' ? config.databases > 0 : kind === 'api' ? config.apis > 0 : kind === 'email' ? config.email > 0 : config.mcp > 0)
   const lines: string[] = []
   for (const agent of agents.values()) {
     if (!roles.includes(agent.role)) continue
@@ -166,7 +173,7 @@ export function buildRoleDigest(
     if (agent.tools.length === 0) notes.push('no tools of its own — reasoning/text only')
     const needs = meta?.requiresAnyOf
     if (needs && !needs.some(have)) {
-      notes.push(`UNAVAILABLE right now: no ${needs.map((n) => (n === 'database' ? 'database' : n === 'api' ? 'external API' : 'email account')).join(' or ')} is configured`)
+      notes.push(`UNAVAILABLE right now: no ${needs.map((n) => (n === 'database' ? 'database' : n === 'api' ? 'external API' : n === 'email' ? 'email account' : 'MCP server')).join(' or ')} is ${needs.includes('mcp') ? 'connected' : 'configured'}`)
     }
     lines.push(`- ${agent.role}: ${agent.summary}${notes.length ? ` (${notes.join('; ')})` : ''}`)
   }

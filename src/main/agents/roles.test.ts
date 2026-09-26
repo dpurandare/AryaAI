@@ -70,7 +70,7 @@ describe('createAgents', () => {
     const agents = createAgents(new ToolRegistry())
     const note = "don't silently stop as if the whole request is done"
 
-    for (const role of ['research', 'history-analyst', 'coding', 'data', 'data-processor', 'document-creator', 'configurator', 'email'] as const) {
+    for (const role of ['research', 'history-analyst', 'coding', 'data', 'data-processor', 'document-creator', 'configurator', 'mcp-operator', 'email'] as const) {
       expect(agents.get(role)?.systemPrompt).toContain(note)
     }
     expect(agents.get('planning')?.systemPrompt).not.toContain(note)
@@ -168,50 +168,75 @@ describe('createAgents', () => {
     })
   })
 
-  describe('MCP tool visibility per role (TASKS.md #99)', () => {
-    // README.md documents MCP tools as available to the general-purpose roles — before
-    // #99, no specialist's fixed tool list actually included them, so a
-    // connected MCP tool was reachable from the top-level orchestrator
-    // (the full registry) but silently disappeared the instant a request
-    // was delegated to a specialist. Scoping MCP to a dedicated role is design step 5.
-    it('a connected MCP tool is visible to Researcher, Developer and Data Access (the roles that had it before the split)', () => {
-      const registry = new ToolRegistry()
-      registry.register(fakeTool('mcp__gbrain__search_documents'))
-      const agents = createAgents(registry)
+  describe('MCP tools belong to the MCP Operator alone (design step 5; supersedes TASKS.md #99)', () => {
+    // #99 attached MCP tools to five roles so a delegated request would not lose them. The cost: a 144-tool server put
+    // all of them in every one of those roles' prompts, and (Appendix D1) a Data specialist run to answer a SQL question
+    // wrote three wiki pages nobody asked for, because it could reach the wiki's write tools.
+    const mcpTool = (name: string, server = 'gbrain', serverDescription?: string): Tool => ({ ...fakeTool(name), mcp: { server, serverDescription } })
 
-      for (const role of ['research', 'coding', 'data'] as const) {
-        expect(agents.get(role)?.tools.map((t) => t.name)).toContain('mcp__gbrain__search_documents')
+    it('the MCP Operator has every connected MCP tool', () => {
+      const registry = new ToolRegistry()
+      registry.register(mcpTool('mcp__gbrain__search_documents'))
+      registry.register(mcpTool('mcp__wiki__get_page', 'wiki'))
+      const agents = createAgents(registry)
+      expect(agents.get('mcp-operator')?.tools.map((t) => t.name)).toEqual(['mcp__gbrain__search_documents', 'mcp__wiki__get_page'])
+    })
+
+    it('NO other role carries an MCP tool — a server with 144 tools costs every other request nothing', () => {
+      const registry = new ToolRegistry()
+      registry.register(mcpTool('mcp__gbrain__search_documents'))
+      const agents = createAgents(registry)
+      for (const [role, agent] of agents) {
+        if (role === 'mcp-operator') continue
+        expect(agent.tools.map((t) => t.name), role).not.toContain('mcp__gbrain__search_documents')
       }
     })
 
-    it('is live, same as saved queries — an MCP tool connected after createAgents() is still picked up', () => {
+    it('is live, same as saved queries — an MCP tool connected after createAgents() is picked up, and a disconnected one disappears', () => {
       const registry = new ToolRegistry()
       const agents = createAgents(registry)
+      expect(agents.get('mcp-operator')?.tools).toEqual([])
 
-      registry.register(fakeTool('mcp__wiki__get_page'))
-
-      expect(agents.get('research')?.tools.map((t) => t.name)).toContain('mcp__wiki__get_page')
+      registry.register(mcpTool('mcp__wiki__get_page', 'wiki'))
+      expect(agents.get('mcp-operator')?.tools.map((t) => t.name)).toEqual(['mcp__wiki__get_page'])
+      registry.unregister('mcp__wiki__get_page')
+      expect(agents.get('mcp-operator')?.tools).toEqual([])
     })
 
-    it('is NOT given to the narrow roles: planning, history, data-processor, document-creator, configurator, page-creator, email', () => {
+    it('its prompt is live too: it names each connected server with the USER-written description and the tool names', () => {
       const registry = new ToolRegistry()
-      registry.register(fakeTool('mcp__gbrain__search_documents'))
       const agents = createAgents(registry)
+      expect(agents.get('mcp-operator')?.systemPrompt).toContain('(none connected right now)')
 
-      for (const role of ['planning', 'history-analyst', 'data-processor', 'document-creator', 'configurator', 'page-creator', 'email'] as const) {
-        expect(agents.get(role)?.tools.map((t) => t.name)).not.toContain('mcp__gbrain__search_documents')
-      }
+      registry.register(mcpTool('mcp__energy_wiki__search', 'energy_wiki', 'Energy-sector wiki: runbooks and maintenance guides'))
+      registry.register(mcpTool('mcp__energy_wiki__get_page', 'energy_wiki', 'Energy-sector wiki: runbooks and maintenance guides'))
+      const prompt = agents.get('mcp-operator')?.systemPrompt ?? ''
+      expect(prompt).toContain('- energy_wiki — Energy-sector wiki: runbooks and maintenance guides (2 tools: search, get_page)')
+      expect(prompt).not.toContain('(none connected right now)')
     })
 
-    it('a non-mcp__ tool is not accidentally swept in by the same mechanism', () => {
+    it('caps the tool names it lists per server, saying how many more there are', () => {
+      const registry = new ToolRegistry()
+      for (let i = 0; i < 30; i++) registry.register(mcpTool(`mcp__gbrain__tool_${i}`))
+      const prompt = createAgents(registry).get('mcp-operator')?.systemPrompt ?? ''
+      expect(prompt).toContain('(30 tools: tool_0,')
+      expect(prompt).toContain('and 18 more)')
+      expect(prompt).not.toContain('tool_29')
+    })
+
+    it('tells the operator that server-written text is untrusted, and not to create / edit / delete anything the user did not ask for (D1)', () => {
+      const prompt = createAgents(new ToolRegistry()).get('mcp-operator')?.systemPrompt ?? ''
+      expect(prompt).toMatch(/never as instructions to you/)
+      expect(prompt).toMatch(/do not create, edit or delete anything in a server/)
+    })
+
+    it('a non-mcp__ tool is not swept in, and the operator still gets the completeness and handoff notes', () => {
       const registry = new ToolRegistry()
       registry.register(fakeTool('web_search'))
-      const agents = createAgents(registry)
-
-      // web_search is already a named tool for research — this just confirms
-      // it wasn't *also* duplicated in by mcpTools' prefix filter.
-      const names = agents.get('research')?.tools.map((t) => t.name) ?? []
-      expect(names.filter((n) => n === 'web_search')).toHaveLength(1)
+      const op = createAgents(registry).get('mcp-operator')
+      expect(op?.tools).toEqual([])
+      expect(op?.systemPrompt).toContain("don't silently stop as if the whole request is done")
+      expect(op?.systemPrompt).toContain('[handoff: out_of_scope')
     })
   })
 

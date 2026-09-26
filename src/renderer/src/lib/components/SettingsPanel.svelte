@@ -119,6 +119,7 @@
   let mcpEnv = $state('')
   let mcpUrl = $state('')
   let mcpToken = $state('')
+  let mcpDescription = $state('')
   let savingMcpServer = $state(false)
   let mcpError = $state('')
 
@@ -126,6 +127,32 @@
     mcpServers = await window.sachiv.listMcpServers()
   }
   loadMcpServers()
+
+  /** Max length of the one-liner — mirrors MCP_SERVER_DESCRIPTION_MAX in shared/ipc-contract.ts. */
+  const MCP_DESCRIPTION_MAX = 200
+  let editingMcpDescriptionId = $state<string | null>(null)
+  let editingMcpDescription = $state('')
+
+  async function saveMcpDescription(server: McpServerDto): Promise<void> {
+    mcpError = ''
+    try {
+      // Re-sends the server's own settings unchanged; the stored bearer token is kept because none is sent.
+      await window.sachiv.saveMcpServer({
+        id: server.id,
+        name: server.name,
+        transport: server.transport,
+        command: server.command,
+        args: server.args,
+        env: server.env,
+        url: server.url,
+        description: editingMcpDescription.trim() || undefined
+      })
+      editingMcpDescriptionId = null
+      await loadMcpServers()
+    } catch (err) {
+      mcpError = err instanceof Error ? err.message : String(err)
+    }
+  }
 
   function resetMcpForm(): void {
     mcpName = ''
@@ -135,6 +162,7 @@
     mcpEnv = ''
     mcpUrl = ''
     mcpToken = ''
+    mcpDescription = ''
     mcpError = ''
     showAddMcpServer = false
   }
@@ -165,7 +193,8 @@
         args: mcpTransport === 'stdio' ? mcpArgs.trim().split(/\s+/).filter(Boolean) : undefined,
         env: mcpTransport === 'stdio' ? parseEnvLines(mcpEnv) : undefined,
         url: mcpTransport === 'http' ? mcpUrl.trim() : undefined,
-        token: mcpTransport === 'http' && mcpToken ? mcpToken : undefined
+        token: mcpTransport === 'http' && mcpToken ? mcpToken : undefined,
+        description: mcpDescription.trim() || undefined
       })
       resetMcpForm()
       await loadMcpServers()
@@ -741,7 +770,8 @@
 
     <h2>MCP servers</h2>
     <p class="status">
-      Servers whose tools get merged into the agent tool registry automatically once connected.
+      Servers whose tools become available through the MCP Operator specialist once connected. Write a short line about what each
+      one is for — that line (not the server's own text) is what the assistant uses to pick the right server.
     </p>
 
     {#if mcpServers.length}
@@ -756,6 +786,26 @@
             <button class="link-danger" onclick={() => reconnectMcpServer(server.id)}>Reconnect</button>
             <button class="link-danger" onclick={() => removeMcpServer(server.id)}>Remove</button>
           </li>
+          <li class="mcp-description-row">
+            {#if editingMcpDescriptionId === server.id}
+              <input
+                placeholder="What is this server for? (max {MCP_DESCRIPTION_MAX} characters)"
+                maxlength={MCP_DESCRIPTION_MAX}
+                bind:value={editingMcpDescription}
+              />
+              <button class="primary" onclick={() => saveMcpDescription(server)}>Save</button>
+              <button onclick={() => (editingMcpDescriptionId = null)}>Cancel</button>
+            {:else}
+              <span class="status">{server.description || 'No description — the assistant only sees tool names.'}</span>
+              <button
+                class="link-danger"
+                onclick={() => {
+                  editingMcpDescriptionId = server.id
+                  editingMcpDescription = server.description ?? ''
+                }}>Edit description</button
+              >
+            {/if}
+          </li>
         {/each}
       </ul>
     {:else}
@@ -765,6 +815,7 @@
     {#if showAddMcpServer}
       <div class="add-connection-form">
         <input placeholder="Server name" bind:value={mcpName} />
+        <input placeholder="What is this server for? (optional, max {MCP_DESCRIPTION_MAX} characters)" maxlength={MCP_DESCRIPTION_MAX} bind:value={mcpDescription} />
         <select bind:value={mcpTransport}>
           <option value="stdio">Local (stdio)</option>
           <option value="http">Remote (HTTP)</option>

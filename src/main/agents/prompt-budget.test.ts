@@ -61,12 +61,12 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
  */
 const CEILINGS = {
   routerPrompt: 880,
-  routerToolSchemas: 10100,
-  routerBare: 11000,
-  slimRouterToolSchemas: 2050,
-  slimRouterBare: 2900,
+  routerToolSchemas: 10250,
+  routerBare: 11150,
+  slimRouterToolSchemas: 2130,
+  slimRouterBare: 3000,
   routerCore: 800,
-  classifyPrompt: 850,
+  classifyPrompt: 910,
   'role:planning': 65,
   'role:research': 1340,
   'role:history-analyst': 500,
@@ -74,7 +74,8 @@ const CEILINGS = {
   'role:data': 2640,
   'role:data-processor': 1920,
   'role:document-creator': 2340,
-  'role:configurator': 1220,
+  'role:configurator': 1290,
+  'role:mcp-operator': 360,
   'role:page-creator': 820,
   'role:email': 630
 } as const

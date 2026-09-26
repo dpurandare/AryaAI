@@ -33,13 +33,13 @@ export const ROUTER_CORE_TOKEN_CAP = 1_200
 /**
  * What the slim router carries: the hot core, plus everything it MUST keep:
  *  - tools no specialist owns (the deck-building flow — pptx_start_deck / pptx_add_slide /
- *    pptx_save_deck — is router-only because a specialist cannot delegate to Page Creator), and
- *  - MCP tools, until MCP becomes a deferred capability of its own (design step 5) — dropping
- *    them here would silently remove a documented feature.
- * Everything else a specialist owns is reached with its delegate tool.
+ *    pptx_save_deck — is router-only because a specialist cannot delegate to Page Creator).
+ * Everything else a specialist owns is reached with its delegate tool — MCP tools included: since
+ * design step 5 they belong to the MCP Operator alone, so a server with 144 tools adds nothing here.
  */
 export function selectRouterTools(all: readonly Tool[], agents: ReadonlyMap<AgentRole, Agent>): Tool[] {
   const owned = new Set([...agents.values()].flatMap((a) => a.tools.map((t) => t.name)))
   const core = new Set(ROUTER_CORE_TOOLS)
-  return all.filter((t) => core.has(t.name) || t.name.startsWith('mcp__') || !owned.has(t.name))
+  // MCP tools are dropped by rule (not merely because the operator owns them right now): they must never reach the router's tool list.
+  return all.filter((t) => !t.name.startsWith('mcp__') && (core.has(t.name) || !owned.has(t.name)))
 }

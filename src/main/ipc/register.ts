@@ -648,7 +648,8 @@ async function runChat(
       getConfiguration: () => ({
         databases: listConnections().length,
         apis: listApiConnections().length,
-        email: listEmailConnections().length
+        email: listEmailConnections().length,
+        mcp: new Set(toolRegistry.list().flatMap((t) => (t.mcp ? [t.mcp.server] : []))).size
       })
     }
   )

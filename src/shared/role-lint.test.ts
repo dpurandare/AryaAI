@@ -41,14 +41,14 @@ describe('the real role manifest', () => {
 
   it('keeps the persisted ids `coding` (now Developer) and `data` (now Data Access), in a stable order', () => {
     expect(ROLE_MANIFEST.map((r) => r.id)).toEqual([
-      'planning', 'research', 'history-analyst', 'coding', 'data', 'data-processor', 'document-creator', 'configurator', 'page-creator', 'email'
+      'planning', 'research', 'history-analyst', 'coding', 'data', 'data-processor', 'document-creator', 'configurator', 'mcp-operator', 'page-creator', 'email'
     ])
     expect(roleMeta('coding')?.label).toBe('Developer')
     expect(roleMeta('data')?.label).toBe('Data Access')
   })
 
   it('derives the picker, plan-target and label lists from it (page-creator is delegate-only)', () => {
-    const expected = ['planning', 'research', 'history-analyst', 'coding', 'data', 'data-processor', 'document-creator', 'configurator', 'email']
+    const expected = ['planning', 'research', 'history-analyst', 'coding', 'data', 'data-processor', 'document-creator', 'configurator', 'mcp-operator', 'email']
     expect(AGENT_ROLES).toEqual(expected)
     expect(PLANNABLE_ROLES).toEqual(expected)
     expect(AGENT_ROLE_LABELS['page-creator']).toBe('Page Creator')
