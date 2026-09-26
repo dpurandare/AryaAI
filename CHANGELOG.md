@@ -16,6 +16,7 @@ version is still `0`.
 
 - A new `describe_capabilities` tool lets the assistant list, from live data, which specialists and tools it has, which databases / APIs / email accounts / MCP servers are configured, whether Python scripts can be run, and which actions ask for confirmation — so "what can you do?" is answered from facts, not memory.
 - Settings > Prompt caching: a switch (on by default) to stop sending Anthropic prompt-cache markers, as a recovery path should the API ever reject them.
+- When a local model ends a round with nothing at all (no text, no tool call — typically right after a tool result), the app now asks it to continue, up to twice, instead of ending the turn with a warning and the work undone. The planning step also accepts a reply that wraps its JSON in prose or a code fence, and the terminal message now shows what the model actually said.
 - Math written with single dollar signs (`$613,898,527\text{ kWh}$`), which several models use, is now rendered as formatted math instead of showing raw LaTeX. Prices such as "$5 to $10" and dollar signs in code are left alone.
 - The account row's arrow now toggles Settings open and closed (it turns over while Settings is open).
 - Picking a session (or New chat) while Settings is open now switches to it. If something typed into Settings has not been saved — an API key, an "add …" form, an edited MCP description, the workspace folder — a prompt offers **Save and stay here**, **Discard and leave** or **Cancel**; settings that apply immediately (theme, toggles, selects) never need it.

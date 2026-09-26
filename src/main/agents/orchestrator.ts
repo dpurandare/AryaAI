@@ -582,17 +582,45 @@ const HANDOFF_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
  * reasonable steps is still mostly useful with only the first 5 kept; the
  * caller surfaces a warning so this isn't silent.
  */
+/** How many times one round loop re-asks after the model returns nothing at all (no text, no tool call) before reporting it. */
+const MAX_EMPTY_RESPONSE_RETRIES = 2
+
+/** Added (for that one retry only, never stored) after an empty round, so the model resumes instead of stopping again. */
+const EMPTY_RESPONSE_NUDGE =
+  'Your previous reply was empty. Continue with the task: use the tool results above and either call the next tool you need or give your answer in plain text.'
+
 const MAX_PLAN_STEPS = 5
 
+
+/**
+ * The JSON object in a model's reply, tolerating what local reasoning models actually wrap around it: a ```json fence, or a sentence before
+ * and/or after the object. Tries the whole (fence-stripped) text first, then the span from the first `{` to the last `}`.
+ */
+export function parseJsonObjectLoosely(text: string): any | undefined {
+  const stripped = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/, '')
+  const candidates = [stripped]
+  const first = stripped.indexOf('{')
+  const last = stripped.lastIndexOf('}')
+  if (first >= 0 && last > first) candidates.push(stripped.slice(first, last + 1))
+  for (const candidate of candidates) {
+    try {
+      const value = JSON.parse(candidate)
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value
+    } catch {
+      // try the next candidate
+    }
+  }
+  return undefined
+}
 
 /** Fails open to `undefined` (treated as "simple" by the caller) on any parse/shape problem — a broken classifier response must never block the turn it's meant to help. */
 function parsePlan(text: string, validRoles: ReadonlySet<string>): { plan: Plan; truncated: boolean } | undefined {
   try {
-    const stripped = text
-      .trim()
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/```\s*$/, '')
-    const parsed = JSON.parse(stripped)
+    const parsed = parseJsonObjectLoosely(text)
+    if (!parsed) return undefined
     if (parsed.complexity !== 'simple' && parsed.complexity !== 'compound') return undefined
     if (!Array.isArray(parsed.steps)) return undefined
     const steps: PlanStep[] = []
@@ -1036,7 +1064,10 @@ export class Orchestrator {
         // not the chat transcript. Reported directly: a persisted warning
         // here had no actionable next step for the user and just read as
         // noise on every turn it happened to fire.
-        console.error('orchestrator: classify-and-plan response was not valid JSON, treating as a normal request')
+        console.error(
+          'orchestrator: classify-and-plan response was not valid JSON, treating as a normal request' +
+            (text.trim() ? ` — the model said: ${JSON.stringify(text.trim().slice(0, 300))}` : ' — the model returned no text')
+        )
       }
     }
     // Phase 2 of TASKS.md #95 — a real classifier response, whatever it was
@@ -1368,6 +1399,10 @@ export class Orchestrator {
     // call this specialist/the top level has made" from "continuing after
     // seeing a tool result," for the status message below.
     let localRound = 0
+    // Empty-response recovery (local reasoning models sometimes end a round with no text and no tool call, typically right after a tool
+    // result): re-ask up to MAX_EMPTY_RESPONSE_RETRIES times with a one-off nudge instead of ending the turn with nothing done.
+    let emptyRetries = 0
+    let nudgeAfterEmptyRound = false
 
     while (state.roundsUsed < maxRounds && Date.now() < state.deadlineAt) {
       state.roundsUsed++
@@ -1392,13 +1427,18 @@ export class Orchestrator {
       // double/triple-count if they summed the raw events.
       let roundUsage: { inputTokens: number; outputTokens: number } | undefined
 
-      const messagesToSend = await this.refitConversationToBudget(
+      let messagesToSend = await this.refitConversationToBudget(
         capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
         toolByName,
         systemPrompt,
         toolDefs,
         state
       )
+      if (nudgeAfterEmptyRound) {
+        messagesToSend = [...messagesToSend, { role: 'user', content: [{ type: 'text', text: EMPTY_RESPONSE_NUDGE }] }]
+        nudgeAfterEmptyRound = false
+      }
+      let emptyRoundToRetry = false
       const roundTimer = this.startRoundTimer(state.deadlineAt, state.consecutiveRoundTimeouts)
       try {
         for await (const event of this.provider.stream({
@@ -1425,6 +1465,18 @@ export class Orchestrator {
             if (call) call.inputJson += event.partialInput
           } else if (event.type === 'message_stop') {
             stopReason = event.stopReason
+            // An empty, cleanly-ended round we are about to retry: do not forward this end_turn, or the renderer would take it for the end
+            // of the whole turn (a nested specialist's stop is tagged, the top level's is not). A genuine abort/timeout is not "empty".
+            if (
+              event.stopReason === 'end_turn' &&
+              !assistantText &&
+              toolCalls.length === 0 &&
+              emptyRetries < MAX_EMPTY_RESPONSE_RETRIES &&
+              !roundTimer.signal.aborted
+            ) {
+              emptyRoundToRetry = true
+              continue
+            }
           } else if (event.type === 'usage') {
             roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
             continue
@@ -1545,6 +1597,19 @@ export class Orchestrator {
         state.inputTokens += roundUsage.inputTokens
         state.outputTokens += roundUsage.outputTokens
         yield { kind: 'stream', event: { type: 'usage', ...roundUsage } }
+      }
+
+      if (emptyRoundToRetry) {
+        emptyRetries++
+        nudgeAfterEmptyRound = true
+        yield {
+          kind: 'stream',
+          event: tagEvent(
+            { type: 'status', message: 'The model returned an empty response — asking it to continue…' },
+            agentRole
+          )
+        }
+        continue
       }
 
       const assistantBlocks: ContentBlock[] = []

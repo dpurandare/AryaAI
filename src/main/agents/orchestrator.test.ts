@@ -13,7 +13,7 @@ import { officeReadDocumentTool } from '../tools/office-docs/read'
 import { showMediaTool } from '../tools/show-media'
 import type { Tool, ToolContext } from '../tools/types'
 import { createAgents } from './roles'
-import { Orchestrator, type Agent, type ConfirmDecision, type OrchestratorEvent, type ToolConfirmRequest } from './orchestrator'
+import { Orchestrator, parseJsonObjectLoosely, type Agent, type ConfirmDecision, type OrchestratorEvent, type ToolConfirmRequest } from './orchestrator'
 
 // Deliberately builds the tool registry/context directly rather than via
 // tools/setup.ts, which imports `electron` at module scope and would crash
@@ -952,6 +952,27 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(classifySystem).not.toMatch(/no shell access/i)
     })
 
+    it('a classifier reply with prose around the JSON (common with local reasoning models) still yields the plan', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        {
+          text: 'Sure, here is the classification:\n```json\n{"complexity": "compound", "steps": [{"role": "research", "description": "find X"}, {"role": "data", "description": "find Y"}]}\n```\nLet me know if you need more.',
+          stopReason: 'end_turn'
+        },
+        { text: 'X is 5.', stopReason: 'end_turn' },
+        { text: 'Y is 10.', stopReason: 'end_turn' },
+        { text: 'X is 5 and Y is 10.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: true
+      })
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }])
+      const plan = events.filter((e) => e.kind === 'stream').map((e) => e.event).find((e) => e.type === 'plan')
+      expect(plan).toBeDefined()
+      expect(provider.requests).toHaveLength(4)
+    })
+
     it('a compound plan dispatches each step to its tagged specialist in order, then synthesizes a final answer', async () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
@@ -1445,7 +1466,11 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // silently done nothing.
       const registry = buildRegistry()
       const agents = createAgents(registry)
-      const provider = new MockProvider([{ text: '', stopReason: 'end_turn' }])
+      const provider = new MockProvider([
+        { text: '', stopReason: 'end_turn' },
+        { text: '', stopReason: 'end_turn' },
+        { text: '', stopReason: 'end_turn' }
+      ])
       const orchestrator = new Orchestrator(
         provider,
         'mock-model',
@@ -1460,6 +1485,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
       const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
+      // The first two empty rounds are retried (see the recovery tests below); only the third is reported.
+      expect(provider.requests).toHaveLength(3)
+      expect(streamEvents.filter((e) => e.type === 'message_stop')).toHaveLength(1)
       const warning = streamEvents.find((e) => e.type === 'warning')
       expect(warning).toMatchObject({ type: 'warning' })
       expect((warning as { message: string }).message).toMatch(/no visible output/i)
@@ -1469,6 +1497,33 @@ describe('Orchestrator (integration, mocked provider)', () => {
         (e) => e.kind === 'message' && e.content.some((c) => c.type === 'warning')
       )
       expect(persistedWarning).toBeDefined()
+    })
+
+    it('an empty round right after a tool result is retried with a nudge and the turn completes (real case: gpt-oss went silent after db_introspect_schema)', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'c1', name: 'read_file', input: { path: 'a.txt' } }] },
+        { text: '', stopReason: 'end_turn' },
+        { text: 'Here is the answer.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'read a.txt and summarise' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(streamEvents.some((e) => e.type === 'warning')).toBe(false)
+      expect(streamEvents.some((e) => e.type === 'text_delta' && e.text === 'Here is the answer.')).toBe(true)
+      // The stream ends exactly once, with the real answer — the empty round's own end_turn was not forwarded as the end of the turn.
+      const stops = streamEvents.filter((e) => e.type === 'message_stop')
+      expect(stops.at(-1)).toMatchObject({ stopReason: 'end_turn' })
+      expect(stops.map((s) => (s as { stopReason: string }).stopReason)).toEqual(['tool_use', 'end_turn'])
+      // The retry carries the nudge as its last message; the round before it did not.
+      const lastOf = (i: number) => JSON.stringify(provider.requests[i].messages.at(-1))
+      expect(lastOf(2)).toContain('previous reply was empty')
+      expect(lastOf(1)).not.toContain('previous reply was empty')
+      // The nudge is never persisted into the conversation record.
+      expect(events.some((e) => e.kind === 'message' && JSON.stringify(e.content).includes('previous reply was empty'))).toBe(false)
     })
 
     it('a delegate whose own round hits the output-token limit surfaces isError on its tool_result, not a silent success', async () => {
@@ -3546,5 +3601,20 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const result = events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'tool_result' ? [e.event.content] : []))[0]
       expect(result).toBe('Unknown tool "no_such_tool".')
     })
+  })
+})
+
+describe('parseJsonObjectLoosely', () => {
+  it('accepts plain JSON, a fenced block, and an object surrounded by prose', () => {
+    expect(parseJsonObjectLoosely('{"a": 1}')).toEqual({ a: 1 })
+    expect(parseJsonObjectLoosely('```json\n{"a": 1}\n```')).toEqual({ a: 1 })
+    expect(parseJsonObjectLoosely('Here you go: {"a": {"b": 2}} — done.')).toEqual({ a: { b: 2 } })
+  })
+
+  it('rejects text with no object, arrays and broken JSON', () => {
+    expect(parseJsonObjectLoosely('I think this is a simple request.')).toBeUndefined()
+    expect(parseJsonObjectLoosely('[1, 2]')).toBeUndefined()
+    expect(parseJsonObjectLoosely('{"a": ')).toBeUndefined()
+    expect(parseJsonObjectLoosely('')).toBeUndefined()
   })
 })
