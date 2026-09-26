@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import type { CompletionRequest, ContentBlock, Message, ModelProvider, StreamEvent } from './types'
+import type { CompletionRequest, ContentBlock, Message, ModelProvider, ProviderOptions, StreamEvent } from './types'
 
 function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
   return messages
@@ -31,12 +31,16 @@ function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
  * Cached reads bill at a fraction of the normal input price; the first write costs a little more — it pays off from the second round.
  * Prefix stability is what makes it work, so nothing in `tools` or `system` may vary between rounds (asserted by a test in
  * orchestrator.test.ts).
+ *
+ * `promptCaching: false` (Settings > Prompt caching, TASKS #121/#137) sends the plain request with no `cache_control` anywhere and the system prompt as a
+ * string — the escape hatch if the API ever rejects the markers, since caching has only been verified against a mocked SDK.
  */
-export function buildAnthropicParams(request: CompletionRequest): Anthropic.MessageStreamParams {
+export function buildAnthropicParams(request: CompletionRequest, options: { promptCaching?: boolean } = {}): Anthropic.MessageStreamParams {
+  const caching = options.promptCaching !== false
   const cache = { type: 'ephemeral' } as const
   const messages = toAnthropicMessages(request.messages)
   const last = messages.at(-1)
-  if (last && Array.isArray(last.content) && last.content.length > 0) {
+  if (caching && last && Array.isArray(last.content) && last.content.length > 0) {
     const block = last.content[last.content.length - 1] as { type: string; text?: string; cache_control?: unknown }
     // Empty text blocks cannot carry cache_control; every other block type we send (text, tool_use, tool_result) can.
     if (block.type !== 'text' || (block.text ?? '').length > 0) block.cache_control = cache
@@ -45,11 +49,11 @@ export function buildAnthropicParams(request: CompletionRequest): Anthropic.Mess
     name: t.name,
     description: t.description,
     input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
-    ...(i === all.length - 1 ? { cache_control: cache } : {})
+    ...(caching && i === all.length - 1 ? { cache_control: cache } : {})
   }))
   return {
     model: request.model,
-    system: request.system ? [{ type: 'text', text: request.system, cache_control: cache }] : undefined,
+    system: request.system ? (caching ? [{ type: 'text', text: request.system, cache_control: cache }] : request.system) : undefined,
     max_tokens: request.maxTokens,
     messages,
     tools
@@ -61,8 +65,11 @@ export class AnthropicProvider implements ModelProvider {
   readonly displayName = 'Anthropic'
   private client: Anthropic
 
-  constructor(apiKey: string) {
+  private promptCaching: boolean
+
+  constructor(apiKey: string, options: ProviderOptions = {}) {
     this.client = new Anthropic({ apiKey })
+    this.promptCaching = options.promptCaching !== false
   }
 
   async listModels(): Promise<string[]> {
@@ -79,7 +86,7 @@ export class AnthropicProvider implements ModelProvider {
   }
 
   async *stream(request: CompletionRequest): AsyncIterable<StreamEvent> {
-    const stream = this.client.messages.stream(buildAnthropicParams(request), { signal: request.signal })
+    const stream = this.client.messages.stream(buildAnthropicParams(request, { promptCaching: this.promptCaching }), { signal: request.signal })
 
     const activeToolUse = new Map<number, { id: string; name: string }>()
     // Anthropic reports input-token usage once, on `message_start` — `message_delta`

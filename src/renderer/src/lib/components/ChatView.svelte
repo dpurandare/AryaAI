@@ -7,6 +7,7 @@
   import { AGENT_ROLES, roleLabel, type AgentRole } from '@shared/agents'
   import type { RoleRosterEntryDto } from '@shared/ipc-contract'
   import { parseSearchHistoryResult } from '../search-history-result'
+import { formatToolInputForDisplay } from '../tool-input-display'
   import type { ToolConfirmRequestPayload, LimitReachedRequestPayload } from '@shared/ipc-contract'
 
   interface ToolCallDisplay {
@@ -327,7 +328,9 @@
               >
                 <span class="tool-icon">⚙</span>
                 <code>{segment.toolCall.name}</code>
-                <span class="tool-input">{segment.toolCall.input}</span>
+                {#if !(showFull && !isDelegate)}
+                  <span class="tool-input">{segment.toolCall.input}</span>
+                {/if}
                 {#if !showFull && !isDelegate && isResolved}
                   <!-- Collapsed + already resolved: a one-glyph result indicator
                        instead of the full body below — full detail is one
@@ -341,6 +344,20 @@
                   </span>
                 {/if}
               </svelte:element>
+              {#if showFull && !isDelegate && segment.toolCall.input}
+                <!-- TASKS.md #109: an expanded block shows the whole command, wrapped (the collapsed head's single ellipsised line
+                     hid most of a long command even after opening the block). Same capped-preview-plus-toggle as the result body
+                     (#87), keyed separately so the two toggles never collide. -->
+                {@const inputText = formatToolInputForDisplay(segment.toolCall.input)}
+                {@const inputPreview = previewOf(inputText)}
+                {@const inputExpanded = Boolean(expandedIds[segment.id + ':input'])}
+                <div class="tool-input-full">{inputExpanded ? inputText : inputPreview.text}{#if inputPreview.truncated && !inputExpanded}…{/if}</div>
+                {#if inputPreview.truncated}
+                  <button class="expand-toggle" onclick={() => toggleExpand(segment.id + ':input')}>
+                    {inputExpanded ? 'Show less' : 'Show more'}
+                  </button>
+                {/if}
+              {/if}
               {#if segment.toolCall.image}
                 <!-- TASKS.md #82 — always shown regardless of the block's own
                      collapsed/expanded state: showing the image *is* the
@@ -700,6 +717,13 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: ui-monospace, monospace;
+  }
+  .tool-input-full {
+    font-family: ui-monospace, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--text);
+    margin: 0.2rem 0 0.3rem;
   }
   .tool-result {
     font-family: ui-monospace, monospace;

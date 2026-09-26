@@ -56,7 +56,7 @@ import { openDriver } from '../tools/db/driver-factory'
 import { buildSchemaSummary } from '../tools/db/schema-summary'
 import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
 import { createDefaultProviderRegistry } from '../providers/setup'
-import type { Message, ModelProvider } from '../providers/types'
+import type { Message, ModelProvider, ProviderOptions } from '../providers/types'
 import { exportSession } from '../sessions/export'
 import { WorkspaceRuntime } from '../runtime/workspace-runtime'
 import {
@@ -130,6 +130,16 @@ let toolContext: ToolContext | undefined
  * a release gate (per-provider replay check, multi-model routing evaluation, caching economics); see scripts/routing-eval.mts.
  */
 export const SLIM_ROUTER_SETTING_KEY = 'slimRouter'
+
+/**
+ * Settings key: `'false'` turns Anthropic prompt caching off (default on when unset). Caching sends `cache_control` markers that have only been
+ * verified against a mocked SDK (TASKS #121/#137), so this is the recovery switch if the API ever rejects them.
+ */
+export const PROMPT_CACHING_SETTING_KEY = 'promptCaching'
+
+function providerOptions(): ProviderOptions {
+  return { promptCaching: getSetting(PROMPT_CACHING_SETTING_KEY) !== 'false' }
+}
 
 /** Settings key: `'true'` when the user chose to continue without Python (design-discussion.md section 4.3). */
 export const PYTHON_RUNTIME_DISABLED_SETTING_KEY = 'pythonRuntimeDisabled'
@@ -573,7 +583,7 @@ function tryResolveActiveProvider(): { provider: ModelProvider; model: string } 
   if (!descriptor || !model) return undefined
   const apiKey = getApiKey(providerId)
   if (descriptor.requiresApiKey && !apiKey) return undefined
-  return { provider: descriptor.create(apiKey), model }
+  return { provider: descriptor.create(apiKey, providerOptions()), model }
 }
 
 async function runChat(
@@ -602,7 +612,7 @@ async function runChat(
     throw new Error('Tool context not initialized.')
   }
 
-  const provider = descriptor.create(apiKey)
+  const provider = descriptor.create(apiKey, providerOptions())
 
   // Read once, up front, and acted on only after the turn actually
   // completes (below) — checking the session's *current title*, not a

@@ -103,6 +103,15 @@ describe('AnthropicProvider', () => {
     expect(events).toContainEqual({ type: 'usage', inputTokens: 0, outputTokens: 3 })
   })
 
+  it('a provider built with promptCaching: false sends no cache_control; the default provider does', async () => {
+    const req = { model: 'claude-sonnet-5', system: 'sys', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }], maxTokens: 100 }
+    mockStream.mockReturnValue(fakeStream([]))
+    await collect(new AnthropicProvider('key', { promptCaching: false }).stream(req))
+    expect(JSON.stringify(mockStream.mock.calls.at(-1)?.[0])).not.toContain('cache_control')
+    await collect(new AnthropicProvider('key').stream(req))
+    expect(JSON.stringify(mockStream.mock.calls.at(-1)?.[0])).toContain('cache_control')
+  })
+
   it('maps stop_reason "max_tokens"', async () => {
     mockStream.mockReturnValue(
       fakeStream([{ type: 'message_delta', delta: { stop_reason: 'max_tokens' }, usage: { output_tokens: 1 } }])
@@ -197,6 +206,13 @@ describe('AnthropicProvider', () => {
       expect(lastBlock.at(-1)?.cache_control).toEqual({ type: 'ephemeral' })
       const breakpoints = JSON.stringify(p).match(/cache_control/g)?.length
       expect(breakpoints).toBe(3)
+    })
+
+    it('with promptCaching off sends no cache_control anywhere and the system prompt as a plain string', () => {
+      const p = buildAnthropicParams({ model: 'm', system: 'sys', messages: history, tools: [tool('a'), tool('b')], maxTokens: 10 }, { promptCaching: false })
+      expect(JSON.stringify(p)).not.toContain('cache_control')
+      expect(p.system).toBe('sys')
+      expect(p.tools?.map((t) => ('name' in t ? t.name : ''))).toEqual(['a', 'b'])
     })
 
     it('marks nothing on earlier messages (only the tail moves as the conversation grows, so the earlier prefix stays cacheable)', () => {

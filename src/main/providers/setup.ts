@@ -14,7 +14,7 @@ export function createDefaultProviderRegistry(): ProviderRegistry {
     displayName: 'Anthropic',
     requiresApiKey: true,
     supportsEmbeddings: false,
-    create: (apiKey) => new AnthropicProvider(apiKey!)
+    create: (apiKey, options) => new AnthropicProvider(apiKey!, options)
   })
   registry.register({
     id: 'openai',

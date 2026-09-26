@@ -15,6 +15,8 @@ version is still `0`.
 - First run now includes a Python setup step: Continue is available once the environment is ready, or you can choose "Continue without Python". README documents Python 3.10+ as a prerequisite, and the Linux `.deb` now depends on `python3` and `python3-venv`.
 
 - A new `describe_capabilities` tool lets the assistant list, from live data, which specialists and tools it has, which databases / APIs / email accounts / MCP servers are configured, whether Python scripts can be run, and which actions ask for confirmation — so "what can you do?" is answered from facts, not memory.
+- Settings > Prompt caching: a switch (on by default) to stop sending Anthropic prompt-cache markers, as a recovery path should the API ever reject them.
+- An expanded tool block now shows the tool's full command wrapped over several lines (multi-line scripts and SQL keep their line breaks) instead of a single ellipsised line.
 - A permanent prompt-size test records the fixed per-request token cost and fails if it grows unnoticed.
 
 - The evaluation scripts now work within free-tier limits (call spacing, a tokens-per-minute budget from actual usage, waiting out 429s, stopping with a partial result and a resume point when a request can never fit or a daily quota is exhausted).

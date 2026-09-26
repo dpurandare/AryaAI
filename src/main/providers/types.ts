@@ -22,6 +22,12 @@ export interface CompletionRequest {
   signal?: AbortSignal
 }
 
+/** Per-turn provider construction options, read from Settings by the caller. Only Anthropic uses `promptCaching` today. */
+export interface ProviderOptions {
+  /** Default true. False sends no `cache_control` markers (Settings > Prompt caching). */
+  promptCaching?: boolean
+}
+
 export interface ModelProvider {
   readonly id: string
   readonly displayName: string

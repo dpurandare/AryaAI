@@ -467,6 +467,15 @@
     await window.sachiv.setSetting(SLIM_ROUTER_SETTING_KEY, on ? 'true' : 'false')
   }
 
+  // --- Prompt caching (Anthropic; TASKS #121/#137) --- on unless explicitly set to 'false'
+  const PROMPT_CACHING_SETTING_KEY = 'promptCaching'
+  let promptCaching = $state(true)
+  window.sachiv.getSetting(PROMPT_CACHING_SETTING_KEY).then((v) => (promptCaching = v !== 'false'))
+  async function setPromptCaching(on: boolean): Promise<void> {
+    promptCaching = on
+    await window.sachiv.setSetting(PROMPT_CACHING_SETTING_KEY, on ? 'true' : 'false')
+  }
+
   // --- Secret storage backend (TASKS.md #75) ---
   let secretStorageMode = $state<'keychain' | 'file'>('keychain')
   let secretStorageEnvPath = $state('')
@@ -1153,6 +1162,20 @@
     <label class="checkbox-row">
       <input type="checkbox" checked={slimRouter} onchange={(e) => setSlimRouter(e.currentTarget.checked)} />
       Use the slim router
+    </label>
+
+    <hr />
+
+    <h2>Prompt caching <span class="status">(Anthropic)</span></h2>
+    <p class="status">
+      Lets Anthropic reuse the unchanged start of each request (the tool list, the instructions and earlier messages) at a fraction
+      of the normal input price, which mainly lowers the cost of long tool-using turns. Leave this on. If Anthropic chat ever fails
+      with an error that mentions <code>cache_control</code>, turn it off — the next message is then sent without it. Applies to
+      your next message; other providers are unaffected.
+    </p>
+    <label class="checkbox-row">
+      <input type="checkbox" checked={promptCaching} onchange={(e) => setPromptCaching(e.currentTarget.checked)} />
+      Use prompt caching
     </label>
 
     <hr />
