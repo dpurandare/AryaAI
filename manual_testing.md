@@ -1,4 +1,4 @@
-# Manual test plan — the `design_change` branch (redesign steps 1–5 and 7, Track A)
+# Manual test plan — the `design_change` branch (redesign steps 1–5 and 7, Track A, user-defined roles)
 
 Everything on this branch was verified with **mocked models** (1,074 automated tests) plus a handful of live checks in an
 isolated Electron instance and one partial run on a local Ollama model. **No cloud model has run any of it.** That is what this
@@ -252,6 +252,29 @@ prompt caching. The trims can only be judged by whether a real model still uses 
 | 11b.4 | Template extraction on a `.docx` of yours: "Turn `<file>.docx` into a template" | It runs `detect`, **asks you to confirm the field list** before `apply`, and can be refined. |
 | 11b.5 | **Anthropic only:** run any multi-round task (e.g. 4.x) and watch the context meter | Numbers keep growing sensibly with the conversation. They must **not** collapse to a tiny value after round 2 (that would mean cached tokens aren't being counted). Cost shown is an *upper bound* for Anthropic now. |
 | 11b.6 | **Anthropic / OpenAI:** `npx vite-node --config vitest.config.ts scripts/cache-probe.mts -- anthropic <model>` (keys from env) | Call 1: `cached 0`; calls 2–3: a large cached share and a lower first-token time. If `cached` stays 0, tell me the provider and model. |
+
+---
+
+## 11c. User-defined roles — P2 (20 min)
+
+Roles are Markdown files in `~/.config/Sachivji/roles/` (Settings > Roles shows the exact folder). **This uses your real profile**, so
+delete the test files afterwards.
+
+| # | Do | Expect |
+|---|----|--------|
+| 11c.1 | Settings > **Roles** > **Create example file**, then in the folder rename `_example-role.md` to `example-role.md`, then **Reload** | "Example Reporter" appears under your roles, enabled, with **~tokens per request**, and no errors. (Files starting with `_` never load.) |
+| 11c.2 | Ctrl+Tab through the Agent picker | "Example Reporter" is after Email. |
+| 11c.3 | Make a small `notes.txt` in your workspace, pick **Example Reporter**, ask "Summarise notes.txt" | Uses `read_file` (its only tools), replies with three bullets; the chip says **Example Reporter agent**. |
+| 11c.4 | Back in Auto: "Give me the gist of notes.txt in three bullets" | Judge whether the assistant hands it to the Example Reporter (its summary/examples say it should). **Note the model** — this is routing to a user role, unmeasured so far. |
+| 11c.5 | Edit `example-role.md`: change `tools: [read_file, list_directory]` to `tools: read_file` (no brackets), save | Settings > Reload: the role stays listed, marked **using the last working version**, with the error shown. Fix it and Reload: clean again. **No restart needed at any point.** |
+| 11c.6 | Copy the file to `coding.md` and change `id:` to `coding` | Reported as an error: `"coding" is a built-in role id`. The built-in Developer is unaffected. |
+| 11c.7 | Copy it to `greedy.md` with `id: greedy` and `summary: Handles anything you throw at it.` | Loads, but with warnings (over-broad wording, no non-scope, no named hand-off, no tools). |
+| 11c.8 | Untick a role in Settings > Roles | It disappears from the picker and the token total; ticking it again restores it. |
+| 11c.9 | Give a role `tools: [shell_execute]` and ask it to run `echo hi` | A **confirmation dialog still appears** — a role cannot bypass confirmation. |
+| 11c.10 | Pin the role in the picker, then delete its file, Reload, and send a message | Falls back to Auto with a notice ("The pinned … agent is not available"), not an error. |
+| 11c.11 | Put 9 role files in the folder | Settings shows the "N of your roles are enabled and add about X tokens" warning. |
+
+Cleanup: delete the test files from the roles folder.
 
 ---
 

@@ -50,6 +50,11 @@ export const IpcChannel = {
   WorkspaceGetRoot: 'workspace:get-root',
   WorkspaceSetRoot: 'workspace:set-root',
 
+  RolesGet: 'roles:get',
+  RolesSetEnabled: 'roles:set-enabled',
+  RolesOpenFolder: 'roles:open-folder',
+  RolesCreateExample: 'roles:create-example',
+
   RuntimeGetState: 'runtime:get-state',
   /** Re-run `ensureWorkspace` (the "Retry" button): finishes a failed package install, or re-detects Python. */
   RuntimeEnsure: 'runtime:ensure',
@@ -439,4 +444,45 @@ export interface ToolDescriptor {
   name: string
   description: string
   mutates: 'always' | 'sometimes'
+}
+
+/** A problem found while loading a role file (file-level errors, and quality warnings for a role that did load). */
+export interface RoleProblemDto {
+  /** File name within the roles folder. */
+  file: string
+  level: 'error' | 'warning'
+  message: string
+}
+
+/** One role as the renderer sees it — built-in or user-defined. */
+export interface RoleRosterEntryDto {
+  id: string
+  label: string
+  summary: string
+  description: string
+  builtin: boolean
+  pickable: boolean
+  plannable: boolean
+  /** User roles only: switched off in Settings. Built-ins are always enabled. */
+  enabled: boolean
+  /** Rough tokens this role adds to EVERY request (its delegate tool, plus its line in the planner's role list when plannable). */
+  tokenCost: number
+  /** Quality warnings for a user role that loaded. */
+  warnings: string[]
+  /** User roles: file name within the roles folder. */
+  file?: string
+  /** True when the file's latest edit has errors and the previous working version is in use. */
+  stale?: boolean
+}
+
+/** Everything the renderer needs about roles, in one call: the picker, the labels, and the Settings > Roles list. */
+export interface RoleRosterDto {
+  roles: RoleRosterEntryDto[]
+  problems: RoleProblemDto[]
+  /** Absolute path of the user roles folder. */
+  folder: string
+  /** Tokens the ENABLED user roles add to every request, together. */
+  userTokenCost: number
+  /** Set when the enabled user roles together are heavy enough to be worth a warning. */
+  budgetWarning?: string
 }

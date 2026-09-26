@@ -1,4 +1,5 @@
-import { ROLE_MANIFEST, type AgentRole } from '@shared/agents'
+import { ROLE_MANIFEST, type AgentRole, type RoleMeta } from '@shared/agents'
+import { toolMatchesPattern, type RoleFile } from '@shared/role-file'
 import type { ToolRegistry } from '../tools/registry'
 import type { Tool } from '../tools/types'
 import type { Agent } from './orchestrator'
@@ -74,7 +75,7 @@ export function mcpOperatorPrompt(tools: readonly Tool[]): string {
  * (`mcp_create_connection`, `api_create_connection`) — is asserted in
  * roles.test.ts.
  */
-export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
+export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFile[] = []): Map<AgentRole, Agent> {
   // `get tools()`, not a plain array computed once here — createAgents()
   // runs a single time at startup, but the registry keeps changing after
   // that (MCP servers connect, saved-query tools get added/removed from
@@ -467,6 +468,44 @@ export function createAgents(registry: ToolRegistry): Map<AgentRole, Agent> {
     if (agent.role !== 'planning' && agent.role !== 'page-creator' && agent.role !== 'mcp-operator') {
       agent.systemPrompt += COMPLETENESS_NOTE + HANDOFF_TAG_INSTRUCTION
     }
+  }
+
+  // User-defined roles (design section 11) come after the built-ins. A role file only SELECTS existing tools by name or prefix and supplies a
+  // prompt; confirmation and the workspace guard are enforced per tool, so it cannot grant itself anything the tools do not already gate.
+  // Tools are resolved live on every read (like the built-ins), so an MCP server connecting later is picked up by `mcp__wiki__*`.
+  const builtinIds = new Set(agents.map((a) => a.role))
+  for (const file of userRoles) {
+    if (builtinIds.has(file.id)) continue // extend-only: a user role never replaces a built-in (the loader rejects it too — defence in depth)
+    const meta: RoleMeta = {
+      id: file.id,
+      label: file.name,
+      summary: file.summary,
+      description: file.description,
+      pickable: file.pickable,
+      plannable: file.plannable,
+      examples: file.examples,
+      notExamples: file.notExamples
+    }
+    agents.push({
+      role: file.id,
+      custom: true,
+      label: file.name,
+      pickable: file.pickable,
+      plannable: file.plannable,
+      meta,
+      summary: file.summary,
+      systemPrompt: file.prompt + COMPLETENESS_NOTE + HANDOFF_TAG_INSTRUCTION,
+      isolated: file.isolated || undefined,
+      maxRounds: file.maxRounds,
+      get tools() {
+        const seen = new Set<string>()
+        return registry.list().filter((t) => {
+          if (seen.has(t.name) || !file.tools.some((p) => toolMatchesPattern(p, t.name))) return false
+          seen.add(t.name)
+          return true
+        })
+      }
+    })
   }
 
   return new Map(agents.map((agent) => [agent.role, agent]))

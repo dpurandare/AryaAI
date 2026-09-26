@@ -26,7 +26,8 @@ import {
   type SearchHistoryStatusDto,
   type SessionTitleUpdatedPayload,
   type ToolValidateResult,
-  type SecretStorageInfo
+  type SecretStorageInfo,
+  type RoleRosterDto
 } from '@shared/ipc-contract'
 import type { RuntimeState } from '@shared/runtime'
 import type { AgentRole } from '@shared/agents'
@@ -103,6 +104,11 @@ const api = {
   getWorkspaceRoot: (): Promise<string> => ipcRenderer.invoke(IpcChannel.WorkspaceGetRoot),
   setWorkspaceRoot: (path: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.WorkspaceSetRoot, path),
+
+  getRoles: (): Promise<RoleRosterDto> => ipcRenderer.invoke(IpcChannel.RolesGet),
+  setRoleEnabled: (id: string, enabled: boolean): Promise<RoleRosterDto> => ipcRenderer.invoke(IpcChannel.RolesSetEnabled, id, enabled),
+  openRolesFolder: (): Promise<void> => ipcRenderer.invoke(IpcChannel.RolesOpenFolder),
+  createExampleRole: (): Promise<string> => ipcRenderer.invoke(IpcChannel.RolesCreateExample),
 
   getRuntimeState: (): Promise<RuntimeState | null> => ipcRenderer.invoke(IpcChannel.RuntimeGetState),
   ensureRuntime: (): Promise<RuntimeState> => ipcRenderer.invoke(IpcChannel.RuntimeEnsure),

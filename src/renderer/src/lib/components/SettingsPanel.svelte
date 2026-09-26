@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor } from '@shared/ipc-contract'
+  import type { RoleRosterDto, ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
   import type { RuntimeState } from '@shared/runtime'
 
@@ -413,6 +413,49 @@
     ready: 'Ready',
     failed: 'Needs attention',
     disabled: 'Turned off'
+  }
+
+  // --- Roles (design-discussion.md section 11) ---
+  let roleRoster = $state<RoleRosterDto | null>(null)
+  let rolesError = $state('')
+  let rolesBusy = $state(false)
+
+  async function loadRoles(): Promise<void> {
+    rolesError = ''
+    try {
+      roleRoster = await window.sachiv.getRoles()
+    } catch (err) {
+      rolesError = err instanceof Error ? err.message : String(err)
+    }
+  }
+  loadRoles()
+
+  async function toggleRole(id: string, enabled: boolean): Promise<void> {
+    rolesBusy = true
+    try {
+      roleRoster = await window.sachiv.setRoleEnabled(id, enabled)
+    } finally {
+      rolesBusy = false
+    }
+  }
+
+  async function openRolesFolder(): Promise<void> {
+    rolesError = ''
+    try {
+      await window.sachiv.openRolesFolder()
+    } catch (err) {
+      rolesError = err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  async function createExampleRole(): Promise<void> {
+    rolesError = ''
+    try {
+      const path = await window.sachiv.createExampleRole()
+      rolesError = `Example written to ${path} — rename it (remove the leading underscore) to load it, then choose Reload.`
+    } catch (err) {
+      rolesError = err instanceof Error ? err.message : String(err)
+    }
   }
 
   // --- Slim router (design-discussion.md step 4; experimental, off by default) ---
@@ -1036,6 +1079,71 @@
 
     <hr />
 
+    <h2>Roles</h2>
+    <p class="status">
+      The specialists the assistant can hand work to. Add your own by putting a Markdown file (frontmatter + the role's prompt) in the roles
+      folder; it loads enabled and applies to your next message. A role only chooses among existing tools — confirmation and the workspace
+      boundary still apply to everything it does. Every enabled role's summary is sent with every request, so keep the list short.
+    </p>
+    {#if roleRoster}
+      <p class="status"><code>{roleRoster.folder}</code></p>
+      <div class="actions">
+        <button onclick={openRolesFolder}>Open roles folder</button>
+        <button onclick={createExampleRole}>Create example file</button>
+        <button onclick={loadRoles}>Reload</button>
+      </div>
+      {#if rolesError}<p class="status">{rolesError}</p>{/if}
+      {#if roleRoster.budgetWarning}<p class="status error">{roleRoster.budgetWarning}</p>{/if}
+
+      {@const yours = roleRoster.roles.filter((r) => !r.builtin)}
+      {#if yours.length}
+        <ul class="connection-list">
+          {#each yours as r (r.id)}
+            <li class="role-row">
+              <div class="role-head">
+                <label class="checkbox-row">
+                  <input type="checkbox" checked={r.enabled} disabled={rolesBusy} onchange={(e) => toggleRole(r.id, e.currentTarget.checked)} />
+                  <span class="conn-name">{r.label} <span class="mcp-status">{r.id}</span></span>
+                </label>
+                <span class="conn-engine">~{r.tokenCost} tokens per request</span>
+              </div>
+              <span class="status">{r.summary}</span>
+              {#if r.stale}<span class="status error">The latest edit of {r.file} has errors — using the last working version.</span>{/if}
+              {#each r.warnings as w}<span class="status">⚠ {w}</span>{/each}
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="status">No roles of your own yet.</p>
+      {/if}
+
+      {#each roleRoster.problems.filter((p) => p.level === 'error') as p}
+        <p class="status error"><strong>{p.file}</strong> — {p.message}</p>
+      {/each}
+      {#each roleRoster.problems.filter((p) => p.level === 'warning') as p}
+        <p class="status"><strong>{p.file}</strong> — {p.message}</p>
+      {/each}
+
+      <details>
+        <summary class="status">Built-in roles ({roleRoster.roles.filter((r) => r.builtin).length}, read-only)</summary>
+        <ul class="connection-list">
+          {#each roleRoster.roles.filter((r) => r.builtin) as r (r.id)}
+            <li class="role-row">
+              <div class="role-head">
+                <span class="conn-name">{r.label} <span class="mcp-status">{r.id}</span></span>
+                <span class="conn-engine">~{r.tokenCost} tokens per request</span>
+              </div>
+              <span class="status">{r.summary}</span>
+            </li>
+          {/each}
+        </ul>
+      </details>
+    {:else}
+      <p class="status">Loading…</p>
+    {/if}
+
+    <hr />
+
     <h2>Slim router <span class="status">(experimental)</span></h2>
     <p class="status">
       Sends the assistant a much smaller request each time (about 2,800 tokens instead of about 10,800) by keeping only a few
@@ -1215,6 +1323,17 @@
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
+  }
+  .connection-list li.role-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.25rem;
+  }
+  .role-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
   }
   .connection-list li {
     display: flex;

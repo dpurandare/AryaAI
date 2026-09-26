@@ -2,11 +2,14 @@
   import { onMount, tick } from 'svelte'
   import MarkdownText from './MarkdownText.svelte'
   import { roleLabel } from '@shared/agents'
-  import type { MessageDto } from '@shared/ipc-contract'
+  import type { MessageDto, RoleRosterEntryDto } from '@shared/ipc-contract'
 
   let title = $state('Chat export')
   let messages = $state<MessageDto[]>([])
   let error = $state('')
+  let roster = $state<RoleRosterEntryDto[]>([])
+  /** The roster's label (covers user-defined roles), else the built-in / humanized one. */
+  const label = (id: string): string => roster.find((r) => r.id === id)?.label ?? roleLabel(id)
 
   /** A pure-tool_result message is the continuation of the tool call just shown, not a new turn — same convention as export.ts's Markdown export. */
   function isPureToolResult(message: MessageDto): boolean {
@@ -17,6 +20,7 @@
     try {
       const sessionId = new URLSearchParams(location.search).get('sessionId')
       if (!sessionId) throw new Error('Missing sessionId in print URL')
+      window.sachiv.getRoles().then((r) => (roster = r.roles)).catch(() => {})
       const [sessions, records] = await Promise.all([
         window.sachiv.listSessions(),
         window.sachiv.listMessages(sessionId)
@@ -48,7 +52,7 @@
     {#each message.content as block, i (i)}
       {#if block.type === 'text'}
         {#if block.agentRole}
-          <div class="agent-chip">{roleLabel(block.agentRole)} agent</div>
+          <div class="agent-chip">{label(block.agentRole)} agent</div>
         {/if}
         <MarkdownText text={block.text} />
       {:else if block.type === 'tool_use'}

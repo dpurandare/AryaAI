@@ -38,7 +38,8 @@ export const ROUTER_CORE_TOKEN_CAP = 1_200
  * design step 5 they belong to the MCP Operator alone, so a server with 144 tools adds nothing here.
  */
 export function selectRouterTools(all: readonly Tool[], agents: ReadonlyMap<AgentRole, Agent>): Tool[] {
-  const owned = new Set([...agents.values()].flatMap((a) => a.tools.map((t) => t.name)))
+  // User-defined roles never count as a tool's owner: a role file naming `pptx_add_slide` must not make the slim router drop the deck flow.
+  const owned = new Set([...agents.values()].filter((a) => !a.custom).flatMap((a) => a.tools.map((t) => t.name)))
   const core = new Set(ROUTER_CORE_TOOLS)
   // MCP tools are dropped by rule (not merely because the operator owns them right now): they must never reach the router's tool list.
   return all.filter((t) => !t.name.startsWith('mcp__') && (core.has(t.name) || !owned.has(t.name)))

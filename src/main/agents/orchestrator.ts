@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
 import type { AgentRole } from '@shared/agents'
-import { PLANNABLE_ROLES, roleLabel } from '@shared/agents'
+import { PLANNABLE_ROLES, roleLabel, type RoleMeta } from '@shared/agents'
 import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
 import { evaluateClassifyGate, shouldSampleForCalibration, type ClassifyGateVerdict } from './classify-gate'
 import { CONTEXT_BUDGET_FRACTION, overheadTokens, resolveContextWindow } from '../context/prepare-context'
@@ -27,6 +27,16 @@ import {
 
 export interface Agent {
   role: AgentRole
+  /**
+   * Set only on user-defined roles (design section 11); built-ins take their label and flags from the manifest. `label` is what chips and
+   * the picker show, `pickable` / `plannable` are the manifest flags, `meta` carries the description and examples for listings, and
+   * `custom` marks the role as user-defined (so, for instance, the slim router never treats it as the owner of a tool).
+   */
+  custom?: boolean
+  label?: string
+  pickable?: boolean
+  plannable?: boolean
+  meta?: RoleMeta
   /** One-line description used in the orchestrator's own system prompt to describe when to delegate here. */
   summary: string
   systemPrompt: string
@@ -442,6 +452,19 @@ function collapseOldestToolResultsToFit(
   return working
 }
 
+/** The tool the router calls to hand a step to a specialist. Shared with the roster (roles/roster.ts), which prices each role by it. */
+export function buildDelegateToolDefinition(role: AgentRole, label: string, summary: string): ToolDefinition {
+  return {
+    name: delegateToolName(role),
+    description: `Hand off to the ${label} specialist: ${summary}`,
+    inputSchema: {
+      type: 'object',
+      properties: { task: { type: 'string', description: 'What the specialist should do' } },
+      required: ['task']
+    }
+  }
+}
+
 export function delegateToolName(role: AgentRole): string {
   return DELEGATE_PREFIX + role.replace(/-/g, '_')
 }
@@ -561,10 +584,9 @@ const HANDOFF_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
  */
 const MAX_PLAN_STEPS = 5
 
-const VALID_STEP_ROLES = new Set<string>(PLANNABLE_ROLES)
 
 /** Fails open to `undefined` (treated as "simple" by the caller) on any parse/shape problem — a broken classifier response must never block the turn it's meant to help. */
-function parsePlan(text: string): { plan: Plan; truncated: boolean } | undefined {
+function parsePlan(text: string, validRoles: ReadonlySet<string>): { plan: Plan; truncated: boolean } | undefined {
   try {
     const stripped = text
       .trim()
@@ -576,7 +598,7 @@ function parsePlan(text: string): { plan: Plan; truncated: boolean } | undefined
     const steps: PlanStep[] = []
     for (const s of parsed.steps) {
       if (typeof s?.description !== 'string' || !s.description.trim()) return undefined
-      if (typeof s?.role !== 'string' || !VALID_STEP_ROLES.has(s.role)) return undefined
+      if (typeof s?.role !== 'string' || !validRoles.has(s.role)) return undefined
       steps.push({ role: s.role as AgentRole, description: s.description })
     }
     const truncated = steps.length > MAX_PLAN_STEPS
@@ -735,7 +757,7 @@ export class Orchestrator {
     // visible notice instead of failing the turn (design 11.4). Roles are an open string set now, so this can genuinely happen.
     let pinned = forcedRole
     if (pinned && !this.agents.has(pinned)) {
-      const message = `The pinned "${roleLabel(pinned)}" agent is not available (it may have been removed or disabled) — using Auto instead.`
+      const message = `The pinned "${this.labelOf(pinned)}" agent is not available (it may have been removed or disabled) — using Auto instead.`
       yield { kind: 'stream', event: { type: 'warning', message } }
       yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message }] }
       pinned = null
@@ -985,7 +1007,7 @@ export class Orchestrator {
       yield { kind: 'stream', event: { type: 'usage', ...roundUsage } }
     }
 
-    const parsed = parsePlan(text)
+    const parsed = parsePlan(text, new Set(this.plannableRoleIds()))
     if (parsed?.truncated) {
       const message =
         `This request's plan had more steps than the ${MAX_PLAN_STEPS}-step limit — proceeding with just the ` +
@@ -1059,7 +1081,7 @@ export class Orchestrator {
         state.handoff.redirects < 1
       ) {
         state.handoff.redirects++
-        yield { kind: 'stream', event: { type: 'status', message: `${roleLabel(role)} handed this to ${roleLabel(suggested as AgentRole)}…` } }
+        yield { kind: 'stream', event: { type: 'status', message: `${this.labelOf(role)} handed this to ${this.labelOf(suggested as AgentRole)}…` } }
         role = suggested as AgentRole
         outcome = yield* this.dispatchDelegate(role, { task: step.description }, conversation, state)
       }
@@ -1082,7 +1104,7 @@ export class Orchestrator {
           : d?.status === 'out_of_scope'
             ? ' (OUT OF SCOPE — not done)'
             : ''
-      const stepLabel = `[Plan step ${index + 1} — ${roleLabel(role)}]${marker}`
+      const stepLabel = `[Plan step ${index + 1} — ${this.labelOf(role)}]${marker}`
       const stepMessage: Message = {
         role: 'user',
         content: [
@@ -1111,6 +1133,16 @@ export class Orchestrator {
     )
   }
 
+  /** The label to show for a role: the agent's own (user-defined roles), else the manifest / legacy label, else a humanized id. */
+  private labelOf(role: string): string {
+    return this.agents.get(role)?.label ?? roleLabel(role)
+  }
+
+  /** Roles a plan may target — the agents' own `plannable` flag (user-defined roles), falling back to the built-in manifest. */
+  private plannableRoleIds(): string[] {
+    return [...this.agents.values()].filter((a) => a.plannable ?? (PLANNABLE_ROLES as readonly string[]).includes(a.role)).map((a) => a.role)
+  }
+
   /**
    * Built from `this.agents`' own `summary` strings — the same source
    * `buildOrchestratorSystemPrompt` already uses — rather than a bare role
@@ -1127,7 +1159,7 @@ export class Orchestrator {
     // roles a plan may target (PLANNABLE_ROLES — the same set `parsePlan` accepts;
     // page-creator is deliberately not one) are listed. What remains below are
     // procedural rules, none of which name a specific role's tools.
-    const specialists = buildRoleDigest(this.agents, PLANNABLE_ROLES, this.options.getConfiguration?.())
+    const specialists = buildRoleDigest(this.agents, this.plannableRoleIds(), this.options.getConfiguration?.())
     return (
       "Before anything else, classify the user's latest request and, only if it genuinely needs more " +
       'than one distinct sub-task, build a short ordered plan for it. You have no tools available for ' +
@@ -1190,11 +1222,11 @@ export class Orchestrator {
   private buildForcedModeNotice(currentRole: AgentRole): string {
     const others = [...this.agents.values()]
       .filter((a) => a.role !== currentRole)
-      .map((a) => `- ${roleLabel(a.role)}: ${a.summary}`)
+      .map((a) => `- ${this.labelOf(a.role)}: ${a.summary}`)
       .join('\n')
     return (
       '\n\n---\n' +
-      `You are currently pinned to the ${roleLabel(currentRole)} specialist only (the ` +
+      `You are currently pinned to the ${this.labelOf(currentRole)} specialist only (the ` +
       'composer\'s "Agent:" selector, bottom-left, is set away from "Auto") — you cannot hand off to ' +
       'another specialist yourself right now, even when one clearly fits the request better, and you ' +
       "have no delegate tools available. If the user's request needs a capability outside your own " +
@@ -1225,20 +1257,12 @@ export class Orchestrator {
     const activity = localRound === 1 ? 'thinking' : 'reviewing tool results'
     const progress = `(round ${state.roundsUsed}/${maxRounds})`
     return agentRole
-      ? `${roleLabel(agentRole)} agent is ${activity}… ${progress}`
+      ? `${this.labelOf(agentRole)} agent is ${activity}… ${progress}`
       : `Model (${this.model}) is ${activity}… ${progress}`
   }
 
   private buildDelegateToolDefinitions(): ToolDefinition[] {
-    return [...this.agents.values()].map((a) => ({
-      name: delegateToolName(a.role),
-      description: `Hand off to the ${roleLabel(a.role)} specialist: ${a.summary}`,
-      inputSchema: {
-        type: 'object',
-        properties: { task: { type: 'string', description: 'What the specialist should do' } },
-        required: ['task']
-      }
-    }))
+    return [...this.agents.values()].map((a) => buildDelegateToolDefinition(a.role, this.labelOf(a.role), a.summary))
   }
 
   /**
@@ -1804,7 +1828,7 @@ export class Orchestrator {
       const owner = this.roleOwningTool(name)
       return {
         content: owner
-          ? `Tool "${name}" is not available here — it belongs to the ${roleLabel(owner)} specialist. Call delegate_to_${owner.replace(/-/g, '_')} with the task instead.`
+          ? `Tool "${name}" is not available here — it belongs to the ${this.labelOf(owner)} specialist. Call delegate_to_${owner.replace(/-/g, '_')} with the task instead.`
           : `Unknown tool "${name}".`,
         isError: true
       }
@@ -1945,7 +1969,7 @@ export class Orchestrator {
     // appended to the brief by the app — typed inputs, not something the router has to remember to pass.
     const taskMessage: Message = {
       role: 'user',
-      content: [{ type: 'text', text: `[Orchestrator -> ${roleLabel(role)}]: ${task}${formatInputs(state.handoff.items)}` }]
+      content: [{ type: 'text', text: `[Orchestrator -> ${this.labelOf(role)}]: ${task}${formatInputs(state.handoff.items)}` }]
     }
     // `isolated` (#77) controls conversation scoping only — this brief alone
     // vs. the whole parent conversation. The round *budget* is always its

@@ -1055,6 +1055,35 @@ author a role from chat; that is a later, optional step.
 Settings list with token cost, extend-only, roles enabled when placed in the
 folder (decided), no import/share feature.
 
+**Status — first slice implemented 2026-09-26 (TASKS #126)**, exactly the "recommended slice for a first version" above: loader + validator +
+roster IPC + Settings list with token cost, extend-only, roles enabled when placed in the folder, no import / share feature.
+
+- *Format:* one Markdown file per role in `<userData>/roles/` (`shared/role-file.ts`: a small purpose-built frontmatter parser — `key: value`,
+  one-line lists, quotes, booleans, numbers, `#` comments, no YAML dependency — plus the validator). Files starting `_` or `.` are ignored, so
+  the shipped `_example-role.md` (Settings > Roles > Create example file) sits there inert until renamed.
+- *Validation (11.4):* **errors, the role is not loaded** — bad or reserved id (`router`, `auto`, `delegate*` …), a built-in or retired id
+  (extend-only), a duplicate, missing `name` / `summary` / prompt, wrong types, malformed tool patterns, and size caps (file 32 KB, prompt 8,000
+  characters, summary 500, 40 tool patterns, 10 examples, `maxRounds` 1–30, at most 20 roles). **Warnings, the role loads** — the design 3.2
+  routing-summary lint (over-broad wording, no stated non-scope, no named hand-off role, overlap with a sibling, > 30 words), fewer than two
+  examples / no non-example, and "no tools". Unknown tool names are simply absent (an MCP server may be disconnected). A file with no frontmatter
+  gets one error, not a cascade.
+- *Loading:* `roles/user-roles.ts` re-reads the folder **every chat turn** (directory read + size/mtime check; text cached by mtime), so an edit
+  applies to the next message with no restart. An edit that breaks a file **keeps the last working version** (marked stale, with the errors
+  shown); a deleted file removes its role and its cached copy.
+- *Runtime:* `createAgents(registry, userRoles)` appends them after the built-ins; tools are picked by exact name or `prefix*` and resolved **live**
+  (an MCP server connecting later is picked up by `mcp__wiki__*`); the completeness and handoff notes are appended to the user's prompt; `Agent`
+  carries `custom` / `label` / `pickable` / `plannable` / `meta`, and the orchestrator now reads plan targets, labels and the classifier's role list
+  from the agents it was given instead of static constants. **A user role never counts as a tool's owner** (a file naming `pptx_add_slide` cannot
+  make the slim router drop the deck flow); `createAgents` also refuses a built-in id (defence in depth behind the loader).
+- *UI:* one roster call (`roles:get`) feeds the Agent picker, the chip labels (chat and print) and Settings > Roles: folder path, Open folder /
+  Create example / Reload, per-role enable checkbox, ~tokens each role adds to every request, inline warnings, per-file errors, a budget warning
+  above 8 enabled roles or ~600 tokens, and the read-only built-ins. The renderer re-reads the roster on window focus and when Settings closes.
+- *Trust model (11.5) as built:* a role you place in the folder is your own configuration and loads enabled. It only **selects** existing tools
+  and supplies a prompt; confirmation and the workspace guard are per tool, so it cannot grant itself anything. There is no import / share path.
+- *Not built:* a `role_create` Configurator tool; a change *event* pushed to the renderer (it re-reads on focus instead); import / share with
+  disabled-until-reviewed and hash approval; skills in the same format; routing evaluation that includes user roles; an editor in Settings
+  (files are edited in your own editor).
+
 ---
 
 ## 12. Review record (senior-engineer feedback, 2026-09-25)

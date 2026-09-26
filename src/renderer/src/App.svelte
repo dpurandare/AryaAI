@@ -12,6 +12,7 @@
     type ProviderDescriptor
   } from '@shared/ipc-contract'
   import type { AgentRole } from '@shared/agents'
+  import type { RoleRosterEntryDto } from '@shared/ipc-contract'
   import { getThemeMode, setThemeMode, type ThemeMode } from './lib/theme'
 
   interface ToolCallDisplay {
@@ -103,6 +104,19 @@
   let runtimes = $state<Record<string, SessionRuntime>>({})
   let showSettings = $state(false)
   let showFirstRunSetup = $state(false)
+
+  // Built-in and user-defined roles (design-discussion.md section 11): the Agent: picker and role labels read this. Re-read when the window
+  // regains focus (the user may have edited a role file in another editor) and when Settings closes.
+  let roleRoster = $state<RoleRosterEntryDto[]>([])
+  async function loadRoleRoster(): Promise<void> {
+    try {
+      roleRoster = (await window.sachiv.getRoles()).roles
+    } catch {
+      // The picker and labels fall back to the built-ins.
+    }
+  }
+  loadRoleRoster()
+  window.addEventListener('focus', () => void loadRoleRoster())
   let firstRunStep = $state<'secrets' | 'python'>('secrets')
   let firstRunEnvPath = $state('')
   let providers = $state<ProviderDescriptor[]>([])
@@ -674,13 +688,17 @@
         {themeMode}
         {planningEnabled}
         onSave={saveApiKey}
-        onClose={() => (showSettings = false)}
+        onClose={() => {
+          showSettings = false
+          void loadRoleRoster()
+        }}
         onToggleAutoApproveRule={toggleAutoApproveTool}
         onChangeTheme={changeThemeMode}
         onChangePlanningEnabled={changePlanningEnabled}
       />
     {:else}
       <ChatView
+        {roleRoster}
         messages={activeRuntime.messages}
         {statusLine}
         sending={activeRuntime.sending}

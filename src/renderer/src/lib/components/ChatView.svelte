@@ -5,6 +5,7 @@
   import MarkdownText from './MarkdownText.svelte'
   import ToolConfirmDialog from './ToolConfirmDialog.svelte'
   import { AGENT_ROLES, roleLabel, type AgentRole } from '@shared/agents'
+  import type { RoleRosterEntryDto } from '@shared/ipc-contract'
   import { parseSearchHistoryResult } from '../search-history-result'
   import type { ToolConfirmRequestPayload, LimitReachedRequestPayload } from '@shared/ipc-contract'
 
@@ -68,11 +69,14 @@
     onToggleAutoApprove,
     onToggleAutoApproveRule,
     pendingLimit,
-    onRespondLimit
+    onRespondLimit,
+    roleRoster = []
   }: {
     messages: DisplayMessage[]
     statusLine: string
     sending: boolean
+    /** Built-in and user-defined roles (the picker, and labels for user-defined ones). Empty until the first load: the built-ins are used. */
+    roleRoster?: readonly RoleRosterEntryDto[]
     onSend: (text: string, forcedRole?: AgentRole | null) => void
     onStop: () => void
     providers: readonly Provider[]
@@ -200,19 +204,28 @@
 
   /** `null` = Auto (orchestrator decides). Sticky across sends until cycled again. */
   let forcedRole: AgentRole | null = $state(null)
-  const MODE_CYCLE: (AgentRole | null)[] = [null, ...AGENT_ROLES]
+  // The picker cycles Auto plus every pickable, enabled role — built-in or user-defined — from the roster.
+  const modeCycle = $derived<(AgentRole | null)[]>([
+    null,
+    ...(roleRoster.length ? roleRoster.filter((r) => r.pickable && r.enabled).map((r) => r.id) : AGENT_ROLES)
+  ])
+
+  /** A role's label: the roster's (covers user-defined roles), else the built-in / humanized one. */
+  function label(role: AgentRole): string {
+    return roleRoster.find((r) => r.id === role)?.label ?? roleLabel(role)
+  }
 
   function cycleMode(direction: 1 | -1): void {
-    const idx = MODE_CYCLE.indexOf(forcedRole)
-    forcedRole = MODE_CYCLE[(idx + direction + MODE_CYCLE.length) % MODE_CYCLE.length]
+    const idx = modeCycle.indexOf(forcedRole)
+    forcedRole = modeCycle[(idx + direction + modeCycle.length) % modeCycle.length]
   }
 
   function modeLabel(role: AgentRole | null): string {
-    return role ? roleLabel(role) : 'Auto'
+    return role ? label(role) : 'Auto'
   }
 
   function limitReachedMessage(limit: LimitReachedRequestPayload): string {
-    const who = limit.agentRole ? `The ${roleLabel(limit.agentRole)} specialist` : 'This turn'
+    const who = limit.agentRole ? `The ${label(limit.agentRole)} specialist` : 'This turn'
     return limit.reason === 'time'
       ? `${who} has been working for a while without finishing. Give it more time, or stop here?`
       : `${who} has used all ${limit.maxRounds} steps available without finishing. Allow more steps, or stop here?`
@@ -287,7 +300,7 @@
                 <span class="plan-step-icon"
                   >{status === 'done' ? '✓' : status === 'error' ? '✗' : status === 'running' ? '⋯' : '○'}</span
                 >
-                <span class="plan-step-role">{roleLabel(step.role)}</span>
+                <span class="plan-step-role">{label(step.role)}</span>
                 <span class="plan-step-desc">{step.description}</span>
               </div>
             {/each}
@@ -296,7 +309,7 @@
         {#each message.segments as segment, i (segment.id)}
           {@const prevRole = i > 0 ? message.segments[i - 1].agentRole : undefined}
           {#if segment.agentRole && segment.agentRole !== prevRole}
-            <div class="agent-chip">{roleLabel(segment.agentRole)} agent</div>
+            <div class="agent-chip">{label(segment.agentRole)} agent</div>
           {/if}
           {#if segment.kind === 'tool' && segment.toolCall}
             {@const isDelegate = segment.toolCall.name.startsWith('delegate_to_')}
@@ -390,7 +403,7 @@
                      target role (not the raw "Working...") is the orchestrator's own routing
                      decision surfacing as a real, live status instead of another dead pause. -->
                 <div class="tool-result pending">
-                  Delegating to {roleLabel(delegateRole)} agent…
+                  Delegating to {label(delegateRole)} agent…
                 </div>
               {/if}
             </div>

@@ -1,8 +1,8 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import type { WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
 import { userInfo } from 'node:os'
 import {
   IpcChannel,
@@ -76,6 +76,8 @@ import {
   type LimitReachedRequest
 } from '../agents/orchestrator'
 import { createAgents } from '../agents/roles'
+import { buildRoster } from '../roles/roster'
+import { EXAMPLE_ROLE_FILE, EXAMPLE_ROLE_FILE_NAME, UserRoleLoader } from '../roles/user-roles'
 import { SYSTEM_PROMPT } from '../agents/system-prompt'
 import { createDescribeCapabilitiesTool } from '../agents/capabilities'
 import { selectRouterTools } from '../agents/router-tools'
@@ -91,7 +93,33 @@ function modelSettingKey(providerId: string): string {
 }
 
 const toolRegistry = createDefaultRegistry()
-const agents = createAgents(toolRegistry)
+/** Settings key: JSON array of user-defined role ids the user switched off in Settings > Roles. */
+const DISABLED_ROLES_SETTING_KEY = 'disabledRoles'
+
+/** User-defined roles live here, one `.md` file each (design-discussion.md section 11). */
+const userRolesFolder = (): string => join(app.getPath('userData'), 'roles')
+const userRoleLoader = new UserRoleLoader(userRolesFolder)
+
+function readDisabledRoleIds(): Set<string> {
+  try {
+    const parsed = JSON.parse(getSetting(DISABLED_ROLES_SETTING_KEY) ?? '[]')
+    return new Set(Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+/**
+ * The agents in force. Rebuilt from the roles folder on every chat turn (a directory read plus a modification-time check per file), so an edit
+ * to a role file applies to the next message with no restart. Starts as the built-ins only.
+ */
+let agents = createAgents(toolRegistry)
+
+async function refreshRoles(): Promise<ReturnType<typeof buildRoster>> {
+  const loaded = await userRoleLoader.load({ disabledIds: readDisabledRoleIds() })
+  agents = createAgents(toolRegistry, loaded.roles.filter((r) => r.enabled).map((r) => r.file))
+  return buildRoster(loaded, userRolesFolder())
+}
 const mcpManager = new McpManager()
 const savedQueryManager = new SavedQueryToolManager()
 let toolContext: ToolContext | undefined
@@ -142,6 +170,28 @@ export function registerIpcHandlers(): void {
       getRuntime: () => workspaceRuntime.getState()
     })
   )
+
+  void refreshRoles().catch((err: unknown) => console.error('Failed to load user-defined roles:', err))
+
+  ipcMain.handle(IpcChannel.RolesGet, () => refreshRoles())
+  ipcMain.handle(IpcChannel.RolesSetEnabled, async (_event, id: string, enabled: boolean) => {
+    const disabled = readDisabledRoleIds()
+    if (enabled) disabled.delete(id)
+    else disabled.add(id)
+    setSetting(DISABLED_ROLES_SETTING_KEY, JSON.stringify([...disabled]))
+    return refreshRoles()
+  })
+  ipcMain.handle(IpcChannel.RolesOpenFolder, async () => {
+    mkdirSync(userRolesFolder(), { recursive: true })
+    const error = await shell.openPath(userRolesFolder())
+    if (error) throw new Error(error)
+  })
+  ipcMain.handle(IpcChannel.RolesCreateExample, () => {
+    mkdirSync(userRolesFolder(), { recursive: true })
+    const target = join(userRolesFolder(), EXAMPLE_ROLE_FILE_NAME)
+    if (!existsSync(target)) writeFileSync(target, EXAMPLE_ROLE_FILE, 'utf-8')
+    return target
+  })
 
   // Folders + the Python venv, created with the workspace (design-discussion.md 4.3).
   // Fire-and-forget like MCP below — creating a venv and installing packages can
@@ -567,6 +617,7 @@ async function runChat(
   // Trims oversized tool results and drops the oldest turns once the loaded
   // history is getting close to the model's context window — operates only
   // on what's about to be sent, never on what's persisted/displayed.
+  await refreshRoles() // user-defined roles are re-read every turn
   const slimRouter = getSetting(SLIM_ROUTER_SETTING_KEY) === 'true'
   const routerTools = slimRouter ? selectRouterTools(toolRegistry.list(), agents) : toolRegistry.list()
   const prepared = await prepareConversation(priorTurns, model, provider, {

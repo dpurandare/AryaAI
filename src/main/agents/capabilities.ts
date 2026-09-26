@@ -87,11 +87,11 @@ export function buildCapabilities(input: CapabilitiesInput): string {
 
   out.push('\n## Specialists')
   for (const agent of agents.values()) {
-    const meta = roleMeta(agent.role)
+    const meta = agent.meta ?? roleMeta(agent.role)
     const own = agent.tools.filter((t) => !isMcp(t)).map((t) => t.name)
     const mcpCount = agent.tools.filter(isMcp).length
     const toolText = own.length === 0 && mcpCount === 0 ? 'no tools (reasoning only)' : list(own) + (mcpCount ? `${own.length ? ', plus ' : ''}${mcpCount} MCP tools` : '')
-    out.push(`- ${meta?.label ?? roleLabel(agent.role)} (${delegateName(agent.role)}): ${meta?.description ?? agent.summary} Tools: ${toolText}.`)
+    out.push(`- ${agent.label ?? meta?.label ?? roleLabel(agent.role)}${agent.custom ? ' [your role]' : ''} (${delegateName(agent.role)}): ${meta?.description ?? agent.summary} Tools: ${toolText}.`)
   }
 
   const direct = tools.filter((t) => !isMcp(t)).map((t) => t.name)
@@ -168,7 +168,7 @@ export function buildRoleDigest(
   const lines: string[] = []
   for (const agent of agents.values()) {
     if (!roles.includes(agent.role)) continue
-    const meta = roleMeta(agent.role)
+    const meta = agent.meta ?? roleMeta(agent.role)
     const notes: string[] = []
     if (agent.tools.length === 0) notes.push('no tools of its own — reasoning/text only')
     const needs = meta?.requiresAnyOf
