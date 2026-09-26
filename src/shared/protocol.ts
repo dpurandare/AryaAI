@@ -89,7 +89,8 @@ export type StreamEvent =
       stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'aborted'
       agentRole?: AgentRole
     }
-  | { type: 'usage'; inputTokens: number; outputTokens: number }
+  /** `cacheReadTokens` (Anthropic prompt caching): the part of `inputTokens` served from the cache; present only when non-zero. */
+  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number }
   /**
    * Emitted once per user turn (not per round), right after context prep
    * resolves the model's real context window for this turn — see

@@ -125,10 +125,14 @@ export async function* streamOpenAICompatible(
     }
 
     if (chunk.usage) {
+      // OpenAI (and providers that copy its shape) cache a byte-stable prefix automatically and report the cached part here. `prompt_tokens`
+      // already includes it, so `inputTokens` is unchanged; the cached share is surfaced so caching can be measured (step 7).
+      const cached = (chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } }).prompt_tokens_details?.cached_tokens ?? 0
       yield {
         type: 'usage',
         inputTokens: chunk.usage.prompt_tokens,
-        outputTokens: chunk.usage.completion_tokens
+        outputTokens: chunk.usage.completion_tokens,
+        ...(cached > 0 ? { cacheReadTokens: cached } : {})
       }
     }
 

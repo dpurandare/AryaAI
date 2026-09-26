@@ -659,6 +659,58 @@ describe('Orchestrator (integration, mocked provider)', () => {
     })
   })
 
+  describe('prompt-cache stability (design step 7)', () => {
+    // Prefix caching (Anthropic cache_control; automatic on OpenAI-compatible providers) only pays if the system prompt and the tool list
+    // are BYTE-identical from one round to the next. Anything that varied per round — a timestamp, a counter, an unordered Map — would
+    // silently turn every request into a cache miss.
+    const prefixOf = (req: { system?: string; tools?: unknown }): string => JSON.stringify({ system: req.system, tools: req.tools })
+
+    it('the router\'s system prompt and tool list are byte-identical on every round of a multi-round turn', async () => {
+      const registry = buildRegistry()
+      await writeFile(join(root, 'a.txt'), 'hello')
+      const provider = new MockProvider([
+        { toolCalls: [{ id: '1', name: 'read_file', input: { path: 'a.txt' } }] },
+        { toolCalls: [{ id: '2', name: 'list_directory', input: { path: '.' } }] },
+        { text: 'done', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'look around' }] }])
+      expect(provider.requests).toHaveLength(3)
+      expect(new Set(provider.requests.map(prefixOf)).size).toBe(1)
+    })
+
+    it('a specialist\'s prefix is byte-identical across its own rounds', async () => {
+      const registry = buildRegistry()
+      await writeFile(join(root, 'a.txt'), 'hello')
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'd', name: 'delegate_to_coding', input: { task: 'read it twice' } }] },
+        { toolCalls: [{ id: '1', name: 'read_file', input: { path: 'a.txt' } }] }, // specialist round 1
+        { toolCalls: [{ id: '2', name: 'read_file', input: { path: 'a.txt' } }] }, // specialist round 2
+        { text: 'read it', stopReason: 'end_turn' }, // specialist round 3
+        { text: 'done', stopReason: 'end_turn' } // router final
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      const nested = provider.requests.slice(1, 4)
+      expect(new Set(nested.map(prefixOf)).size).toBe(1)
+      // ...and it differs from the router's (different role, different tools), so the two are cached independently.
+      expect(prefixOf(nested[0])).not.toBe(prefixOf(provider.requests[0]))
+    })
+
+    it('two separately-built orchestrators over the same registry produce the same prefix (nothing depends on construction order or time)', async () => {
+      const build = async (): Promise<string> => {
+        const registry = buildRegistry()
+        const provider = new MockProvider([{ text: 'hi', stopReason: 'end_turn' }])
+        const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+        await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+        return prefixOf(provider.requests[0])
+      }
+      const first = await build()
+      await new Promise((r) => setTimeout(r, 15)) // a wall-clock-dependent prompt would differ now
+      expect(await build()).toBe(first)
+    })
+  })
+
   describe('router prompt (step 2)', () => {
     it('carries each specialist summary once — in its delegate tool description — not again as a roster in the system prompt', async () => {
       const registry = buildRegistry()

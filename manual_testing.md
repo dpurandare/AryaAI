@@ -1,10 +1,10 @@
-# Manual test plan — the `design_change` branch (redesign steps 1–5, Track A)
+# Manual test plan — the `design_change` branch (redesign steps 1–5 and 7, Track A)
 
 Everything on this branch was verified with **mocked models** (1,074 automated tests) plus a handful of live checks in an
 isolated Electron instance and one partial run on a local Ollama model. **No cloud model has run any of it.** That is what this
 plan is for: to find out whether real models actually follow the new roles, the handoff and `python_run`.
 
-Branch: `design_change` (latest commit: step 5). Nothing here is released; `v0.2.1` / `v0.2.2` drafts are unpublished.
+Branch: `design_change` (latest commit: step 7). Nothing here is released; `v0.2.1` / `v0.2.2` drafts are unpublished.
 
 **How to use this:** work top to bottom; `P1` sections are the ones that decide whether the redesign works, `P2` are regression
 checks, `P3` are optional. For each check, note **Pass / Fail / Odd** and paste anything odd into the report template at the
@@ -239,6 +239,22 @@ Cleanup: `rm -rf /tmp/sachiv-fresh /tmp/sachiv-fresh2 /tmp/sachiv-ws`.
 
 ---
 
+## 11b. Step 7 — trimmed tool descriptions and prompt caching — P2 (15 min)
+
+Step 7 shortened the descriptions of `office_create_document` (-28%) and `office_extract_template` (-24%), and added Anthropic
+prompt caching. The trims can only be judged by whether a real model still uses those tools correctly.
+
+| # | Do | Expect |
+|---|----|--------|
+| 11b.1 | "Create a Word document called team-update with a heading, two paragraphs where one word is **bold** and one is *italic*, a bulleted list of 3 items, a numbered list of 3 steps, and a table of 3 rows with headers Name, Role, Start date." | A real `.docx` under `documents/` whose bold/italic render, lists are real Word lists (not "- " text), and the table is a real Word table with a shaded header. **No markdown pipes or literal asterisks.** |
+| 11b.2 | "Add a chart to that document" | It should say it can't embed images with the Office tool and **hand it to the Developer** (python-docx) — not pretend. |
+| 11b.3 | "Create a 2-slide .pptx with just titles and bullets" | Works (plain deck). For "a 10-slide presentation with charts" it must use the deck flow instead. |
+| 11b.4 | Template extraction on a `.docx` of yours: "Turn `<file>.docx` into a template" | It runs `detect`, **asks you to confirm the field list** before `apply`, and can be refined. |
+| 11b.5 | **Anthropic only:** run any multi-round task (e.g. 4.x) and watch the context meter | Numbers keep growing sensibly with the conversation. They must **not** collapse to a tiny value after round 2 (that would mean cached tokens aren't being counted). Cost shown is an *upper bound* for Anthropic now. |
+| 11b.6 | **Anthropic / OpenAI:** `npx vite-node --config vitest.config.ts scripts/cache-probe.mts -- anthropic <model>` (keys from env) | Call 1: `cached 0`; calls 2–3: a large cached share and a lower first-token time. If `cached` stays 0, tell me the provider and model. |
+
+---
+
 ## 12. Things I could not verify — please look out for these
 
 - **Real cloud models.** Everything above was mocked except one partial local-model run (Ollama qwen 27B, 21 of 39 routing cases).
@@ -247,6 +263,7 @@ Cleanup: `rm -rf /tmp/sachiv-fresh /tmp/sachiv-fresh2 /tmp/sachiv-ws`.
   the literal text `[handoff: …]` in a reply, that's worth reporting.
 - **Windows and macOS.** Only Linux was exercised (the Windows branches are unit-tested only).
 - **Very large workspaces:** artifact detection stops scanning at 20,000 files (it then says it could not determine files).
+- **Prompt caching on Anthropic** was unit-tested against a mocked SDK only (breakpoints, accounting) — never against the real API.
 - **`.deb` packaging** (`python3`, `python3-venv` dependencies) was never built.
 - **Providers other than Ollama** for history replay with tools the request doesn't carry (only matters with the slim router).
 - MCP Operator tool schemas are **not** lazily loaded (all of a server's tools are in the operator's context); a 144-tool

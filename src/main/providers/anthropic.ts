@@ -21,6 +21,41 @@ function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
     .filter((m) => m.content.length > 0)
 }
 
+/**
+ * The request Anthropic is sent, with **prompt-cache breakpoints** (design-discussion.md 6, step 7). Anthropic's cache is opt-in and keyed on
+ * the exact prefix `tools -> system -> messages`, so three `cache_control` markers cover the three things that repeat:
+ *  - the last tool (the whole tool list — the biggest, most stable block: ~10K tokens for the full router, ~2K for the slim one),
+ *  - the system prompt, and
+ *  - the last block of the last message, so each round of a tool loop reuses everything before it and only the new result is processed.
+ * Three of the four allowed. A prefix under the model's minimum (1,024 tokens on most models) is silently not cached, which is harmless.
+ * Cached reads bill at a fraction of the normal input price; the first write costs a little more — it pays off from the second round.
+ * Prefix stability is what makes it work, so nothing in `tools` or `system` may vary between rounds (asserted by a test in
+ * orchestrator.test.ts).
+ */
+export function buildAnthropicParams(request: CompletionRequest): Anthropic.MessageStreamParams {
+  const cache = { type: 'ephemeral' } as const
+  const messages = toAnthropicMessages(request.messages)
+  const last = messages.at(-1)
+  if (last && Array.isArray(last.content) && last.content.length > 0) {
+    const block = last.content[last.content.length - 1] as { type: string; text?: string; cache_control?: unknown }
+    // Empty text blocks cannot carry cache_control; every other block type we send (text, tool_use, tool_result) can.
+    if (block.type !== 'text' || (block.text ?? '').length > 0) block.cache_control = cache
+  }
+  const tools = request.tools?.map((t, i, all) => ({
+    name: t.name,
+    description: t.description,
+    input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+    ...(i === all.length - 1 ? { cache_control: cache } : {})
+  }))
+  return {
+    model: request.model,
+    system: request.system ? [{ type: 'text', text: request.system, cache_control: cache }] : undefined,
+    max_tokens: request.maxTokens,
+    messages,
+    tools
+  }
+}
+
 export class AnthropicProvider implements ModelProvider {
   readonly id = 'anthropic'
   readonly displayName = 'Anthropic'
@@ -44,20 +79,7 @@ export class AnthropicProvider implements ModelProvider {
   }
 
   async *stream(request: CompletionRequest): AsyncIterable<StreamEvent> {
-    const stream = this.client.messages.stream(
-      {
-        model: request.model,
-        system: request.system,
-        max_tokens: request.maxTokens,
-        messages: toAnthropicMessages(request.messages),
-        tools: request.tools?.map((t) => ({
-          name: t.name,
-          description: t.description,
-          input_schema: t.inputSchema as Anthropic.Tool.InputSchema
-        }))
-      },
-      { signal: request.signal }
-    )
+    const stream = this.client.messages.stream(buildAnthropicParams(request), { signal: request.signal })
 
     const activeToolUse = new Map<number, { id: string; name: string }>()
     // Anthropic reports input-token usage once, on `message_start` — `message_delta`
@@ -65,10 +87,17 @@ export class AnthropicProvider implements ModelProvider {
     // and reused on every `usage` event this round emits, instead of the input side
     // being silently reported as 0.
     let inputTokens = 0
+    let cacheReadTokens = 0
 
     for await (const event of stream) {
       if (event.type === 'message_start') {
-        inputTokens = event.message.usage.input_tokens
+        // With prompt caching, `input_tokens` counts only the UNcached part of the input; cache reads and cache writes are reported
+        // separately. All three are real input the model saw, so they are summed — otherwise the context meter would under-report
+        // the conversation size by almost everything the moment caching starts working. (Cost estimates therefore read as an upper
+        // bound for Anthropic: cached input is billed at a fraction of the normal rate, which `estimateCost` does not know.)
+        const u = event.message.usage as { input_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null }
+        cacheReadTokens = u.cache_read_input_tokens ?? 0
+        inputTokens = u.input_tokens + (u.cache_creation_input_tokens ?? 0) + cacheReadTokens
       } else if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
         activeToolUse.set(event.index, {
           id: event.content_block.id,
@@ -86,7 +115,8 @@ export class AnthropicProvider implements ModelProvider {
         yield {
           type: 'usage',
           inputTokens,
-          outputTokens: event.usage.output_tokens
+          outputTokens: event.usage.output_tokens,
+          ...(cacheReadTokens > 0 ? { cacheReadTokens } : {})
         }
         if (event.delta.stop_reason) {
           const stopReason =

@@ -190,21 +190,14 @@ async function applyToXlsx(buffer: Buffer, replacements: Replacement[]): Promise
 export const officeExtractTemplateTool: Tool = {
   name: 'office_extract_template',
   description:
-    'Turn an existing .docx/.pptx/.xlsx document into a reusable template in the workspace templates/ ' +
-    'folder, for later use with office_fill_template. action "detect" (default, read-only) scans the ' +
-    'document for variable-looking content (dates, money amounts, percentages, emails, phone numbers, ' +
-    'URLs) and lists candidates with a suggested {placeholder} name — a mechanical first pass only; use ' +
-    "your own judgment to also propose names/addresses/other free-text fields it can't reliably detect, " +
-    'and always confirm the final list with the user before applying (their call which fields are truly ' +
-    'variable vs. fixed content — a naive whole-document echo is not a template). action "apply" (mutates) ' +
-    'takes a confirmed list of exact-text → placeholder replacements and writes templates/<templateName>, ' +
-    'preserving the original formatting/branding exactly (only the matched text runs/cells change) — this ' +
-    'is expected to be iterative: apply, show the user the result, refine the replacement list based on ' +
-    'their feedback, and apply again (each call regenerates fresh from the original source document, ' +
-    'never from a previous template attempt) until they confirm it looks right. Only text within a single ' +
-    'text run can be matched — if Word/PowerPoint split a phrase across multiple runs (can happen after ' +
-    'real editing history), that phrase may not be detected or replaceable; same known limitation as ' +
-    'office_fill_template\'s own underlying docxtemplater engine.',
+    'Turn an existing .docx/.pptx/.xlsx document into a reusable template under templates/, for office_fill_template. ' +
+    'action "detect" (default, read-only) lists variable-looking content (dates, amounts, percentages, emails, phone ' +
+    'numbers, URLs) with a suggested {placeholder} name — a mechanical first pass: also propose names, addresses and ' +
+    'other free text yourself, and confirm the FULL list with the user before applying (which fields are truly variable ' +
+    'is their call). action "apply" (mutates) takes the confirmed exact-text → placeholder replacements and writes ' +
+    'templates/<templateName>, keeping the original formatting exactly. It is iterative: apply, show the user, refine ' +
+    'the list, apply again — each call starts fresh from the original document. Only text inside a single text run can ' +
+    'be matched; a phrase split across runs by editing history may not be found.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -213,8 +206,7 @@ export const officeExtractTemplateTool: Tool = {
       templateName: {
         type: 'string',
         description:
-          'apply only: filename to save under templates/ (same extension as sourcePath). Any directory ' +
-          'component is ignored — templates always save directly under templates/, never a subfolder.'
+          'apply only: filename under templates/ (same extension as sourcePath); any directory part is ignored.'
       },
       replacements: {
         type: 'array',

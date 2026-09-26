@@ -256,26 +256,16 @@ async function buildPptx(absPath: string, title: string | undefined, slides: Ppt
 export const officeCreateDocumentTool: Tool = {
   name: 'office_create_document',
   description:
-    'Create a new .docx or .pptx file from scratch inside the workspace — the format is chosen by the ' +
-    "path's extension. Automatically placed under documents/ regardless of the path given, unless a file " +
-    'already exists at that path (then it writes back there instead) — the result names the real path ' +
-    'used. This can only build a new document, never open/edit an existing one (docx/pptxgenjs ' +
-    "have no load capability for these formats — see office_fill_template for the one supported way back " +
-    "into 'editing', via a user-authored template). For .docx, provide sections (each an optional heading " +
-    'plus paragraphs/bullets/numbers/table). **bold**, *italic*/_italic_, and `code` inside any text field ' +
-    "render as real formatting, not literal asterisks — write prose the normal way, it doesn't need " +
-    'special handling. Use the dedicated `table` field (headers + rows) for any tabular data — it renders ' +
-    'as a real Word table with a shaded header row, not a wall of pipe characters. Likewise prefer `bullets`/' +
-    "`numbers` over typing \"- \"/\"1. \" into a paragraph yourself — real Word list formatting, not literal " +
-    'list-marker text. For .pptx, provide slides (each an optional title, bullets, and speaker notes) — ' +
-    'but this .pptx path is deliberately plain: a title and a flat bullet list per slide, no charts, ' +
-    'tables, images, or real visual layout at all, regardless of what the content actually needs. Found ' +
-    'live: asked for "a presentation," a model used this tool directly and produced a wall of bullet-only ' +
-    'slides — a valid file, but not what a real presentation-building request wants. For an actual ' +
-    'presentation (more than a handful of slides, or any real visual design — charts, tables, images, ' +
-    "varied layouts), use pptx_start_deck + delegate_to_page-creator per slide instead (see this app's " +
-    "own system prompt for the full flow) — reserve this tool's .pptx path for a genuinely minimal, " +
-    'text-only deck where a flat bullet list is actually fine.',
+    'Create a new .docx or .pptx file from scratch inside the workspace — the format follows the path\'s extension. ' +
+    'It is placed under documents/ regardless of the path given (unless a file already exists at that path, which it ' +
+    'then overwrites); the result names the real path. It cannot open or edit an existing document — the one way back ' +
+    'into editing is office_fill_template with a user-authored template. For .docx give sections (each an optional ' +
+    'heading plus paragraphs / bullets / numbers / table); **bold**, *italic* and `code` in any text render as real ' +
+    'formatting. Use `table` (headers + rows) for tabular data and `bullets`/`numbers` for lists, never markdown ' +
+    'pipes or typed "- "/"1. " markers. It cannot embed images or charts. For .pptx give slides (title, bullets, ' +
+    'notes), but this path is deliberately plain — a flat bullet list per slide, no charts, tables, images or layout. ' +
+    'For a real presentation (more than a few slides, or any visual design) use pptx_start_deck + ' +
+    'delegate_to_page-creator per slide instead; keep this tool\'s .pptx path for a minimal text-only deck.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -291,16 +281,13 @@ export const officeCreateDocumentTool: Tool = {
             paragraphs: {
               type: 'array',
               items: { type: 'string' },
-              description:
-                'Ordinary prose paragraphs. **bold**/*italic*/`code` render as real formatting. Avoid ' +
-                "writing a table or list here as raw markdown text — use the table/bullets/numbers fields " +
-                'instead so they render as real Word constructs, not literal pipe/dash/number characters.'
+              description: 'Ordinary prose paragraphs (inline **bold** / *italic* / `code` render). Not for tables or lists.'
             },
             bullets: { type: 'array', items: { type: 'string' }, description: 'Real Word bulleted list items.' },
             numbers: { type: 'array', items: { type: 'string' }, description: 'Real Word numbered list items.' },
             table: {
               type: 'object',
-              description: 'A real Word table — use this for any tabular data instead of a markdown pipe table.',
+              description: 'A real Word table.',
               properties: {
                 headers: { type: 'array', items: { type: 'string' }, description: 'Optional header row (shaded, bold).' },
                 rows: { type: 'array', items: { type: 'array', items: { type: 'string' } }, description: 'Data rows, each an array of cell values.' }

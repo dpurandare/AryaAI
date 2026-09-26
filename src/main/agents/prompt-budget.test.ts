@@ -61,8 +61,8 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
  */
 const CEILINGS = {
   routerPrompt: 880,
-  routerToolSchemas: 10250,
-  routerBare: 11150,
+  routerToolSchemas: 9900,
+  routerBare: 10760,
   slimRouterToolSchemas: 2130,
   slimRouterBare: 3000,
   routerCore: 800,
@@ -73,7 +73,7 @@ const CEILINGS = {
   'role:coding': 2500,
   'role:data': 2640,
   'role:data-processor': 1920,
-  'role:document-creator': 2340,
+  'role:document-creator': 1990,
   'role:configurator': 1290,
   'role:mcp-operator': 360,
   'role:page-creator': 820,
@@ -147,5 +147,48 @@ describe('prompt budget (no conversation, no MCP servers)', () => {
 
   it('every role in the manifest is measured', () => {
     expect(Object.keys(measured).filter((k) => k.startsWith('role:')).map((k) => k.slice(5))).toEqual(ROLE_MANIFEST.map((r) => r.id))
+  })
+})
+
+/**
+ * Per-tool schema budget (design 6: "fails when ... any single tool schema exceeds its budget"). Every tool has a ceiling; the
+ * heaviest have their own, tight ones. A new tool, or a "helpful paragraph" added to an existing one, that pushes it past its
+ * ceiling fails here — trim it, or raise the ceiling deliberately in the same commit with the reason. Measured 2026-09-26 (step 7,
+ * after trimming office_create_document 794 -> 569 and office_extract_template 520 -> 395; 44 tools, 9,060 -> 8,710 in total).
+ */
+const DEFAULT_TOOL_CEILING = 320
+const TOOL_CEILINGS: Record<string, number> = {
+  office_create_document: 590,
+  parse_csv: 450,
+  office_extract_template: 410,
+  pptx_compose_slide: 400,
+  xlsx_write: 365,
+  api_call: 360,
+  db_create_connection: 350,
+  mcp_create_connection: 340,
+  parse_html: 330
+}
+
+describe('per-tool schema budget', () => {
+  const registry = createDefaultRegistry()
+  const tokensFor = (t: { name: string; description: string; inputSchema: unknown }): number =>
+    schemaTokens([{ name: t.name, description: t.description, inputSchema: t.inputSchema }])
+
+  it.each(registry.list().map((t) => [t.name, tokensFor(t)] as const))('%s stays within its ceiling', (name, tokens) => {
+    const ceiling = TOOL_CEILINGS[name] ?? DEFAULT_TOOL_CEILING
+    expect(tokens, `${name} is ${tokens} tokens, ceiling ${ceiling} — trim its description/schema, or raise the ceiling deliberately`).toBeLessThanOrEqual(ceiling)
+  })
+
+  it('every per-tool ceiling names a real tool, and is not stale (a saving must be locked in by lowering it)', () => {
+    for (const [name, ceiling] of Object.entries(TOOL_CEILINGS)) {
+      const t = registry.get(name)
+      expect(t, `${name} is not registered`).toBeDefined()
+      expect(tokensFor(t!), `${name} is well under its ceiling ${ceiling} — lower it`).toBeGreaterThan(ceiling * 0.9)
+    }
+  })
+
+  it('the whole built-in registry stays under its total ceiling', () => {
+    const total = registry.list().reduce((n, t) => n + tokensFor(t), 0)
+    expect(total).toBeLessThanOrEqual(8900) // 8,710 measured
   })
 })

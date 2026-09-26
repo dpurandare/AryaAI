@@ -862,6 +862,12 @@ Each step ships on its own and is checked against measured numbers.
    load rounds.
 7. **Schema diet + caching.**
 
+   **Status — implemented 2026-09-26 (TASKS #118), modestly:**
+   - *Schema diet:* the audit found most heavy descriptions are dense API documentation with little to cut. The two with real waste were trimmed — `office_create_document` 794 → 569 tokens (an incident narrative and the same table/list rule stated three times) and `office_extract_template` 520 → 395 — for **-350 tokens on the full router and on Document Creator** (built-in registry 9,060 → 8,710, 44 tools, -3.9%). The slim router does not carry either tool, so it is unchanged. A **per-tool budget test** now fails if any tool exceeds its ceiling (default 320; tight individual ceilings for the nine heaviest) or the registry total exceeds 8,900. The router-prompt diet (`SYSTEM_PROMPT` to ~350 tokens) was **not** done: step 2 already moved the domain paragraphs out, what remains is mostly the PowerPoint flow (router-only) and the "found live" rules, and cutting those cannot be validated without a model.
+   - *Caching:* Anthropic requests now carry three `cache_control` breakpoints (last tool → whole tool list, the system prompt, the last block of the last message), so each round of a tool loop reuses everything before it. Cached reads and writes are counted into `inputTokens` (otherwise the context meter would under-report almost everything once caching works), and the cached share is surfaced as an optional `cacheReadTokens` on the usage event — for Anthropic and, via `prompt_tokens_details.cached_tokens`, for OpenAI-compatible providers, which cache a stable prefix automatically. **Cost estimates for Anthropic are now an upper bound** (`estimateCost` prices all input at the full rate). **Byte-stability is asserted:** the router's and a specialist's system prompt + tool list are identical on every round, and identical across separately built orchestrators (the cross-turn case where caching actually pays; mutation-checked with an injected timestamp).
+   - *Not done:* real-API verification of Anthropic caching (mocked SDK only); a cost model that prices cached input; the `SYSTEM_PROMPT` diet; lazy schema loading.
+
+
 **Track A — workspace runtime (parallel, independent of steps 1–7).**
 `ensureWorkspace(root)` and the Python prerequisite (4.3) touch startup,
 set-root, onboarding and Settings, not roles or prompts, so they can ship
@@ -896,7 +902,7 @@ before step 1 as their own release. Order inside the track:
 3. **Caching economics** — measure the real cost and latency effect per
    provider before claiming savings, and confirm the tool list is
    byte-stable across requests.
-   **NOT done** (needs real provider billing / usage numbers; belongs with step 7). What is measured is *size*, not cost or latency.
+   **Partly measured, not resolved.** Built in step 7: Anthropic prompt caching, cache-aware usage accounting, byte-stability tests, and `scripts/cache-probe.mts` (same request repeated; prints first-token time, input tokens, cached tokens per call — run it with your keys). Real data so far is one local model only (Appendix E, run 2): the prompt-size effect on latency there is within the noise of a thinking model's generation time, so it shows nothing either way. **Money** saved on Anthropic/OpenAI is still unmeasured — that needs your billing figures.
 4. **Classify-prompt migration** — hand-written role facts replaced by the
    generated digest (3.6), verified on real compound prompts.
    **Done in step 2** (generated digest with live availability, unit-tested); **not verified on real compound prompts with a real model.**
@@ -1247,3 +1253,18 @@ What this suggests (one model, partial — not conclusions):
   cost of slimming that the token numbers do not show, and the reason the slim router stays opt-in.
 
 Not yet run: the same cases against the full-registry router on this model (for a like-for-like comparison), the remaining 18 cases, and any other model.
+
+**Run 2 — 2026-09-26, cache probe (`scripts/cache-probe.mts`), Ollama / `qwen3.8-custom` (27B, local).** The same router request repeated
+(`Reply with the single word: ok`, max 16 tokens). Ollama caches the prompt prefix in its KV cache but reports no cached-token count, so
+only latency is readable.
+
+| Router | Input tokens | Uncached first call (warm model) | Repeat (prefix cached) |
+|---|---|---|---|
+| Slim | 3,494 | 5.1 s | 4.4 s, 4.4 s |
+| Full registry | 12,313 | 7.4 s | 15.0 s, 5.8 s (earlier run) |
+
+Cold model load dominated the very first calls (136–181 s) and is not comparable. Reading it honestly: on this model and machine the extra ~9K
+tokens of the full router cost roughly 2–3 seconds of prefill, small next to the 4–15 s the model spends generating (it is a thinking
+model; the 15.0 s outlier had 32 output tokens against 12). **No evidence here that slimming or caching changes latency materially for a
+local model** — the case for the slim router rests on token count, cost on providers without strong caching, and tool-selection quality,
+not on speed. The token-cost side on Anthropic / OpenAI is unmeasured.
