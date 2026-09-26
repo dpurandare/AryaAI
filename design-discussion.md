@@ -38,6 +38,14 @@ section 12):
 - **Step 3 (handoff + replay safety) is now an explicit prerequisite and
   release gate for step 4 (slim router)**, with four named risk gates (10).
 
+**What changed in revision 4** (2026-09-25/26, after the Northwind chart
+session):
+
+- **Python is a prerequisite; the venv is created with the workspace** (4.3,
+  rewritten): `ensureWorkspace(root)`, a runtime state machine, an onboarding
+  gate, pinned base packages. Risks in section 8, open questions in section 9,
+  and a parallel **Track A** in section 10 that can ship before step 1.
+
 Goal, unchanged: **the right information reaches the LLM at the right time —
 nothing more.** Prompt size is a symptom; the cause is that the current design
 loads everything up front and gives every role an overloaded definition.
@@ -450,15 +458,72 @@ Notes:
 Found live: the workspace already had a working `venv/` and the agent still
 reported "Python is not available", because nothing in the app knew the venv
 existed. Hotfix #107 hard-wires it into `shell_execute` (activated in code
-whenever present, plus a bootstrap hint when it is not). The redesign should
-make it a first-class part of the Developer role rather than a shell trick:
+whenever present, plus a bootstrap hint when it is not).
 
-- **Managed runtime.** The workspace owns one venv (`venv/` today). A
-  `python_run` tool (Developer role, not core) resolves the interpreter itself
-  — never `python` vs `python3` guesswork — runs a workspace script, and
-  **creates the venv on demand** (with the normal confirmation dialog) when
-  missing. Package installs are a separate, confirmed action
-  (`pip install …` into the venv only).
+**Decision (Deepak, 2026-09-25): Python is a prerequisite to run Sachivji, and
+the venv is created together with the workspace and its internal folders** —
+not improvised by an agent mid-task. The redesign makes the runtime a managed,
+first-class part of the workspace rather than a shell trick.
+
+**Today (verified in code).** `createToolContext()` only does `mkdirSync(root)`.
+The managed folders (`code/ documents/ resources/`, plus the excluded
+`templates` and `.sachiv-clones`) are created lazily on first file write, and
+`WorkspaceSetRoot` only mkdirs and swaps the path guard. There is no explicit
+"ensure the workspace" step, and two entry points need one (startup and
+set-root). An `onboardingCompleted` setting and flow already exist and are the
+natural place to extend.
+
+**1. `ensureWorkspace(root)`.** Idempotent; creates the managed folders and the
+venv; never destroys content; called from startup and from set-root. It drives
+a state machine —
+
+`missing-python | creating | ready | failed(reason) | disabled`
+
+— shown in Settings > Runtime and in onboarding, and fed into
+`describe_capabilities` and the planner digest as a `requires` state so the
+router knows when code execution is unavailable. The `shell_execute` "no venv"
+hint should point at this state instead of suggesting the model bootstraps one.
+
+**2. Detection.** Try `python3`, `python`, and `py -3` (Windows) with
+`--version` and a timeout. The interpreter must import both `venv` and
+`ensurepip`. Minimum version to be settled (open question 9), verified against
+the base packages. Platform traps are listed in section 8.
+
+**3. Creation and packages.** `<python> -m venv <ws>/venv`, and always
+`<venv python> -m pip` (never a bare `pip`). Base packages are a **curated,
+pinned** list (candidates: matplotlib, numpy, pillow, python-docx, openpyxl),
+installed in the background with progress, retryable and **non-fatal**; keep a
+managed requirements file. Package installs requested later by an agent are a
+separate, confirmed action (`pip install …` into the venv only). Existing venvs
+are **adopted, not recreated**. On the reference machine `pip` inside a
+workspace path containing a space works (the default workspace is
+"Sachivji Workspace"), but going through `python -m pip` stays the rule.
+
+**4. Enforcement.** "Prerequisite" can mean two things. Recommendation: an
+**onboarding gate** — onboarding cannot finish until the runtime is `ready`,
+unless the user explicitly chooses "continue without Python", which sets
+`disabled` and makes the capability listing say code execution is unavailable.
+A hard block on app start would lock out chat- and DB-only users for no
+benefit. This is Deepak's call (open question 9). Installer level: the `.deb`
+can declare `depends: python3, python3-venv` in `electron-builder.yml`; dmg,
+AppImage and NSIS cannot, so they rely on README text plus detection (NSIS could
+open the download page).
+
+**5. Alternative, not recommended for v1.** Ship or download a private
+standalone Python (python-build-standalone or uv). It removes the prerequisite
+and the platform gotchas, at the cost of size, network access and macOS
+notarization / Windows SmartScreen complexity. Keep it as the fallback if the
+support burden of a system-Python prerequisite turns out to be high.
+
+**6. Lifecycle.** Venvs are not relocatable, so a "Repair runtime" action
+rebuilds one; changing the workspace root must ensure a fresh venv for the new
+root. Other lifecycle and failure corner cases are in section 8.
+
+**7. Tools built on it** (these land with the role work, not with the
+prerequisite — see Track A in section 10):
+
+- **`python_run`** (Developer role, not core) resolves the interpreter itself —
+  never `python` vs `python3` guesswork — and runs a workspace script.
 - **Reports what it produced.** It returns the files the script created or
   changed, which is exactly the `artifacts` field of the handoff contract
   (5.1) — derived in code, not claimed by the model.
@@ -658,6 +723,39 @@ core, and rises for multi-domain requests.
   never gets; role-summary wording is a first-class quality concern and needs
   an eval set, not just code review.
 
+**Workspace runtime / Python prerequisite (section 4.3)**
+
+- **Venvs are not relocatable.** They embed absolute paths, so moving or
+  renaming the workspace, or changing the workspace root, breaks the venv
+  silently (scripts fail with a confusing interpreter error). `ensureWorkspace`
+  must run on set-root, and "Repair runtime" must rebuild rather than reuse.
+- **System Python upgrades stale the venv.** `pyvenv.cfg`'s `home` points at
+  the interpreter that created it; an OS or Homebrew upgrade can remove it.
+  State detection must check that the venv's interpreter actually runs, not
+  just that the folder exists.
+- **Detection is platform-specific.** Debian/Ubuntu ship `venv` and `ensurepip`
+  in a separate `python3-venv` package, so `python3 --version` succeeding is not
+  enough. macOS `/usr/bin/python3` may be a Command Line Tools shim that pops an
+  installer dialog. Windows `python` may be the Microsoft Store stub — prefer
+  `py -3`. Every probe needs a timeout.
+- **Never destroy an existing venv.** Users (and past agents) already have
+  venvs with packages installed; adopt them. Creation happens only when the
+  folder is missing, and repair is an explicit user action.
+- **Concurrency.** Two app instances, or startup racing set-root, must not
+  create the venv twice — needs a lock file and idempotent steps.
+- **Third-party code at install time.** Base packages come from PyPI and run
+  arbitrary code on install. Use a curated, pinned list (hashes later), keep a
+  managed requirements file, and put user-requested installs behind
+  confirmation. Installs are background, retryable and non-fatal.
+- **Failure environments.** Offline, proxy, low disk space and antivirus
+  false positives on freshly created executables must degrade to a visible
+  `failed(reason)` state with retry, not a stuck onboarding.
+- **Installer reach is uneven.** Only the `.deb` can declare
+  `depends: python3, python3-venv` (electron-builder). dmg, AppImage and NSIS
+  cannot, so the prerequisite is enforced by detection plus README text.
+- **A venv is still not a sandbox** (see 4.3) — creating one at onboarding
+  must not be presented to users as confinement.
+
 ---
 
 ## 9. Open questions
@@ -689,6 +787,19 @@ core, and rises for multi-domain requests.
    - Still open: extend-only or allow overriding a built-in id (recommended:
      extend-only in v1)? Folder location and whether Settings can point
      elsewhere? Should the same file format also carry skills?
+9. **Python prerequisite (section 4.3):**
+   - **Enforcement.** Onboarding gate with an explicit "continue without
+     Python" escape (recommended), or hard-block app start? Chat- and
+     DB-only users argue for the gate.
+   - **Minimum Python version.** To be verified against the base package
+     list (3.9? 3.10?).
+   - **Base package list.** Candidates: matplotlib, numpy, pillow,
+     python-docx, openpyxl — which are installed eagerly, which on demand?
+   - **Venv location.** Visible `<ws>/venv` (today, discoverable, adopts
+     existing venvs) or hidden `<ws>/.sachiv-venv` (harder for users to
+     break, invisible in the file browser)?
+   - **Fallback.** If the prerequisite proves a support burden, bundle or
+     download a private standalone Python (python-build-standalone / uv)?
 
 ---
 
@@ -723,6 +834,21 @@ Each step ships on its own and is checked against measured numbers.
    possibly Data Access / Data Processor), with pinned results and uncounted
    load rounds.
 7. **Schema diet + caching.**
+
+**Track A — workspace runtime (parallel, independent of steps 1–7).**
+`ensureWorkspace(root)` and the Python prerequisite (4.3) touch startup,
+set-root, onboarding and Settings, not roles or prompts, so they can ship
+before step 1 as their own release. Order inside the track:
+
+- **A1.** `ensureWorkspace(root)` (folders + venv creation, idempotent) with the
+  state machine, wired to startup and `WorkspaceSetRoot`; Settings > Runtime
+  shows state, retry and "Repair runtime".
+- **A2.** Onboarding gate and README / installer prerequisite text.
+- **A3.** Runtime state fed into `describe_capabilities` / the planner digest
+  (`requires`), so the router knows code execution is unavailable when it is.
+- **A4.** `python_run` tool (Developer role) — depends on the role work in
+  steps 1–2 and on the handoff contract's `artifacts` field (step 3), so it
+  lands with those, not with A1–A3.
 
 **Risk gates for step 4** — kept visible, each to be resolved and not deferred:
 
