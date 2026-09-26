@@ -274,3 +274,42 @@ describe('AnthropicProvider', () => {
     expect(await provider.countTokens(messages, 'claude-sonnet-5')).toBe(42)
   })
 })
+
+describe('AnthropicProvider structured output (forced tool call)', () => {
+  const planSchema = { type: 'object', properties: { complexity: { type: 'string' } }, required: ['complexity'] }
+  const req = {
+    model: 'claude-sonnet-5',
+    system: 'classify',
+    messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }],
+    maxTokens: 100,
+    structuredOutput: { name: 'classify_and_plan', schema: planSchema }
+  }
+
+  it('forces one tool whose input schema is the requested schema, with no cache marker on it', () => {
+    const p = buildAnthropicParams(req)
+    expect(p.tool_choice).toEqual({ type: 'tool', name: 'classify_and_plan' })
+    expect(p.tools).toHaveLength(1)
+    expect(p.tools?.[0]).toMatchObject({ name: 'classify_and_plan', input_schema: planSchema })
+    expect(JSON.stringify(p.tools)).not.toContain('cache_control')
+  })
+
+  it('sends no tool_choice for an ordinary request', () => {
+    expect(buildAnthropicParams({ ...req, structuredOutput: undefined })).not.toHaveProperty('tool_choice')
+  })
+
+  it("streams the forced tool's JSON as text and ends with end_turn, not tool_use", async () => {
+    mockStream.mockReturnValue(
+      fakeStream([
+        { type: 'message_start', message: { usage: { input_tokens: 5 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'classify_and_plan' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"complexity":' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '"simple"}' } },
+        { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 4 } }
+      ])
+    )
+    const events = await collect(new AnthropicProvider('key').stream(req))
+    expect(events.filter((e) => e.type === 'text_delta').map((e) => (e as { text: string }).text).join('')).toBe('{"complexity":"simple"}')
+    expect(events.some((e) => e.type === 'tool_use_start')).toBe(false)
+    expect(events.at(-1)).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
+  })
+})

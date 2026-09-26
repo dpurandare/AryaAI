@@ -116,3 +116,25 @@ describe('streamOpenAICompatible', () => {
     expect(events).toEqual([{ type: 'message_stop', stopReason: 'end_turn' }])
   })
 })
+
+describe('streamOpenAICompatible structured output', () => {
+  it('sends a json_schema response_format only when structuredOutput is requested', async () => {
+    const seen: Record<string, unknown>[] = []
+    const client = {
+      chat: {
+        completions: {
+          create: async (params: Record<string, unknown>) => {
+            seen.push(params)
+            return { [Symbol.asyncIterator]: async function* () { yield { choices: [{ delta: { content: '{}' }, finish_reason: 'stop' }] } } }
+          }
+        }
+      }
+    } as unknown as OpenAI
+    const planSchema = { type: 'object', properties: { complexity: { type: 'string', enum: ['simple', 'compound'] } }, required: ['complexity'], additionalProperties: false }
+    const base = { model: 'm', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }], maxTokens: 10 }
+    await collect(streamOpenAICompatible(client, base))
+    await collect(streamOpenAICompatible(client, { ...base, structuredOutput: { name: 'classify_and_plan', schema: planSchema } }))
+    expect(seen[0]).not.toHaveProperty('response_format')
+    expect(seen[1].response_format).toEqual({ type: 'json_schema', json_schema: { name: 'classify_and_plan', strict: true, schema: planSchema } })
+  })
+})

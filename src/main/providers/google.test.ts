@@ -266,3 +266,20 @@ describe('GoogleProvider', () => {
     expect(await provider.countTokens([], 'gemini-flash-latest')).toBe(42)
   })
 })
+
+describe('GoogleProvider structured output', () => {
+  it('sets responseMimeType and responseJsonSchema only when structuredOutput is requested', async () => {
+    mockGenerateContentStream.mockReset()
+    mockGenerateContentStream.mockImplementation(async () => fakeStream([{ candidates: [{ content: { parts: [{ text: '{}' }] }, finishReason: 'STOP' }] }]))
+    const planSchema = { type: 'object', properties: { complexity: { type: 'string', enum: ['simple', 'compound'] } }, required: ['complexity'], additionalProperties: false }
+    const provider = new GoogleProvider('key')
+    const base = { model: 'gemini-3.5-flash', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }], maxTokens: 10 }
+    await collect(provider.stream(base))
+    await collect(provider.stream({ ...base, structuredOutput: { name: 'classify_and_plan', schema: planSchema } }))
+    const plain = mockGenerateContentStream.mock.calls[0][0].config
+    const structured = mockGenerateContentStream.mock.calls[1][0].config
+    expect(plain).not.toHaveProperty('responseMimeType')
+    expect(structured.responseMimeType).toBe('application/json')
+    expect(structured.responseJsonSchema).toEqual(planSchema)
+  })
+})

@@ -95,6 +95,14 @@ export async function* streamOpenAICompatible(
         type: 'function' as const,
         function: { name: t.name, description: t.description, parameters: t.inputSchema }
       })),
+      ...(request.structuredOutput
+        ? {
+            response_format: {
+              type: 'json_schema' as const,
+              json_schema: { name: request.structuredOutput.name, strict: true, schema: request.structuredOutput.schema }
+            }
+          }
+        : {}),
       stream: true,
       stream_options: { include_usage: true }
     },

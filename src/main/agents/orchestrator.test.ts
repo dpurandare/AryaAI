@@ -952,6 +952,63 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(classifySystem).not.toMatch(/no shell access/i)
     })
 
+    it('the planning call asks the provider for structured output limited to the plannable roles; ordinary rounds never do', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: true
+      })
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }])
+      const so = provider.requests[0].structuredOutput as { name: string; schema: { properties: { steps: { items: { properties: { role: { enum: string[] } } } } } } }
+      expect(so.name).toBe('classify_and_plan')
+      expect(so.schema.properties.steps.items.properties.role.enum).toContain('data')
+      expect(so.schema.properties.steps.items.properties.role.enum).not.toContain('page-creator')
+      expect(provider.requests[1].structuredOutput).toBeUndefined()
+    })
+
+    it('a provider that rejects structured output (HTTP 400) gets the same call as a plain prompt, remembered for the next turn', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const make = (turns: ScriptedTurn[]) => {
+        const provider = new MockProvider(turns)
+        // A model name no other test uses: the "rejected" memo is per provider:model for the whole app session.
+        const o = new Orchestrator(provider, 'mock-model-no-schema', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+          planningEnabled: true
+        })
+        return { provider, o }
+      }
+      const first = make([
+        { throwError: 'response_format is not supported by this model', throwStatus: 400 },
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const events = await collect(first.o, [{ role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }])
+      expect(first.provider.requests.map((r) => Boolean(r.structuredOutput))).toEqual([true, false, false])
+      expect(events.filter((e) => e.kind === 'stream').some((e) => e.event.type === 'error')).toBe(false)
+
+      const second = make([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      await collect(second.o, [{ role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }])
+      expect(second.provider.requests.map((r) => Boolean(r.structuredOutput))).toEqual([false, false])
+    })
+
+    it('a non-client error on the planning call (no 4xx status) is not blamed on the schema and still surfaces', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ throwError: 'socket hang up' }])
+      const orchestrator = new Orchestrator(provider, 'mock-model-net', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: true
+      })
+      await expect(collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }])).rejects.toThrow('socket hang up')
+      expect(provider.requests).toHaveLength(1)
+    })
+
     it('a classifier reply with prose around the JSON (common with local reasoning models) still yields the plan', async () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)

@@ -84,6 +84,7 @@ export class GoogleProvider implements ModelProvider, EmbeddingProvider {
         systemInstruction: request.system,
         maxOutputTokens: request.maxTokens,
         abortSignal: request.signal,
+        ...(request.structuredOutput ? { responseMimeType: 'application/json', responseJsonSchema: request.structuredOutput.schema } : {}),
         tools: request.tools?.length
           ? [
               {

@@ -23,6 +23,8 @@ export interface ScriptedTurn {
   usage?: { inputTokens: number; outputTokens: number }
   /** Throws instead of streaming anything — every real SDK throws its own differently-shaped error when the request's AbortSignal fires mid-call; the orchestrator is expected to tell that apart from a genuine failure via `request.signal.aborted`, not by inspecting the error itself. */
   throwError?: string
+  /** With `throwError`: gives the thrown error an HTTP-style `.status`, like every real SDK's API error (e.g. 400 for a request the provider rejects). */
+  throwStatus?: number
   /** Throws a rate-limit-shaped error (a real `.status === 429`, optionally real `.headers` for `Retry-After`) — matches the actual `APIError`/`ApiError` shape all 3 real SDK families throw (see `rate-limit.ts`'s own doc comment), for exercising `handleRateLimitError` (TASKS.md #91). */
   throwRateLimit?: { message?: string; headers?: Record<string, string> }
   /**
@@ -114,7 +116,7 @@ export class MockProvider implements ModelProvider {
     }
 
     if (turn.throwError) {
-      throw new Error(turn.throwError)
+      throw Object.assign(new Error(turn.throwError), turn.throwStatus !== undefined ? { status: turn.throwStatus } : {})
     }
 
     if (turn.throwRateLimit) {

@@ -45,18 +45,30 @@ export function buildAnthropicParams(request: CompletionRequest, options: { prom
     // Empty text blocks cannot carry cache_control; every other block type we send (text, tool_use, tool_result) can.
     if (block.type !== 'text' || (block.text ?? '').length > 0) block.cache_control = cache
   }
-  const tools = request.tools?.map((t, i, all) => ({
-    name: t.name,
-    description: t.description,
-    input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
-    ...(caching && i === all.length - 1 ? { cache_control: cache } : {})
-  }))
+  // Structured output: Anthropic has no JSON mode, so the schema becomes the input schema of one tool the model is forced to call; `stream()`
+  // hands the tool's JSON back as ordinary text. Nothing else repeats between such one-shot calls, so no cache marker on it.
+  const forced = request.structuredOutput
+  const tools = forced
+    ? [
+        {
+          name: forced.name,
+          description: 'Report the result. Call this once with the complete result.',
+          input_schema: forced.schema as Anthropic.Tool.InputSchema
+        }
+      ]
+    : request.tools?.map((t, i, all) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+        ...(caching && i === all.length - 1 ? { cache_control: cache } : {})
+      }))
   return {
     model: request.model,
     system: request.system ? (caching ? [{ type: 'text', text: request.system, cache_control: cache }] : request.system) : undefined,
     max_tokens: request.maxTokens,
     messages,
-    tools
+    tools,
+    ...(forced ? { tool_choice: { type: 'tool' as const, name: forced.name } } : {})
   }
 }
 
@@ -89,6 +101,9 @@ export class AnthropicProvider implements ModelProvider {
     const stream = this.client.messages.stream(buildAnthropicParams(request, { promptCaching: this.promptCaching }), { signal: request.signal })
 
     const activeToolUse = new Map<number, { id: string; name: string }>()
+    // Blocks of the forced structured-output tool: their JSON is surfaced as text, and the closing `tool_use` stop as an ordinary end_turn.
+    const structuredBlocks = new Set<number>()
+    const structuredName = request.structuredOutput?.name
     // Anthropic reports input-token usage once, on `message_start` — `message_delta`
     // (fired later, alongside output usage/stop_reason) never repeats it. Captured here
     // and reused on every `usage` event this round emits, instead of the input side
@@ -105,6 +120,8 @@ export class AnthropicProvider implements ModelProvider {
         const u = event.message.usage as { input_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null }
         cacheReadTokens = u.cache_read_input_tokens ?? 0
         inputTokens = u.input_tokens + (u.cache_creation_input_tokens ?? 0) + cacheReadTokens
+      } else if (event.type === 'content_block_start' && event.content_block.type === 'tool_use' && event.content_block.name === structuredName) {
+        structuredBlocks.add(event.index)
       } else if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
         activeToolUse.set(event.index, {
           id: event.content_block.id,
@@ -114,6 +131,8 @@ export class AnthropicProvider implements ModelProvider {
       } else if (event.type === 'content_block_delta') {
         if (event.delta.type === 'text_delta') {
           yield { type: 'text_delta', text: event.delta.text }
+        } else if (event.delta.type === 'input_json_delta' && structuredBlocks.has(event.index)) {
+          yield { type: 'text_delta', text: event.delta.partial_json }
         } else if (event.delta.type === 'input_json_delta') {
           const tool = activeToolUse.get(event.index)
           if (tool) yield { type: 'tool_use_delta', id: tool.id, partialInput: event.delta.partial_json }
@@ -127,7 +146,7 @@ export class AnthropicProvider implements ModelProvider {
         }
         if (event.delta.stop_reason) {
           const stopReason =
-            event.delta.stop_reason === 'tool_use'
+            event.delta.stop_reason === 'tool_use' && structuredBlocks.size === 0
               ? 'tool_use'
               : event.delta.stop_reason === 'max_tokens'
                 ? 'max_tokens'

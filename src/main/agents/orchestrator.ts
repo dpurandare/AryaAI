@@ -593,6 +593,41 @@ const MAX_PLAN_STEPS = 5
 
 
 /**
+ * The JSON Schema the planning reply must satisfy, handed to the provider as structured output (provider-enforced JSON: the reply is
+ * constrained to this shape rather than merely requested in the prompt). `role` is limited to the roles a plan may target — the same
+ * set `parsePlan` accepts. Kept to the portable subset (object/array/string/enum, `additionalProperties: false`, everything required) that
+ * OpenAI strict mode, Gemini, Ollama, Groq, Mistral and an Anthropic tool input schema all take.
+ */
+export function buildPlanSchema(roleIds: readonly string[]): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      complexity: { type: 'string', enum: ['simple', 'compound'] },
+      steps: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            role: { type: 'string', enum: [...roleIds] },
+            description: { type: 'string' }
+          },
+          required: ['role', 'description'],
+          additionalProperties: false
+        }
+      }
+    },
+    required: ['complexity', 'steps'],
+    additionalProperties: false
+  }
+}
+
+/**
+ * Provider/model pairs that rejected the structured-output request (an HTTP error, e.g. a model without schema support). The planning call
+ * then goes out as a plain prompt-only request, and stops trying the structured form for that pair for the rest of the app session.
+ */
+const structuredOutputRejected = new Set<string>()
+
+/**
  * The JSON object in a model's reply, tolerating what local reasoning models actually wrap around it: a ```json fence, or a sentence before
  * and/or after the object. Tries the whole (fence-stripped) text first, then the span from the first `{` to the last `}`.
  */
@@ -617,7 +652,7 @@ export function parseJsonObjectLoosely(text: string): any | undefined {
 }
 
 /** Fails open to `undefined` (treated as "simple" by the caller) on any parse/shape problem — a broken classifier response must never block the turn it's meant to help. */
-function parsePlan(text: string, validRoles: ReadonlySet<string>): { plan: Plan; truncated: boolean } | undefined {
+export function parsePlan(text: string, validRoles: ReadonlySet<string>): { plan: Plan; truncated: boolean } | undefined {
   try {
     const parsed = parseJsonObjectLoosely(text)
     if (!parsed) return undefined
@@ -991,42 +1026,68 @@ export class Orchestrator {
     let roundUsage: { inputTokens: number; outputTokens: number } | undefined
     const latestMessage = conversation[conversation.length - 1]
 
-    // Always a fresh (non-retried) budget — this is a one-shot probe that
-    // falls open on timeout rather than retrying, so the adaptive growth
-    // that a real retry loop gets doesn't apply here.
-    const roundTimer = this.startRoundTimer(state.deadlineAt, 0)
-    try {
-      for await (const event of this.provider.stream({
-        model: this.model,
-        system: this.buildClassifySystemPrompt(),
-        messages: latestMessage ? [latestMessage] : conversation,
-        // Shares the same real, scaled-when-possible budget as every other
-        // round (see resolveMaxOutputTokens) — a flat small value here
-        // starved gpt-oss's hidden reasoning into an empty response before
-        // this existed (finish_reason:"length", 0 visible chars).
-        maxTokens: state.maxOutputTokens,
-        signal: roundTimer.signal
-      })) {
-        if (event.type === 'text_delta') text += event.text
-        else if (event.type === 'usage') roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
-        else if (event.type === 'message_stop') stopReason = event.stopReason
+    // Provider-enforced JSON where the provider supports it (see StructuredOutputRequest). If the provider/model rejects the request, the same
+    // call is repeated once as a plain prompt-only request and the pair is remembered, so a model without schema support costs one failed call
+    // per app session, not one per message.
+    const structuredKey = `${this.provider.id}:${this.model}`
+    let structured = !structuredOutputRejected.has(structuredKey)
+
+    for (;;) {
+      text = ''
+      stopReason = 'end_turn'
+      roundUsage = undefined
+      // Always a fresh (non-retried) budget — this is a one-shot probe that
+      // falls open on timeout rather than retrying, so the adaptive growth
+      // that a real retry loop gets doesn't apply here.
+      const roundTimer = this.startRoundTimer(state.deadlineAt, 0)
+      try {
+        for await (const event of this.provider.stream({
+          model: this.model,
+          system: this.buildClassifySystemPrompt(),
+          messages: latestMessage ? [latestMessage] : conversation,
+          // Shares the same real, scaled-when-possible budget as every other
+          // round (see resolveMaxOutputTokens) — a flat small value here
+          // starved gpt-oss's hidden reasoning into an empty response before
+          // this existed (finish_reason:"length", 0 visible chars).
+          maxTokens: state.maxOutputTokens,
+          signal: roundTimer.signal,
+          ...(structured ? { structuredOutput: { name: 'classify_and_plan', schema: buildPlanSchema(this.plannableRoleIds()) } } : {})
+        })) {
+          if (event.type === 'text_delta') text += event.text
+          else if (event.type === 'usage') roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
+          else if (event.type === 'message_stop') stopReason = event.stopReason
+        }
+        break
+      } catch (err) {
+        // TASKS.md #91: a rate limit here falls open the same way a timeout
+        // already does, just below — no retry loop for a one-shot probe (the
+        // real round loop right after this gets the full retry treatment via
+        // handleRateLimitError, and will hit the identical rate limit again
+        // immediately if it's still in effect, at which point it's handled
+        // properly rather than twice over in two different ways here).
+        if (isRateLimitError(err)) return undefined
+        if (!roundTimer.signal.aborted) {
+          // Only a client-error rejection (400/404/422 — the request shape or the model does not support it) counts; auth failures, rate limits,
+          // network errors and 5xx are not the schema's fault and rethrow as before.
+          const status = (err as { status?: number }).status
+          if (structured && (status === 400 || status === 404 || status === 422)) {
+            structuredOutputRejected.add(structuredKey)
+            structured = false
+            console.error(
+              `orchestrator: ${structuredKey} rejected structured output for the planning call (${err instanceof Error ? err.message : String(err)}) — retrying it as a plain prompt`
+            )
+            continue
+          }
+          throw err
+        }
+        // A timed-out classify call falls open exactly like a genuinely
+        // malformed one already does (see the no-plan branch below) — it's
+        // a probe, not the real answer, so there's nothing here worth
+        // surfacing beyond just proceeding without a plan.
+        return undefined
+      } finally {
+        roundTimer.clear()
       }
-    } catch (err) {
-      // TASKS.md #91: a rate limit here falls open the same way a timeout
-      // already does, just below — no retry loop for a one-shot probe (the
-      // real round loop right after this gets the full retry treatment via
-      // handleRateLimitError, and will hit the identical rate limit again
-      // immediately if it's still in effect, at which point it's handled
-      // properly rather than twice over in two different ways here).
-      if (isRateLimitError(err)) return undefined
-      if (!roundTimer.signal.aborted) throw err
-      // A timed-out classify call falls open exactly like a genuinely
-      // malformed one already does (see the no-plan branch below) — it's
-      // a probe, not the real answer, so there's nothing here worth
-      // surfacing beyond just proceeding without a plan.
-      return undefined
-    } finally {
-      roundTimer.clear()
     }
 
     if (roundUsage) {
