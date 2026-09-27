@@ -122,6 +122,9 @@ not — Developer writes and runs in one step).
 | 5.3 | Ambiguous input: "Get the sales figures and write a report." (with more than one database connected, or none) | Either it asks **which database** and the plan **pauses** (step labelled "NEEDS INPUT — plan paused"), or it picks sensibly. It must not invent figures. |
 | 5.4 | Ask for something outside the role, pinned: set Agent to **Researcher** and ask "How many customers are in Northwind?" | It says it can't and **names Data Access** / tells you to switch the selector. |
 | 5.5 | After a multi-step run, open `.sachiv-handoff/` | Files are there, readable, the right size. (They are auto-deleted after 7 days.) |
+| 5.6 | *(new 9/27, needs a wiki-capable MCP server and a database both connected)* "What is the recommended maintenance interval for GJ01-WIND per the wiki, and how many operating hours has it logged in the database this year?" | Plans as compound with **two steps** — MCP Operator (wiki) and Data Access (database) — not one. This exact shape used to sometimes come back as a single step, or even `simple` (#142). |
+| 5.7 | *(new 9/27)* Ask a wiki-shaped question your connected server has nothing on (something clearly outside its domain) | The MCP Operator step ends plainly, no invented answer, and — since you didn't restrict sourcing — the assistant may try the open web instead and **must say so explicitly** in the final answer ("the wiki had nothing on this; this came from the web instead"), not present it as wiki-verified (#143/#144). |
+| 5.8 | *(new 9/27)* Repeat 5.7, but say up front "only use the wiki for this, don't search the web" | No web fallback attempted. The answer plainly reports the wiki had nothing and stops there (#144's opt-out — `detectsSourceRestriction`, a narrow regex on your exact wording: "only ... wiki", "don't/without ... web", "no web search"; a differently-worded restriction may not be caught yet). |
 
 ---
 
@@ -205,7 +208,8 @@ Uses `scripts/manual-test-mcp-server.mjs`, a tiny server with a **hostile** 5,00
 | 9.7 | Watch the Developer/Researcher **context**: with Agent pinned to Developer, ask "list your tools" | Developer's tool list has **no `mcp__` tools**. |
 | 9.8 | Ask "Add an MCP server called foo at https://example.invalid/mcp with the description 'Example'" | Configurator; a confirmation dialog appears; it fails to connect (invalid host) with a clear message; nothing is saved. (Try it against a real server too and check the description you gave shows under it in Settings.) |
 | 9.9 | Your real `energy_wiki` (if still connected): ask a wiki question | MCP Operator handles it; add a description via **Edit description** first and confirm the assistant uses it to pick the server. |
-| 9.10 | Remove `test_wiki` | Tools disappear; asking about MCP servers no longer lists it; MCP Operator would say none is connected. |
+| 9.10 | Remove `test_wiki` | Tools disappear; asking about MCP servers no longer lists it; a **meta** question like "what MCP servers are connected?" gets answered (directly or via MCP Operator) that none are. |
+| 9.11 | *(new 9/27)* With no MCP server connected (after 9.10), ask a **content** question shaped like a wiki lookup again, e.g. "Look up the maintenance runbook for the inverter fault in the wiki" | It no longer just answers "no server connected" and stops — the request is silently handled as an open-web lookup instead (the chip should show **Researcher**, not MCP Operator), and it should say plainly if the web has nothing relevant either, rather than guessing (§13.3, #145 for a multi-step plan / #146 for this single direct-delegation shape — check that the tool-call chip/label matches whichever specialist actually answered, they should never disagree). |
 
 ---
 
@@ -304,6 +308,11 @@ Cleanup: delete the test files from the roles folder.
 - **Providers other than Ollama** for history replay with tools the request doesn't carry (only matters with the slim router).
 - MCP Operator tool schemas are **not** lazily loaded (all of a server's tools are in the operator's context); a 144-tool
   server will make that one role heavy, though no other role.
+- **The wiki/MCP fallback chain (#142–#146, added 9/27):** naming "domain knowledge + data" as its own compound pattern,
+  the `[handoff: no_information]` tag, the wiki→web fallback with mandatory disclosure, its "only use the wiki" opt-out,
+  and the no-MCP-connected substitution (both a plan step and a direct `delegate_to_mcp-operator` tool call) — all
+  unit/mock-tested and measured once against local Ollama (`gpt-oss-custom`, see design-discussion.md §13 / TASKS #142),
+  never yet exercised in a real running session. Sections 5.6–5.8 and 9.11 above are new for this.
 
 ---
 
@@ -324,4 +333,5 @@ Anything that looked slower or more expensive than before:
 ```
 
 Most useful for me: **section 4 (all of 4.1–4.9), section 6 misses, and section 9.4/9.5** — those three tell us whether the
-handoff, the role split and the MCP containment work with a real model.
+handoff, the role split and the MCP containment work with a real model. **Section 5.6–5.8 and 9.11 (new 9/27)** are the
+next most useful — nothing in the wiki/database fallback chain (#142–#146) has been checked against a real running session yet.
