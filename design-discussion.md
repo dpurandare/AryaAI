@@ -1121,6 +1121,186 @@ roster IPC + Settings list with token cost, extend-only, roles enabled when plac
 
 ---
 
+## 13. Business information requests — domain knowledge, data, and provenance
+
+Raised by Deepak 2026-09-27, after the #139 probe showed the PLF question
+("...you may use the information from wiki and database") planned
+inconsistently — first step went to `data` in some replies, `research` in
+others, and one rep called it `simple` outright (TASKS #139, #142). His framing:
+answering a business question generally needs domain knowledge (rules,
+constraints, how to interpret something — from the wiki/MCP, or the open web
+if neither has it) combined with data (the numbers those rules get applied
+to, from the database/API). *Which role does this is not the point — the
+information-sourcing behaviour has to be dependable.*
+
+### 13.1 Why this is not a new role
+
+A "Domain Expert" role was considered and rejected (see the conversation this
+section is drawn from). Two structural reasons, both already enforced in this
+codebase rather than just argued for:
+
+- **Every role is defined by exclusive tool ownership**, not by a kind of
+  reasoning. MCP Operator is *the only* role carrying `mcp__*` tools
+  (`roles.ts` `mcpTools()`, filtered by prefix and assigned nowhere else);
+  Researcher's tools are exactly `['web_search', 'parse_html']`
+  (`roles.ts`, the `get tools()` right after the Researcher prompt) — no MCP
+  access at all. A role that carried both would duplicate ownership the §10
+  step-2 redesign deliberately made exclusive (Appendix D1: a Data step wrote
+  three unrequested `energy_wiki` pages *because* MCP tools used to be on
+  five roles at once). Duplicating it again for "Domain Expert" reopens that.
+- **Delegation is one level only.** `dispatchDelegate` runs a specialist's
+  nested round with `runLoop(agent.systemPrompt, agent.tools, ..., [], ...)`
+  — an empty delegate-tool array, unlike the top-level round's
+  `buildDelegateToolDefinitions()` in that same slot. A specialist cannot
+  call another specialist; only the top-level orchestrator sequences steps.
+  So even a role allowed to reach both wiki and web could not, by itself,
+  decide to try one after the other failed — the sequencing has to live at
+  the orchestrator regardless of which roles exist.
+
+Given both, the fix is a plan-shape, contract, and sequencing change on top
+of the existing role split (MCP Operator = wiki/KB, Data Access = DB/API,
+Researcher = open web), not a twelfth role.
+
+### 13.2 Four layered mechanisms
+
+**(a) Name the pattern in classify-and-plan.** `buildClassifySystemPrompt`
+already calls out specific compound shapes by name once a real failure
+showed the generic rule wasn't enough — "write code AND run it" (the bar
+chart bug, 2026-09-23) and "gather info, THEN save a deliverable" (#73). A
+request needing domain knowledge *and* data belongs in that same list: two
+independent sources, always planned as two steps, tagged to whichever roles'
+summaries say they can supply each (MCP Operator for wiki/KB, Data Access
+for DB/API), with the PLF question as the worked example — exactly what #142
+already scopes, expanded to name this pattern explicitly rather than leave
+"two independent sources" as the only guidance.
+
+**(b) A model-emitted, code-parsed "found nothing relevant" status.** The
+typed handoff (`handoff.ts`) already has a real precedent for this shape:
+`status` is code-decided where code can know it (`failed`, from
+`loopResult.isError`) and otherwise self-reported by the model via a short
+trailing tag (`needs_input`, `out_of_scope`) that code parses
+(`parseHandoffTag`, the `TAG` regex) and acts on — a model that adds no tag
+just defaults to `done`. "Searched the connected server(s) and found nothing
+relevant to this request" deserves the same third tag,
+e.g. `[handoff: no_information]`, added to `HandoffStatus` and the `TAG`
+regex, with MCP Operator's own prompt (`mcpOperatorPrompt`, which today only
+covers *no server fitting at all* — "say so plainly and name what the user
+could connect") extended to also cover *a server that fits but returns
+nothing relevant*. This turns "the wiki had nothing" from a hope that the
+model's prose happens to be plain enough for the orchestrator to notice into
+a structured fact the code can act on — matching this project's own standing
+rule ([[feedback_code_enforced_policy]]): guardrails and behaviour
+distinctions that matter go in code, not just in a prompt's wording.
+
+**(c) A deterministic fallback branch, not model improvisation.** Today
+nothing stops the top-level orchestrator from opportunistically calling
+`web_search` itself after seeing an empty MCP Operator result — TASKS #96
+confirms it holds the entire tool registry directly in Auto mode, not just
+delegate tools — but nothing *requires* it to, so whether it happens is
+luck, and it happened inconsistently across the #139 reps for exactly this
+reason. With (b) in place, the step-result marker mechanism that already
+renders `FAILED` / `NEEDS INPUT` / `OUT OF SCOPE` onto a plan step's message
+(`orchestrator.ts`, the `marker` computed from `outcome.isError` /
+`d?.status`) gets a fourth branch: `no_information` on a domain-knowledge
+step causes the orchestrator's next round to be told, in that same
+code-inserted step text, that the wiki/KB had nothing and it may use
+`web_search` / `delegate_to_research` to fill the gap. Researcher's tools and
+one-level delegation are unchanged — the branch lives entirely in the
+orchestrator, the one layer that already sees every step's result.
+
+**(d) Provenance carried into the answer by construction, not by request.**
+The same code-inserted marker text that triggers (c) should also be the
+thing that ends up in the transcript the final synthesis round is built
+from: "(no relevant result in the connected wiki/knowledge base — the
+following was sourced from the open web instead)". Because it is inserted by
+code into a message the final round necessarily reads (not a separate
+instruction hoping the model remembers to mention it several rounds later),
+the disclosure survives even on a small local model that would otherwise
+drop it. This mirrors a pattern already in Researcher's own prompt for the
+no-Tavily-key case — "fall back to your own knowledge and say plainly that a
+real web search was not available rather than guessing" — extended from
+"say so in the reply" to "the fact is in the material the reply is built
+from."
+
+### 13.3 Two kinds of "unavailable": deterministic vs. self-reported
+
+Raised by Deepak 2026-09-27: 13.2 implicitly assumed an MCP/wiki server is
+there to be queried at all. It often won't be — and that case is not a
+judgment call the way "the wiki had nothing relevant" is, so it should not go
+through the same mechanism.
+
+- **No MCP server connected at all** is a fact the app already knows before
+  the classifier ever runs: `ConfigurationCounts.mcp === 0`
+  (`capabilities.ts`). `buildRoleDigest` already renders this into the
+  classify prompt as "UNAVAILABLE right now: no MCP server is connected" on
+  `mcp-operator`'s line, and the prompt already says never to route a step to
+  an UNAVAILABLE role — but that is only ever a *suggestion the classifier is
+  asked to honor*. `parsePlan` (`orchestrator.ts:655`) validates a step's
+  role against the static plannable-role set only, never against live
+  availability, so nothing stops a plan step from targeting `mcp-operator`
+  anyway; if it does, the step actually runs, `mcpOperatorPrompt` correctly
+  reports "no connected server fits... connect one in Settings," and the
+  step is simply wasted — no redirect happens, because none is wired up.
+  Given the #139 probe already found this same classifier inconsistent about
+  *available* roles, trusting it to always honor an UNAVAILABLE note it could
+  just as easily miss is optimistic for a fact that costs nothing to check
+  directly. So this case should be a **deterministic code check at
+  plan-consumption time**, not a prompt suggestion: when a step targets
+  `mcp-operator` and the live digest says MCP is unavailable, code rewrites
+  the step to `research` before it runs, prefixing its task text with a
+  code-inserted note — "no MCP/knowledge-base server is connected; treat
+  this as an open-web lookup for domain/process knowledge, and say plainly
+  if nothing genuinely relevant turns up rather than guessing" — echoing the
+  honesty wording Researcher's own prompt already uses for its no-Tavily-key
+  case. No LLM decision is involved, so there is no reliability risk to
+  design around.
+- **A server is connected but the specific query comes up empty or
+  irrelevant** stays exactly as 13.2(b)/(c) already designed — genuinely a
+  judgment call only the model reading the actual content can make, so it
+  stays a self-reported `no_information` tag, not something code can decide
+  on its own.
+
+Two triggers, matched to two different confidence levels: a free, certain
+fact is checked in code before any model call; a judgment call is
+self-reported and acted on afterward. Neither substitutes for the other —
+losing the code check would leave a dead plan step whenever nothing is
+connected; losing the self-reported tag would leave a connected-but-empty
+wiki with no way to say so.
+
+### 13.4 What stays unchanged
+
+Data Access keeps exclusive DB/API ownership, untouched. MCP Operator and
+Researcher keep their current, exclusive tool sets and one-level-only
+delegation. Nothing here adds a role, changes who owns which tool, or lets a
+specialist call another specialist directly.
+
+### 13.5 An explicit corner case
+
+If the user's own request restricts the source ("only use the wiki for
+this", "don't search the internet"), neither fallback (13.2(c) nor 13.3's
+plan-time substitution) should fire — report `no_information` (or, for
+13.3's case, that no MCP server is connected) plainly and stop, the same "no
+unrequested side effect" principle already established for tool *actions*
+(Appendix D1's "no wiki pages, no database views created" acceptance check)
+applied to *sourcing* instead. `web_search` itself is read-only, so the risk
+here is scope, not mutation: answering from a source the user explicitly
+excluded is its own kind of unrequested action.
+
+### 13.6 Mapping to TASKS.md
+
+- **#142** (existing): expand to name this pattern explicitly in the classify
+  prompt, per 13.2(a).
+- **#143** (new): the `no_information` handoff tag, `mcpOperatorPrompt`
+  update, and the code-inserted provenance marker — 13.2(b) and (d).
+- **#144** (new): the orchestrator's deterministic fallback branch and its
+  tests, plus new `plan-probe.mts` / acceptance cases for the PLF-shaped
+  request — 13.2(c), depends on #143.
+- **#145** (new): the plan-consumption-time, config-driven substitution of
+  `research` for an UNAVAILABLE `mcp-operator` step — 13.3. Independent of
+  #143/#144 (no handoff tag involved) and can ship first.
+
+---
+
 ## Appendix A — per-tool schema cost (43 built-in tools)
 
 Total ~9,260 tokens (this counting; `ctx.md` reports ~8,424 with a slightly

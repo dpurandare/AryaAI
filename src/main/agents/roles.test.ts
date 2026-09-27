@@ -238,6 +238,12 @@ describe('createAgents', () => {
       expect(op?.systemPrompt).toContain("don't silently stop as if the whole request is done")
       expect(op?.systemPrompt).toContain('[handoff: out_of_scope')
     })
+
+    it('tags both no-server-fits and server-fits-but-empty as no_information, so a later fallback (#144) can react to either the same way (design-discussion.md §13.2(b), TASKS #143)', () => {
+      const prompt = createAgents(new ToolRegistry()).get('mcp-operator')?.systemPrompt ?? ''
+      expect(prompt).toMatch(/no connected server fits the request, say so plainly.*end.*\[handoff: no_information\]/is)
+      expect(prompt).toMatch(/end the same way, instead of guessing, if a server does fit but its tools return nothing relevant/is)
+    })
   })
 
   it('gives show_media (TASKS.md #82) to the Developer — the role that generates images — not to every role', () => {

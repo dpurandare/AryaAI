@@ -9,7 +9,7 @@ import { isRateLimitError, retryAfterMsFromError } from '../providers/rate-limit
 import type { ModelProvider, ToolDefinition } from '../providers/types'
 import { SHOW_MEDIA_MARKER, type ShowMediaPayload } from '../tools/show-media'
 import type { Tool, ToolContext } from '../tools/types'
-import { buildRoleDigest, type ConfigurationCounts } from './capabilities'
+import { buildRoleDigest, isRoleAvailable, type ConfigurationCounts } from './capabilities'
 import {
   diffSnapshots,
   formatDelegateResult,
@@ -373,6 +373,25 @@ function latestMessageText(conversation: Message[]): string {
     .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
     .map((b) => b.text)
     .join('\n')
+}
+
+/**
+ * design-discussion.md §13.5, TASKS #144: a deliberately narrow, conservative check for the user having
+ * restricted where information may come from ("only use the wiki for this", "don't search the internet") —
+ * if a `no_information` step's fallback (executePlan below) fired anyway, that would be its own kind of
+ * unrequested action (Appendix D1's "no unrequested side effect" principle applied to sourcing, not
+ * mutation). Unlike `evaluateClassifyGate` (#95), which is conservative toward running the real check
+ * because a false "skip" there silently loses real work, this is conservative toward the OPPOSITE
+ * direction: a false negative here (missing a real restriction) lets an unwanted web fallback through,
+ * which is the worse mistake, so it only fires on an unambiguous phrase and defaults to "not restricted"
+ * — i.e. fallback allowed — whenever it isn't sure. Not a general intent classifier; a cheap, narrow,
+ * easily-extended signal, in the same spirit as the compound-request connector-word check it sits beside.
+ */
+const SOURCE_RESTRICTION_SIGNAL =
+  /\bonly\b(?:\s+\S+){0,4}\s+(?:the\s+)?(?:wiki|knowledge base)\b|\b(?:don't|do not|never)\b(?:\s+\S+){0,4}\s+(?:the\s+)?(?:web|internet|online)\b|\bwithout\b(?:\s+\S+){0,3}\s+(?:the\s+)?(?:web|internet)\b|\bno\s+(?:web|internet)\s+search\b/i
+
+export function detectsSourceRestriction(latestMessageText: string): boolean {
+  return SOURCE_RESTRICTION_SIGNAL.test(latestMessageText)
 }
 
 /**
@@ -1145,6 +1164,42 @@ export class Orchestrator {
   }
 
   /**
+   * design-discussion.md §13.3, TASKS #145/#146: whether an MCP server is connected at all is a fact
+   * known before any model runs — `ConfigurationCounts.mcp === 0` — not a judgment call, so it isn't left
+   * to the classifier or the top-level model reliably noticing `buildRoleDigest`'s "UNAVAILABLE right
+   * now" note (`parsePlan` only validates role-id membership, never live availability; an unheeded note
+   * used to mean the step, or a direct `delegate_to_mcp-operator` tool call, just ran anyway and wasted
+   * itself on "no connected server fits"). A request for `mcp-operator` while none is connected is
+   * rewritten to `research` here, with a code-inserted note carrying the substitution's purpose and the
+   * same "say plainly, don't guess" honesty Researcher's prompt already uses for its no-Tavily-key case.
+   * Shared by both entry points that can route to a role — a compound plan's own step (`executePlan`,
+   * #145) and the top-level round's direct tool-call delegation (#146) — so the availability check and
+   * the note's wording live in exactly one place. Distinct from the connected-but-nothing-relevant case
+   * (TASKS #143/#144), which genuinely can only be judged by a model that looked, so it stays a
+   * self-reported handoff tag instead of a code check.
+   */
+  private substituteUnavailableMcpOperator(role: AgentRole, description: string): { role: AgentRole; description: string } {
+    const mcpAgent = this.agents.get('mcp-operator')
+    if (role !== 'mcp-operator' || !mcpAgent || !this.agents.has('research') || isRoleAvailable(mcpAgent, this.options.getConfiguration?.())) {
+      return { role, description }
+    }
+    return {
+      role: 'research',
+      description:
+        'No MCP/knowledge-base server is connected right now, so treat this as an open-web substitute for ' +
+        "domain or process knowledge that would normally come from a connected wiki. Say plainly if nothing " +
+        `genuinely relevant turns up, rather than guessing. Original task: ${description}`
+    }
+  }
+
+  private applyMcpAvailabilityFallback(steps: readonly PlanStep[]): PlanStep[] {
+    return steps.map((step) => {
+      const substituted = this.substituteUnavailableMcpOperator(step.role, step.description)
+      return substituted.role === step.role ? step : substituted
+    })
+  }
+
+  /**
    * Walks a compound plan's steps in order, each one dispatched exactly
    * like today's single delegate call, then runs one final top-level round
    * so the model can synthesize everything the steps produced into the
@@ -1155,9 +1210,13 @@ export class Orchestrator {
    * full text even though the live checklist animation doesn't replay.
    */
   private async *executePlan(plan: Plan, conversation: Message[], state: RunState): AsyncIterable<OrchestratorEvent> {
-    yield { kind: 'stream', event: { type: 'plan', steps: plan.steps } }
+    const steps = this.applyMcpAvailabilityFallback(plan.steps)
+    // Computed once, before any step message is pushed onto `conversation` — by the time a later step
+    // runs, its last entry would be the previous step's own message, not the user's original request.
+    const sourcingRestricted = detectsSourceRestriction(latestMessageText(conversation))
+    yield { kind: 'stream', event: { type: 'plan', steps } }
 
-    for (const [index, step] of plan.steps.entries()) {
+    for (const [index, step] of steps.entries()) {
       yield { kind: 'stream', event: { type: 'plan_step_start', index } }
       let role = step.role
       let outcome = yield* this.dispatchDelegate(role, { task: step.description }, conversation, state)
@@ -1195,6 +1254,24 @@ export class Orchestrator {
           ? ' (NEEDS INPUT — plan paused)'
           : d?.status === 'out_of_scope'
             ? ' (OUT OF SCOPE — not done)'
+            : d?.status === 'no_information'
+              ? ' (NO INFORMATION FOUND — nothing relevant in the connected source)'
+              : ''
+      // design-discussion.md §13.2(c),(d), §13.5, TASKS #144: a `no_information` step's own text is where
+      // a later step or the final round gets its ONLY view of what happened here — so the fallback
+      // permission and the provenance requirement both have to live in this same code-inserted text, not
+      // in a separate instruction hoping a later round remembers it. Deliberately silent (no note either
+      // way) for every other status, and for `no_information` itself when the user's own request already
+      // restricted sourcing — firing the fallback then would be its own kind of unrequested action.
+      const fallbackNote =
+        d?.status === 'no_information' && !sourcingRestricted && this.agents.has('research')
+          ? '\n\n(Nothing relevant was found in the connected wiki/knowledge base. A later step or your final answer may use ' +
+            'web_search or delegate_to_research to look for this on the open web instead. If that turns up something, say so ' +
+            "plainly in the final answer — state that the connected wiki had nothing on this and the information came from the " +
+            'web instead, rather than presenting it as verified from the wiki.)'
+          : d?.status === 'no_information' && sourcingRestricted
+            ? '\n\n(The user\'s own request restricts where this information may come from, so no web fallback should be attempted ' +
+              'here — report plainly that the connected source had nothing on this and stop.)'
             : ''
       const stepLabel = `[Plan step ${index + 1} — ${this.labelOf(role)}]${marker}`
       const stepMessage: Message = {
@@ -1202,7 +1279,7 @@ export class Orchestrator {
         content: [
           {
             type: 'text',
-            text: `${stepLabel}: ${step.description}\n\nResult:\n${trimmed}`
+            text: `${stepLabel}: ${step.description}\n\nResult:\n${trimmed}${fallbackNote}`
           }
         ]
       }
@@ -1272,6 +1349,9 @@ export class Orchestrator {
       'belongs in the final answer instead.\n' +
       'A role whose summary says it writes AND runs code handles both in ONE step — never split writing ' +
       'a script from running it into separate steps or roles.\n' +
+      'Domain knowledge (rules/constraints, or how to interpret something — from a wiki/MCP server, or the ' +
+      'web if none is connected) together with the data those rules apply to (database/API) is always ' +
+      'compound, one step per source, even in a single sentence.\n' +
       "A later step only sees the written result of earlier steps: when a step needs data an earlier step " +
       'retrieves (query rows, figures, file contents), word the earlier step so it returns the actual ' +
       'values, not just a summary, and word the later step as working from those values — never from ' +
@@ -1716,6 +1796,14 @@ export class Orchestrator {
         yield { kind: 'stream', event: tagEvent({ type: 'warning', message, failureCategory }, agentRole) }
       }
       const inputByCallId = new Map<string, Record<string, unknown>>()
+      // design-discussion.md §13.3, TASKS #146: the same MCP-availability substitution #145 applies to a
+      // *plan* step, applied here to a direct `delegate_to_mcp-operator` tool call the top-level model
+      // makes on its own (the more common shape for a plain "look this up in the wiki" request, which
+      // never goes through executePlan at all). Rewritten BEFORE the `tool_use` block is built, not after
+      // dispatch, so the persisted name and the specialist that actually ran always agree — the opposite
+      // order would leave a `delegate_to_mcp-operator` tool_use in the transcript next to a Researcher's
+      // result, which would misattribute the work in the UI and on replay.
+      const delegateRoleOverride = new Map<string, AgentRole>()
       for (const call of toolCalls) {
         let input: Record<string, unknown> = {}
         try {
@@ -1723,11 +1811,21 @@ export class Orchestrator {
         } catch {
           // Malformed tool input is surfaced back to the model as an error result below.
         }
+        let name = call.name
+        const requestedRole = roleFromDelegateName(name, this.agents)
+        if (requestedRole && typeof input.task === 'string') {
+          const substituted = this.substituteUnavailableMcpOperator(requestedRole, input.task)
+          if (substituted.role !== requestedRole) {
+            name = delegateToolName(substituted.role)
+            input = { ...input, task: substituted.description }
+            delegateRoleOverride.set(call.id, substituted.role)
+          }
+        }
         inputByCallId.set(call.id, input)
         assistantBlocks.push({
           type: 'tool_use',
           id: call.id,
-          name: call.name,
+          name,
           input,
           agentRole,
           thoughtSignature: call.thoughtSignature
@@ -1751,7 +1849,7 @@ export class Orchestrator {
       const resultBlocks: ContentBlock[] = []
       for (const call of toolCalls) {
         const input = inputByCallId.get(call.id) ?? {}
-        const delegateRole = roleFromDelegateName(call.name, this.agents)
+        const delegateRole = delegateRoleOverride.get(call.id) ?? roleFromDelegateName(call.name, this.agents)
 
         let content: string
         let isError: boolean

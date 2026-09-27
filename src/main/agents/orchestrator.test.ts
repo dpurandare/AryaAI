@@ -13,7 +13,7 @@ import { officeReadDocumentTool } from '../tools/office-docs/read'
 import { showMediaTool } from '../tools/show-media'
 import type { Tool, ToolContext } from '../tools/types'
 import { createAgents } from './roles'
-import { Orchestrator, parseJsonObjectLoosely, type Agent, type ConfirmDecision, type OrchestratorEvent, type ToolConfirmRequest } from './orchestrator'
+import { Orchestrator, detectsSourceRestriction, parseJsonObjectLoosely, type Agent, type ConfirmDecision, type OrchestratorEvent, type ToolConfirmRequest } from './orchestrator'
 
 // Deliberately builds the tool registry/context directly rather than via
 // tools/setup.ts, which imports `electron` at module scope and would crash
@@ -952,6 +952,25 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(classifySystem).not.toMatch(/no shell access/i)
     })
 
+    it('names domain knowledge + data as its own compound pattern, always two steps even in one sentence (design-discussion.md §13.2(a), TASKS #142)', async () => {
+      // The #139 probe found the PLF question ("...you may use the information from wiki and database")
+      // planned inconsistently — sometimes `simple`, and the first step split between data/research —
+      // because "two independent sources" was the only guidance, never named as a recognizable shape.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Sure, here you go.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: true }
+      )
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+      const classifySystem = provider.requests[0].system ?? ''
+      expect(classifySystem).toMatch(/domain knowledge.*together with the data those rules apply to.*is always compound/is)
+      expect(classifySystem).toMatch(/one step per source, even in a single sentence/i)
+    })
+
     it('the planning call asks the provider for structured output limited to the plannable roles; ordinary rounds never do', async () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
@@ -1228,6 +1247,81 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(apiOnly).not.toMatch(/- data: .*UNAVAILABLE/) // Data Access needs a database OR an API
       expect(apiOnly).not.toMatch(/- email: .*UNAVAILABLE/)
       expect(apiOnly).not.toMatch(/- mcp-operator: .*UNAVAILABLE/)
+    })
+
+    it('rewrites an mcp-operator plan step to research when no MCP server is connected (design-discussion.md §13.3, #145)', async () => {
+      // No MCP server connected at all is a fact known before any model runs — the step must not be
+      // dispatched to mcp-operator (it would just report "no connected server fits" and waste itself);
+      // it should be transparently rewritten to research, with the substitution's reason and the
+      // original task both visible, before the step is even shown in the live plan. Two steps, since
+      // executePlan (where this fix lives) is only reached for a plan with more than one step —
+      // a single-step plan runs through the ordinary top-level round instead (a separate, known gap).
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "steps": [' +
+            '{"role": "mcp-operator", "description": "look up the maintenance policy for inverter faults"}, ' +
+            '{"role": "research", "description": "check for any recent public advisories on the same fault"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'No wiki is connected, and the web has nothing specific either.', stopReason: 'end_turn' },
+        { text: 'No recent public advisories found.', stopReason: 'end_turn' },
+        { text: 'Here is what I found.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp: 0 }) }
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'look up the maintenance policy for the inverter fault and check for public advisories' }] }
+      ])
+
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const planSteps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : undefined
+      expect(planSteps?.[0].role).toBe('research') // rewritten from mcp-operator
+      expect(planSteps?.[1].role).toBe('research') // untouched, was already research
+
+      const stepText = events
+        .filter((e) => e.kind === 'message' && e.role === 'user')
+        .flatMap((e) => (e.kind === 'message' ? e.content : []))
+        .find((c) => c.type === 'text' && c.text.includes('[Plan step 1 — Researcher]'))
+      const text = stepText && stepText.type === 'text' ? stepText.text : ''
+      expect(text).toMatch(/No MCP\/knowledge-base server is connected/)
+      expect(text).toContain('Original task: look up the maintenance policy for inverter faults')
+
+      // The rewritten step actually ran as research, not mcp-operator — confirmed via the delegate's own request.
+      expect(provider.requests[1].system ?? '').toMatch(/Research specialist/)
+    })
+
+    it('leaves an mcp-operator plan step untouched when an MCP server is connected', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "steps": [' +
+            '{"role": "mcp-operator", "description": "look up the maintenance policy for inverter faults"}, ' +
+            '{"role": "research", "description": "check for any recent public advisories on the same fault"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'No connected server fits the request.', stopReason: 'end_turn' },
+        { text: 'No recent public advisories found.', stopReason: 'end_turn' },
+        { text: 'Here is what I found.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp: 1 }) }
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'look up the maintenance policy for the inverter fault and check for public advisories' }] }
+      ])
+
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const planSteps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : undefined
+      expect(planSteps?.[0].role).toBe('mcp-operator')
+      expect(provider.requests[1].system ?? '').toMatch(/MCP Operator specialist/)
     })
 
     it('tells the classifier a later step only sees written results, so an earlier step must return the actual values (Appendix D2: fabricated chart data)', async () => {
@@ -1610,6 +1704,60 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const toolResult = streamEvents.find((e) => e.type === 'tool_result')
       expect(toolResult).toMatchObject({ isError: true })
       expect(streamEvents.some((e) => e.type === 'warning' && e.agentRole === 'research')).toBe(true)
+    })
+
+    it('a direct delegate_to_mcp-operator tool call is rewritten to research when no MCP server is connected, with matching attribution (design-discussion.md §13.3, TASKS #146)', async () => {
+      // The more common shape than a multi-step plan (#145): the top-level model calls a delegate tool
+      // directly. The persisted tool_use name must match the specialist that actually ran — rewriting
+      // AFTER dispatch would leave a `delegate_to_mcp-operator` tool_use next to a Researcher's result.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_mcp-operator', input: { task: 'look up the inverter maintenance policy' } }] },
+        { text: 'No wiki connected, and the web has nothing specific.', stopReason: 'end_turn' },
+        { text: 'Here is what I found.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: false,
+        getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp: 0 })
+      })
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'look up the inverter maintenance policy' }] }])
+
+      const toolUse = events
+        .filter((e) => e.kind === 'message' && e.role === 'assistant')
+        .flatMap((e) => (e.kind === 'message' ? e.content : []))
+        .find((c): c is Extract<typeof c, { type: 'tool_use' }> => c.type === 'tool_use')
+      expect(toolUse).toMatchObject({ name: 'delegate_to_research' })
+      const task = toolUse?.input.task
+      expect(task).toMatch(/No MCP\/knowledge-base server is connected/)
+      expect(task).toContain('Original task: look up the inverter maintenance policy')
+
+      // Actually dispatched as Researcher, not left unresolved or sent to mcp-operator.
+      expect(provider.requests[1]?.system ?? '').toMatch(/Research specialist/)
+    })
+
+    it('leaves a direct delegate_to_mcp-operator tool call untouched when an MCP server is connected', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_mcp-operator', input: { task: 'look up the inverter maintenance policy' } }] },
+        { text: 'No connected server fits the request.', stopReason: 'end_turn' },
+        { text: 'Here is what I found.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: false,
+        getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp: 1 })
+      })
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'look up the inverter maintenance policy' }] }])
+
+      const toolUse = events
+        .filter((e) => e.kind === 'message' && e.role === 'assistant')
+        .flatMap((e) => (e.kind === 'message' ? e.content : []))
+        .find((c) => c.type === 'tool_use')
+      expect(toolUse).toMatchObject({ name: 'delegate_to_mcp-operator' })
+      expect(provider.requests[1]?.system ?? '').toMatch(/MCP Operator specialist/)
     })
 
     it('a classify-and-plan call that hits the output-token limit reports why, instead of silently falling open unremarked', async () => {
@@ -3436,12 +3584,12 @@ describe('Orchestrator (integration, mocked provider)', () => {
       text: JSON.stringify({ complexity: 'compound', steps: steps.map(([role, description]) => ({ role, description })) }),
       stopReason: 'end_turn'
     })
-    const run = async (turns: ScriptedTurn[], registry: ToolRegistry = withSql()) => {
+    const run = async (turns: ScriptedTurn[], registry: ToolRegistry = withSql(), message = 'hi and thanks') => {
       const provider = new MockProvider(turns)
       const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
         planningEnabled: true
       })
-      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: message }] }])
       const userTexts = events
         .filter((e) => e.kind === 'message' && e.role === 'user')
         .flatMap((e) => (e.kind === 'message' ? e.content : []))
@@ -3572,6 +3720,50 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(provider.requests).toHaveLength(4) // classify, coding, research, final — no redirect into a role that does not exist
     })
 
+    it('no_information is named plainly on the step, and does not pause the plan or trigger a redirect (design-discussion.md §13.2(b), TASKS #143)', async () => {
+      const { provider, userTexts } = await run([
+        planOf(['mcp-operator', 'look up the inverter maintenance policy'], ['research', 'find a caption']),
+        { text: 'Searched the connected wiki for inverter maintenance procedures.\n[handoff: no_information] nothing on file', stopReason: 'end_turn' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'The wiki had nothing on this.', stopReason: 'end_turn' }
+      ])
+      // Unlike needs_input, the plan continues — the next step still ran (classify, mcp-operator, research, final).
+      expect(provider.requests).toHaveLength(4)
+      const step = userTexts.find((t) => t.includes('[Plan step 1 — MCP Operator]')) ?? ''
+      expect(step).toContain('(NO INFORMATION FOUND — nothing relevant in the connected source)')
+      expect(step).toContain('Searched the connected wiki for inverter maintenance procedures.')
+      expect(step).not.toContain('[handoff:') // the tag itself is stripped from what later rounds see
+      expect(userTexts.some((t) => t.includes('[Plan step 2 — Researcher]'))).toBe(true)
+    })
+
+    it('no_information grants a web fallback with a disclosure requirement, unless the user restricted sourcing (design-discussion.md §13.2(c),(d), §13.5, TASKS #144)', async () => {
+      const { userTexts } = await run([
+        planOf(['mcp-operator', 'look up the inverter maintenance policy'], ['research', 'find a caption']),
+        { text: 'Searched the connected wiki.\n[handoff: no_information] nothing on file', stopReason: 'end_turn' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'The wiki had nothing, but the web says X.', stopReason: 'end_turn' }
+      ])
+      const step = userTexts.find((t) => t.includes('[Plan step 1 — MCP Operator]')) ?? ''
+      expect(step).toMatch(/may use web_search or delegate_to_research/)
+      expect(step).toMatch(/say so plainly in the final answer/)
+    })
+
+    it('does NOT grant the web fallback when the user\'s own request restricted sourcing to the wiki', async () => {
+      const { userTexts } = await run(
+        [
+          planOf(['mcp-operator', 'look up the inverter maintenance policy'], ['research', 'find a caption']),
+          { text: 'Searched the connected wiki.\n[handoff: no_information] nothing on file', stopReason: 'end_turn' },
+          { text: 'A caption.', stopReason: 'end_turn' },
+          { text: 'The connected wiki had nothing on this.', stopReason: 'end_turn' }
+        ],
+        withSql(),
+        'Only use the wiki for this and tell me the maintenance policy'
+      )
+      const step = userTexts.find((t) => t.includes('[Plan step 1 — MCP Operator]')) ?? ''
+      expect(step).not.toMatch(/may use web_search or delegate_to_research/)
+      expect(step).toMatch(/no web fallback should be attempted/)
+    })
+
     it('an ordinary reply with no tag, no files and no data is passed through exactly as before', async () => {
       const { userTexts } = await run([
         planOf(['research', 'find X'], ['research', 'find Y']),
@@ -3673,5 +3865,20 @@ describe('parseJsonObjectLoosely', () => {
     expect(parseJsonObjectLoosely('[1, 2]')).toBeUndefined()
     expect(parseJsonObjectLoosely('{"a": ')).toBeUndefined()
     expect(parseJsonObjectLoosely('')).toBeUndefined()
+  })
+})
+
+describe('detectsSourceRestriction (design-discussion.md §13.5, TASKS #144)', () => {
+  it('fires on an unambiguous restriction phrase', () => {
+    expect(detectsSourceRestriction('Only use the wiki for this, what is the maintenance policy?')).toBe(true)
+    expect(detectsSourceRestriction("Look this up but don't search the web for it")).toBe(true)
+    expect(detectsSourceRestriction('Answer this without searching the internet')).toBe(true)
+    expect(detectsSourceRestriction('Find the policy, no web search please')).toBe(true)
+  })
+
+  it('defaults to false (fallback allowed) for an ordinary request — a false negative here is safer than a false positive', () => {
+    expect(detectsSourceRestriction('look up the maintenance policy for inverter faults and check for public advisories')).toBe(false)
+    expect(detectsSourceRestriction('only tell me about the inverter, nothing else')).toBe(false) // "only" with no wiki/web mention
+    expect(detectsSourceRestriction('')).toBe(false)
   })
 })

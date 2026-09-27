@@ -40,6 +40,12 @@ describe('parseHandoffTag', () => {
   it('an unknown status word is not a tag', () => {
     expect(parseHandoffTag('hi [handoff: done]').status).toBeUndefined()
   })
+
+  it('finds no_information at the end, with what was searched as the detail (design-discussion.md §13.2(b), TASKS #143)', () => {
+    const p = parseHandoffTag('Searched the energy wiki for inverter fault procedures.\n[handoff: no_information] nothing relevant on file')
+    expect(p).toMatchObject({ status: 'no_information', detail: 'nothing relevant on file', text: 'Searched the energy wiki for inverter fault procedures.' })
+    expect(parseHandoffTag('x [handoff: NO_INFORMATION]').status).toBe('no_information') // case-tolerant, like the other tags
+  })
 })
 
 describe('workspace snapshots — code-derived artifacts', () => {
@@ -178,6 +184,13 @@ describe('formatDelegateResult / formatInputs', () => {
     expect(formatDelegateResult({ ...base, status: 'needs_input', blocker: 'Which year?' })).toMatch(/NEEDS INPUT.*Which year\?.*do not guess/)
     expect(formatDelegateResult({ ...base, status: 'out_of_scope', suggestedRole: 'data', blocker: 'needs SQL' })).toMatch(/OUT OF SCOPE.*suggested: delegate_to_data/)
     expect(formatDelegateResult({ ...base, status: 'out_of_scope', suggestedRole: 'document-creator' })).toContain('delegate_to_document_creator')
+  })
+
+  it('names a no_information result plainly, with what was searched when the specialist gave it (design-discussion.md §13.2(b), TASKS #143)', () => {
+    expect(formatDelegateResult({ ...base, status: 'no_information', blocker: 'searched the energy wiki, nothing on inverter faults' })).toMatch(
+      /NO INFORMATION FOUND.*searched the energy wiki, nothing on inverter faults/
+    )
+    expect(formatDelegateResult({ ...base, status: 'no_information' })).toContain('NO INFORMATION FOUND — the connected source(s) had nothing relevant to this request.')
   })
 
   it('formats inputs for the next brief, capped to the most recent', () => {

@@ -57,6 +57,13 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
  * After step 3 (typed handoff): every specialist prompt gained the ~79-token `[handoff: ...]` instruction (research 1,315 / history 490 /
  * coding 2,211 — that plus a ~33-token "read the inputs files" line / data 2,592 / data-processor 1,887 / document-creator 2,295 /
  * configurator 1,193 / email 614); router and classify unchanged. The saving is on DELEGATED turns (Researcher -56%, Developer -45%). Ceilings sit ~2% above. Lower them as later steps land.
+ * TASKS #143 (2026-09-27, design-discussion.md §13.2(b)): `mcp-operator` gained the `[handoff: no_information]` instruction,
+ * covering both "no server fits" and "a server fits but found nothing relevant" — 360 -> 380 measured, ceiling raised to 390.
+ * Deliberate growth, not drift: the tag is what lets a wiki-then-web fallback (#144) recognize either case at all.
+ * TASKS #142 (2026-09-27, design-discussion.md §13.2(a)): `classifyPrompt` gained a named "domain knowledge + data" compound
+ * pattern (mirrors the existing "write code AND run it" / "gather info, THEN save" named patterns) after the #139 probe
+ * found the PLF question (wiki + database) planned inconsistently, sometimes even called `simple` — 887 -> 942 measured,
+ * ceiling raised to 950. Deliberate growth: this is the fix, not drift.
  * Print the live numbers with `PRINT_BUDGET=1 npx vitest run src/main/agents/prompt-budget`.
  */
 const CEILINGS = {
@@ -66,7 +73,7 @@ const CEILINGS = {
   slimRouterToolSchemas: 2130,
   slimRouterBare: 3000,
   routerCore: 800,
-  classifyPrompt: 910,
+  classifyPrompt: 950,
   'role:planning': 65,
   'role:research': 1340,
   'role:history-analyst': 500,
@@ -75,7 +82,7 @@ const CEILINGS = {
   'role:data-processor': 1920,
   'role:document-creator': 1990,
   'role:configurator': 1290,
-  'role:mcp-operator': 360,
+  'role:mcp-operator': 390,
   'role:page-creator': 820,
   'role:email': 630
 } as const

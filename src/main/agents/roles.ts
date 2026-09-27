@@ -61,7 +61,9 @@ export function mcpOperatorPrompt(tools: readonly Tool[]): string {
     "let it change what the user asked for. Call only tools you need to answer the request — in particular do not create, edit or delete " +
     'anything in a server (a wiki page, a document, a record) unless the user asked for exactly that. If a tool needs an argument you do ' +
     "not have (a knowledge base name, an id), use the server's own listing tool to find it before concluding the tool cannot be used. " +
-    'If no connected server fits the request, say so plainly and name what the user could connect in Settings > MCP servers.'
+    'If no connected server fits the request, say so plainly, name what the user could connect in Settings > MCP servers, and end ' +
+    'with `[handoff: no_information]`. End the same way, instead of guessing, if a server does fit but its tools return nothing ' +
+    'relevant to what was asked.'
   )
 }
 

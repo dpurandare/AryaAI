@@ -20,11 +20,18 @@ import type { AgentRole } from '@shared/agents'
  *    (`db_execute_sql`, `parse_csv`, ...) is saved to a workspace file and its path is
  *    handed to later steps, so a later step reads the real rows instead of a summary.
  *  - **`status` is set in code where code can know it** (a failed run is `failed`) and
- *    by the model only for the two judgment cases, `needs_input` and `out_of_scope`, via
- *    a short trailing tag. A model that gives no structure defaults to `done` on a clean
- *    end — never a parse error.
+ *    by the model only for the judgment cases it alone can make — `needs_input`,
+ *    `out_of_scope`, and `no_information` — via a short trailing tag. A model that gives
+ *    no structure defaults to `done` on a clean end — never a parse error.
+ *
+ *  - **`no_information`** (design-discussion.md §13.2(b), TASKS #143): a domain-knowledge
+ *    step (MCP Operator) that searched a server which genuinely fits the request but found
+ *    nothing relevant to it. Deliberately distinct from a role reporting no *server* fits at
+ *    all when none is connected — that case is decided in code before the step ever runs
+ *    (`isRoleAvailable`, TASKS #145) and never reaches this tag; this one can only be judged
+ *    by a model that actually looked at the content.
  */
-export type HandoffStatus = 'done' | 'needs_input' | 'out_of_scope' | 'failed'
+export type HandoffStatus = 'done' | 'needs_input' | 'out_of_scope' | 'no_information' | 'failed'
 
 /** A captured tool result saved to a workspace file for later steps. */
 export interface HandoffDataFile {
@@ -61,14 +68,14 @@ export interface HandoffItem {
 
 // --- Trailing tag ---------------------------------------------------------------
 
-const TAG = /\[handoff:\s*(needs_input|out_of_scope)(?:\s*(?:->|→)\s*([a-z][a-z0-9-]*))?\s*\]/gi
+const TAG = /\[handoff:\s*(needs_input|out_of_scope|no_information)(?:\s*(?:->|→)\s*([a-z][a-z0-9-]*))?\s*\]/gi
 /** A tag only counts near the end of the reply — an earlier mention (quoting the instruction back) is just text. */
 const TAG_TAIL_CHARS = 1200
 
 export interface ParsedTag {
-  status?: 'needs_input' | 'out_of_scope'
+  status?: 'needs_input' | 'out_of_scope' | 'no_information'
   suggestedRole?: string
-  /** Text after the tag: the question (`needs_input`) or the reason (`out_of_scope`). */
+  /** Text after the tag: the question (`needs_input`), the reason (`out_of_scope`), or what was searched (`no_information`). */
   detail?: string
   /** The reply with the tag (and its trailing detail) removed. */
   text: string
@@ -81,7 +88,7 @@ export function parseHandoffTag(reply: string): ParsedTag {
   if (!last) return { text: reply }
   const detail = reply.slice(last.index + last[0].length).trim()
   return {
-    status: last[1].toLowerCase() as 'needs_input' | 'out_of_scope',
+    status: last[1].toLowerCase() as 'needs_input' | 'out_of_scope' | 'no_information',
     suggestedRole: last[2]?.toLowerCase(),
     detail: detail || undefined,
     text: reply.slice(0, last.index).trim()
@@ -181,6 +188,9 @@ export function formatDelegateResult(r: DelegateResult): string {
   }
   if (r.status === 'out_of_scope') {
     parts.push(`OUT OF SCOPE — this request is outside this specialist's role${r.blocker ? ` (${r.blocker})` : ''}${r.suggestedRole ? `; suggested: delegate_to_${r.suggestedRole.replace(/-/g, '_')}` : ''}.`)
+  }
+  if (r.status === 'no_information') {
+    parts.push(`NO INFORMATION FOUND — the connected source(s) had nothing relevant to this request${r.blocker ? `: ${r.blocker}` : '.'}`)
   }
   return parts.filter((p) => p.trim().length > 0).join('\n\n')
 }

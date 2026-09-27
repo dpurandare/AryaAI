@@ -4,7 +4,7 @@ import type { AgentRole } from '@shared/agents'
 import { ToolRegistry } from '../tools/registry'
 import type { Tool } from '../tools/types'
 import type { Agent } from './orchestrator'
-import { buildCapabilities, createDescribeCapabilitiesTool, type CapabilitiesInput } from './capabilities'
+import { buildCapabilities, createDescribeCapabilitiesTool, isRoleAvailable, type CapabilitiesInput } from './capabilities'
 
 const tool = (name: string, mutates: Tool['mutates'] = false): Tool => ({
   name,
@@ -144,5 +144,27 @@ describe('describe_capabilities tool', () => {
     runtime = { status: 'ready', packages: 'installed', message: '', pythonVersion: '3.11.0', root: '/w' }
     expect(await t.execute({}, ctx)).toContain('Python: AVAILABLE (3.11.0)')
     expect(await t.execute({}, ctx)).toContain('/w/venv')
+  })
+})
+
+describe('isRoleAvailable (design-discussion.md §13.3, TASKS #145)', () => {
+  it('is unavailable only when none of its required connection kinds are configured', () => {
+    const mcpOperator = agent('mcp-operator', [])
+    expect(isRoleAvailable(mcpOperator, { databases: 0, apis: 0, email: 0, mcp: 0 })).toBe(false)
+    expect(isRoleAvailable(mcpOperator, { databases: 0, apis: 0, email: 0, mcp: 1 })).toBe(true)
+  })
+
+  it('is available when config is undefined (unit tests / no live wiring) — same convention as buildRoleDigest', () => {
+    expect(isRoleAvailable(agent('mcp-operator', []), undefined)).toBe(true)
+  })
+
+  it('is always available for a role with no requiresAnyOf', () => {
+    expect(isRoleAvailable(agent('research', []), { databases: 0, apis: 0, email: 0, mcp: 0 })).toBe(true)
+  })
+
+  it('is available if ANY of several required kinds is configured (Data Access: database OR api)', () => {
+    const dataAccess = agent('data', [])
+    expect(isRoleAvailable(dataAccess, { databases: 0, apis: 1, email: 0, mcp: 0 })).toBe(true)
+    expect(isRoleAvailable(dataAccess, { databases: 0, apis: 0, email: 0, mcp: 0 })).toBe(false)
   })
 })

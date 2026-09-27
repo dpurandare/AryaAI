@@ -150,6 +150,24 @@ export interface ConfigurationCounts {
   mcp: number
 }
 
+const have = (config: ConfigurationCounts | undefined, kind: 'database' | 'api' | 'email' | 'mcp'): boolean =>
+  !config || (kind === 'database' ? config.databases > 0 : kind === 'api' ? config.apis > 0 : kind === 'email' ? config.email > 0 : config.mcp > 0)
+
+/**
+ * Whether a role's connection requirement (`requiresAnyOf`, e.g. MCP Operator
+ * needing a connected server) is currently satisfied. A role with no
+ * requirement is always available. `config` undefined (unit tests, no live
+ * wiring) means "assume everything a role needs is configured" — matching
+ * `buildRoleDigest`'s existing convention. Exported so a plan-consumption-time
+ * check (design-discussion.md §13.3, TASKS #145) can ask the same live
+ * question `buildRoleDigest` already answers for the classify prompt's text,
+ * without deciding availability twice from two different pieces of logic.
+ */
+export function isRoleAvailable(agent: Pick<Agent, 'role' | 'meta'>, config?: ConfigurationCounts): boolean {
+  const needs = (agent.meta ?? roleMeta(agent.role))?.requiresAnyOf
+  return !needs || needs.some((kind) => have(config, kind))
+}
+
 /**
  * Role-granularity digest for the classify-and-plan prompt (design 3.6): one
  * line per role — id, routing summary, and whether the role is usable right now.
@@ -163,8 +181,6 @@ export function buildRoleDigest(
   roles: readonly string[],
   config?: ConfigurationCounts
 ): string {
-  const have = (kind: 'database' | 'api' | 'email' | 'mcp'): boolean =>
-    !config || (kind === 'database' ? config.databases > 0 : kind === 'api' ? config.apis > 0 : kind === 'email' ? config.email > 0 : config.mcp > 0)
   const lines: string[] = []
   for (const agent of agents.values()) {
     if (!roles.includes(agent.role)) continue
@@ -172,7 +188,7 @@ export function buildRoleDigest(
     const notes: string[] = []
     if (agent.tools.length === 0) notes.push('no tools of its own — reasoning/text only')
     const needs = meta?.requiresAnyOf
-    if (needs && !needs.some(have)) {
+    if (needs && !isRoleAvailable(agent, config)) {
       notes.push(`UNAVAILABLE right now: no ${needs.map((n) => (n === 'database' ? 'database' : n === 'api' ? 'external API' : n === 'email' ? 'email account' : 'MCP server')).join(' or ')} is ${needs.includes('mcp') ? 'connected' : 'configured'}`)
     }
     lines.push(`- ${agent.role}: ${agent.summary}${notes.length ? ` (${notes.join('; ')})` : ''}`)
