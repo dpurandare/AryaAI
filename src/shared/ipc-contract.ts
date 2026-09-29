@@ -29,6 +29,10 @@ export const IpcChannel = {
 
   SettingsGet: 'settings:get',
   SettingsSet: 'settings:set',
+  /** TASKS.md #150 — admin-to-user settings provisioning, curated subset only (providers, MCP servers, DB connections). Never carries a live secret. */
+  SettingsExport: 'settings:export',
+  SettingsImportPreview: 'settings:import-preview',
+  SettingsImportApply: 'settings:import-apply',
 
   DataConnectionsList: 'data-connections:list',
   DataConnectionsSave: 'data-connections:save',
@@ -157,6 +161,63 @@ export interface SessionDto {
 export interface SessionExportResult {
   cancelled: boolean
   path?: string
+}
+
+/**
+ * TASKS.md #150 — the curated, admin-provisionable subset of settings: chat
+ * provider/model selection, MCP servers, database connections. Deliberately
+ * excludes External API connections, email accounts, and every personal UI
+ * preference (theme, `toolDetailsExpanded`, etc.) — the goal is org-level
+ * connection provisioning, not overriding a user's own choices. **Never
+ * carries a live secret** — no API key, no MCP bearer token, no DB
+ * password — only connection *shape* (same "shape without the secret"
+ * precedent #155's edit-by-id already established); an imported connection
+ * needs its credentials filled in separately by whoever uses it.
+ */
+export interface SettingsExportPayload {
+  formatVersion: 1
+  exportedAt: string
+  providers: {
+    activeProviderId?: string
+    /** providerId -> model, only for providers with a model actually selected locally. */
+    models: Record<string, string>
+  }
+  mcpServers: Array<{
+    name: string
+    transport: McpTransport
+    command?: string
+    args?: string[]
+    url?: string
+    description?: string
+  }>
+  dataConnections: Array<{
+    name: string
+    engine: DbEngine
+    filePath?: string
+    host?: string
+    port?: number
+    database?: string
+    username?: string
+  }>
+}
+
+/** One entry in an import preview — `willImport: false` means a same-name/same-key entry already exists locally and this one will be skipped, not overwritten. */
+export interface SettingsImportPreviewItem {
+  category: 'provider' | 'mcpServer' | 'dataConnection'
+  label: string
+  willImport: boolean
+}
+
+export type SettingsExportResult = { cancelled: true } | { cancelled: false; path: string } | { error: string }
+
+export type SettingsImportPreviewResult =
+  | { cancelled: true }
+  | { error: string }
+  | { cancelled: false; payload: SettingsExportPayload; items: SettingsImportPreviewItem[] }
+
+export interface SettingsImportApplyResult {
+  imported: number
+  skipped: number
 }
 
 /** Pushed from main to renderer once a session's title is auto-generated from its first message — see db/sessions.ts's titleFromMessage. */

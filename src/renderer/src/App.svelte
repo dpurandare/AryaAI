@@ -3,6 +3,7 @@
   import ChatView from './lib/components/ChatView.svelte'
   import SettingsPanel from './lib/components/SettingsPanel.svelte'
   import FirstRunSetup from './lib/components/FirstRunSetup.svelte'
+  import AccountMenu from './lib/components/AccountMenu.svelte'
   import {
     DEFAULT_SESSION_TITLE,
     type SessionDto,
@@ -722,13 +723,7 @@
       onDelete={removeSession}
       onExport={exportSession}
     />
-    <button class="user-row" aria-expanded={showSettings} title={showSettings ? 'Close settings' : 'Open settings'} onclick={toggleSettings}>
-      <span class="avatar">{(userName || '?').charAt(0).toUpperCase()}</span>
-      <span class="user-name">{userName || 'Account'}</span>
-      <svg class="chevron" width="14" height="14" viewBox="0 0 16 16" fill="none">
-        <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-    </button>
+    <AccountMenu {userName} {showSettings} onOpenSettings={toggleSettings} />
   </aside>
   {#if !sidebarCollapsed}
     <div
@@ -916,45 +911,6 @@
     min-height: 0;
     overflow: hidden;
   }
-  .user-row {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
-    margin: 0.5rem;
-    padding: 0.45rem 0.5rem;
-    border-radius: 10px;
-    border: none;
-    background: none;
-    color: var(--text);
-    cursor: pointer;
-    font-size: 0.85rem;
-    text-align: left;
-  }
-  .user-row:hover {
-    background: var(--panel-hover);
-  }
-  .user-name {
-    flex: 1;
-    font-weight: 500;
-  }
-  .chevron {
-    color: var(--text-muted);
-    flex-shrink: 0;    transition: transform 0.15s;
-  }
-  .user-row[aria-expanded='true'] .chevron {
-    transform: rotate(180deg);
-  }
-  .avatar {
-    width: 1.6rem;
-    height: 1.6rem;
-    border-radius: 50%;
-    background: var(--accent);
-    color: #1a1a1a;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.75rem;
-    font-weight: 600;
-    flex-shrink: 0;
-  }
+  /* .user-row/.avatar/.chevron/.user-name moved into AccountMenu.svelte (TASKS.md #150) — that
+     component now owns the account row's markup and styling. */
 </style>

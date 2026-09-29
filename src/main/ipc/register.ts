@@ -22,7 +22,11 @@ import {
   type ToolValidateResult,
   type SecretStorageInfo,
   type SearchHistoryStatusDto,
-  type SessionTitleUpdatedPayload
+  type SessionTitleUpdatedPayload,
+  type SettingsExportPayload,
+  type SettingsExportResult,
+  type SettingsImportPreviewResult,
+  type SettingsImportApplyResult
 } from '@shared/ipc-contract'
 import { isValidRoleId, roleLabel, type AgentRole } from '@shared/agents'
 import type { RuntimeState } from '@shared/runtime'
@@ -84,17 +88,18 @@ import { SYSTEM_PROMPT } from '../agents/system-prompt'
 import { createDescribeCapabilitiesTool } from '../agents/capabilities'
 import { selectRouterTools } from '../agents/router-tools'
 import { logToolUse } from '../db/tool-usage-log'
+import {
+  ACTIVE_PROVIDER_KEY,
+  DEFAULT_PROVIDER_ID,
+  modelSettingKey,
+  exportSettings,
+  previewSettingsImport,
+  applySettingsImport
+} from '../settings/import-export'
 
 const providerRegistry = createDefaultProviderRegistry()
 /** TASKS.md #161 — separate registry/namespace from the chat-provider one above; a web-search provider is a different kind of thing (one `search` call, not a full ModelProvider). */
 const webSearchProviderRegistry = createDefaultWebSearchProviderRegistry()
-
-const ACTIVE_PROVIDER_KEY = 'activeProviderId'
-const DEFAULT_PROVIDER_ID = 'openai'
-
-function modelSettingKey(providerId: string): string {
-  return `model:${providerId}`
-}
 
 const toolRegistry = createDefaultRegistry()
 /** Settings key: JSON array of user-defined role ids the user switched off in Settings > Roles. */
@@ -422,6 +427,20 @@ export function registerIpcHandlers(): void {
     switchToFileStorage()
     return { mode: getSecretStorageMode(), envFilePath: envFilePath() }
   })
+
+  // TASKS.md #150 — admin-to-user settings provisioning. Preview and Apply are deliberately separate
+  // calls: the renderer shows the user exactly what Preview decided before Apply re-derives (never
+  // re-asks) the same willImport decisions and actually writes them — see import-export.ts's own doc
+  // comment on why that re-derivation is safe.
+  ipcMain.handle(IpcChannel.SettingsExport, (event): Promise<SettingsExportResult> =>
+    exportSettings(providerRegistry, currentWorkspaceRoot(), BrowserWindow.fromWebContents(event.sender))
+  )
+  ipcMain.handle(IpcChannel.SettingsImportPreview, (event): Promise<SettingsImportPreviewResult> =>
+    previewSettingsImport(BrowserWindow.fromWebContents(event.sender))
+  )
+  ipcMain.handle(IpcChannel.SettingsImportApply, (_event, payload: SettingsExportPayload): SettingsImportApplyResult =>
+    applySettingsImport(payload)
+  )
 
   ipcMain.handle(IpcChannel.ToolsList, (): ToolDescriptor[] =>
     toolRegistry

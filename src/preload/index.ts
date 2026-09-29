@@ -29,7 +29,11 @@ import {
   type SessionTitleUpdatedPayload,
   type ToolValidateResult,
   type SecretStorageInfo,
-  type RoleRosterDto
+  type RoleRosterDto,
+  type SettingsExportPayload,
+  type SettingsExportResult,
+  type SettingsImportPreviewResult,
+  type SettingsImportApplyResult
 } from '@shared/ipc-contract'
 import type { RuntimeState } from '@shared/runtime'
 import type { AgentRole } from '@shared/agents'
@@ -78,6 +82,11 @@ const api = {
     ipcRenderer.invoke(IpcChannel.SettingsGet, key),
   setSetting: (key: string, value: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.SettingsSet, key, value),
+
+  exportSettings: (): Promise<SettingsExportResult> => ipcRenderer.invoke(IpcChannel.SettingsExport),
+  previewSettingsImport: (): Promise<SettingsImportPreviewResult> => ipcRenderer.invoke(IpcChannel.SettingsImportPreview),
+  applySettingsImport: (payload: SettingsExportPayload): Promise<SettingsImportApplyResult> =>
+    ipcRenderer.invoke(IpcChannel.SettingsImportApply, payload),
 
   listDataConnections: (): Promise<DataConnectionDto[]> =>
     ipcRenderer.invoke(IpcChannel.DataConnectionsList),
