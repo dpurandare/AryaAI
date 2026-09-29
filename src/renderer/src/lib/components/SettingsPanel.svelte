@@ -65,6 +65,8 @@
   let connUsername = $state('')
   let connPassword = $state('')
   let savingConnection = $state(false)
+  /** #155: set while a row's inline edit form is open; `null` means the form below is for a brand-new connection. */
+  let editingConnectionId = $state<string | null>(null)
 
   async function loadConnections(): Promise<void> {
     connections = await window.sachiv.listDataConnections()
@@ -81,6 +83,21 @@
     connUsername = ''
     connPassword = ''
     showAddConnection = false
+    editingConnectionId = null
+  }
+
+  /** #155: prefills the shared form fields from an existing connection and switches it into edit-in-place mode. Password is left blank — saving it blank keeps the stored one unchanged. */
+  function startEditConnection(conn: DataConnectionDto): void {
+    showAddConnection = false
+    editingConnectionId = conn.id
+    connName = conn.name
+    connEngine = conn.engine
+    connFilePath = conn.filePath ?? ''
+    connHost = conn.host ?? ''
+    connPort = conn.port != null ? String(conn.port) : '5432'
+    connDatabase = conn.database ?? ''
+    connUsername = conn.username ?? ''
+    connPassword = ''
   }
 
   async function saveConnection(): Promise<void> {
@@ -89,6 +106,7 @@
     try {
       const isSqlite = connEngine === 'sqlite'
       await window.sachiv.saveDataConnection({
+        id: editingConnectionId ?? undefined,
         name: connName.trim(),
         engine: connEngine,
         filePath: isSqlite ? connFilePath.trim() : undefined,
@@ -141,29 +159,8 @@
 
   /** Max length of the one-liner — mirrors MCP_SERVER_DESCRIPTION_MAX in shared/ipc-contract.ts. */
   const MCP_DESCRIPTION_MAX = 200
-  let editingMcpDescriptionId = $state<string | null>(null)
-  let editingMcpDescription = $state('')
-
-  async function saveMcpDescription(server: McpServerDto): Promise<void> {
-    mcpError = ''
-    try {
-      // Re-sends the server's own settings unchanged; the stored bearer token is kept because none is sent.
-      await window.sachiv.saveMcpServer({
-        id: server.id,
-        name: server.name,
-        transport: server.transport,
-        command: server.command,
-        args: server.args,
-        env: server.env,
-        url: server.url,
-        description: editingMcpDescription.trim() || undefined
-      })
-      editingMcpDescriptionId = null
-      await loadMcpServers()
-    } catch (err) {
-      mcpError = err instanceof Error ? err.message : String(err)
-    }
-  }
+  /** #155: set while a server's inline edit form is open (replaces the old description-only inline edit — this edits every field). */
+  let editingMcpId = $state<string | null>(null)
 
   function resetMcpForm(): void {
     mcpName = ''
@@ -176,6 +173,22 @@
     mcpDescription = ''
     mcpError = ''
     showAddMcpServer = false
+    editingMcpId = null
+  }
+
+  /** #155: prefills the shared form fields from an existing server and switches it into edit-in-place mode. Token is left blank — saving it blank keeps the stored one unchanged. */
+  function startEditMcpServer(server: McpServerDto): void {
+    showAddMcpServer = false
+    editingMcpId = server.id
+    mcpName = server.name
+    mcpTransport = server.transport
+    mcpCommand = server.command ?? ''
+    mcpArgs = (server.args ?? []).join(' ')
+    mcpEnv = server.env ? Object.entries(server.env).map(([k, v]) => `${k}=${v}`).join('\n') : ''
+    mcpUrl = server.url ?? ''
+    mcpToken = ''
+    mcpDescription = server.description ?? ''
+    mcpError = ''
   }
 
   /** One `KEY=VALUE` per line; blank/malformed lines are skipped rather than rejected. */
@@ -198,6 +211,7 @@
     mcpError = ''
     try {
       await window.sachiv.saveMcpServer({
+        id: editingMcpId ?? undefined,
         name: mcpName.trim(),
         transport: mcpTransport,
         command: mcpTransport === 'stdio' ? mcpCommand.trim() : undefined,
@@ -243,6 +257,8 @@
   let apiSecret = $state('')
   let apiSpecUrl = $state('')
   let savingApiConnection = $state(false)
+  /** #155: set while a row's inline edit form is open; `null` means the form below is for a brand-new connection. */
+  let editingApiConnectionId = $state<string | null>(null)
 
   async function loadApiConnections(): Promise<void> {
     apiConnections = await window.sachiv.listApiConnections()
@@ -258,6 +274,20 @@
     apiSecret = ''
     apiSpecUrl = ''
     showAddApiConnection = false
+    editingApiConnectionId = null
+  }
+
+  /** #155: prefills the shared form fields from an existing connection and switches it into edit-in-place mode. Secret is left blank — saving it blank keeps the stored one unchanged. */
+  function startEditApiConnection(conn: ApiConnectionDto): void {
+    showAddApiConnection = false
+    editingApiConnectionId = conn.id
+    apiName = conn.name
+    apiBaseUrl = conn.baseUrl
+    apiAuthType = conn.authType
+    apiKeyHeader = conn.apiKeyHeader ?? 'X-API-Key'
+    apiUsername = conn.username ?? ''
+    apiSecret = ''
+    apiSpecUrl = conn.specUrl ?? ''
   }
 
   async function saveApiConnection(): Promise<void> {
@@ -265,6 +295,7 @@
     savingApiConnection = true
     try {
       await window.sachiv.saveApiConnection({
+        id: editingApiConnectionId ?? undefined,
         name: apiName.trim(),
         baseUrl: apiBaseUrl.trim(),
         authType: apiAuthType,
@@ -471,8 +502,9 @@
 
   // --- Unsaved entries -------------------------------------------------------------------------------------------------
   // Most settings apply the moment they change (theme, toggles, selects, roles, the embedding model on blur). The exceptions are text
-  // entries with their own Save button — API keys, the "add …" forms, an MCP description being edited and the workspace folder. Those
-  // are what "unsaved" means here: leaving Settings while any is filled in asks first (App.svelte -> `leaveRequested`).
+  // entries with their own Save button — API keys, the "add …"/edit-in-place (#155) forms for data sources, MCP servers and API
+  // connections, and the workspace folder. Those are what "unsaved" means here: leaving Settings while any is filled in asks first
+  // (App.svelte -> `leaveRequested`).
   type PendingChange = { label: string; save: () => Promise<void> }
 
   function pendingChanges(): PendingChange[] {
@@ -494,13 +526,18 @@
     if (embeddingApiKey.trim()) list.push({ label: 'Search-history embedding API key', save: saveEmbeddingKey })
     if (tavilyApiKey.trim()) list.push({ label: 'Web search (Tavily) API key', save: saveTavilyKey })
     if (workspaceRootInput.trim() && workspaceRootInput !== workspaceRoot) list.push({ label: 'Workspace folder', save: saveWorkspaceRoot })
-    if (showAddConnection && connName.trim()) list.push({ label: `Data source "${connName.trim()}"`, save: saveConnection })
-    if (showAddMcpServer && mcpName.trim()) list.push({ label: `MCP server "${mcpName.trim()}"`, save: saveMcpServer })
-    const editedServer = editingMcpDescriptionId ? mcpServers.find((s) => s.id === editingMcpDescriptionId) : undefined
-    if (editedServer && editingMcpDescription.trim() !== (editedServer.description ?? '').trim()) {
-      list.push({ label: `Description of MCP server "${editedServer.name}"`, save: () => saveMcpDescription(editedServer) })
+    if ((showAddConnection || editingConnectionId) && connName.trim()) {
+      const label = editingConnectionId ? `Edits to data source "${connName.trim()}"` : `Data source "${connName.trim()}"`
+      list.push({ label, save: saveConnection })
     }
-    if (showAddApiConnection && apiName.trim()) list.push({ label: `API connection "${apiName.trim()}"`, save: saveApiConnection })
+    if ((showAddMcpServer || editingMcpId) && mcpName.trim()) {
+      const label = editingMcpId ? `Edits to MCP server "${mcpName.trim()}"` : `MCP server "${mcpName.trim()}"`
+      list.push({ label, save: saveMcpServer })
+    }
+    if ((showAddApiConnection || editingApiConnectionId) && apiName.trim()) {
+      const label = editingApiConnectionId ? `Edits to API connection "${apiName.trim()}"` : `API connection "${apiName.trim()}"`
+      list.push({ label, save: saveApiConnection })
+    }
     if (showAddEmailConnection && emailName.trim()) list.push({ label: `Email account "${emailName.trim()}"`, save: saveEmailConnectionWithValidation })
     return list
   }
@@ -802,11 +839,45 @@
     {#if connections.length}
       <ul class="connection-list">
         {#each connections as conn (conn.id)}
-          <li>
-            <span class="conn-name">{conn.name}</span>
-            <span class="conn-engine">{conn.engine}</span>
-            <button class="link-danger" onclick={() => removeConnection(conn.id)}>Remove</button>
-          </li>
+          {#if editingConnectionId === conn.id}
+            <li class="edit-row">
+              <input placeholder="Connection name" bind:value={connName} />
+              <select
+                value={connEngine}
+                onchange={(e) => {
+                  connEngine = e.currentTarget.value as typeof connEngine
+                  if (connEngine !== 'sqlite') connPort = DEFAULT_PORT[connEngine]
+                }}
+              >
+                <option value="sqlite">SQLite</option>
+                <option value="postgres">Postgres</option>
+                <option value="mssql">SQL Server</option>
+                <option value="mysql">MySQL</option>
+              </select>
+              {#if connEngine === 'sqlite'}
+                <input placeholder="Path to .db file" bind:value={connFilePath} />
+              {:else}
+                <input placeholder="Host" bind:value={connHost} />
+                <input placeholder="Port" bind:value={connPort} />
+                <input placeholder="Database" bind:value={connDatabase} />
+                <input placeholder="Username" bind:value={connUsername} />
+                <input placeholder="New password (leave blank to keep unchanged)" type="password" bind:value={connPassword} />
+              {/if}
+              <div class="actions">
+                <button onclick={resetConnectionForm}>Cancel</button>
+                <button class="primary" disabled={savingConnection || !connName.trim()} onclick={saveConnection}>
+                  {savingConnection ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </li>
+          {:else}
+            <li>
+              <span class="conn-name">{conn.name}</span>
+              <span class="conn-engine">{conn.engine}</span>
+              <button class="link-danger" onclick={() => startEditConnection(conn)}>Edit</button>
+              <button class="link-danger" onclick={() => removeConnection(conn.id)}>Remove</button>
+            </li>
+          {/if}
         {/each}
       </ul>
     {:else}
@@ -845,7 +916,7 @@
         </div>
       </div>
     {:else}
-      <button onclick={() => (showAddConnection = true)}>+ Add connection</button>
+      <button onclick={() => { editingConnectionId = null; showAddConnection = true }}>+ Add connection</button>
     {/if}
 
     <hr />
@@ -924,35 +995,49 @@
     {#if mcpServers.length}
       <ul class="connection-list">
         {#each mcpServers as server (server.id)}
-          <li>
-            <span class="conn-name">
-              {server.name}
-              <span class="mcp-status" class:error={server.status === 'error'}>{mcpStatusLabel(server)}</span>
-            </span>
-            <span class="conn-engine">{server.transport}</span>
-            <button class="link-danger" onclick={() => reconnectMcpServer(server.id)}>Reconnect</button>
-            <button class="link-danger" onclick={() => removeMcpServer(server.id)}>Remove</button>
-          </li>
-          <li class="mcp-description-row">
-            {#if editingMcpDescriptionId === server.id}
+          {#if editingMcpId === server.id}
+            <li class="edit-row">
+              <input placeholder="Server name" bind:value={mcpName} />
               <input
-                placeholder="What is this server for? (max {MCP_DESCRIPTION_MAX} characters)"
+                placeholder="What is this server for? (optional, max {MCP_DESCRIPTION_MAX} characters)"
                 maxlength={MCP_DESCRIPTION_MAX}
-                bind:value={editingMcpDescription}
+                bind:value={mcpDescription}
               />
-              <button class="primary" onclick={() => saveMcpDescription(server)}>Save</button>
-              <button onclick={() => (editingMcpDescriptionId = null)}>Cancel</button>
-            {:else}
+              <select bind:value={mcpTransport}>
+                <option value="stdio">Local (stdio)</option>
+                <option value="http">Remote (HTTP)</option>
+              </select>
+              {#if mcpTransport === 'stdio'}
+                <input placeholder="Command, e.g. npx" bind:value={mcpCommand} />
+                <input placeholder="Args (space-separated)" bind:value={mcpArgs} />
+                <textarea placeholder={'Env vars, one per line: KEY=value'} bind:value={mcpEnv}></textarea>
+              {:else}
+                <input placeholder="Server URL" bind:value={mcpUrl} />
+                <input placeholder="New bearer token (leave blank to keep unchanged)" type="password" bind:value={mcpToken} />
+              {/if}
+              {#if mcpError}<p class="status error">{mcpError}</p>{/if}
+              <div class="actions">
+                <button onclick={resetMcpForm}>Cancel</button>
+                <button class="primary" disabled={savingMcpServer || !mcpName.trim()} onclick={saveMcpServer}>
+                  {savingMcpServer ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </li>
+          {:else}
+            <li>
+              <span class="conn-name">
+                {server.name}
+                <span class="mcp-status" class:error={server.status === 'error'}>{mcpStatusLabel(server)}</span>
+              </span>
+              <span class="conn-engine">{server.transport}</span>
+              <button class="link-danger" onclick={() => startEditMcpServer(server)}>Edit</button>
+              <button class="link-danger" onclick={() => reconnectMcpServer(server.id)}>Reconnect</button>
+              <button class="link-danger" onclick={() => removeMcpServer(server.id)}>Remove</button>
+            </li>
+            <li class="mcp-description-row">
               <span class="status">{server.description || 'No description — the assistant only sees tool names.'}</span>
-              <button
-                class="link-danger"
-                onclick={() => {
-                  editingMcpDescriptionId = server.id
-                  editingMcpDescription = server.description ?? ''
-                }}>Edit description</button
-              >
-            {/if}
-          </li>
+            </li>
+          {/if}
         {/each}
       </ul>
     {:else}
@@ -984,7 +1069,7 @@
         </div>
       </div>
     {:else}
-      <button onclick={() => (showAddMcpServer = true)}>+ Add MCP server</button>
+      <button onclick={() => { editingMcpId = null; showAddMcpServer = true }}>+ Add MCP server</button>
     {/if}
 
     <hr />
@@ -999,11 +1084,45 @@
     {#if apiConnections.length}
       <ul class="connection-list">
         {#each apiConnections as conn (conn.id)}
-          <li>
-            <span class="conn-name">{conn.name}</span>
-            <span class="conn-engine">{conn.authType}</span>
-            <button class="link-danger" onclick={() => removeApiConnection(conn.id)}>Remove</button>
-          </li>
+          {#if editingApiConnectionId === conn.id}
+            <li class="edit-row">
+              <input placeholder="Connection name" bind:value={apiName} />
+              <input placeholder="Base URL, e.g. https://api.example.com/v1" bind:value={apiBaseUrl} />
+              <select bind:value={apiAuthType}>
+                <option value="none">No auth</option>
+                <option value="apiKey">API key header</option>
+                <option value="bearer">Bearer token</option>
+                <option value="basic">Basic auth</option>
+              </select>
+              {#if apiAuthType === 'apiKey'}
+                <input placeholder="Header name, e.g. X-API-Key" bind:value={apiKeyHeader} />
+                <input placeholder="New API key (leave blank to keep unchanged)" type="password" bind:value={apiSecret} />
+              {:else if apiAuthType === 'bearer'}
+                <input placeholder="New bearer token (leave blank to keep unchanged)" type="password" bind:value={apiSecret} />
+              {:else if apiAuthType === 'basic'}
+                <input placeholder="Username" bind:value={apiUsername} />
+                <input placeholder="New password (leave blank to keep unchanged)" type="password" bind:value={apiSecret} />
+              {/if}
+              <input placeholder="OpenAPI/Swagger spec URL (optional)" bind:value={apiSpecUrl} />
+              <div class="actions">
+                <button onclick={resetApiConnectionForm}>Cancel</button>
+                <button
+                  class="primary"
+                  disabled={savingApiConnection || !apiName.trim() || !apiBaseUrl.trim()}
+                  onclick={saveApiConnection}
+                >
+                  {savingApiConnection ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </li>
+          {:else}
+            <li>
+              <span class="conn-name">{conn.name}</span>
+              <span class="conn-engine">{conn.authType}</span>
+              <button class="link-danger" onclick={() => startEditApiConnection(conn)}>Edit</button>
+              <button class="link-danger" onclick={() => removeApiConnection(conn.id)}>Remove</button>
+            </li>
+          {/if}
         {/each}
       </ul>
     {:else}
@@ -1042,7 +1161,7 @@
         </div>
       </div>
     {:else}
-      <button onclick={() => (showAddApiConnection = true)}>+ Add API connection</button>
+      <button onclick={() => { editingApiConnectionId = null; showAddApiConnection = true }}>+ Add API connection</button>
     {/if}
 
     <hr />
@@ -1470,6 +1589,13 @@
     flex-direction: column;
     align-items: stretch;
     gap: 0.25rem;
+  }
+  /* #155: an inline edit-in-place row (data source / MCP server / API connection) — same stacked-form
+     shape as .add-connection-form, just inside a .connection-list li instead of a standalone div. */
+  .connection-list li.edit-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.4rem;
   }
   .role-head {
     display: flex;

@@ -579,6 +579,7 @@
     .getAppInfo()
     .then((info) => {
       statusLine = `Sachivji v${info.version}`
+      document.title = statusLine
       isMac = info.platform === 'darwin'
       userName = info.userName
     })
