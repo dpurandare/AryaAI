@@ -36,8 +36,10 @@ export async function overheadTokens(overhead: TurnOverhead, model: string, prov
 }
 
 /** Tools whose result is one entry per line (a file/directory listing) — TASKS.md #148: a blind character cut mid-line is
- * both uglier and less useful than cutting at a line boundary with an honest "N found, showing first K" count. */
-const LISTING_TOOL_NAMES = new Set(['list_directory', 'find_files'])
+ * both uglier and less useful than cutting at a line boundary with an honest "N found, showing first K" count.
+ * Exported for reuse by orchestrator.ts's `capRepeatedToolResults` (#149), which needs the same "this is a listing"
+ * knowledge to collapse an older result compactly instead of erasing it. */
+export const LISTING_TOOL_NAMES = new Set(['list_directory', 'find_files'])
 
 /** `toolUseId` -> the tool name that produced it, built once from every `tool_use` block across the whole array — a
  * `tool_result` only carries the id (`shared/protocol.ts`), never the name, so this is the only way to know which tool a
@@ -99,8 +101,8 @@ function isPureToolResult(m: Message): boolean {
   return m.content.length > 0 && m.content.every((b) => b.type === 'tool_result' || b.type === 'image')
 }
 
-/** Groups messages into complete turns (one real user message through the next), never splitting a tool_use/tool_result pair — the API rejects a dangling one. */
-function splitIntoTurns(messages: Message[]): Message[][] {
+/** Groups messages into complete turns (one real user message through the next), never splitting a tool_use/tool_result pair — the API rejects a dangling one. Exported for reuse by orchestrator.ts's `capRepeatedToolResults` (#149), which needs the same turn boundary to genuinely scope its cap to "the current turn" as its own doc comment always claimed but never enforced — this is the one canonical definition of a turn boundary in this codebase; a second, inconsistent one must not be invented elsewhere. */
+export function splitIntoTurns(messages: Message[]): Message[][] {
   const turns: Message[][] = []
   for (const m of messages) {
     if (turns.length === 0 || (m.role === 'user' && !isPureToolResult(m))) {

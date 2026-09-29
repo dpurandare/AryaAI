@@ -3237,6 +3237,161 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
       expect(toolResultContents.every((c) => !c.includes('omitted to save context'))).toBe(true)
     })
+
+    // TASKS.md #149: root-caused live against session `cd81e5f5` — 15 list_directory calls across ~5
+    // different real paths all shared one name-only bucket, so unrelated paths' calls evicted each other
+    // regardless of which directory they were actually about. This is the direct regression test for that.
+    it('#149: different list_directory paths do not compete for the same bucket, even well past the cap in total', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      for (const dir of ['charts', 'code', 'documents', 'resources', 'logs']) {
+        await writeFileTool.execute({ path: `${dir}/real.txt`, content: 'x' }, ctx)
+      }
+
+      const dirs = ['charts', 'code', 'documents', 'resources', 'logs']
+      const turns: ScriptedTurn[] = [
+        ...dirs.map((dir, i) => ({
+          toolCalls: [{ id: `ls${i + 1}`, name: 'list_directory', input: { path: dir } }],
+          stopReason: 'tool_use' as const
+        })),
+        { text: 'Done.', stopReason: 'end_turn' as const }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'list every folder' }] }])
+
+      const finalRequest = provider.requests[provider.requests.length - 1]
+      const toolResultContents = finalRequest.messages
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result')
+        .map((b) => b.content)
+
+      // 5 calls total (well past MAX_KEPT_RESULTS_PER_TOOL=3), but 5 genuinely different paths — none should
+      // collapse, since each path gets its own bucket and no single path was called more than once.
+      expect(toolResultContents).toHaveLength(5)
+      expect(toolResultContents.every((c) => c.includes('real.txt'))).toBe(true)
+    })
+
+    // TASKS.md #149: the same path called past the cap still collapses — resource-keying must not turn the
+    // cap into a no-op, only stop UNRELATED paths from sharing a bucket.
+    it('#149: the SAME list_directory path called past the cap still collapses its oldest calls, compactly not content-free', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      await writeFileTool.execute({ path: 'code/keep.py', content: 'x' }, ctx)
+
+      const turns: ScriptedTurn[] = [
+        ...Array.from({ length: 4 }, (_, i) => ({
+          toolCalls: [{ id: `ls${i + 1}`, name: 'list_directory', input: { path: 'code' } }],
+          stopReason: 'tool_use' as const
+        })),
+        { text: 'Done.', stopReason: 'end_turn' as const }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'list code four times' }] }])
+
+      const finalRequest = provider.requests[provider.requests.length - 1]
+      const toolResultContents = finalRequest.messages
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result')
+        .map((b) => b.content)
+
+      expect(toolResultContents).toHaveLength(4)
+      // The oldest of the 4 (4 - MAX_KEPT_RESULTS_PER_TOOL=3) is collapsed, but compactly — it still names
+      // the real file found, not the generic content-free "omitted" marker.
+      expect(toolResultContents[0]).not.toMatch(/omitted to save context/)
+      expect(toolResultContents[0]).toContain('keep.py')
+      expect(toolResultContents[0]).toContain('collapsed to save context but still complete')
+      // The 3 most recent stay fully untouched.
+      for (const c of toolResultContents.slice(1)) expect(c).toContain('keep.py')
+    })
+
+    // TASKS.md #149: an older, already-resolved turn's calls must never be counted together with the
+    // current turn's — the function's own doc comment always claimed "within a single turn" but, before
+    // #149, actually ran against the whole session array.
+    it('#149: an earlier turn\'s list_directory calls are never touched by the current turn\'s cap', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      // The new turn's single call actually executes for real against the workspace — needs `code/` to exist.
+      await writeFileTool.execute({ path: 'code/real.py', content: 'x' }, ctx)
+
+      // A prior, already-closed turn: exactly at the cap (3 calls to the same path) — nothing collapsed yet.
+      const priorConversation: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'earlier request' }] },
+        {
+          role: 'assistant',
+          content: [1, 2, 3].map((i) => ({
+            type: 'tool_use' as const,
+            id: `old${i}`,
+            name: 'list_directory',
+            input: { path: 'code' }
+          }))
+        },
+        {
+          role: 'user',
+          content: [1, 2, 3].map((i) => ({
+            type: 'tool_result' as const,
+            toolUseId: `old${i}`,
+            content: `old-listing-${i}`
+          }))
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'done with that earlier request' }] },
+        { role: 'user', content: [{ type: 'text', text: 'now list it again' }] }
+      ]
+
+      // The NEW turn: just one more list_directory call to the same path. If this wrongly shared a bucket
+      // with the prior turn's 3, the total (4) would push the prior turn's oldest call stale.
+      const turns: ScriptedTurn[] = [
+        { toolCalls: [{ id: 'new1', name: 'list_directory', input: { path: 'code' } }], stopReason: 'tool_use' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      await collect(orchestrator, priorConversation)
+
+      const finalRequest = provider.requests[provider.requests.length - 1]
+      const toolResultContents = finalRequest.messages
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result')
+        .map((b) => b.content)
+
+      // All 3 of the prior turn's results are still their real, original content — untouched by the new
+      // turn's single call, which is exactly what "scoped to the current turn" means.
+      expect(toolResultContents).toEqual(['old-listing-1', 'old-listing-2', 'old-listing-3', 'file  real.py'])
+    })
   })
 
   describe('collapsing near-duplicate tool results by URL overlap (context-bloat fix)', () => {

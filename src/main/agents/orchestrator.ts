@@ -4,7 +4,7 @@ import type { AgentRole } from '@shared/agents'
 import { PLANNABLE_ROLES, roleLabel, type RoleMeta } from '@shared/agents'
 import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
 import { evaluateClassifyGate, shouldSampleForCalibration, type ClassifyGateVerdict } from './classify-gate'
-import { CONTEXT_BUDGET_FRACTION, overheadTokens, resolveContextWindow } from '../context/prepare-context'
+import { CONTEXT_BUDGET_FRACTION, LISTING_TOOL_NAMES, overheadTokens, resolveContextWindow, splitIntoTurns } from '../context/prepare-context'
 import { isRateLimitError, retryAfterMsFromError } from '../providers/rate-limit'
 import type { ModelProvider, ToolDefinition } from '../providers/types'
 import { SHOW_MEDIA_MARKER, type ShowMediaPayload } from '../tools/show-media'
@@ -235,6 +235,53 @@ function sleepAbortable(ms: number, signal: AbortSignal): Promise<number> {
 const MAX_KEPT_RESULTS_PER_TOOL = 3
 
 /**
+ * TASKS.md #149: the argument names that identify a genuinely distinct RESOURCE for a given tool, so
+ * different targets don't compete for the same recency-cap bucket — root-caused live (session `cd81e5f5`):
+ * 15 `list_directory` calls across ~5 different real paths all shared one name-only bucket, evicting each
+ * other's results regardless of which path they were actually about. Deliberately scoped to just the two
+ * tools that incident actually involved (`list_directory`/`find_files`, #148) — NOT `read_file`, which the
+ * existing test suite already uses in two places as a generic stand-in for a fuzzy-repeated-call tool like
+ * `web_search` (cheaper to script than a real web_search mock); resource-keying it too would silently change
+ * that established, deliberate test behavior without being asked to. A tool with no entry here keeps the
+ * original name-only bucketing — for a fuzzy free-text-query tool (`web_search`), many distinct-but-similar
+ * calls SHOULD still compete for the same cap as a backstop, even when `collapseDuplicateToolResults`'s
+ * URL-overlap detection above didn't catch them as near-duplicates; keying by exact query text would defeat
+ * that entirely (every reworded query would get its own never-full bucket).
+ */
+const RESOURCE_KEY_ARGS: Readonly<Record<string, readonly string[]>> = {
+  list_directory: ['path'],
+  find_files: ['path', 'pattern']
+}
+
+function bucketKey(toolName: string, input: Record<string, unknown>): string {
+  const argNames = RESOURCE_KEY_ARGS[toolName]
+  if (!argNames) return toolName
+  return `${toolName}:${argNames.map((a) => JSON.stringify(input[a] ?? null)).join(',')}`
+}
+
+/**
+ * TASKS.md #149: an older `list_directory`/`find_files` result gets collapsed to a compact-but-complete
+ * form — every entry it found, just without the per-line "dir "/"file " decoration or find_files' header
+ * line — rather than erased. This is the fix for the incident's actual failure: a collapsed listing used to
+ * lose the filenames it found entirely, which is why the model both re-issued identical calls (it could no
+ * longer tell whether an earlier call had found anything) and stated an unlisted filename as fact (pattern-
+ * completing off adjacent real context once the real one was gone). #148's own hard requirement: a "do
+ * something for each file" task must still be able to see every entry from a collapsed result. Returns
+ * `undefined` when there's nothing meaningful to compact (an empty directory / no matches) — that result is
+ * already minimal, so the caller leaves it completely untouched rather than wrapping a placeholder around
+ * essentially nothing.
+ */
+function compactListing(toolName: string, content: string): string | undefined {
+  const lines = content.split('\n')
+  const names =
+    toolName === 'list_directory'
+      ? lines.map((l) => l.replace(/^(dir|file)\s+/, '')).filter((l) => l && l !== '(empty directory)')
+      : lines.slice(1).filter(Boolean) // find_files: line 0 is always the header ("N matched"/"No files matched")
+  if (names.length === 0) return undefined
+  return `[Earlier ${toolName} result, collapsed to save context but still complete — every entry found: ${names.join(', ')}]`
+}
+
+/**
  * Repeated calls to the same read-only tool within a single turn — a
  * research agent refining a `web_search` query several times being the
  * concrete case this was built for — each stayed fully expanded in
@@ -246,14 +293,21 @@ const MAX_KEPT_RESULTS_PER_TOOL = 3
  * most refinements of a query that hadn't found what was needed yet, and
  * every one of those stayed in full for every subsequent round.
  *
- * Keeps only the most recent `MAX_KEPT_RESULTS_PER_TOOL` results for each
- * tool name in what's actually sent to the provider; older ones collapse
- * to a one-line marker (the original tool_use input block is untouched and
- * still cheap, so the model can still see *what* it already tried, just
- * not the full result again). Only applies to a tool whose `mutates` is
- * statically `false` — a completed write/mutating call represents a real
- * side effect worth remembering in full for as long as it's in context;
- * a stale read is safely re-fetchable if actually still needed. Never
+ * Keeps only the most recent `MAX_KEPT_RESULTS_PER_TOOL` results per
+ * `bucketKey` (tool name, or tool name + the resource it targeted for a
+ * path-shaped tool — see `RESOURCE_KEY_ARGS`) in what's actually sent to
+ * the provider; older ones collapse to a compact-but-complete marker for a
+ * listing tool (`compactListing`) or a plain one-line marker otherwise (the
+ * original tool_use input block is untouched either way and still cheap,
+ * so the model can always see *what* it already tried). Only applies to a
+ * tool whose `mutates` is statically `false` — a completed write/mutating
+ * call represents a real side effect worth remembering in full for as long
+ * as it's in context; a stale read is safely re-fetchable if actually
+ * still needed. **Genuinely scoped to the current turn** (`splitIntoTurns`,
+ * the one canonical turn-boundary definition in this codebase) — a call
+ * from an earlier turn is never counted or touched here, matching what
+ * this function's own doc comment always claimed but, before #149, never
+ * actually enforced (it ran against the whole session array). Never
  * mutates `conversation` itself (returns a fresh array only when there's
  * something to collapse) — this only ever affects what's sent to the
  * provider on this and later rounds, never what's persisted to SQLite or
@@ -261,19 +315,31 @@ const MAX_KEPT_RESULTS_PER_TOOL = 3
  * pass in this codebase.
  */
 function capRepeatedToolResults(conversation: Message[], toolByName: ReadonlyMap<string, Tool>): Message[] {
-  const idsByName = new Map<string, string[]>()
+  const turns = splitIntoTurns(conversation)
+  const currentTurn = turns[turns.length - 1] ?? []
+  const currentTurnUseIds = new Set<string>()
+  for (const m of currentTurn) {
+    for (const b of m.content) {
+      if (b.type === 'tool_use') currentTurnUseIds.add(b.id)
+    }
+  }
+
+  const toolNameById = new Map<string, string>()
+  const idsByBucket = new Map<string, string[]>()
   for (const m of conversation) {
     for (const b of m.content) {
-      if (b.type !== 'tool_use') continue
+      if (b.type !== 'tool_use' || !currentTurnUseIds.has(b.id)) continue
       const tool = toolByName.get(b.name)
       if (!tool || tool.mutates !== false) continue
-      const ids = idsByName.get(b.name) ?? []
+      toolNameById.set(b.id, b.name)
+      const key = bucketKey(b.name, b.input)
+      const ids = idsByBucket.get(key) ?? []
       ids.push(b.id)
-      idsByName.set(b.name, ids)
+      idsByBucket.set(key, ids)
     }
   }
   const staleIds = new Set<string>()
-  for (const ids of idsByName.values()) {
+  for (const ids of idsByBucket.values()) {
     if (ids.length <= MAX_KEPT_RESULTS_PER_TOOL) continue
     for (const id of ids.slice(0, ids.length - MAX_KEPT_RESULTS_PER_TOOL)) staleIds.add(id)
   }
@@ -283,6 +349,10 @@ function capRepeatedToolResults(conversation: Message[], toolByName: ReadonlyMap
     ...m,
     content: m.content.map((b): ContentBlock => {
       if (b.type !== 'tool_result' || !staleIds.has(b.toolUseId)) return b
+      const toolName = toolNameById.get(b.toolUseId)
+      const compact = toolName && LISTING_TOOL_NAMES.has(toolName) ? compactListing(toolName, b.content) : undefined
+      if (compact !== undefined) return { ...b, content: compact }
+      if (toolName && LISTING_TOOL_NAMES.has(toolName)) return b // nothing to compact (empty/no-match) — already minimal, leave untouched
       return {
         ...b,
         content: '[Earlier result omitted to save context — this tool was called again later in the same turn. See the tool_use input above for what was tried.]'
