@@ -38,6 +38,15 @@ export function createDefaultProviderRegistry(): ProviderRegistry {
     create: () => new OllamaProvider()
   })
   registry.register({
+    id: 'ollama-cloud',
+    displayName: 'Ollama Cloud',
+    requiresApiKey: true,
+    supportsEmbeddings: true,
+    // #167: ollama.com's hosted offering — same OllamaProvider class, pointed at the cloud
+    // OpenAI-compatible endpoint with a real key instead of localhost's unused placeholder.
+    create: (apiKey) => new OllamaProvider('https://ollama.com/v1', apiKey!, 'ollama-cloud', 'Ollama Cloud')
+  })
+  registry.register({
     id: 'groq',
     displayName: 'Groq',
     requiresApiKey: true,
@@ -57,7 +66,7 @@ export function createDefaultProviderRegistry(): ProviderRegistry {
 /**
  * The only way anything in the app obtains an EmbeddingProvider — scoped to
  * the closed set of providers that actually implement one (openai/google/
- * ollama/mistral), so callers never need an `if (provider.embed)` guard.
+ * ollama/ollama-cloud/mistral), so callers never need an `if (provider.embed)` guard.
  * Throws for anything outside that set; in practice unreachable, since
  * Settings only ever lets the user pick a `supportsEmbeddings` provider for
  * this role in the first place.
@@ -70,6 +79,8 @@ export function getEmbeddingProvider(providerId: string, apiKey?: string): Embed
       return new GoogleProvider(apiKey!)
     case 'ollama':
       return new OllamaProvider()
+    case 'ollama-cloud':
+      return new OllamaProvider('https://ollama.com/v1', apiKey!, 'ollama-cloud', 'Ollama Cloud')
     case 'mistral':
       return new MistralProvider(apiKey!)
     default:

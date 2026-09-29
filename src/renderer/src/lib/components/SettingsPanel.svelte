@@ -825,10 +825,9 @@
         </button>
       </div>
     {:else}
+      <!-- #167: no Close button here any more — it only ever appeared for a no-key-needed provider (in
+           practice, only Ollama), redundant with the header's always-visible "Back to chat". -->
       <p class="status">This provider runs locally — no API key needed.</p>
-      <div class="actions">
-        <button onclick={onClose}>Close</button>
-      </div>
     {/if}
 
     <hr />
