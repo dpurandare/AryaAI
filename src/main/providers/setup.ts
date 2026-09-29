@@ -87,3 +87,17 @@ export function getEmbeddingProvider(providerId: string, apiKey?: string): Embed
       throw new Error(`"${providerId}" does not support embeddings.`)
   }
 }
+
+/**
+ * TASKS.md #162: a model's embedding dimension isn't knowable ahead of time from its name alone in this
+ * app (`db/schema.sql`'s `embedding_index_meta.dimension` is only ever learned empirically from a real
+ * embed call, same reasoning here) — so rather than a hardcoded per-model lookup table that could be wrong
+ * or missing for a newer/uncommon model, Settings fires one small real embed call when the user picks a
+ * model and shows the real, returned dimension. One word ("test") is enough; the actual text embedded
+ * doesn't matter, only the length of the vector that comes back.
+ */
+export async function probeEmbeddingDimension(providerId: string, apiKey: string | undefined, model: string): Promise<number> {
+  const provider = getEmbeddingProvider(providerId, apiKey)
+  const [vector] = await provider.embed(['test'], model)
+  return vector.length
+}

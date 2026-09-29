@@ -60,6 +60,9 @@ const api = {
   getSessionUsage: (sessionId: string): Promise<SessionUsageDto> =>
     ipcRenderer.invoke(IpcChannel.SessionsGetUsage, sessionId),
 
+  probeEmbeddingDimension: (providerId: string, model: string): Promise<number> =>
+    ipcRenderer.invoke(IpcChannel.EmbeddingProbeDimension, providerId, model),
+
   listProviders: (): Promise<ProviderDescriptor[]> => ipcRenderer.invoke(IpcChannel.ProvidersList),
   listWebSearchProviders: (): Promise<WebSearchProviderDescriptor[]> =>
     ipcRenderer.invoke(IpcChannel.WebSearchProvidersList),

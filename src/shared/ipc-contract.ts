@@ -90,6 +90,8 @@ export const IpcChannel = {
 
   SearchHistoryStatus: 'search-history:status',
   SearchHistoryRebuildIndex: 'search-history:rebuild-index',
+  /** TASKS.md #162 — a real, small embed call against the given provider/model, returning the actual vector length rather than a guessed/hardcoded dimension. */
+  EmbeddingProbeDimension: 'embedding:probe-dimension',
 
   SessionTitleUpdated: 'sessions:title-updated',
 

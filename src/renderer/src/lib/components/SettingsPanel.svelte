@@ -524,6 +524,9 @@
       })
     }
     if (embeddingApiKey.trim()) list.push({ label: 'Search-history embedding API key', save: saveEmbeddingKey })
+    if (embeddingModelDraft.trim() && embeddingModelDraft !== embeddingModel) {
+      list.push({ label: `Search-history embedding model "${embeddingModelDraft.trim()}"`, save: saveEmbeddingModelChoice })
+    }
     if (webSearchApiKey.trim()) list.push({ label: 'Web Search Provider API key', save: saveWebSearchKey })
     if (workspaceRootInput.trim() && workspaceRootInput !== workspaceRoot) list.push({ label: 'Workspace folder', save: saveWorkspaceRoot })
     if ((showAddConnection || editingConnectionId) && connName.trim()) {
@@ -629,10 +632,24 @@
   let searchHistoryStatus = $state<SearchHistoryStatusDto | null>(null)
   let rebuildingIndex = $state(false)
 
+  // --- Model picker + live dimension probe (TASKS.md #162) ---
+  // Mirrors ModelPicker.svelte's own listModels-with-manual-fallback pattern exactly, for every
+  // embedding-capable provider (not just the default) — see this item's own decided scope.
+  let embeddingModelDraft = $state(DEFAULT_EMBEDDING_MODEL) // what's selected/typed, not yet saved
+  let embeddingModels = $state<string[]>([])
+  let embeddingModelsLoading = $state(false)
+  let embeddingModelsError = $state('')
+  let embeddingDimension = $state<number | null>(null)
+  let embeddingDimensionError = $state('')
+  let probingDimension = $state(false)
+  let savingEmbeddingModel = $state(false)
+
   async function loadEmbeddingConfig(): Promise<void> {
     embeddingProviderId = (await window.sachiv.getSetting(EMBEDDING_PROVIDER_SETTING_KEY)) ?? DEFAULT_EMBEDDING_PROVIDER_ID
     embeddingModel = (await window.sachiv.getSetting(EMBEDDING_MODEL_SETTING_KEY)) ?? DEFAULT_EMBEDDING_MODEL
+    embeddingModelDraft = embeddingModel
     await refreshEmbeddingHasKey()
+    await loadEmbeddingModels()
   }
   loadEmbeddingConfig()
 
@@ -646,18 +663,63 @@
   }
   loadSearchHistoryStatus()
 
+  async function loadEmbeddingModels(): Promise<void> {
+    embeddingModels = []
+    embeddingModelsError = ''
+    if (!embeddingHasKey) return
+    embeddingModelsLoading = true
+    try {
+      embeddingModels = await window.sachiv.listModels(embeddingProviderId)
+    } catch (err) {
+      embeddingModelsError = err instanceof Error ? err.message : String(err)
+    } finally {
+      embeddingModelsLoading = false
+    }
+  }
+
+  /** Decided 2026-09-29: a real probe call, not a hardcoded dimension table — fires once the user picks a
+   * model (before Save), showing the real returned vector length rather than a guess that could be wrong
+   * or missing for a newer/uncommon model. */
+  async function probeDimension(model: string): Promise<void> {
+    if (!model.trim()) return
+    embeddingDimension = null
+    embeddingDimensionError = ''
+    probingDimension = true
+    try {
+      embeddingDimension = await window.sachiv.probeEmbeddingDimension(embeddingProviderId, model.trim())
+    } catch (err) {
+      embeddingDimensionError = err instanceof Error ? err.message : String(err)
+    } finally {
+      probingDimension = false
+    }
+  }
+
+  function selectEmbeddingModel(model: string): void {
+    embeddingModelDraft = model
+    void probeDimension(model)
+  }
+
+  async function saveEmbeddingModelChoice(): Promise<void> {
+    if (!embeddingModelDraft.trim()) return
+    savingEmbeddingModel = true
+    try {
+      await window.sachiv.setSetting(EMBEDDING_MODEL_SETTING_KEY, embeddingModelDraft.trim())
+      embeddingModel = embeddingModelDraft.trim()
+      await loadSearchHistoryStatus()
+    } finally {
+      savingEmbeddingModel = false
+    }
+  }
+
   async function changeEmbeddingProvider(id: string): Promise<void> {
     embeddingProviderId = id
     embeddingApiKey = ''
+    embeddingDimension = null
+    embeddingDimensionError = ''
     await window.sachiv.setSetting(EMBEDDING_PROVIDER_SETTING_KEY, id)
     await refreshEmbeddingHasKey()
     await loadSearchHistoryStatus()
-  }
-
-  async function changeEmbeddingModel(): Promise<void> {
-    if (!embeddingModel.trim()) return
-    await window.sachiv.setSetting(EMBEDDING_MODEL_SETTING_KEY, embeddingModel.trim())
-    await loadSearchHistoryStatus()
+    await loadEmbeddingModels()
   }
 
   // --- Web Search Provider (TASKS.md #161 — pluggable, mirrors the embedding-provider picker above) ---
@@ -944,7 +1006,7 @@
 
     <hr />
 
-    <h2>Search history</h2>
+    <h2>Search History Embedding: Provider and Model</h2>
     <p class="status">
       Lets the agent search your own past conversations (search_history tool). Uses a separate,
       independently-configured embedding model — not whatever provider you picked for chat above.
@@ -956,7 +1018,6 @@
         <option value={provider.id}>{provider.displayName}</option>
       {/each}
     </select>
-    <input placeholder="Model (e.g. nomic-embed-text)" bind:value={embeddingModel} onblur={changeEmbeddingModel} />
 
     {#if embeddingCapableProviders.find((p) => p.id === embeddingProviderId)?.requiresApiKey}
       <p class="status">
@@ -976,6 +1037,43 @@
     {:else}
       <p class="status">This provider runs locally — no API key needed.</p>
     {/if}
+
+    {#if embeddingCapableProviders.find((p) => p.id === embeddingProviderId)?.requiresApiKey && !embeddingHasKey}
+      <p class="status">Add a key above to list this provider's models.</p>
+    {:else if embeddingModelsLoading}
+      <p class="status">Loading models...</p>
+    {:else if embeddingModels.length > 0}
+      <select value={embeddingModelDraft} onchange={(e) => selectEmbeddingModel(e.currentTarget.value)}>
+        {#each embeddingModels as m (m)}
+          <option value={m}>{m}</option>
+        {/each}
+      </select>
+    {:else}
+      {#if embeddingModelsError}<p class="status error">Couldn't list models — enter one manually.</p>{/if}
+      <input
+        placeholder="Model (e.g. nomic-embed-text)"
+        bind:value={embeddingModelDraft}
+        onblur={() => probeDimension(embeddingModelDraft)}
+      />
+    {/if}
+
+    {#if probingDimension}
+      <p class="status">Checking embedding dimension...</p>
+    {:else if embeddingDimension !== null}
+      <p class="status">Embedding dimension: <strong>{embeddingDimension}</strong></p>
+    {:else if embeddingDimensionError}
+      <p class="status error">Couldn't determine dimension: {embeddingDimensionError}</p>
+    {/if}
+
+    <div class="actions">
+      <button
+        class="primary"
+        disabled={savingEmbeddingModel || !embeddingModelDraft.trim() || embeddingModelDraft === embeddingModel}
+        onclick={saveEmbeddingModelChoice}
+      >
+        {savingEmbeddingModel ? 'Saving...' : 'Save model'}
+      </button>
+    </div>
 
     <p class="status">{searchHistoryStatusLabel()}</p>
     <div class="actions">

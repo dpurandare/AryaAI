@@ -55,7 +55,7 @@ import { McpManager } from '../mcp/manager'
 import { openDriver } from '../tools/db/driver-factory'
 import { buildSchemaSummary } from '../tools/db/schema-summary'
 import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
-import { createDefaultProviderRegistry } from '../providers/setup'
+import { createDefaultProviderRegistry, probeEmbeddingDimension } from '../providers/setup'
 import { createDefaultWebSearchProviderRegistry } from '../tools/web-search-providers'
 import type { Message, ModelProvider, ProviderOptions } from '../providers/types'
 import { exportSession } from '../sessions/export'
@@ -461,6 +461,9 @@ export function registerIpcHandlers(): void {
     }
   })
   ipcMain.handle(IpcChannel.SearchHistoryRebuildIndex, () => rebuildIndex())
+  ipcMain.handle(IpcChannel.EmbeddingProbeDimension, (_event, providerId: string, model: string) =>
+    probeEmbeddingDimension(providerId, getApiKey(providerId), model)
+  )
 
   ipcMain.handle(
     IpcChannel.ChatSend,
