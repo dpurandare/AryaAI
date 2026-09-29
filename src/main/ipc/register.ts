@@ -18,12 +18,13 @@ import {
   type ToolConfirmRequestPayload,
   type LimitReachedRequestPayload,
   type ToolDescriptor,
+  type RoleToolsDto,
   type ToolValidateResult,
   type SecretStorageInfo,
   type SearchHistoryStatusDto,
   type SessionTitleUpdatedPayload
 } from '@shared/ipc-contract'
-import { isValidRoleId, type AgentRole } from '@shared/agents'
+import { isValidRoleId, roleLabel, type AgentRole } from '@shared/agents'
 import type { RuntimeState } from '@shared/runtime'
 import { createSession, listSessions, deleteSession, getSession, updateSessionTitle, titleFromMessage } from '../db/sessions'
 import { insertMessage, listMessages } from '../db/messages'
@@ -431,6 +432,24 @@ export function registerIpcHandlers(): void {
         description: tool.description,
         mutates: typeof tool.mutates === 'function' ? 'sometimes' : 'always'
       }))
+  )
+
+  // TASKS.md #164 — unfiltered (unlike ToolsList above, which drops never-mutating tools for the
+  // auto-approve list's own purpose), grouped by role: a reference for a user defining a new custom
+  // role. Reads `agents` fresh (the same module-level binding the orchestrator itself uses), so it
+  // reflects custom roles and mid-session tool-registry changes (MCP connects, saved queries) exactly
+  // like every other consumer of `agents` already does.
+  ipcMain.handle(IpcChannel.ToolsListByRole, (): RoleToolsDto[] =>
+    [...agents.values()].map((agent) => ({
+      role: agent.role,
+      roleLabel: roleLabel(agent.role),
+      summary: agent.summary,
+      tools: agent.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        mutates: typeof tool.mutates === 'function' ? 'sometimes' : tool.mutates ? 'always' : 'never'
+      }))
+    }))
   )
 
   // Pull-based counterpart to the context_window *stream* event runChat

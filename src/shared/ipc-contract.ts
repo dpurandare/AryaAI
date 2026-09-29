@@ -71,6 +71,7 @@ export const IpcChannel = {
   SecretStorageSwitchToFile: 'secret-storage:switch-to-file',
 
   ToolsList: 'tools:list',
+  ToolsListByRole: 'tools:list-by-role',
 
   ContextWindowGet: 'context-window:get',
 
@@ -457,6 +458,21 @@ export interface ToolDescriptor {
   name: string
   description: string
   mutates: 'always' | 'sometimes'
+}
+
+/**
+ * TASKS.md #164 — the full, unfiltered set of tools each role actually has,
+ * grouped by role, as a reference for a user defining a new custom role
+ * ("what can an existing role do that my new role might also need"). Unlike
+ * `ToolDescriptor` above (built for the auto-approve list, which has nothing
+ * useful to do with a tool that never mutates), `mutates` here includes
+ * `'never'` so a read-only tool like `web_search` still shows up.
+ */
+export interface RoleToolsDto {
+  role: string
+  roleLabel: string
+  summary: string
+  tools: Array<{ name: string; description: string; mutates: 'always' | 'sometimes' | 'never' }>
 }
 
 /** A problem found while loading a role file (file-level errors, and quality warnings for a role that did load). */

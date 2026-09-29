@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { RoleRosterDto, ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor, WebSearchProviderDescriptor } from '@shared/ipc-contract'
+  import type { RoleRosterDto, RoleToolsDto, ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor, WebSearchProviderDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
   import type { RuntimeState } from '@shared/runtime'
 
@@ -471,6 +471,21 @@
     }
   }
   loadRoles()
+
+  // TASKS.md #164 — full tool reference grouped by role, loaded lazily (only when the <details> is
+  // opened) since it's a reference view, not something every Settings visit needs.
+  let toolsByRole = $state<RoleToolsDto[] | null>(null)
+  let toolsByRoleError = $state('')
+
+  async function loadToolsByRole(): Promise<void> {
+    if (toolsByRole) return
+    toolsByRoleError = ''
+    try {
+      toolsByRole = await window.sachiv.listToolsByRole()
+    } catch (err) {
+      toolsByRoleError = err instanceof Error ? err.message : String(err)
+    }
+  }
 
   async function toggleRole(id: string, enabled: boolean): Promise<void> {
     rolesBusy = true
@@ -1499,6 +1514,45 @@
 
     <hr />
 
+    <h2>Tools by role</h2>
+    <p class="status">
+      Every tool each specialist actually has, with its full description — a reference for deciding what a new custom role above should
+      be able to do. "Mutates" means the tool changes something (a file, a database row, a sent message); "sometimes" means it only
+      mutates for certain inputs (e.g. a SQL tool run with a SELECT vs. an UPDATE).
+    </p>
+    <details ontoggle={(e) => e.currentTarget.open && loadToolsByRole()}>
+      <summary class="status">Show tools by role</summary>
+      {#if toolsByRoleError}
+        <p class="status error">{toolsByRoleError}</p>
+      {:else if toolsByRole}
+        {#each toolsByRole as r (r.role)}
+          <details class="role-tools-group">
+            <summary class="status"><strong>{r.roleLabel}</strong> — {r.tools.length} tool{r.tools.length === 1 ? '' : 's'}</summary>
+            <p class="status">{r.summary}</p>
+            {#if r.tools.length}
+              <ul class="connection-list">
+                {#each r.tools as t (t.name)}
+                  <li class="role-row">
+                    <div class="role-head">
+                      <span class="conn-name">{t.name}</span>
+                      <span class="conn-engine">mutates: {t.mutates}</span>
+                    </div>
+                    <span class="status">{t.description}</span>
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="status">No tools of its own (delegates or plans only).</p>
+            {/if}
+          </details>
+        {/each}
+      {:else}
+        <p class="status">Loading…</p>
+      {/if}
+    </details>
+
+    <hr />
+
     <h2>Slim router <span class="status">(experimental)</span></h2>
     <p class="status">
       Sends the assistant a much smaller request each time (about 2,800 tokens instead of about 10,800) by keeping only a few
@@ -1744,6 +1798,10 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
+  }
+  /* #164 — one nested <details> per role inside the outer "Show tools by role" <details>. */
+  .role-tools-group {
+    margin: 0.4rem 0 0.4rem 0.75rem;
   }
   .connection-list li {
     display: flex;

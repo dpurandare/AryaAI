@@ -21,6 +21,7 @@ import {
   type McpServerDto,
   type SaveMcpServerInput,
   type ToolDescriptor,
+  type RoleToolsDto,
   type SessionUsageDto,
   type SessionExportResult,
   type AppUpdateAvailablePayload,
@@ -132,6 +133,7 @@ const api = {
   rebuildSearchHistoryIndex: (): Promise<void> => ipcRenderer.invoke(IpcChannel.SearchHistoryRebuildIndex),
 
   listTools: (): Promise<ToolDescriptor[]> => ipcRenderer.invoke(IpcChannel.ToolsList),
+  listToolsByRole: (): Promise<RoleToolsDto[]> => ipcRenderer.invoke(IpcChannel.ToolsListByRole),
 
   getContextWindow: (): Promise<ContextWindowInfo | null> => ipcRenderer.invoke(IpcChannel.ContextWindowGet),
 
