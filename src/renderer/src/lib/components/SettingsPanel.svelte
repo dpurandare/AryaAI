@@ -1394,6 +1394,39 @@
 
     <hr />
 
+    <h2>Auto-approve rules</h2>
+    <p class="status">Tools checked here skip the confirmation dialog, persisted across restarts.</p>
+
+    {#if tools.length}
+      <ul class="connection-list auto-approve-list">
+        {#each tools as tool (tool.name)}
+          <li>
+            <label class="tool-rule">
+              <input
+                type="checkbox"
+                checked={Boolean(autoApproveRules[tool.name])}
+                onchange={(e) =>
+                  onToggleAutoApproveRule(tool.name, (e.target as HTMLInputElement).checked)}
+              />
+              <span class="conn-name">
+                {tool.name}
+                {#if tool.mutates === 'sometimes'}
+                  <span class="mcp-status error">
+                    Only some calls of this tool mutate — enabling skips confirmation for all of them, writes included
+                  </span>
+                {/if}
+              </span>
+            </label>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="status">No tools need confirmation yet.</p>
+    {/if}
+
+    <hr />
+
+    <!-- #166: Secret storage is deliberately the LAST section in the panel — Deepak's own ordering preference, 2026-09-29. -->
     <h2>Secret storage</h2>
     <p class="status">
       Where provider API keys and DB/API/MCP connection secrets are kept.
@@ -1419,38 +1452,6 @@
       <p class="status">
         Secret storage: <strong>File</strong> (<code>{secretStorageEnvPath}</code>).
       </p>
-    {/if}
-
-    <hr />
-
-    <h2>Auto-approve rules</h2>
-    <p class="status">Tools checked here skip the confirmation dialog, persisted across restarts.</p>
-
-    {#if tools.length}
-      <ul class="connection-list">
-        {#each tools as tool (tool.name)}
-          <li>
-            <label class="tool-rule">
-              <input
-                type="checkbox"
-                checked={Boolean(autoApproveRules[tool.name])}
-                onchange={(e) =>
-                  onToggleAutoApproveRule(tool.name, (e.target as HTMLInputElement).checked)}
-              />
-              <span class="conn-name">
-                {tool.name}
-                {#if tool.mutates === 'sometimes'}
-                  <span class="mcp-status error">
-                    Only some calls of this tool mutate — enabling skips confirmation for all of them, writes included
-                  </span>
-                {/if}
-              </span>
-            </label>
-          </li>
-        {/each}
-      </ul>
-    {:else}
-      <p class="status">No tools need confirmation yet.</p>
     {/if}
     </div>
   </div>
@@ -1596,6 +1597,15 @@
     flex-direction: column;
     align-items: stretch;
     gap: 0.4rem;
+  }
+  /* #165: caps the auto-approve list to ~15 visible rows with its own scroll, rather than growing
+     unbounded with the full tool registry. Scoped to this one list (not .connection-list itself,
+     shared by the data-source/MCP/API-connection lists, which must stay unbounded — #155). 36.5rem
+     measured live against a real 23-tool registry (897px / 23 rows ≈ 39px/row * 15 ≈ 585px), not
+     estimated from the CSS box model alone — an earlier 31rem estimate undershot to ~12-13 rows. */
+  .connection-list.auto-approve-list {
+    max-height: 36.5rem;
+    overflow-y: auto;
   }
   .role-head {
     display: flex;
