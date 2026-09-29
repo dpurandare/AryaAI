@@ -96,9 +96,25 @@ export function trimToolResults(messages: Message[]): Message[] {
   }))
 }
 
-/** A pure-tool_result message is the continuation of the turn before it (a tool round-trip), not a new one — same convention already used by the renderer (App.svelte's mapMessagesToDisplay). An `image` block (TASKS.md #82) rides alongside its `show_media` call's own `tool_result` in the same message, so it counts as a continuation too — never sent to the model either way (see toOpenAIMessages/toAnthropicMessages/Google's own mapping), but must not be misread as the start of a new turn for trimming purposes. */
+/** A message made only of tool_result/image/user_note blocks is the continuation of the turn before it, not a new one
+ * — same convention already used by the renderer (App.svelte's mapMessagesToDisplay). An `image` block (TASKS.md #82)
+ * rides alongside its `show_media` call's own `tool_result` in the same message, so it counts as a continuation too —
+ * never sent to the model either way (see toOpenAIMessages/toAnthropicMessages/Google's own mapping), but must not be
+ * misread as the start of a new turn for trimming purposes. A `user_note` (TASKS.md #158, a mid-run steering comment)
+ * is the newest case here for the identical reason: it must never fracture the turn it was injected into. */
 function isPureToolResult(m: Message): boolean {
-  return m.content.length > 0 && m.content.every((b) => b.type === 'tool_result' || b.type === 'image')
+  return m.content.length > 0 && m.content.every((b) => b.type === 'tool_result' || b.type === 'image' || b.type === 'user_note')
+}
+
+/** TASKS.md #158: a `user_note` block reads as ordinary text to the MODEL — the `user_note` type is purely an
+ * internal distinction for turn-boundary (`isPureToolResult` above) and UI-rendering purposes. Applied to
+ * `messagesToSend` right before every `provider.stream()` call (orchestrator.ts's `runLoop`), never to what's
+ * persisted or shown in the transcript, same as every other wire-only transform in this file. */
+export function normalizeUserNotesForWire(messages: Message[]): Message[] {
+  return messages.map((m) => ({
+    ...m,
+    content: m.content.map((b): ContentBlock => (b.type === 'user_note' ? { type: 'text', text: b.text } : b))
+  }))
 }
 
 /** Groups messages into complete turns (one real user message through the next), never splitting a tool_use/tool_result pair — the API rejects a dangling one. Exported for reuse by orchestrator.ts's `capRepeatedToolResults` (#149), which needs the same turn boundary to genuinely scope its cap to "the current turn" as its own doc comment always claimed but never enforced — this is the one canonical definition of a turn boundary in this codebase; a second, inconsistent one must not be invented elsewhere. */

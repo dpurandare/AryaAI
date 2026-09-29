@@ -2,7 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { toOpenAIMessages } from '../providers/openai-compatible'
 import type { ContentBlock } from '@shared/protocol'
 import type { Message, ModelProvider } from '../providers/types'
-import { applySlidingWindow, collapseFailedTurns, collapseUnavailableToolCalls, migrateLegacyDelegateNames, prepareConversation, repairToolPairs, trimToolResults, type TurnOverhead } from './prepare-context'
+import {
+  applySlidingWindow,
+  collapseFailedTurns,
+  collapseUnavailableToolCalls,
+  migrateLegacyDelegateNames,
+  normalizeUserNotesForWire,
+  prepareConversation,
+  repairToolPairs,
+  splitIntoTurns,
+  trimToolResults,
+  type TurnOverhead
+} from './prepare-context'
 
 const OVERHEAD_MARKER = 'SYS-PROMPT-MARKER'
 
@@ -88,6 +99,50 @@ describe('trimToolResults', () => {
       { role: 'user', content: [{ type: 'tool_result', toolUseId: 'call-1', content: 'file a.txt\nfile b.txt' }] }
     ]
     expect(trimToolResults(messages)).toEqual(messages)
+  })
+})
+
+// TASKS.md #158: a mid-run steering comment must never fracture the turn it was injected into — these are
+// the two mechanisms that make that true (splitIntoTurns treats it as a continuation; normalizeUserNotesForWire
+// makes it read as ordinary text to the model without changing what's persisted/shown).
+describe('splitIntoTurns treats a user_note as a continuation, not a new turn (#158)', () => {
+  it('keeps a user_note-only message in the same turn as the assistant round it was injected into', () => {
+    const messages: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'original request' }] },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'c1', name: 'shell_execute', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'c1', content: 'output' }] },
+      { role: 'user', content: [{ type: 'user_note', text: 'wrong path, try the other table' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'ok, adjusting' }] }
+    ]
+    const turns = splitIntoTurns(messages)
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toHaveLength(5)
+  })
+
+  it('an ordinary role:user text message still starts a genuinely new turn (the marker is not overbroad)', () => {
+    const messages: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'first request' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'first answer' }] },
+      { role: 'user', content: [{ type: 'text', text: 'second, unrelated request' }] }
+    ]
+    const turns = splitIntoTurns(messages)
+    expect(turns).toHaveLength(2)
+  })
+})
+
+describe('normalizeUserNotesForWire (#158)', () => {
+  it('converts a user_note block to plain text, leaving everything else untouched', () => {
+    const messages: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+      { role: 'user', content: [{ type: 'user_note', text: 'wrong path, try the other table' }] },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'c1', name: 'read_file', input: { path: 'a.txt' } }] }
+    ]
+    const normalized = normalizeUserNotesForWire(messages)
+    expect(normalized[1].content[0]).toEqual({ type: 'text', text: 'wrong path, try the other table' })
+    expect(normalized[0]).toEqual(messages[0])
+    expect(normalized[2]).toEqual(messages[2])
+    // Original input untouched.
+    expect(messages[1].content[0]).toEqual({ type: 'user_note', text: 'wrong path, try the other table' })
   })
 })
 

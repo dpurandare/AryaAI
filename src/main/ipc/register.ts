@@ -156,6 +156,11 @@ function ensureRuntimeFor(root: string, opts: { repair?: boolean } = {}): Promis
 const pendingConfirmations = new Map<string, (decision: ConfirmDecision) => void>()
 const pendingLimitDecisions = new Map<string, (decision: LimitDecision) => void>()
 const activeStreams = new Map<string, AbortController>()
+/** TASKS.md #158: comments submitted via ChatSteer for a still-running stream, keyed the same way as
+ * activeStreams (per-streamId) — drained non-blockingly by the Orchestrator's own runLoop between rounds
+ * (see drainSteeringComments), never awaited/blocked on here. Cleared in ChatSend's own `.finally()` below
+ * alongside activeStreams so nothing leaks past the stream it belonged to. */
+const pendingSteeringComments = new Map<string, string[]>()
 
 /**
  * Central place where every ipcMain.handle/on channel is registered.
@@ -482,7 +487,10 @@ export function registerIpcHandlers(): void {
           enqueueMessage(record.id, sessionId, record.content)
           emit(sender, { streamId, sessionId, event: { type: 'warning', message, failureCategory: 'communication_failure' } })
         })
-        .finally(() => activeStreams.delete(streamId))
+        .finally(() => {
+          activeStreams.delete(streamId)
+          pendingSteeringComments.delete(streamId)
+        })
       return { streamId }
     }
   )
@@ -491,6 +499,18 @@ export function registerIpcHandlers(): void {
     // A no-op if the stream already finished — same defensive shape as
     // ToolConfirmRespond's "no matching pending entry" handling below.
     activeStreams.get(streamId)?.abort()
+  })
+
+  ipcMain.handle(IpcChannel.ChatSteer, (_event, streamId: string, comment: string) => {
+    // TASKS.md #158. A no-op (nothing thrown) if the stream already finished by the time this arrives —
+    // same "harmless if stale" shape as ChatCancel above; the comment is simply never drained. Only
+    // queues it — persistence happens when runLoop actually drains and injects it (see Orchestrator's
+    // drainSteeringComments option), not here, so a comment is never persisted twice.
+    const text = comment.trim()
+    if (!text || !activeStreams.has(streamId)) return
+    const list = pendingSteeringComments.get(streamId) ?? []
+    list.push(text)
+    pendingSteeringComments.set(streamId, list)
   })
 
   ipcMain.handle(
@@ -713,7 +733,13 @@ async function runChat(
         apis: listApiConnections().length,
         email: listEmailConnections().length,
         mcp: new Set(toolRegistry.list().flatMap((t) => (t.mcp ? [t.mcp.server] : []))).size
-      })
+      }),
+      // TASKS.md #158 — drains and clears whatever ChatSteer queued for this stream since the last check.
+      drainSteeringComments: () => {
+        const list = pendingSteeringComments.get(streamId) ?? []
+        pendingSteeringComments.set(streamId, [])
+        return list
+      }
     }
   )
 

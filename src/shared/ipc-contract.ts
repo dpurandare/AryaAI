@@ -74,6 +74,8 @@ export const IpcChannel = {
 
   ChatSend: 'chat:send',
   ChatCancel: 'chat:cancel',
+  /** TASKS.md #158: appends a mid-run steering comment for the given streamId — distinct from ChatSend, since it never starts a second run. */
+  ChatSteer: 'chat:steer',
   ChatStreamEvent: 'chat:stream-event',
 
   ToolConfirmRequest: 'tools:confirm-request',

@@ -34,9 +34,9 @@
    */
   interface DisplaySegment {
     id: string
-    kind: 'text' | 'tool' | 'warning'
+    kind: 'text' | 'tool' | 'warning' | 'user_note'
     agentRole?: AgentRole
-    /** Holds the plain message for both 'text' and 'warning' kinds. */
+    /** Holds the plain message for 'text', 'warning' and 'user_note' kinds. */
     text?: string
     toolCall?: ToolCallDisplay
   }
@@ -198,11 +198,19 @@
     for (const m of records) {
       // An `image` block (TASKS.md #82) rides alongside its `show_media`
       // call's own `tool_result` in the same synthetic message — still a
-      // continuation of the round that produced it, not a new turn.
+      // continuation of the round that produced it, not a new turn. A
+      // `user_note` (TASKS.md #158, a mid-run steering comment) is the same
+      // shape of continuation, appended to the message already in progress
+      // rather than starting a new bubble of its own.
       const isPureToolResult =
-        m.content.length > 0 && m.content.every((b) => b.type === 'tool_result' || b.type === 'image')
+        m.content.length > 0 && m.content.every((b) => b.type === 'tool_result' || b.type === 'image' || b.type === 'user_note')
       if (isPureToolResult) {
         for (const b of m.content) {
+          if (b.type === 'user_note') {
+            const prev = result[result.length - 1]
+            prev?.segments.push({ id: crypto.randomUUID(), kind: 'user_note', text: b.text })
+            continue
+          }
           if (b.type !== 'tool_result' && b.type !== 'image') continue
           const seg = toolSegmentsById.get(b.toolUseId)
           if (!seg?.toolCall) continue
@@ -379,6 +387,10 @@
           agentRole: event.agentRole,
           text: event.message
         })
+      } else if (event.type === 'user_note') {
+        // TASKS.md #158: a mid-run steering comment, streamed alongside the matching persisted message —
+        // appended inline to the ongoing assistant message, same placement `warning` already uses.
+        msg.segments.push({ id: crypto.randomUUID(), kind: 'user_note', text: event.text })
       } else if (event.type === 'plan') {
         msg.plan = { steps: event.steps, stepStatus: event.steps.map(() => 'pending') }
       } else if (event.type === 'plan_step_start') {
@@ -414,6 +426,15 @@
     // instead of leaving the composer replaced until that round-trips.
     runtime.pendingConfirm = null
     runtime.pendingLimit = null
+  }
+
+  /** TASKS.md #158: drops a correcting comment into the active run without cancelling it — always scoped to
+   * the currently-shown session's own stream, same reasoning as stopGeneration above. A no-op if nothing is
+   * actually running (currentStreamId unset) — the composer only offers this while `sending` is true anyway. */
+  function steerGeneration(text: string): void {
+    const runtime = runtimes[activeId]
+    if (!runtime?.currentStreamId) return
+    window.sachiv.steerChat(runtime.currentStreamId, text)
   }
 
   function approveTool(input: Record<string, unknown>): void {
@@ -749,6 +770,7 @@
         sending={activeRuntime.sending}
         onSend={sendMessage}
         onStop={stopGeneration}
+        onSteer={steerGeneration}
         {providers}
         {providerId}
         model={currentModel}

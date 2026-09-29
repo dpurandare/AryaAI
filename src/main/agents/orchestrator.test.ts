@@ -3394,6 +3394,110 @@ describe('Orchestrator (integration, mocked provider)', () => {
     })
   })
 
+  describe('mid-run steering (#158)', () => {
+    it('injects a drained comment between rounds: model sees plain text, persisted form keeps user_note, and a live event is streamed', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+
+      let drainCalls = 0
+      const drainSteeringComments = (): string[] => {
+        drainCalls++
+        // Nothing pending before round 1; one comment ready before round 2.
+        return drainCalls === 2 ? ['wrong path, try code/ instead'] : []
+      }
+
+      const turns: ScriptedTurn[] = [
+        { toolCalls: [{ id: 'call1', name: 'list_directory', input: { path: '.' } }], stopReason: 'tool_use' },
+        { toolCalls: [{ id: 'call2', name: 'list_directory', input: { path: 'code' } }], stopReason: 'tool_use' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false, drainSteeringComments }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'list things' }] }])
+
+      // The model's OWN request for round 2 (built after the drain) shows the note as ordinary text, never
+      // the internal user_note type — normalizeUserNotesForWire applied right before the wire.
+      const round2Request = provider.requests[1]
+      const round2UserTexts = round2Request.messages
+        .filter((m) => m.role === 'user')
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
+        .map((b) => b.text)
+      expect(round2UserTexts).toContain('wrong path, try code/ instead')
+      expect(round2Request.messages.flatMap((m) => m.content).some((b) => b.type === 'user_note')).toBe(false)
+
+      // The persisted form (what ipc/register.ts's generic insertMessage/enqueueMessage handling receives)
+      // keeps the real user_note type, not normalized away — that's what lets splitIntoTurns/the renderer
+      // recognize it later.
+      const persistedNote = events.find(
+        (e) => e.kind === 'message' && e.role === 'user' && e.content.some((b) => b.type === 'user_note')
+      )
+      expect(persistedNote).toBeDefined()
+      if (persistedNote?.kind === 'message') {
+        expect(persistedNote.content).toEqual([{ type: 'user_note', text: 'wrong path, try code/ instead' }])
+      }
+
+      // A live stream event fires too, so the UI shows it inline without waiting for a reload.
+      const liveNoteEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'user_note')
+      expect(liveNoteEvent).toBeDefined()
+      if (liveNoteEvent?.kind === 'stream' && liveNoteEvent.event.type === 'user_note') {
+        expect(liveNoteEvent.event.text).toBe('wrong path, try code/ instead')
+      }
+    })
+
+    it('never drains steering comments for a nested specialist\'s own rounds, only the top-level orchestrator\'s', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+
+      let drainCalls = 0
+      const drainSteeringComments = (): string[] => {
+        drainCalls++
+        return []
+      }
+
+      const turns: ScriptedTurn[] = [
+        // Round 1 (top-level): delegate to coding.
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'list files' } }] },
+        // Round 2 (nested, agentRole coding): a tool call.
+        { toolCalls: [{ id: 'call_ls', name: 'list_directory', input: { path: '.' } }], stopReason: 'tool_use' },
+        // Round 3 (nested, agentRole coding): wrap-up, end_turn.
+        { text: 'Listed.', stopReason: 'end_turn' },
+        // Round 4 (top-level): final reply, end_turn.
+        { text: 'The specialist listed the files.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false, drainSteeringComments }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'please list files' }] }])
+
+      // 4 total rounds ran (confirmed by the 4 scripted turns above all being consumed), but only the 2
+      // TOP-LEVEL rounds (1 and 4) should have checked for a pending steering comment — the 2 nested
+      // specialist rounds (2 and 3) must not.
+      expect(drainCalls).toBe(2)
+    })
+  })
+
   describe('collapsing near-duplicate tool results by URL overlap (context-bloat fix)', () => {
     // Both scripts stay at 3 calls (== MAX_KEPT_RESULTS_PER_TOOL), so the
     // separate pure-recency cap (capRepeatedToolResults, tested above) never

@@ -9,9 +9,9 @@ import { IpcChannel, type SessionExportResult } from '@shared/ipc-contract'
 import { listMessages, type MessageRecord } from '../db/messages'
 import { listSessions, type SessionRecord } from '../db/sessions'
 
-/** A pure-tool_result message is the continuation of the tool call just shown, not a new turn — same convention already used by App.svelte/prepare-context.ts. An `image` block (TASKS.md #82) rides alongside its `show_media` call's own `tool_result` in the same message, so it counts as a continuation too. */
+/** A pure-tool_result message is the continuation of the tool call just shown, not a new turn — same convention already used by App.svelte/prepare-context.ts. An `image` block (TASKS.md #82) rides alongside its `show_media` call's own `tool_result` in the same message, so it counts as a continuation too. A `user_note` (TASKS.md #158, a mid-run steering comment) is the same shape of continuation. */
 function isPureToolResult(message: MessageRecord): boolean {
-  return message.content.length > 0 && message.content.every((b) => b.type === 'tool_result' || b.type === 'image')
+  return message.content.length > 0 && message.content.every((b) => b.type === 'tool_result' || b.type === 'image' || b.type === 'user_note')
 }
 
 function blockToMarkdown(block: ContentBlock): string {
@@ -30,6 +30,9 @@ function blockToMarkdown(block: ContentBlock): string {
     // The path only, not the base64 payload — keeps a Markdown export
     // lightweight rather than inlining a multi-MB data URI into a text file.
     return `> 🖼️ Displayed image: ${block.path}`
+  }
+  if (block.type === 'user_note') {
+    return `> 💬 **Mid-run note:** ${block.text}`
   }
   const label = block.isError ? '⚠️ Error' : '→ Result'
   return `> ${label}: ${block.content}`

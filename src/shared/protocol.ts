@@ -23,6 +23,18 @@ export type ContentBlock =
     }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
   /**
+   * TASKS.md #158: a user comment injected mid-run, between rounds — the user spotted the model heading
+   * down a wrong path and dropped in a correction without waiting for the whole turn or hitting Stop. A
+   * distinct type purely for turn-boundary and UI-rendering purposes: the MODEL sees it as ordinary text
+   * (`normalizeUserNotesForWire`, context/prepare-context.ts, converts it right before the request is sent),
+   * and it never starts a new turn boundary the way an ordinary `role: 'user'` message would (`splitIntoTurns`,
+   * same file, treats a message made only of these — like `tool_result`/`image` — as a continuation of the
+   * turn already running) — inserting it as a plain `text` block would have fractured `search_history`'s
+   * embedding (#52) and every turn-scoped mechanism (the sliding window, #149's own per-turn cap) into
+   * thinking a second, unrelated top-level request had started mid-turn.
+   */
+  | { type: 'user_note'; text: string }
+  /**
    * A non-fatal problem worth surfacing rather than silently absorbing —
    * e.g. a round truncated by hitting its output-token limit before
    * finishing, or the classify-and-plan pass failing to produce a usable
@@ -83,6 +95,8 @@ export type StreamEvent =
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
   /** Live counterpart of `ContentBlock`'s `image` — see its own doc comment. Streamed once, alongside the `show_media` call's own `tool_result`. */
   | { type: 'image'; toolUseId: string; path: string; mimeType: string; dataBase64: string; agentRole?: AgentRole }
+  /** Live counterpart of `ContentBlock`'s `user_note` — see its own doc comment (TASKS.md #158). Streamed once, alongside the matching persisted message. */
+  | { type: 'user_note'; text: string }
   /** `agentRole` set means this is a nested specialist's own round ending, not the whole exchange — the renderer must not treat it as final. */
   | {
       type: 'message_stop'

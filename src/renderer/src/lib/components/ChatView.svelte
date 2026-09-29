@@ -22,9 +22,9 @@ import { formatToolInputForDisplay } from '../tool-input-display'
 
   interface DisplaySegment {
     id: string
-    kind: 'text' | 'tool' | 'warning'
+    kind: 'text' | 'tool' | 'warning' | 'user_note'
     agentRole?: AgentRole
-    /** Holds the plain message for both 'text' and 'warning' kinds. */
+    /** Holds the plain message for 'text', 'warning' and 'user_note' kinds. */
     text?: string
     toolCall?: ToolCallDisplay
   }
@@ -71,7 +71,8 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     onToggleAutoApproveRule,
     pendingLimit,
     onRespondLimit,
-    roleRoster = []
+    roleRoster = [],
+    onSteer
   }: {
     messages: DisplayMessage[]
     statusLine: string
@@ -115,9 +116,22 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     /** Same idea as pendingConfirm, for a different question — a round/time budget ran out and the orchestrator is waiting to hear whether to keep going (see orchestrator.ts's askToContinue) rather than silently wrapping up. Mutually exclusive with pendingConfirm in the composer-area render below. */
     pendingLimit: LimitReachedRequestPayload | null
     onRespondLimit: (continueWorking: boolean) => void
+    /** TASKS.md #158: drop a correcting comment in while the orchestrator is actively working, without
+     * waiting for the whole turn or hitting Stop — a softer, non-destructive alternative to Stop. */
+    onSteer: (text: string) => void
   } = $props()
 
   let draft = $state('')
+  /** TASKS.md #158: separate from `draft` so an in-progress note doesn't clobber (or get clobbered by) the
+   * next real message's own draft, which the composer reverts to showing the moment `sending` goes false. */
+  let steerDraft = $state('')
+
+  function steer(): void {
+    const text = steerDraft.trim()
+    if (!text) return
+    steerDraft = ''
+    onSteer(text)
+  }
 
   // Drag-to-resize the composer, matching the sidebar's own resize-handle
   // pattern (App.svelte's startSidebarResize) instead of the textarea's
@@ -441,6 +455,10 @@ import { formatToolInputForDisplay } from '../tool-input-display'
             {/if}
           {:else if segment.kind === 'warning'}
             <div class="warning-note">⚠️ {segment.text}</div>
+          {:else if segment.kind === 'user_note'}
+            <!-- TASKS.md #158: a mid-run steering comment — visually distinct from both the assistant's own
+                 text and a warning, since it's the user's own words injected partway through. -->
+            <div class="user-note">💬 <strong>Note added mid-run:</strong> {segment.text}</div>
           {/if}
         {/each}
         {#if message.pending}
@@ -498,13 +516,31 @@ import { formatToolInputForDisplay } from '../tool-input-display'
           <button type="button" class="primary" onclick={() => onRespondLimit(true)}>Continue</button>
         </div>
       </div>
+    {:else if sending}
+      <!-- TASKS.md #158: while a turn is running, the composer becomes a steering-note input instead of a
+           frozen, disabled box — Enter sends a correcting comment (onSteer), not a new turn. Stop stays
+           available alongside it, unchanged, for a hard abort. -->
+      <form class="composer" onsubmit={(e) => (e.preventDefault(), steer())}>
+        <textarea
+          bind:value={steerDraft}
+          style="height: {composerHeight}px"
+          placeholder="Add a note while this is running (Enter to send) — Stop to cancel instead"
+          onkeydown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              steer()
+            }
+          }}
+        ></textarea>
+        <button class="send steer" type="submit" disabled={!steerDraft.trim()} aria-label="Add note">💬</button>
+        <button class="send stop" type="button" onclick={onStop} aria-label="Stop generating">⏹</button>
+      </form>
     {:else}
       <form class="composer" onsubmit={(e) => (e.preventDefault(), submit())}>
         <textarea
           bind:value={draft}
           style="height: {composerHeight}px"
           placeholder="Message Sachivji..."
-          disabled={sending}
           onkeydown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
@@ -518,11 +554,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
             }
           }}
         ></textarea>
-        {#if sending}
-          <button class="send stop" type="button" onclick={onStop} aria-label="Stop generating">⏹</button>
-        {:else}
-          <button class="send" type="submit" disabled={!draft.trim()} aria-label="Send">↵</button>
-        {/if}
+        <button class="send" type="submit" disabled={!draft.trim()} aria-label="Send">↵</button>
       </form>
     {/if}
 
@@ -765,6 +797,17 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     font-size: 0.82rem;
     background: color-mix(in srgb, var(--warn) 10%, transparent);
   }
+  /* TASKS.md #158: same shape as .warning-note but in --accent, so a mid-run steering note reads as
+     "the user said this," not as a problem the app is flagging. */
+  .user-note {
+    margin-bottom: 0.4rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    color: var(--accent);
+    font-size: 0.82rem;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
   .plan-checklist {
     display: flex;
     flex-direction: column;
@@ -926,6 +969,13 @@ import { formatToolInputForDisplay } from '../tool-input-display'
   .send:disabled {
     opacity: 0.35;
     cursor: default;
+  }
+  /* TASKS.md #158: a lighter, outline treatment vs. .stop's solid fill — Stop (the more consequential,
+     destructive action) should read as the primary control; Add-note is the secondary, softer one. */
+  .send.steer {
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
   }
   .status-bar {
     display: flex;

@@ -4,7 +4,14 @@ import type { AgentRole } from '@shared/agents'
 import { PLANNABLE_ROLES, roleLabel, type RoleMeta } from '@shared/agents'
 import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
 import { evaluateClassifyGate, shouldSampleForCalibration, type ClassifyGateVerdict } from './classify-gate'
-import { CONTEXT_BUDGET_FRACTION, LISTING_TOOL_NAMES, overheadTokens, resolveContextWindow, splitIntoTurns } from '../context/prepare-context'
+import {
+  CONTEXT_BUDGET_FRACTION,
+  LISTING_TOOL_NAMES,
+  normalizeUserNotesForWire,
+  overheadTokens,
+  resolveContextWindow,
+  splitIntoTurns
+} from '../context/prepare-context'
 import { isRateLimitError, retryAfterMsFromError } from '../providers/rate-limit'
 import type { ModelProvider, ToolDefinition } from '../providers/types'
 import { SHOW_MEDIA_MARKER, type ShowMediaPayload } from '../tools/show-media'
@@ -821,6 +828,18 @@ export class Orchestrator {
        * core honest (design 3.1). Optional/no-op by default — this file stays DB-free (see this class's own doc comment).
        */
       logToolUse?: (sample: { tool: string; agentRole: string }) => void
+      /**
+       * TASKS.md #158: returns and clears whatever mid-run steering comments have arrived since the last
+       * drain — polled non-blockingly at the top of every TOP-LEVEL round (never a nested specialist's own
+       * rounds; delegation is structurally one level only, and routing a steering comment down through an
+       * active delegate call is real additional scope this pass doesn't cover). Optional/absent (tests,
+       * anything that doesn't care) = no-op, matching every other optional callback here. `runLoop` persists
+       * a drained comment itself via the same `yield { kind: 'message', ... }` path every other message
+       * already goes through (ipc/register.ts's generic insertMessage/enqueueMessage handling) — this file
+       * never calls a DB function directly, same as always. A comment submitted but never drained (the run
+       * ends before its next round starts) is a known, accepted gap for this first pass.
+       */
+      drainSteeringComments?: () => string[]
     } = { planningEnabled: false }
   ) {}
 
@@ -1619,6 +1638,19 @@ export class Orchestrator {
       state.roundsUsed++
       localRound++
 
+      // TASKS.md #158: between-rounds checkpoint for a mid-run steering comment — top-level only (see the
+      // drainSteeringComments option's own doc comment for why nested specialist rounds don't check this).
+      // Non-blocking: nothing pending is the overwhelmingly common case, so this never delays a round.
+      if (isTopLevel) {
+        const steeringComments = this.options.drainSteeringComments?.() ?? []
+        if (steeringComments.length > 0) {
+          const noteText = steeringComments.join('\n')
+          conversation.push({ role: 'user', content: [{ type: 'user_note', text: noteText }] })
+          yield { kind: 'stream', event: { type: 'user_note', text: noteText } }
+          yield { kind: 'message', role: 'user', content: [{ type: 'user_note', text: noteText }] }
+        }
+      }
+
       yield {
         kind: 'stream',
         event: tagEvent(
@@ -1638,12 +1670,16 @@ export class Orchestrator {
       // double/triple-count if they summed the raw events.
       let roundUsage: { inputTokens: number; outputTokens: number } | undefined
 
-      let messagesToSend = await this.refitConversationToBudget(
-        capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
-        toolByName,
-        systemPrompt,
-        toolDefs,
-        state
+      // normalizeUserNotesForWire applied last, right before the wire — a user_note reads as ordinary text to
+      // the model; every earlier step in this pipeline only needs to know about tool_result/tool_use shapes.
+      let messagesToSend = normalizeUserNotesForWire(
+        await this.refitConversationToBudget(
+          capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
+          toolByName,
+          systemPrompt,
+          toolDefs,
+          state
+        )
       )
       if (nudgeAfterEmptyRound) {
         messagesToSend = [...messagesToSend, { role: 'user', content: [{ type: 'text', text: EMPTY_RESPONSE_NUDGE }] }]
@@ -2003,12 +2039,14 @@ export class Orchestrator {
       'than attempting anything further.'
     // The wrap-up call is exactly the scenario #98 (see refitConversationToBudget) exists for —
     // reached after exhausting rounds/a whole plan, so `conversation` is at its largest for the turn.
-    const wrapUpMessages = await this.refitConversationToBudget(
-      capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
-      toolByName,
-      wrapUpSystem,
-      [],
-      state
+    const wrapUpMessages = normalizeUserNotesForWire(
+      await this.refitConversationToBudget(
+        capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
+        toolByName,
+        wrapUpSystem,
+        [],
+        state
+      )
     )
     // A one-shot call with no retry of its own, so no escalation applies — same as classifyAndPlan.
     const wrapUpTimer = this.startRoundTimer(state.deadlineAt, 0)

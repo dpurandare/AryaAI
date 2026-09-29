@@ -136,6 +136,8 @@ const api = {
   ): Promise<{ streamId: string }> =>
     ipcRenderer.invoke(IpcChannel.ChatSend, sessionId, text, forcedRole ?? null),
   cancelChat: (streamId: string): Promise<void> => ipcRenderer.invoke(IpcChannel.ChatCancel, streamId),
+  steerChat: (streamId: string, comment: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.ChatSteer, streamId, comment),
 
   onChatStreamEvent: (callback: (payload: ChatStreamEventPayload) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, payload: ChatStreamEventPayload): void =>
