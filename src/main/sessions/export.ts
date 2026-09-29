@@ -34,6 +34,9 @@ function blockToMarkdown(block: ContentBlock): string {
   if (block.type === 'user_note') {
     return `> 💬 **Mid-run note:** ${block.text}`
   }
+  if (block.type === 'thinking') {
+    return `> 🧠 *Thinking:* ${block.text}`
+  }
   const label = block.isError ? '⚠️ Error' : '→ Result'
   return `> ${label}: ${block.content}`
 }

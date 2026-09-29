@@ -22,9 +22,9 @@ import { formatToolInputForDisplay } from '../tool-input-display'
 
   interface DisplaySegment {
     id: string
-    kind: 'text' | 'tool' | 'warning' | 'user_note'
+    kind: 'text' | 'tool' | 'warning' | 'user_note' | 'thinking'
     agentRole?: AgentRole
-    /** Holds the plain message for 'text', 'warning' and 'user_note' kinds. */
+    /** Holds the plain message for 'text', 'warning', 'user_note' and 'thinking' kinds. */
     text?: string
     toolCall?: ToolCallDisplay
   }
@@ -298,6 +298,32 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     if (!toolDetailsExpanded) return
     toolBlockOverride[segmentId] = !isToolBlockExpanded(segmentId)
   }
+
+  /**
+   * TASKS.md #147 — same pattern as `lastToolSegmentId`/`isToolBlockExpanded`/`toggleToolBlock` above,
+   * reusing the shared `toolDetailsExpanded` toggle and `toolBlockOverride` map rather than a new
+   * convention (segment ids never collide across kinds, so one override map safely serves both). Tracked
+   * separately from `lastToolSegmentId` since "most recent thinking block" and "most recent tool call" are
+   * different things that can both legitimately want to default open at once.
+   */
+  let lastThinkingSegmentId = $derived.by((): string | undefined => {
+    let last: string | undefined
+    for (const m of messages) {
+      for (const s of m.segments) {
+        if (s.kind === 'thinking') last = s.id
+      }
+    }
+    return last
+  })
+
+  function isThinkingBlockExpanded(segmentId: string): boolean {
+    return toolDetailsExpanded && (toolBlockOverride[segmentId] ?? segmentId === lastThinkingSegmentId)
+  }
+
+  function toggleThinkingBlock(segmentId: string): void {
+    if (!toolDetailsExpanded) return
+    toolBlockOverride[segmentId] = !isThinkingBlockExpanded(segmentId)
+  }
 </script>
 
 <div class="chat-view">
@@ -436,6 +462,36 @@ import { formatToolInputForDisplay } from '../tool-input-display'
                 <div class="tool-result pending">
                   Delegating to {label(delegateRole)} agent…
                 </div>
+              {/if}
+            </div>
+          {:else if segment.kind === 'thinking'}
+            <!-- TASKS.md #147: real model reasoning, collapsed by default — reuses #72/#88's tool-output
+                 collapse toggle/state rather than a new convention (isThinkingBlockExpanded/toggleThinkingBlock). -->
+            {@const showFull = isThinkingBlockExpanded(segment.id)}
+            {@const thinkingClickable = toolDetailsExpanded}
+            <div class="thinking-block" class:collapsed={!showFull}>
+              <svelte:element
+                this={thinkingClickable ? 'button' : 'div'}
+                class="thinking-head"
+                class:clickable={thinkingClickable}
+                type={thinkingClickable ? 'button' : undefined}
+                role={thinkingClickable ? 'button' : undefined}
+                onclick={thinkingClickable ? () => toggleThinkingBlock(segment.id) : undefined}
+              >
+                <span class="thinking-icon">🧠</span>
+                <span class="thinking-label">{showFull ? 'Thinking' : 'Thinking (click to expand)'}</span>
+              </svelte:element>
+              {#if showFull}
+                {@const thinkingPreview = previewOf(segment.text ?? '')}
+                {@const thinkingExpanded = Boolean(expandedIds[segment.id])}
+                <div class="thinking-body">{thinkingExpanded
+                    ? segment.text
+                    : thinkingPreview.text}{#if thinkingPreview.truncated && !thinkingExpanded}…{/if}</div>
+                {#if thinkingPreview.truncated}
+                  <button class="expand-toggle" onclick={() => toggleExpand(segment.id)}>
+                    {thinkingExpanded ? 'Show less' : 'Show more'}
+                  </button>
+                {/if}
               {/if}
             </div>
           {:else if segment.kind === 'text'}
@@ -811,6 +867,51 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     color: var(--accent);
     font-size: 0.82rem;
     background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  /* TASKS.md #147: same collapsible-block shape as .tool-call, styled distinctly (muted/italic) so the
+     model's own reasoning reads as a different kind of thing from an executed tool call or its own answer. */
+  .thinking-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.65rem;
+    margin-bottom: 0.4rem;
+    font-size: 0.78rem;
+  }
+  .thinking-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    text-align: left;
+    width: 100%;
+  }
+  .thinking-head.clickable {
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .thinking-head.clickable:hover {
+    color: var(--text);
+  }
+  .thinking-head.clickable:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .thinking-label {
+    font-style: italic;
+  }
+  .thinking-body {
+    color: var(--text-muted);
+    font-style: italic;
+    white-space: pre-wrap;
   }
   .plan-checklist {
     display: flex;

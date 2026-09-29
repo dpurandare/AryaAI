@@ -3498,6 +3498,93 @@ describe('Orchestrator (integration, mocked provider)', () => {
     })
   })
 
+  describe('real reasoning/thinking content (#147)', () => {
+    it('persists a thinking block before the text block, and streams it live too', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const turns: ScriptedTurn[] = [{ thinking: 'considering the request', text: 'Here is the answer.', stopReason: 'end_turn' }]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      // Live: a real thinking_delta stream event fires, separate from text_delta.
+      expect(events.some((e) => e.kind === 'stream' && e.event.type === 'thinking_delta' && e.event.text === 'considering the request')).toBe(true)
+
+      // Persisted: the thinking block comes before the text block in the same assistant message.
+      const persistedMessage = events.find((e) => e.kind === 'message' && e.role === 'assistant')
+      expect(persistedMessage).toBeDefined()
+      if (persistedMessage?.kind === 'message') {
+        expect(persistedMessage.content).toEqual([
+          { type: 'thinking', text: 'considering the request', agentRole: undefined },
+          { type: 'text', text: 'Here is the answer.', agentRole: undefined }
+        ])
+      }
+    })
+
+    it('never persists a thinking block when nothing was streamed for it', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const turns: ScriptedTurn[] = [{ text: 'Just the answer, no reasoning streamed.', stopReason: 'end_turn' }]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      const persistedMessage = events.find((e) => e.kind === 'message' && e.role === 'assistant')
+      if (persistedMessage?.kind === 'message') {
+        expect(persistedMessage.content.some((b) => b.type === 'thinking')).toBe(false)
+      }
+    })
+
+    it('tags a delegated specialist\'s thinking with its own agentRole, same as text_delta already is', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const turns: ScriptedTurn[] = [
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.txt' } }] },
+        { thinking: 'planning the write', text: 'Writing the file now.', stopReason: 'end_turn' },
+        { text: 'The specialist is done.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'write hello.txt' }] }])
+      const taggedThinking = events.find(
+        (e) => e.kind === 'stream' && e.event.type === 'thinking_delta' && e.event.agentRole === 'coding'
+      )
+      expect(taggedThinking).toBeDefined()
+    })
+  })
+
   describe('collapsing near-duplicate tool results by URL overlap (context-bloat fix)', () => {
     // Both scripts stay at 3 calls (== MAX_KEPT_RESULTS_PER_TOOL), so the
     // separate pure-recency cap (capRepeatedToolResults, tested above) never

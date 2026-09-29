@@ -17,6 +17,8 @@ export interface ScriptedToolCall {
 
 export interface ScriptedTurn {
   text?: string
+  /** TASKS.md #147 — yielded as a single thinking_delta, before `text` (matching real providers, which reason before answering). */
+  thinking?: string
   toolCalls?: ScriptedToolCall[]
   stopReason?: 'end_turn' | 'tool_use' | 'max_tokens'
   /** Yielded twice in a row before message_stop, matching real providers (Anthropic, Gemini) that repeat a cumulative usage total across chunks rather than sending it once — see orchestrator.ts's roundUsage handling. */
@@ -153,6 +155,10 @@ export class MockProvider implements ModelProvider {
       })
       yield { type: 'message_stop', stopReason: 'end_turn' }
       return
+    }
+
+    if (turn.thinking) {
+      yield { type: 'thinking_delta', text: turn.thinking }
     }
 
     if (turn.text) {

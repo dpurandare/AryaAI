@@ -8,6 +8,17 @@ import type { AgentRole } from './agents'
 export type ContentBlock =
   /** `agentRole` set means a specialist (not the orchestrator itself) produced this block — see main/agents/orchestrator.ts. */
   | { type: 'text'; text: string; agentRole?: AgentRole }
+  /**
+   * TASKS.md #147: the model's own real reasoning/chain-of-thought, when the provider streams it as a
+   * distinct signal — Ollama/Groq (`delta.reasoning`/`delta.reasoning_content`, whichever a given
+   * OpenAI-compatible-shaped provider uses) and Gemini (`part.thought`, opt-in via `thinkingConfig.
+   * includeThoughts`). Persisted like `text` so it survives a reload; the renderer collapses it by
+   * default, reusing #72/#88's existing tool-output collapse toggle rather than a new convention.
+   * OpenAI/Anthropic are explicitly out of scope here — OpenAI's reasoning models don't stream raw CoT via
+   * the Chat Completions API this app uses (policy-level), and Anthropic extended thinking is tracked
+   * separately as #159 (needs its own request-shape opt-in and redacted-thinking-block replay rules).
+   */
+  | { type: 'thinking'; text: string; agentRole?: AgentRole }
   | {
       type: 'tool_use'
       id: string
@@ -89,6 +100,8 @@ export interface Message {
 
 export type StreamEvent =
   | { type: 'text_delta'; text: string; agentRole?: AgentRole }
+  /** Live counterpart of `ContentBlock`'s `thinking` — see its own doc comment (TASKS.md #147). Providers emit this incrementally, same as `text_delta`. */
+  | { type: 'thinking_delta'; text: string; agentRole?: AgentRole }
   | { type: 'tool_use_start'; id: string; name: string; agentRole?: AgentRole; thoughtSignature?: string }
   | { type: 'tool_use_delta'; id: string; partialInput: string }
   /** Synthesized by the main process once a tool call finishes running — not emitted by providers. */

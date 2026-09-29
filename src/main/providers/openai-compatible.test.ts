@@ -115,6 +115,39 @@ describe('streamOpenAICompatible', () => {
     const events = await collect(streamOpenAICompatible(client, baseRequest))
     expect(events).toEqual([{ type: 'message_stop', stopReason: 'end_turn' }])
   })
+
+  // TASKS.md #147: Ollama and Groq stream real reasoning content on this shared path, under different
+  // field names not in the official OpenAI Chat Completions type — both are checked, not just one.
+  it('emits thinking_delta for delta.reasoning (one real observed field name)', async () => {
+    const client = fakeClient([{ choices: [{ delta: { reasoning: 'let me think' } }] }])
+    const events = await collect(streamOpenAICompatible(client, baseRequest))
+    expect(events).toEqual([
+      { type: 'thinking_delta', text: 'let me think' },
+      { type: 'message_stop', stopReason: 'end_turn' }
+    ])
+  })
+
+  it('emits thinking_delta for delta.reasoning_content (the other real observed field name)', async () => {
+    const client = fakeClient([{ choices: [{ delta: { reasoning_content: 'considering options' } }] }])
+    const events = await collect(streamOpenAICompatible(client, baseRequest))
+    expect(events).toEqual([
+      { type: 'thinking_delta', text: 'considering options' },
+      { type: 'message_stop', stopReason: 'end_turn' }
+    ])
+  })
+
+  it('keeps thinking_delta and text_delta as genuinely separate events, in the order the server sent them', async () => {
+    const client = fakeClient([
+      { choices: [{ delta: { reasoning: 'thinking first' } }] },
+      { choices: [{ delta: { content: 'then the real answer' } }] }
+    ])
+    const events = await collect(streamOpenAICompatible(client, baseRequest))
+    expect(events).toEqual([
+      { type: 'thinking_delta', text: 'thinking first' },
+      { type: 'text_delta', text: 'then the real answer' },
+      { type: 'message_stop', stopReason: 'end_turn' }
+    ])
+  })
 })
 
 describe('streamOpenAICompatible structured output', () => {

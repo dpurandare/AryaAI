@@ -119,6 +119,17 @@ export async function* streamOpenAICompatible(
       yield { type: 'text_delta', text: choice.delta.content }
     }
 
+    // TASKS.md #147: Ollama and Groq stream real reasoning content on this shared OpenAI-compatible path,
+    // but under different field names (not in the official OpenAI Chat Completions type, hence the cast) —
+    // `reasoning` and `reasoning_content` are both real, observed field names across OpenAI-compatible-
+    // shaped providers, so both are checked rather than picking one and silently missing the other.
+    const reasoning = (choice?.delta as { reasoning?: string; reasoning_content?: string } | undefined)?.reasoning
+    const reasoningContent = (choice?.delta as { reasoning?: string; reasoning_content?: string } | undefined)?.reasoning_content
+    const thinkingText = reasoning || reasoningContent
+    if (thinkingText) {
+      yield { type: 'thinking_delta', text: thinkingText }
+    }
+
     for (const call of choice?.delta?.tool_calls ?? []) {
       if (call.id && call.function?.name) {
         toolCalls.set(call.index, { id: call.id, name: call.function.name })

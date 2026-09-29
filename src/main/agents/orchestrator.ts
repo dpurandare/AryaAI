@@ -575,6 +575,7 @@ function roleFromDelegateName(name: string, agents: Map<AgentRole, Agent>): Agen
 function tagEvent(event: StreamEvent, agentRole: AgentRole | undefined): StreamEvent {
   if (!agentRole) return event
   if (event.type === 'text_delta') return { ...event, agentRole }
+  if (event.type === 'thinking_delta') return { ...event, agentRole }
   if (event.type === 'tool_use_start') return { ...event, agentRole }
   if (event.type === 'status') return { ...event, agentRole }
   if (event.type === 'warning') return { ...event, agentRole }
@@ -1660,6 +1661,9 @@ export class Orchestrator {
       }
 
       let assistantText = ''
+      // TASKS.md #147: separate from assistantText, same reasoning as why tool calls get their own array —
+      // a provider's real thinking content is a genuinely different signal from its final answer text.
+      let assistantThinking = ''
       const toolCalls: AccumulatedToolCall[] = []
       const toolCallsById = new Map<string, AccumulatedToolCall>()
       let stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'aborted' = 'end_turn'
@@ -1698,6 +1702,8 @@ export class Orchestrator {
         })) {
           if (event.type === 'text_delta') {
             assistantText += event.text
+          } else if (event.type === 'thinking_delta') {
+            assistantThinking += event.text
           } else if (event.type === 'tool_use_start') {
             const call: AccumulatedToolCall = {
               id: event.id,
@@ -1860,6 +1866,9 @@ export class Orchestrator {
       }
 
       const assistantBlocks: ContentBlock[] = []
+      // TASKS.md #147: pushed before the text block — reasoning precedes the final answer, both
+      // conceptually and in how it should render.
+      if (assistantThinking) assistantBlocks.push({ type: 'thinking', text: assistantThinking, agentRole })
       if (assistantText) assistantBlocks.push({ type: 'text', text: assistantText, agentRole })
       if (stopReason === 'max_tokens') {
         // Found live against gpt-oss (empty response) before this existed —

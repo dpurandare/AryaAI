@@ -34,9 +34,9 @@
    */
   interface DisplaySegment {
     id: string
-    kind: 'text' | 'tool' | 'warning' | 'user_note'
+    kind: 'text' | 'tool' | 'warning' | 'user_note' | 'thinking'
     agentRole?: AgentRole
-    /** Holds the plain message for 'text', 'warning' and 'user_note' kinds. */
+    /** Holds the plain message for 'text', 'warning', 'user_note' and 'thinking' kinds. */
     text?: string
     toolCall?: ToolCallDisplay
   }
@@ -228,6 +228,8 @@
       for (const b of m.content) {
         if (b.type === 'text') {
           segments.push({ id: crypto.randomUUID(), kind: 'text', agentRole: b.agentRole, text: b.text })
+        } else if (b.type === 'thinking') {
+          segments.push({ id: crypto.randomUUID(), kind: 'thinking', agentRole: b.agentRole, text: b.text })
         } else if (b.type === 'warning') {
           segments.push({ id: crypto.randomUUID(), kind: 'warning', agentRole: b.agentRole, text: b.message })
         } else if (b.type === 'tool_use') {
@@ -293,13 +295,13 @@
     await window.sachiv.exportSession(id)
   }
 
-  /** Appends to the trailing segment if it's the same kind+speaker, else starts a new one — keeps consecutive same-speaker text as one flowing block. */
-  function appendTextSegment(msg: DisplayMessage, text: string, agentRole?: AgentRole): void {
+  /** Appends to the trailing segment if it's the same kind+speaker, else starts a new one — keeps consecutive same-speaker text (or, #147, thinking) as one flowing block. */
+  function appendDeltaSegment(msg: DisplayMessage, kind: 'text' | 'thinking', text: string, agentRole?: AgentRole): void {
     const last = msg.segments[msg.segments.length - 1]
-    if (last && last.kind === 'text' && last.agentRole === agentRole) {
+    if (last && last.kind === kind && last.agentRole === agentRole) {
       last.text = (last.text ?? '') + text
     } else {
-      msg.segments.push({ id: crypto.randomUUID(), kind: 'text', agentRole, text })
+      msg.segments.push({ id: crypto.randomUUID(), kind, agentRole, text })
     }
   }
 
@@ -349,7 +351,9 @@
       if (event.type === 'status') {
         msg.statusText = event.message
       } else if (event.type === 'text_delta') {
-        appendTextSegment(msg, event.text, event.agentRole)
+        appendDeltaSegment(msg, 'text', event.text, event.agentRole)
+      } else if (event.type === 'thinking_delta') {
+        appendDeltaSegment(msg, 'thinking', event.text, event.agentRole)
       } else if (event.type === 'tool_use_start') {
         msg.segments.push({
           id: crypto.randomUUID(),
@@ -398,7 +402,7 @@
       } else if (event.type === 'plan_step_done') {
         if (msg.plan) msg.plan.stepStatus[event.index] = event.isError ? 'error' : 'done'
       } else if (event.type === 'error') {
-        appendTextSegment(msg, `Error: ${event.message}`)
+        appendDeltaSegment(msg, 'text', `Error: ${event.message}`)
         msg.pending = false
         runtime.sending = false
         unsubscribe()
@@ -406,7 +410,7 @@
         // A tagged stop is a nested specialist's own round ending, not the whole
         // exchange — only an untagged (top-level) non-tool_use stop is truly final.
         if (event.stopReason === 'tool_use' || event.agentRole) return
-        if (event.stopReason === 'aborted') appendTextSegment(msg, '\n\n⏹ Stopped.')
+        if (event.stopReason === 'aborted') appendDeltaSegment(msg, 'text', '\n\n⏹ Stopped.')
         msg.pending = false
         runtime.sending = false
         unsubscribe()

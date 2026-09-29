@@ -70,6 +70,47 @@ describe('GoogleProvider', () => {
     ])
   })
 
+  // TASKS.md #147
+  it('requests thought summaries via thinkingConfig.includeThoughts — opt-in, Gemini does not stream them by default', async () => {
+    mockGenerateContentStream.mockResolvedValue(fakeStream([{ candidates: [{ finishReason: 'STOP' }] }]))
+    const provider = new GoogleProvider('key')
+    await collect(provider.stream({ model: 'gemini-flash-latest', messages: [], maxTokens: 100 }))
+    const params = mockGenerateContentStream.mock.calls[0][0]
+    expect(params.config.thinkingConfig).toEqual({ includeThoughts: true })
+  })
+
+  it('routes a part.thought=true part to thinking_delta, keeping it separate from real answer text', async () => {
+    mockGenerateContentStream.mockResolvedValue(
+      fakeStream([
+        { candidates: [{ content: { parts: [{ text: 'considering the request', thought: true }] } }] },
+        { candidates: [{ content: { parts: [{ text: 'Here is the answer.' }] } }] },
+        { candidates: [{ finishReason: 'STOP' }] }
+      ])
+    )
+    const provider = new GoogleProvider('key')
+    const events = await collect(provider.stream({ model: 'gemini-flash-latest', messages: [], maxTokens: 100 }))
+    expect(events).toEqual([
+      { type: 'thinking_delta', text: 'considering the request' },
+      { type: 'text_delta', text: 'Here is the answer.' },
+      { type: 'message_stop', stopReason: 'end_turn' }
+    ])
+  })
+
+  it('a model that does not return any thought parts (e.g. gemini-flash-lite) just never emits thinking_delta — no error, no special-casing needed', async () => {
+    mockGenerateContentStream.mockResolvedValue(
+      fakeStream([
+        { candidates: [{ content: { parts: [{ text: 'Straight to the answer.' }] } }] },
+        { candidates: [{ finishReason: 'STOP' }] }
+      ])
+    )
+    const provider = new GoogleProvider('key')
+    const events = await collect(provider.stream({ model: 'gemini-flash-lite', messages: [], maxTokens: 100 }))
+    expect(events).toEqual([
+      { type: 'text_delta', text: 'Straight to the answer.' },
+      { type: 'message_stop', stopReason: 'end_turn' }
+    ])
+  })
+
   it('reports the cached part of the prompt (Gemini implicit caching) without changing inputTokens, and omits the key when nothing was cached', async () => {
     mockGenerateContentStream.mockResolvedValueOnce(
       fakeStream([{ candidates: [{ finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 3000, candidatesTokenCount: 4, cachedContentTokenCount: 2500 } }])
