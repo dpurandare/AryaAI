@@ -24,7 +24,9 @@ export const MANAGED_FOLDERS: readonly ManagedFolder[] = ['code', 'documents', '
  * `git_clone_repo`'s fixed clone destination. Both stay exactly where they've
  * always been.
  */
-const EXCLUDED_FOLDERS: readonly string[] = ['templates', '.sachiv-clones']
+/** Exported for reuse by find-files.ts (#148) — these predate the recursive-search tool but should be
+ * excluded from it for the same reason they're excluded from write-placement: not ordinary managed content. */
+export const EXCLUDED_FOLDERS: readonly string[] = ['templates', '.sachiv-clones']
 
 const CODE_EXTENSIONS = new Set([
   'py', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'sh', 'bash', 'zsh', 'ps1', 'bat', 'cmd',

@@ -19,6 +19,7 @@ import {
   dbFindRowsTool,
   dbSaveQueryTool
 } from './db'
+import { findFilesTool } from './find-files'
 import { listDirectoryTool, readFileTool, writeFileTool } from './file-ops'
 import { gitCloneRepoTool, gitExecTool } from './git'
 import { githubCliTool } from './github-cli'
@@ -65,6 +66,7 @@ export function createDefaultRegistry(): ToolRegistry {
   const registry = new ToolRegistry()
   registry.register(readFileTool)
   registry.register(listDirectoryTool)
+  registry.register(findFilesTool)
   registry.register(writeFileTool)
   registry.register(shellExecuteTool)
   registry.register(pythonRunTool)

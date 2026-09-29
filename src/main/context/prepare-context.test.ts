@@ -59,6 +59,36 @@ describe('trimToolResults', () => {
     const messages: Message[] = [{ role: 'assistant', content: [{ type: 'text', text: 'hi' }] }]
     expect(trimToolResults(messages)).toEqual(messages)
   })
+
+  // TASKS.md #148/#149: a listing-shaped tool (find_files/list_directory) gets a line-boundary cut and an
+  // honest count, not a blind mid-line character cut — the whole point being the model can always tell exactly
+  // how much of the listing it isn't seeing, rather than losing an arbitrarily-truncated last entry silently.
+  it('trims a find_files result at a line boundary with a listing-shaped message, not a blind character cut', () => {
+    const lines = Array.from({ length: 500 }, (_, i) => `code/file-${String(i).padStart(3, '0')}.py`)
+    const big = lines.join('\n')
+    const messages: Message[] = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'call-1', name: 'find_files', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'call-1', content: big }] }
+    ]
+    const [, trimmedMsg] = trimToolResults(messages)
+    const block = trimmedMsg.content[0]
+    expect(block.type).toBe('tool_result')
+    if (block.type !== 'tool_result') throw new Error('unreachable')
+    // Never cuts mid-line: every kept line before the marker is a complete, real entry from the original list.
+    const [kept, marker] = block.content.split('\n...[')
+    for (const line of kept.split('\n')) expect(lines).toContain(line)
+    expect(marker).toContain('500 found, showing first')
+    expect(marker).toContain('more not shown')
+    expect(marker).not.toContain('characters omitted')
+  })
+
+  it('leaves a listing-shaped result under the cap untouched', () => {
+    const messages: Message[] = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'call-1', name: 'list_directory', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'call-1', content: 'file a.txt\nfile b.txt' }] }
+    ]
+    expect(trimToolResults(messages)).toEqual(messages)
+  })
 })
 
 describe('applySlidingWindow', () => {

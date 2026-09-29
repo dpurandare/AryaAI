@@ -35,6 +35,41 @@ export async function overheadTokens(overhead: TurnOverhead, model: string, prov
   return provider.countTokens([{ role: 'user', content: [{ type: 'text', text }] }], model)
 }
 
+/** Tools whose result is one entry per line (a file/directory listing) — TASKS.md #148: a blind character cut mid-line is
+ * both uglier and less useful than cutting at a line boundary with an honest "N found, showing first K" count. */
+const LISTING_TOOL_NAMES = new Set(['list_directory', 'find_files'])
+
+/** `toolUseId` -> the tool name that produced it, built once from every `tool_use` block across the whole array — a
+ * `tool_result` only carries the id (`shared/protocol.ts`), never the name, so this is the only way to know which tool a
+ * given result came from without re-plumbing the name onto `tool_result` itself. */
+function toolNamesByUseId(messages: Message[]): Map<string, string> {
+  const names = new Map<string, string>()
+  for (const m of messages) {
+    for (const block of m.content) {
+      if (block.type === 'tool_use') names.set(block.id, block.name)
+    }
+  }
+  return names
+}
+
+/** Cuts `content` at the last full line within the budget rather than mid-line, and reports a listing-shaped count
+ * ("N found, showing first K") instead of a raw character count — TASKS.md #148/#149's shared "compact but complete,
+ * never silently lossy" principle: the model should know exactly how much it isn't seeing and how to see the rest. */
+function trimListingResult(content: string): string {
+  if (content.length <= TOOL_RESULT_MAX_CHARS) return content
+  const lines = content.split('\n')
+  let kept = 0
+  let usedChars = 0
+  for (const line of lines) {
+    const lineChars = line.length + 1 // +1 for the newline this line re-adds when joined back
+    if (usedChars + lineChars > TOOL_RESULT_MAX_CHARS && kept > 0) break
+    usedChars += lineChars
+    kept++
+  }
+  const omitted = lines.length - kept
+  return `${lines.slice(0, kept).join('\n')}\n...[${lines.length} found, showing first ${kept} — narrow the pattern/path or use write_file to persist the full list, ${omitted} more not shown]`
+}
+
 /**
  * Caps any oversized tool_result content before it's sent to the provider —
  * a large file read or `git log` can otherwise balloon a request by itself.
@@ -42,10 +77,14 @@ export async function overheadTokens(overhead: TurnOverhead, model: string, prov
  * transcript untouched, so nothing the user can see is ever silently cut.
  */
 export function trimToolResults(messages: Message[]): Message[] {
+  const toolNames = toolNamesByUseId(messages)
   return messages.map((m) => ({
     ...m,
     content: m.content.map((block): ContentBlock => {
       if (block.type !== 'tool_result' || block.content.length <= TOOL_RESULT_MAX_CHARS) return block
+      if (LISTING_TOOL_NAMES.has(toolNames.get(block.toolUseId) ?? '')) {
+        return { ...block, content: trimListingResult(block.content) }
+      }
       const omitted = block.content.length - TOOL_RESULT_MAX_CHARS
       return {
         ...block,

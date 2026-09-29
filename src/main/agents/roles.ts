@@ -235,6 +235,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
           ...pickTools(registry, [
             'read_file',
             'list_directory',
+            'find_files',
             'write_file',
             'shell_execute',
             'python_run',
@@ -320,7 +321,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'not run SQL against databases (Data Access does) and you do not write general-purpose ' +
         'scripts (the Developer does).',
       get tools() {
-        return pickTools(registry, ['parse_csv', 'parse_json', 'parse_xml', 'xlsx_read', 'xlsx_write', 'read_file', 'list_directory'])
+        return pickTools(registry, ['parse_csv', 'parse_json', 'parse_xml', 'xlsx_read', 'xlsx_write', 'read_file', 'list_directory', 'find_files'])
       }
     },
     {
@@ -354,7 +355,8 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
           'office_fill_template',
           'office_extract_template',
           'read_file',
-          'list_directory'
+          'list_directory',
+          'find_files'
         ])
       }
     },

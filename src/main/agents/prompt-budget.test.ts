@@ -66,10 +66,17 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
  * ceiling raised to 950. Deliberate growth: this is the fix, not drift.
  * Print the live numbers with `PRINT_BUDGET=1 npx vitest run src/main/agents/prompt-budget`.
  */
+// TASKS.md #148 (2026-09-29): added find_files (a real, new capability — recursive/glob file search, the fix for
+// the #148/#149 incident's 15-call list_directory loop), attached to coding/data-processor/document-creator
+// alongside list_directory. Raised deliberately, not padded: routerBare/routerToolSchemas carry the full,
+// unfiltered registry (#96 — the default top-level orchestrator has every tool, not just the slim router's
+// filtered set), so one more real tool raises them regardless of role ownership; the three role ceilings that
+// moved are exactly the three roles find_files was added to. slimRouterToolSchemas/slimRouterBare/routerCore are
+// unchanged — selectRouterTools() correctly excludes find_files since it's owned by those specialists.
 const CEILINGS = {
   routerPrompt: 880,
-  routerToolSchemas: 9900,
-  routerBare: 10760,
+  routerToolSchemas: 9930,
+  routerBare: 10800,
   slimRouterToolSchemas: 2130,
   slimRouterBare: 3000,
   routerCore: 800,
@@ -77,10 +84,10 @@ const CEILINGS = {
   'role:planning': 65,
   'role:research': 1340,
   'role:history-analyst': 500,
-  'role:coding': 2500,
+  'role:coding': 2640,
   'role:data': 2640,
-  'role:data-processor': 1920,
-  'role:document-creator': 1990,
+  'role:data-processor': 2070,
+  'role:document-creator': 2130,
   'role:configurator': 1290,
   'role:mcp-operator': 390,
   'role:page-creator': 820,
