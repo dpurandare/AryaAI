@@ -127,6 +127,17 @@ describe('createAgents', () => {
     it('points at Settings > Runtime when Python is unavailable, instead of trying to install it', () => {
       expect(dev.systemPrompt).toMatch(/Settings > Runtime/)
     })
+
+    // TASKS.md #156
+    it('names matplotlib as the default charting/diagram library', () => {
+      expect(dev.systemPrompt).toMatch(/matplotlib is the default charting\/diagram library/)
+    })
+
+    it("tells shell_execute's real OS target (this test machine's own process.platform), not a hedge between two possibilities", () => {
+      const expected = process.platform === 'win32' ? 'PowerShell' : 'bash'
+      expect(dev.systemPrompt).toContain(`it targets ${expected}`)
+      expect(dev.systemPrompt).toMatch(/"write a script" defaults to/)
+    })
   })
 
   describe('the narrow roles own exactly their own tools', () => {

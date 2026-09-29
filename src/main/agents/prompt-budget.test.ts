@@ -73,18 +73,23 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 // filtered set), so one more real tool raises them regardless of role ownership; the three role ceilings that
 // moved are exactly the three roles find_files was added to. slimRouterToolSchemas/slimRouterBare/routerCore are
 // unchanged — selectRouterTools() correctly excludes find_files since it's owned by those specialists.
+// TASKS.md #156 (2026-09-29): SYSTEM_PROMPT (routerPrompt/routerBare/slimRouterBare) gained the
+// diagram/script/language-default rules (Mermaid for diagrams, Python for ad-hoc code, "script" as its own
+// trigger for the native shell) — real, requested content, raised deliberately. role:coding also grew: the
+// same defaults are restated in the Developer role's own prompt (matplotlib named explicitly, the OS-target
+// shell fact interpolated from process.platform).
 const CEILINGS = {
-  routerPrompt: 880,
+  routerPrompt: 1030,
   routerToolSchemas: 9930,
-  routerBare: 10800,
+  routerBare: 10930,
   slimRouterToolSchemas: 2130,
-  slimRouterBare: 3000,
+  slimRouterBare: 3080,
   routerCore: 800,
   classifyPrompt: 950,
   'role:planning': 65,
   'role:research': 1340,
   'role:history-analyst': 500,
-  'role:coding': 2640,
+  'role:coding': 2710,
   'role:data': 2640,
   'role:data-processor': 2070,
   'role:document-creator': 2130,

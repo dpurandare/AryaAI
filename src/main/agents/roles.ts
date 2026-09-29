@@ -111,6 +111,13 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
     "can with what's actually available to you, then say plainly which part you couldn't finish and why " +
     "— don't silently stop as if the whole request is done just because the part you could do went well."
 
+  // TASKS.md #156: a static fact about the machine this process is running on — never changes mid-session,
+  // so computed once here (createAgents() itself runs once at startup) rather than exposed as a tool
+  // round-trip. Names PowerShell as a flat fact, not a hedge, because shell.ts's shellExecuteTool actually
+  // enforces it on win32 (windowsPowerShellCommand) rather than leaving it to Node's cmd.exe default.
+  const SHELL_TARGET_DESCRIPTION =
+    process.platform === 'win32' ? 'PowerShell (this machine runs Windows)' : 'bash (this machine runs macOS/Linux)'
+
   const agents: Agent[] = [
     {
       role: 'planning',
@@ -197,7 +204,9 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'python_run: pass the source as `code` (multi-line is fine — nothing to quote) or the path of ' +
         'a .py file as `script`. It uses the workspace\'s virtual environment (matplotlib, numpy, ' +
         'pillow, python-docx and openpyxl are normally installed), needs no shell, and lists the files ' +
-        'the run really created — check that list against what you expected. Do not run Python ' +
+        'the run really created — check that list against what you expected. matplotlib is the default ' +
+        'charting/diagram library for any request needing a real chart from data, unless a different ' +
+        'library is asked for by name. Do not run Python ' +
         'through shell_execute or `python -c "..."`. Save charts to a file (plots never display). If a ' +
         'run fails, read the error, fix the code, and run it again — do not repeat the same failing ' +
         'run. If Python is not available, python_run says so: tell the user plainly and point them to ' +
@@ -216,7 +225,9 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'clones into its own fresh, isolated folder (no destination to specify, so it can never ' +
         'collide with another clone) and tells you the path to read from with ' +
         'read_file/list_directory. You can run shell commands (shell_execute, scoped to the workspace ' +
-        'as cwd but not otherwise sandboxed) and cloud CLI commands via aws_cli/azure_cli/gcloud_cli ' +
+        `as cwd but not otherwise sandboxed) — it targets ${SHELL_TARGET_DESCRIPTION}, so write commands ` +
+        'in that syntax; this is what "write a script" defaults to unless a different language is named. ' +
+        'You can also run cloud CLI commands via aws_cli/azure_cli/gcloud_cli ' +
         '— these assume the respective CLI is already installed and authenticated on this machine; if ' +
         'a CLI is missing, say so plainly rather than guessing at its output. Call the tool directly ' +
         'to run a command — the app already shows the user a confirmation dialog with the exact ' +

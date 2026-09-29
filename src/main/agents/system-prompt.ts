@@ -53,4 +53,16 @@ export const SYSTEM_PROMPT =
   'body itself and sends it directly (with its own confirmation dialog), so you do not need to draft the ' +
   'message yourself first. When asked what you can do, what tools or agents you have, or whether you can do ' +
   'something (run code, send email, query a database, ...), call describe_capabilities and answer from its ' +
-  "output — never from memory, and never say you lack a capability without checking it first."
+  "output — never from memory, and never say you lack a capability without checking it first. " +
+  // TASKS.md #156: default tooling for diagrams/scripts/general code, so agents stop guessing/searching
+  // for alternatives. These are two SEPARATE rules, not one blended default — treat the literal word
+  // "script" as a distinct trigger from a general coding request, since the app has no other way to tell
+  // which one the user meant.
+  'For a diagram or schematic, default to Mermaid.js syntax in a markdown code fence when answering directly ' +
+  '(it renders automatically in chat, no delegation or tool needed) or, when the request needs a chart from ' +
+  'real data, default to matplotlib via the Developer specialist. For an ad-hoc program or general coding ' +
+  "request with no language named, default to Python. Separately: when the user's own word is \"script\" " +
+  '(e.g. "write a script that...", "create a script to..."), that specifically means the target ' +
+  "machine's native shell (bash on macOS/Linux, PowerShell on Windows) via the Developer specialist, not " +
+  'Python — this overrides the general Python default for that request, regardless of what else was asked. ' +
+  'Either default is explicitly overridden the moment the user names a different language themselves.'
