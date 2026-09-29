@@ -10,6 +10,7 @@
     autoApproveTool,
     onApprove,
     onDeny,
+    onTalkAboutIt,
     onStop,
     onValidate,
     onToggleAutoApprove,
@@ -27,6 +28,14 @@
     onApprove: (input: Record<string, unknown>) => void
     /** Denies only this one tool call — the turn continues, and the model sees the denial and decides what to do next. */
     onDeny: () => void
+    /**
+     * TASKS.md #154: a third sibling to Deny and Edit-then-Approve, not a replacement for either — denies
+     * this one call (same as Deny) AND drops a free-text comment into the run via #158's own steering
+     * queue, so the model sees both together at the start of its next round: the call was rejected, and
+     * here's why/what to do instead. The caller (ChatView.svelte) composes this from its own onDeny/onSteer
+     * props — this component only collects the text.
+     */
+    onTalkAboutIt: (comment: string) => void
     /** Ends the whole turn right now, same as Stop during a normal response — distinct from Deny, which only rejects this one call and lets the turn keep going. Was always reachable before this was inline (a z-index fix kept the composer's own Stop button clickable over the old modal overlay) — kept as its own action here rather than silently dropped now that this replaces the composer instead of floating over it. */
     onStop: () => void
     onValidate: (input: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
@@ -39,6 +48,9 @@
   let secretValues = $state<Record<string, string>>({})
   let validating = $state(false)
   let validationError = $state('')
+  /** TASKS.md #154 */
+  let showTalkAboutIt = $state(false)
+  let talkAboutItText = $state('')
 
   /**
    * Resets whenever this becomes a genuinely different confirmation request
@@ -61,7 +73,15 @@
     jsonError = ''
     validationError = ''
     validating = false
+    showTalkAboutIt = false
+    talkAboutItText = ''
   })
+
+  function sendTalkAboutIt(): void {
+    const text = talkAboutItText.trim()
+    if (!text) return
+    onTalkAboutIt(text)
+  }
 
   function combinedInput(): Record<string, unknown> | null {
     try {
@@ -138,15 +158,42 @@
     </label>
   </div>
 
-  <div class="actions">
-    <button type="button" class="ghost" onclick={onStop} title="Ends the whole turn now, not just this one call">
-      Stop turn
-    </button>
-    <button type="button" onclick={onDeny}>Deny</button>
-    <button type="button" class="primary" onclick={approve} disabled={validating}>
-      {validating ? 'Validating…' : 'Approve'}
-    </button>
-  </div>
+  {#if showTalkAboutIt}
+    <!-- TASKS.md #154: a fourth resolution for this one call, alongside Deny/Approve/Edit-then-Approve —
+         denies this call and drops a free-text comment into the run via #158's steering queue together. -->
+    <div class="talk-about-it">
+      <textarea
+        class="talk-about-it-input"
+        placeholder="What should it do differently? (denies this call, then the model sees your comment)"
+        bind:value={talkAboutItText}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            sendTalkAboutIt()
+          }
+        }}
+      ></textarea>
+      <div class="actions">
+        <button type="button" class="ghost" onclick={() => (showTalkAboutIt = false)}>Cancel</button>
+        <button type="button" class="primary" onclick={sendTalkAboutIt} disabled={!talkAboutItText.trim()}>
+          Deny &amp; send comment
+        </button>
+      </div>
+    </div>
+  {:else}
+    <div class="actions">
+      <button type="button" class="ghost" onclick={onStop} title="Ends the whole turn now, not just this one call">
+        Stop turn
+      </button>
+      <div class="actions-right">
+        <button type="button" onclick={() => (showTalkAboutIt = true)}>Talk about it</button>
+        <button type="button" onclick={onDeny}>Deny</button>
+        <button type="button" class="primary" onclick={approve} disabled={validating}>
+          {validating ? 'Validating…' : 'Approve'}
+        </button>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -227,6 +274,10 @@
     justify-content: space-between;
     gap: 0.5rem;
   }
+  .actions-right {
+    display: flex;
+    gap: 0.5rem;
+  }
   .actions .ghost {
     background: none;
     border-color: transparent;
@@ -235,6 +286,25 @@
   .actions .ghost:hover {
     color: var(--text);
     border-color: var(--border);
+  }
+  /* TASKS.md #154 */
+  .talk-about-it {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .talk-about-it-input {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 3rem;
+    padding: 0.5rem;
+    border-radius: 6px;
+    border: 1px solid var(--accent);
+    background: var(--bg);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.82rem;
   }
   button {
     padding: 0.4rem 0.8rem;
