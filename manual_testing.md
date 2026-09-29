@@ -267,7 +267,8 @@ prompt caching. The trims can only be judged by whether a real model still uses 
 | 11b.6 | **Anthropic / OpenAI:** `$E openai -- npx vite-node --config vitest.config.ts scripts/cache-probe.mts -- openai <model> --full` (same helper as section 8; for Anthropic use an env var until a key is configured) | Call 1: `cached 0`; calls 2–3: a large cached share and a lower first-token time. If `cached` stays 0, tell me the provider and model. |
 | 11b.7 | **Anthropic:** Settings > Prompt caching, untick "Use prompt caching", send a message, then tick it again and send another | Both messages work. With it off, 11b.6's cache-read numbers stay at 0; with it on they grow from the second round. If chat with caching **on** ever errors mentioning `cache_control`, that is the bug this switch exists for — report it. |
 | 11b.8 | Tool block display (#109): ask for something that runs a long one-line command (e.g. a `shell_execute` `echo` of 300 characters) and a multi-line one (a Python snippet with 3+ lines); click each tool block open | Collapsed: one compact line. Expanded: the **full command wrapped over several lines** (multi-line ones keep their real line breaks, several arguments show as `name: value`); a very long body shows a preview with Show more / Show less. |
-| 11b.9 | Settings navigation: (a) click the account row (bottom-left) twice; (b) open Settings and click another session; (c) open Settings, paste text into an API-key box or open "+ Add connection" and type a name, then click a session | (a) Settings opens, then closes; the arrow turns over while open. (b) That session is shown. (c) A prompt lists what is unsaved: **Save and stay here** saves it and stays in Settings, **Discard and leave** goes to the session, **Cancel** keeps your typing. Theme/toggles/selects never prompt — they apply at once. |
+| 11b.9 | Settings navigation *(updated for #150 — the account row is now a menu, not a direct Settings toggle)*: (a) click the account row (bottom-left) once, then click **Settings** in the menu that appears; click the account row again and click **Close settings** | (a) A small menu opens (Settings / Export Settings… / Import Settings…) instead of Settings itself; **Settings** opens Settings and the arrow turns over; the second round shows **Close settings** in the menu and closes it. |
+| 11b.9b | (b) open Settings and click another session; (c) open Settings, paste text into an API-key box or open "+ Add connection" and type a name, then click a session | (b) That session is shown. (c) A prompt lists what is unsaved: **Save and stay here** saves it and stays in Settings, **Discard and leave** goes to the session, **Cancel** keeps your typing. Theme/toggles/selects never prompt — they apply at once. |
 | 11b.10 | Zoom: Ctrl + `=` (or `+`) a few times, Ctrl + `-`, Ctrl + `0`; restart the app | Whole UI scales in steps and resets with 0; the level survives a restart (Cmd instead of Ctrl on macOS). |
 
 ---
@@ -295,6 +296,31 @@ Cleanup: delete the test files from the roles folder.
 
 ---
 
+## 11d. New since the last pass — reasoning display, steering, default tooling, settings import/export (#147/#150/#153/#154/#156/#158/#163/#164) — P2 (25 min)
+
+All of this landed after the last manual pass. Everything below was unit-tested and live-verified against **one local model
+(Ollama `qwen3.5:9b-custom`, CPU-bound)** in an isolated instance — never against a real cloud model, and the two rows
+marked **⚠ native dialog** were never clicked through by a human at all (a native OS file dialog can't be driven by an
+automated test). That's what this section is for.
+
+| # | Do | Expect |
+|---|----|--------|
+| 11d.1 | Ask something that should make the model reason before answering (e.g. a multi-step word problem), on a model/provider known to stream reasoning (Ollama/Groq models that support it, or Gemini) | A collapsible **🧠 Thinking** block appears **before** the answer text, collapsed by default except the most recent one; click to expand/collapse. **Note the model** — not every model streams a separate reasoning field even when asked to "think" (this is real, observed model-behavior variance, not necessarily a bug — see #147's TASKS.md note). |
+| 11d.2 | Same as 11d.1, on **Anthropic** | No thinking block (out of scope — extended thinking is #159, blocked on an Anthropic key). Confirm nothing breaks; the answer streams normally. |
+| 11d.3 | Mid-generation, while the assistant is working, type a note in the composer (now labeled for steering while sending) and send it | A **💬 Note added mid-run**-style box appears in the transcript at the point the next round started, and the assistant's next round visibly responds to it — this is separate from **Stop**, which still ends the turn. |
+| 11d.4 | On a tool confirmation dialog, click **Talk about it**, type a comment, send | The call is denied *and* your comment reaches the model as a steering note (same mechanism as 11d.3) — check the transcript shows both the denial and your comment. |
+| 11d.5 | "Draw me a diagram of X" / "chart the data" with no library named | Defaults to **Mermaid** (diagram/schematic) or **matplotlib** (data chart) without the assistant searching for alternatives first. |
+| 11d.6 | "Write a script that does X" with no language named | Defaults to a **shell script** targeting this machine's actual OS (bash on Linux/macOS, PowerShell on Windows) — check the tool call, not just the assistant's claim. |
+| 11d.7 | "Write a program that does X" (say **program**, not **script**), no language named | Defaults to **Python**, distinct from 11d.6 — the assistant should not treat "script" and "program" as interchangeable. |
+| 11d.8 | Settings > **Tools by role** (next to Roles) > expand a role you use often | Shows every tool that role actually has, full descriptions, correctly labeled `mutates: never/sometimes/always` — cross-check a couple of entries against what the role's system prompt claims it can do. |
+| 11d.9 | ⚠ native dialog. Account menu > **Export Settings…** | A real native Save dialog opens, defaulting into your workspace root with filename `sachivji-settings-export.json`. Save it, then open the file — confirm it has no API keys, MCP tokens, or DB passwords anywhere in it. |
+| 11d.10 | ⚠ native dialog. Add a test MCP server or DB connection with a throwaway name, Account menu > **Import Settings…**, pick the file from 11d.9 | A real native Open dialog appears; after picking the file, a preview panel lists every entry as **Import** or **Already configured — skip** (your throwaway one, and anything matching what's already in Settings, should read skip) — confirm before importing that nothing you didn't expect is about to be added, then Import and check Settings for the new entries. |
+| 11d.11 | *(Optional, needs a real API you can reach)* Settings > External APIs > add a no-key connection (e.g. Open-Meteo, `https://api.open-meteo.com`, auth **None**), ask a question that needs it | The assistant calls `api_call` and answers from the **real response**, not an estimate — check the tool result body. |
+
+Cleanup: remove any test MCP server/DB connection/exported file created above.
+
+---
+
 ## 12. Things I could not verify — please look out for these
 
 - **Real cloud models.** Everything above was mocked except one partial local-model run (Ollama qwen 27B, 21 of 39 routing cases).
@@ -313,6 +339,10 @@ Cleanup: delete the test files from the roles folder.
   and the no-MCP-connected substitution (both a plan step and a direct `delegate_to_mcp-operator` tool call) — all
   unit/mock-tested and measured once against local Ollama (`gpt-oss-custom`, see design-discussion.md §13 / TASKS #142),
   never yet exercised in a real running session. Sections 5.6–5.8 and 9.11 above are new for this.
+- **The #147–#170 batch (added 9/29, section 11d above is new for this):** real reasoning/thinking display, mid-run steering,
+  "Talk about it", default-tooling prompt guidance, and settings import/export were all live-verified against exactly one
+  local model (Ollama `qwen3.5:9b-custom`) — none against a real cloud model. The native Export/Import Settings file dialogs
+  (11d.9/11d.10) were never clicked through by a human at all — only their underlying IPC calls were exercised directly.
 
 ---
 
@@ -335,3 +365,6 @@ Anything that looked slower or more expensive than before:
 Most useful for me: **section 4 (all of 4.1–4.9), section 6 misses, and section 9.4/9.5** — those three tell us whether the
 handoff, the role split and the MCP containment work with a real model. **Section 5.6–5.8 and 9.11 (new 9/27)** are the
 next most useful — nothing in the wiki/database fallback chain (#142–#146) has been checked against a real running session yet.
+**Section 11d (new 9/29)** is next after that — 11d.1/11d.2 (reasoning display) and 11d.5–11d.7 (default tooling) are the
+rows most likely to behave differently on a real cloud model than they did on local Ollama; 11d.9/11d.10 are the only way
+to actually exercise the native Export/Import Settings dialogs at all.
