@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { RoleRosterDto, ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor } from '@shared/ipc-contract'
+  import type { RoleRosterDto, ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor, WebSearchProviderDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
   import type { RuntimeState } from '@shared/runtime'
 
@@ -524,7 +524,7 @@
       })
     }
     if (embeddingApiKey.trim()) list.push({ label: 'Search-history embedding API key', save: saveEmbeddingKey })
-    if (tavilyApiKey.trim()) list.push({ label: 'Web search (Tavily) API key', save: saveTavilyKey })
+    if (webSearchApiKey.trim()) list.push({ label: 'Web Search Provider API key', save: saveWebSearchKey })
     if (workspaceRootInput.trim() && workspaceRootInput !== workspaceRoot) list.push({ label: 'Workspace folder', save: saveWorkspaceRoot })
     if ((showAddConnection || editingConnectionId) && connName.trim()) {
       const label = editingConnectionId ? `Edits to data source "${connName.trim()}"` : `Data source "${connName.trim()}"`
@@ -660,30 +660,54 @@
     await loadSearchHistoryStatus()
   }
 
-  // --- Web search (Tavily — TASKS.md #32 follow-up) ---
+  // --- Web Search Provider (TASKS.md #161 — pluggable, mirrors the embedding-provider picker above) ---
   // Reuses the generic setApiKey/hasApiKey IPC channels exactly like every
   // provider/embedding key above — they're not restricted to registered
   // LLM providers, just a plain keychain-backed key-value store, so a
-  // second, unrelated credential ("tavily") needs no new IPC surface.
-  const TAVILY_KEY_ID = 'tavily'
-  let tavilyHasKey = $state(false)
-  let tavilyApiKey = $state('')
-  let savingTavilyKey = $state(false)
+  // per-provider credential (e.g. "tavily") needs no new IPC surface for
+  // storage, only for listing which providers exist (listWebSearchProviders).
+  const WEB_SEARCH_PROVIDER_SETTING_KEY = 'webSearchProviderId'
+  // Matches web-search.ts's own pre-#161 implicit preference (Tavily if a key already exists, else
+  // DuckDuckGo) — this default only ever shows before loadWebSearchConfig()'s real read resolves.
+  const DEFAULT_WEB_SEARCH_PROVIDER_ID = 'tavily'
 
-  async function loadTavilyHasKey(): Promise<void> {
-    tavilyHasKey = await window.sachiv.hasApiKey(TAVILY_KEY_ID)
+  let webSearchProviders = $state<WebSearchProviderDescriptor[]>([])
+  let webSearchProviderId = $state(DEFAULT_WEB_SEARCH_PROVIDER_ID)
+  let webSearchHasKey = $state(false)
+  let webSearchApiKey = $state('')
+  let savingWebSearchKey = $state(false)
+
+  async function loadWebSearchProviders(): Promise<void> {
+    webSearchProviders = await window.sachiv.listWebSearchProviders()
   }
-  loadTavilyHasKey()
+  loadWebSearchProviders()
 
-  async function saveTavilyKey(): Promise<void> {
-    if (!tavilyApiKey.trim()) return
-    savingTavilyKey = true
+  async function loadWebSearchConfig(): Promise<void> {
+    webSearchProviderId = (await window.sachiv.getSetting(WEB_SEARCH_PROVIDER_SETTING_KEY)) ?? DEFAULT_WEB_SEARCH_PROVIDER_ID
+    await refreshWebSearchHasKey()
+  }
+  loadWebSearchConfig()
+
+  async function refreshWebSearchHasKey(): Promise<void> {
+    webSearchHasKey = await window.sachiv.hasApiKey(webSearchProviderId)
+  }
+
+  async function changeWebSearchProvider(id: string): Promise<void> {
+    webSearchProviderId = id
+    webSearchApiKey = ''
+    await window.sachiv.setSetting(WEB_SEARCH_PROVIDER_SETTING_KEY, id)
+    await refreshWebSearchHasKey()
+  }
+
+  async function saveWebSearchKey(): Promise<void> {
+    if (!webSearchApiKey.trim()) return
+    savingWebSearchKey = true
     try {
-      await window.sachiv.setApiKey(TAVILY_KEY_ID, tavilyApiKey.trim())
-      tavilyApiKey = ''
-      await loadTavilyHasKey()
+      await window.sachiv.setApiKey(webSearchProviderId, webSearchApiKey.trim())
+      webSearchApiKey = ''
+      await refreshWebSearchHasKey()
     } finally {
-      savingTavilyKey = false
+      savingWebSearchKey = false
     }
   }
 
@@ -962,26 +986,37 @@
 
     <hr />
 
-    <h2>Web search</h2>
+    <h2>Web Search Provider</h2>
     <p class="status">
-      web_search uses Tavily (a real search API built for AI agents) when a key is set here — real
-      ranked results with real URLs, not just DuckDuckGo's narrow Instant Answer API. Falls back to
-      DuckDuckGo automatically when no key is configured.
+      web_search uses whichever provider is selected here. Tavily gives real ranked results with real,
+      independently fetchable URLs; DuckDuckGo is free and needs no key, but only covers well-known
+      topics with an existing summary/infobox, not general search.
     </p>
-    <p class="status">
-      {tavilyHasKey ? 'A Tavily key is currently configured.' : 'No Tavily key configured — falling back to DuckDuckGo.'}
-    </p>
-    <input
-      type="password"
-      placeholder="Paste your Tavily API key"
-      bind:value={tavilyApiKey}
-      onkeydown={(e) => e.key === 'Enter' && saveTavilyKey()}
-    />
-    <div class="actions">
-      <button class="primary" disabled={savingTavilyKey || !tavilyApiKey.trim()} onclick={saveTavilyKey}>
-        {savingTavilyKey ? 'Saving...' : 'Save key'}
-      </button>
-    </div>
+
+    <select value={webSearchProviderId} onchange={(e) => changeWebSearchProvider(e.currentTarget.value)}>
+      {#each webSearchProviders as provider (provider.id)}
+        <option value={provider.id}>{provider.displayName}</option>
+      {/each}
+    </select>
+
+    {#if webSearchProviders.find((p) => p.id === webSearchProviderId)?.requiresApiKey}
+      <p class="status">
+        {webSearchHasKey ? 'A key is currently configured.' : 'No key configured yet — falling back to DuckDuckGo until one is set.'}
+      </p>
+      <input
+        type="password"
+        placeholder="Paste your API key"
+        bind:value={webSearchApiKey}
+        onkeydown={(e) => e.key === 'Enter' && saveWebSearchKey()}
+      />
+      <div class="actions">
+        <button class="primary" disabled={savingWebSearchKey || !webSearchApiKey.trim()} onclick={saveWebSearchKey}>
+          {savingWebSearchKey ? 'Saving...' : 'Save key'}
+        </button>
+      </div>
+    {:else}
+      <p class="status">This provider needs no API key.</p>
+    {/if}
 
     <hr />
 

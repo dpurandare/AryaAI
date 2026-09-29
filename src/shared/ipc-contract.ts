@@ -21,6 +21,8 @@ export const IpcChannel = {
   SessionsGetUsage: 'sessions:get-usage',
 
   ProvidersList: 'providers:list',
+  /** TASKS.md #161 — separate from ProvidersList (chat/embedding providers); reuses the same generic ProvidersSetApiKey/ProvidersHasApiKey (keychain) channels below, keyed by the web-search provider's own id, same as the existing Tavily key already was. */
+  WebSearchProvidersList: 'web-search-providers:list',
   ProvidersSetApiKey: 'providers:set-api-key',
   ProvidersHasApiKey: 'providers:has-api-key',
   ProvidersListModels: 'providers:list-models',
@@ -110,6 +112,13 @@ export interface ProviderDescriptor {
   requiresApiKey: boolean
   /** Whether this provider can be picked for the separate embedding-provider role (Settings > Search history) — independent of the chat provider. */
   supportsEmbeddings: boolean
+}
+
+/** TASKS.md #161 — the web_search tool's own provider set, fetched via WebSearchProvidersList; a smaller shape than ProviderDescriptor since a web-search provider is just an id/displayName/requiresApiKey, no embeddings/model-list concept. */
+export interface WebSearchProviderDescriptor {
+  id: string
+  displayName: string
+  requiresApiKey: boolean
 }
 
 export interface AppInfo {

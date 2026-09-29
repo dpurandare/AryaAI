@@ -56,6 +56,7 @@ import { openDriver } from '../tools/db/driver-factory'
 import { buildSchemaSummary } from '../tools/db/schema-summary'
 import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
 import { createDefaultProviderRegistry } from '../providers/setup'
+import { createDefaultWebSearchProviderRegistry } from '../tools/web-search-providers'
 import type { Message, ModelProvider, ProviderOptions } from '../providers/types'
 import { exportSession } from '../sessions/export'
 import { WorkspaceRuntime } from '../runtime/workspace-runtime'
@@ -84,6 +85,8 @@ import { selectRouterTools } from '../agents/router-tools'
 import { logToolUse } from '../db/tool-usage-log'
 
 const providerRegistry = createDefaultProviderRegistry()
+/** TASKS.md #161 — separate registry/namespace from the chat-provider one above; a web-search provider is a different kind of thing (one `search` call, not a full ModelProvider). */
+const webSearchProviderRegistry = createDefaultWebSearchProviderRegistry()
 
 const ACTIVE_PROVIDER_KEY = 'activeProviderId'
 const DEFAULT_PROVIDER_ID = 'openai'
@@ -275,6 +278,9 @@ export function registerIpcHandlers(): void {
         requiresApiKey,
         supportsEmbeddings
       }))
+  )
+  ipcMain.handle(IpcChannel.WebSearchProvidersList, () =>
+    webSearchProviderRegistry.list().map(({ id, displayName, requiresApiKey }) => ({ id, displayName, requiresApiKey }))
   )
   ipcMain.handle(IpcChannel.ProvidersSetApiKey, (_event, providerId: string, apiKey: string) => {
     setApiKey(providerId, apiKey)

@@ -17,6 +17,7 @@ import {
   type SaveEmailConnectionInput,
   type ContextWindowInfo,
   type ProviderDescriptor,
+  type WebSearchProviderDescriptor,
   type McpServerDto,
   type SaveMcpServerInput,
   type ToolDescriptor,
@@ -60,6 +61,8 @@ const api = {
     ipcRenderer.invoke(IpcChannel.SessionsGetUsage, sessionId),
 
   listProviders: (): Promise<ProviderDescriptor[]> => ipcRenderer.invoke(IpcChannel.ProvidersList),
+  listWebSearchProviders: (): Promise<WebSearchProviderDescriptor[]> =>
+    ipcRenderer.invoke(IpcChannel.WebSearchProvidersList),
   setApiKey: (providerId: string, apiKey: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.ProvidersSetApiKey, providerId, apiKey),
   hasApiKey: (providerId: string): Promise<boolean> =>
