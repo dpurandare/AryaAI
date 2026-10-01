@@ -4205,6 +4205,28 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(step).toContain('(OUT OF SCOPE — not done)')
     })
 
+    it('overrides a false out_of_scope tag when the step already captured real data, instead of redirecting into wasted work (2026-10-01)', async () => {
+      // Found live (Gemini): Data Access queried successfully, wrote a complete, correct answer from
+      // real rows — then appended [handoff: out_of_scope -> document-creator] anyway, despite having
+      // fully succeeded. The redirect-once safety net trusted it, triggering a real, wasted specialist
+      // call (re-fetched the same data, built a whole document) whose output the step after it then
+      // discarded entirely by overwriting the same file. A step that captured real data cannot also be
+      // out of scope — the tag is a model slip, not a real capability boundary.
+      const { provider, userTexts } = await run([
+        planOf(['data', 'top 10 customers per year'], ['coding', 'chart them']),
+        { toolCalls: [{ id: 'q1', name: 'db_execute_sql', input: { sql: 'select ...' } }] },
+        { text: 'Here are the real top customers: Ernst Handel, QUICK-Stop.\n\n[handoff: out_of_scope -> document-creator]', stopReason: 'end_turn' },
+        { text: 'Charting from the file.', stopReason: 'end_turn' },
+        { text: 'Here you go.', stopReason: 'end_turn' }
+      ])
+      expect(provider.requests).toHaveLength(5) // classify, data (tool call + text), coding, final — no redirect into document-creator
+      const step = userTexts.find((t) => t.includes('[Plan step 1')) ?? ''
+      expect(step).toMatch(/^\[Plan step 1 — Data Access\]:/) // stays Data Access — never redirected
+      expect(step).not.toContain('OUT OF SCOPE')
+      expect(step).toContain('Here are the real top customers')
+      expect(userTexts.some((t) => t.includes('[Plan step 2 — Developer]'))).toBe(true) // the plan carried on normally
+    })
+
     it('no_information is named plainly on the step, and does not pause the plan or trigger a redirect (design-discussion.md §13.2(b), TASKS #143)', async () => {
       const { provider, userTexts } = await run([
         planOf(['mcp-operator', 'look up the inverter maintenance policy'], ['research', 'find a caption']),

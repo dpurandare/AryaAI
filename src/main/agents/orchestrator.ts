@@ -2464,15 +2464,25 @@ export class Orchestrator {
       const diff = before && root ? diffSnapshots(before, await snapshotWorkspace(root)) : undefined
       const artifacts = diff ? [...diff.created, ...diff.modified] : []
       // status: code decides failure; the model only ever chooses the two judgment cases, and only on a clean end.
-      const status = loopResult.isError ? 'failed' : (tag.status ?? 'done')
+      const rawStatus = loopResult.isError ? 'failed' : (tag.status ?? 'done')
+      // Found live: Data Access queried successfully, wrote a complete, correct answer from real data —
+      // then appended `[handoff: out_of_scope -> document-creator]` anyway. `out_of_scope` means "I lack
+      // the capability for this"; dataFiles/artifacts are proof of real tool use that already produced
+      // real output, which directly contradicts that. The redirect-once safety net trusted the tag at
+      // face value, triggering a wasted specialist call whose output the step after it then discarded
+      // entirely. A contradictory tag is a model slip, not a real capability boundary — override to
+      // `done` rather than redirect. Left untouched for `needs_input` (legitimately compatible with
+      // partial work) and `no_information` (self-consistent: it implies nothing was captured anyway).
+      const overridden = rawStatus === 'out_of_scope' && (dataFiles.length > 0 || artifacts.length > 0)
+      const status = overridden ? 'done' : rawStatus
       const result: DelegateResult = {
         role,
         status,
         summary: tag.text || (tag.detail ?? '') || '(no response)',
         artifacts,
         dataFiles,
-        blocker: tag.detail,
-        suggestedRole: tag.suggestedRole,
+        blocker: overridden ? undefined : tag.detail,
+        suggestedRole: overridden ? undefined : tag.suggestedRole,
         isError: status === 'failed'
       }
       for (const d of dataFiles) state.handoff.items.push({ fromRole: role, kind: 'data', path: d.path, note: `${d.tool}: ${d.summary}` })
