@@ -143,7 +143,11 @@ export const pythonRunTool: Tool = {
     const diff = diffSnapshots(before, await snapshotWorkspace(root))
 
     const parts = [outcome.timedOut ? `exit code: none — timed out after ${timeoutS}s and was stopped` : `exit code: ${outcome.code}`]
-    parts.push(`script: ${scriptRel}${generated ? ' (saved from `code`; re-run it with `script`)' : ''}`)
+    // Found live (2026-10-01): "re-run it with `script`", with no caveat, read naturally as "reference this
+    // alongside your revised code" to a model fixing a failed run — producing exactly the `code`+`script`-
+    // together call this tool rejects (line 94's "Give exactly one of..."), burning a whole round on a
+    // malformed call instead of the actual fix. Spelled out explicitly: UNCHANGED, ALONE, never with `code`.
+    parts.push(`script: ${scriptRel}${generated ? ' (saved from `code`; to re-run it UNCHANGED, pass `script` ALONE — never together with `code`; for a fix, pass the revised source as `code` again instead)' : ''}`)
     if (outcome.stdout.trim()) parts.push(`stdout:\n${clip(outcome.stdout)}`)
     if (outcome.stderr.trim()) parts.push(`stderr:\n${clip(outcome.stderr)}`)
     // The generated script itself is not a result of the run.

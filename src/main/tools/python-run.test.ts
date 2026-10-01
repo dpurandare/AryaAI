@@ -114,7 +114,7 @@ describe('python_run', () => {
       const scripts = await readdir(join(root, 'code'))
       expect(scripts).toHaveLength(1)
       expect(scripts[0]).toMatch(/^run_\d{8}-\d{6}\.py$/)
-      expect(out).toContain(`script: code/${scripts[0]} (saved from \`code\`; re-run it with \`script\`)`)
+      expect(out).toContain(`script: code/${scripts[0]} (saved from \`code\`; to re-run it UNCHANGED, pass \`script\` ALONE — never together with \`code\`; for a fix, pass the revised source as \`code\` again instead)`)
       expect(out).toContain('Files created or changed by this run (found by the app): out.txt')
       expect(out).not.toMatch(/found by the app\): .*run_/)
     })
