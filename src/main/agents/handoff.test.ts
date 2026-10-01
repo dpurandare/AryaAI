@@ -120,14 +120,36 @@ describe('saveHandoffData', () => {
     const saved = await saveHandoffData(root, 'turn1', 1, 'db_execute_sql', sqlResult)
     expect(saved).toEqual({ path: `${HANDOFF_DIR}/turn1/01-db_execute_sql.json`, tool: 'db_execute_sql', summary: '30 rows' })
     const onDisk = await readFile(path.join(root, saved!.path), 'utf-8')
-    expect(onDisk).toBe(sqlResult)
-    expect(JSON.parse(onDisk.slice(onDisk.indexOf('\n') + 1))).toHaveLength(30)
+    // Found live (manual_testing.md section 4, Prompt B): the file used to keep the "30 row(s):" chat
+    // header, and a later step's script had to skip the first line itself before json.load() — several
+    // failed rounds of od -c/head -c to even find that out. The on-disk file is now pure, directly
+    // parseable JSON; the row count still reaches the next step, but via its `summary` (above) and the
+    // orchestrator's own "Inputs from earlier in this turn" note, never by being embedded in the file.
+    expect(onDisk).not.toMatch(/^\d+ row\(s\):/)
+    expect(JSON.parse(onDisk)).toHaveLength(30)
   })
 
   it('uses .txt for non-JSON results and describes them by length', async () => {
     const saved = await saveHandoffData(root, 't', 2, 'parse_html', 'Article text. '.repeat(50))
     expect(saved?.path).toMatch(/02-parse_html\.txt$/)
     expect(saved?.summary).toBe('700 characters')
+  })
+
+  it('strips a differently-shaped chat header too — not hardcoded to "N row(s):" (api_call-style "<status> <statusText>\\n<json>")', async () => {
+    const body = JSON.stringify({ items: Array.from({ length: 20 }, (_, i) => ({ id: i })) }, null, 2)
+    const saved = await saveHandoffData(root, 't', 3, 'api_call', `200 OK\n${body}`)
+    expect(saved?.path).toMatch(/03-api_call\.json$/)
+    const onDisk = await readFile(path.join(root, saved!.path), 'utf-8')
+    expect(onDisk).toBe(body) // header stripped, exact JSON preserved
+    expect(JSON.parse(onDisk).items).toHaveLength(20)
+  })
+
+  it('falls back to the raw text when nothing after the first bracket is actually valid JSON', async () => {
+    const text = 'Some prose mentioning a {set} of things but not actually JSON at all. '.repeat(5)
+    const saved = await saveHandoffData(root, 't', 4, 'parse_html', text)
+    expect(saved?.path).toMatch(/04-parse_html\.txt$/)
+    const onDisk = await readFile(path.join(root, saved!.path), 'utf-8')
+    expect(onDisk).toBe(text) // untouched — never silently truncate real text content
   })
 
   it('skips a result short enough to be fully visible already', async () => {

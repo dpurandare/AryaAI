@@ -87,6 +87,15 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 // workspace file as this turn's output — the second half of the same incident (the stalled plan's final
 // round presented an old .docx, from a different session, as freshly created) — routerPrompt 1030 -> 1200
 // measured, ceiling raised to 1230; routerBare/slimRouterBare raised to match.
+// 2026-10-01 (same incident, the layout regression it caused): classify-and-plan's blanket "a
+// file/document is its own step" rule had no carve-out for a document that needs a chart/image embedded
+// in it, so it split chart generation (Developer) from "put it in a Word file" (Document Creator) across
+// two roles — Document Creator cannot embed an image at all and only ever bounces that step back, and
+// with the document-saving part framed as someone else's job, Developer's own step description never
+// even asked for it, so Developer quietly over-delivered unasked, redundantly, on a worse second pass.
+// classifyPrompt gained an explicit rule: chart/image generation AND embedding it into a document is ONE
+// Developer step, never split and never routed to Document Creator for this — 942 -> 1104 measured,
+// ceiling raised to 1150. Deliberate growth: this is the fix, not drift.
 const CEILINGS = {
   routerPrompt: 1230,
   routerToolSchemas: 9930,
@@ -94,7 +103,7 @@ const CEILINGS = {
   slimRouterToolSchemas: 2130,
   slimRouterBare: 3360,
   routerCore: 800,
-  classifyPrompt: 950,
+  classifyPrompt: 1150,
   'role:planning': 65,
   'role:research': 1340,
   'role:history-analyst': 500,

@@ -1475,6 +1475,22 @@ export class Orchestrator {
       'belongs in the final answer instead.\n' +
       'A role whose summary says it writes AND runs code handles both in ONE step — never split writing ' +
       'a script from running it into separate steps or roles.\n' +
+      // Found live (manual_testing.md section 4, Prompt B, 2026-10-01): the file/document rule above, applied
+      // literally, split "generate the chart" (Developer) and "put it in a Word file" (Document Creator) into
+      // two steps — but Document Creator cannot embed an image or chart at all and only ever bounces that
+      // step back. Worse, with the document part framed as a separate step for someone else, step 2's own
+      // wording asked Developer only for "the chart file paths" — never to save the document — so Developer
+      // quietly over-delivered (embedding it anyway, unasked, because its own prompt nudges it to) while
+      // Document Creator got invoked redundantly afterward for work already done.
+      'A document/file that needs a chart or image generated from data AND embedded into it ("put these ' +
+      'charts in a Word file") is ONE step for the role that writes and runs code — never split the chart ' +
+      'generation from the document creation across two steps or two roles, and never route the document ' +
+      "part to Document Creator for this: it cannot embed an image or chart at all and will only bounce the " +
+      "step back. Word that one step's own description to cover BOTH halves explicitly — generate the " +
+      'chart(s) AND save them into the requested document — so the result cannot silently omit the embedding ' +
+      'or need a second, redundant pass to finish it. Only give Document Creator a step when the deliverable ' +
+      'is genuinely text-only (headings, bullets, prose, or filling an existing template) with nothing to ' +
+      'embed.\n' +
       'Domain knowledge (rules/constraints, or how to interpret something — from a wiki/MCP server, or the ' +
       'web if none is connected) together with the data those rules apply to (database/API) is always ' +
       'compound, one step per source, even in a single sentence.\n' +

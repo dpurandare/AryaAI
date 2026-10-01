@@ -127,15 +127,40 @@ function describeCapture(content: string): string {
 }
 
 /**
+ * Found live (manual_testing.md section 4, Prompt B, 2026-10-01): a captured `db_execute_sql` file
+ * started with the literal line `30 row(s):` before its JSON array — a header meant for the chat
+ * transcript, not a data file — and `json.load()` on it failed with "Extra data". The Developer step
+ * burned several rounds (`od -c`, `head -c`, manual trial and error) discovering that and working
+ * around it by skipping the first line. Several other data tools (`api_call`'s `"200 OK\n{...}"`,
+ * `parse_csv`'s `"N row(s):\n[...]"`) share the same shape: a short human-readable line, then the real
+ * JSON payload. Rather than special-case every tool's exact header text, find the first `[`/`{` and
+ * confirm everything from there really is valid JSON — if so, THAT (not the original string) is what
+ * gets written to disk, so a later step's script can `json.load()` the file directly. The header stays
+ * in `content` for `describeCapture`'s summary and in whatever the model sees in the chat transcript —
+ * only the on-disk file handed to the next step is cleaned.
+ */
+function extractPureJson(content: string): string | undefined {
+  const start = content.search(/[[{]/)
+  if (start < 0) return undefined
+  const candidate = content.slice(start)
+  try {
+    JSON.parse(candidate)
+  } catch {
+    return undefined
+  }
+  return candidate
+}
+
+/**
  * Saves one tool result under `<root>/.sachiv-handoff/<turnId>/` and returns its handoff
- * record, or `undefined` when it is not worth capturing. The `N row(s):` header of a SQL
- * result is kept in the file — the payload after it is already pretty-printed JSON.
+ * record, or `undefined` when it is not worth capturing.
  */
 export async function saveHandoffData(root: string, turnId: string, seq: number, tool: string, content: string): Promise<HandoffDataFile | undefined> {
   if (content.length < MIN_CAPTURE_CHARS) return undefined
-  const looksJson = /^(\d+ row\(s\):\n)?\s*[[{]/.test(content)
-  const ext = looksJson ? 'json' : 'txt'
-  const body = Buffer.byteLength(content) > MAX_CAPTURE_BYTES ? content.slice(0, MAX_CAPTURE_BYTES) + '\n[...truncated at 2 MB...]' : content
+  const pureJson = extractPureJson(content)
+  const ext = pureJson !== undefined ? 'json' : 'txt'
+  const toWrite = pureJson ?? content
+  const body = Buffer.byteLength(toWrite) > MAX_CAPTURE_BYTES ? toWrite.slice(0, MAX_CAPTURE_BYTES) + '\n[...truncated at 2 MB...]' : toWrite
   const rel = `${HANDOFF_DIR}/${turnId}/${String(seq).padStart(2, '0')}-${tool.replace(/[^a-zA-Z0-9_-]/g, '_')}.${ext}`
   try {
     await mkdir(path.join(root, HANDOFF_DIR, turnId), { recursive: true })

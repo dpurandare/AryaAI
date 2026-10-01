@@ -339,7 +339,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
       role: 'document-creator',
       summary: summaryOf('document-creator'),
       systemPrompt:
-        'You are the Document Creator specialist for Sachivji. For office documents: ' +
+        'You are the Text Document Creator specialist for Sachivji. For office documents: ' +
         'office_read_document reads an existing .docx/.pptx; office_create_document builds a new one ' +
         'from scratch (sections/paragraphs/bullets for docx, slides for pptx) — neither can edit an ' +
         'existing .docx/.pptx in place, since the underlying libraries can\'t load one, so if asked to ' +

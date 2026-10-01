@@ -971,6 +971,29 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(classifySystem).toMatch(/one step per source, even in a single sentence/i)
     })
 
+    it('names chart/image generation + embedding into a document as ONE Developer step, never split and never routed to Document Creator (2026-10-01, manual_testing.md section 4)', async () => {
+      // Found live: the blanket "a file/document is its own step" rule, applied literally, split chart
+      // generation (Developer) from "put it in a Word file" (Document Creator) across two steps — but
+      // Document Creator cannot embed an image at all and only ever bounces that step back. Worse, with
+      // the document part framed as someone else's job, the chart step's own wording never even asked
+      // Developer to save the document, so Developer quietly over-delivered it anyway, unasked, on a
+      // worse, redundant second pass.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Sure, here you go.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: true }
+      )
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+      const classifySystem = provider.requests[0].system ?? ''
+      expect(classifySystem).toMatch(/chart or image generated from data AND embedded into it/i)
+      expect(classifySystem).toMatch(/never split the chart generation from the document creation/i)
+      expect(classifySystem).toMatch(/never route the document part to Document Creator/i)
+    })
+
     it('the planning call asks the provider for structured output limited to the plannable roles; ordinary rounds never do', async () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
@@ -4040,10 +4063,13 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const m = /Data from data: (\.sachiv-handoff\/[^ ]+\.json) — db_execute_sql: 30 rows/.exec(codingBrief)
       expect(m, 'the brief must name the captured data file').not.toBeNull()
 
-      // The file really holds all 30 rows the query returned.
+      // The file really holds all 30 rows the query returned — as pure, directly-parseable JSON (no
+      // "30 row(s):" chat header): found live, a later step's script had to skip that line itself
+      // before json.load() would work at all. The row count still reaches the brief above, via the
+      // handoff note/summary, never by being embedded in the file.
       const saved = await readFile(join(root, m![1]), 'utf-8')
-      expect(saved.startsWith('30 row(s):')).toBe(true)
-      expect(JSON.parse(saved.slice(saved.indexOf('\n') + 1))).toHaveLength(30)
+      expect(saved.startsWith('30 row(s):')).toBe(false)
+      expect(JSON.parse(saved)).toHaveLength(30)
 
       // ...and the plan-step message the final round sees also names it, past the summary.
       expect(userTexts.find((t) => t.includes('[Plan step 1 — Data Access]'))).toContain('Data captured for later steps: .sachiv-handoff/')

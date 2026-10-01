@@ -110,7 +110,7 @@ export const ROLE_MANIFEST = [
     id: 'coding',
     label: 'Developer',
     summary:
-      'Writes AND runs code (Python in the workspace venv), edits files, uses git, cloud CLIs and GitHub. Not for plain Word documents (Document Creator) or database queries (Data Access).',
+      'Writes AND runs code (Python in the workspace venv), edits files, uses git, cloud CLIs and GitHub. Not for plain Word documents (Text Document Creator) or database queries (Data Access).',
     description:
       'Writes and edits code and files in the workspace, and runs them: shell commands and Python scripts (with the workspace virtual environment active), git, the AWS / Azure / Google Cloud CLIs, and GitHub via gh. Because it both writes and runs, "make a chart / a script and run it" is one job for it. Every command and every change asks for confirmation. Not a sandbox.',
     pickable: true,
@@ -165,7 +165,7 @@ export const ROLE_MANIFEST = [
   },
   {
     id: 'document-creator',
-    label: 'Document Creator',
+    label: 'Text Document Creator',
     summary:
       'Creates, fills from templates and reads Word and other Office documents. Cannot run code or draw charts from data (Developer) and cannot edit an existing file in place.',
     description:
@@ -237,7 +237,7 @@ export const ROLE_MANIFEST = [
     id: 'email',
     label: 'Email',
     summary:
-      'Drafts and sends an email from a brief (recipients, what to say). Does not write documents (Document Creator) or look up addresses (Data Access).',
+      'Drafts and sends an email from a brief (recipients, what to say). Does not write documents (Text Document Creator) or look up addresses (Data Access).',
     description:
       'Isolated specialist: drafts and sends an email from a short brief using the email accounts configured in Settings. Sending always asks for confirmation. Needs at least one configured email account.',
     pickable: true,
