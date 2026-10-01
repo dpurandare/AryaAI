@@ -681,12 +681,10 @@ async function runChat(
 
   const provider = descriptor.create(apiKey, providerOptions())
 
-  // Read once, up front, and acted on only after the turn actually
-  // completes (below) — checking the session's *current title*, not a
-  // message count, so a first attempt that errors out mid-turn (thrown
-  // before reaching the rename) still leaves the next successful attempt
-  // able to auto-title, rather than a message-count check silently
-  // consuming the "first turn" opportunity on a failed one.
+  // Read once, up front, before this turn's own user message is inserted — checking the session's
+  // *current title*, not a message count, so a first turn that never gets this far (fails before even
+  // reaching the rename below) still leaves the next attempt able to auto-title, rather than a
+  // message-count check silently consuming the "first turn" opportunity on one that never happened.
   const sessionBeforeTurn = getSession(sessionId)
 
   const history = listMessages(sessionId)
@@ -743,6 +741,20 @@ async function runChat(
   conversation.push({ role: 'user', content: [{ type: 'text', text }] })
   const userMessage = insertMessage(sessionId, 'user', [{ type: 'text', text }])
   enqueueMessage(userMessage.id, sessionId, userMessage.content)
+
+  // "Asked and answered" — only once, only from a session's actual first exchange (the title guard
+  // above). Found live (2026-10-01): doing this at the END of the turn instead meant a turn that got
+  // stuck (slow/looping local model) or was manually stopped never reached it, leaving the session
+  // titled "New Chat" forever — the per-turn guard only retries on a session's *next* turn, and a
+  // session that never finishes a turn cleanly never gets one. The title comes from the user's own
+  // first message text, which can't change no matter how the turn itself goes, so there's nothing to
+  // gain by waiting for it to finish — do it right away, optimistically, the moment the message lands.
+  if (sessionBeforeTurn?.title === DEFAULT_SESSION_TITLE) {
+    const title = titleFromMessage(text)
+    updateSessionTitle(sessionId, title)
+    const payload: SessionTitleUpdatedPayload = { sessionId, title }
+    sender.send(IpcChannel.SessionTitleUpdated, payload)
+  }
 
   // A named local, not an inline `new Map()`, specifically so the
   // finally-block below can still see whatever's left in it after the
@@ -841,16 +853,5 @@ async function runChat(
         console.error(`runChat: failed to auto-save in-progress deck "${deckId}" at turn end:`, err)
       }
     }
-  }
-
-  // "Asked and answered" — only once, only from a session's actual first
-  // exchange (the title guard above), and only once the turn has genuinely
-  // finished (success or a clean abort both reach here; a thrown error does
-  // not, leaving the opportunity open for the next attempt).
-  if (sessionBeforeTurn?.title === DEFAULT_SESSION_TITLE) {
-    const title = titleFromMessage(text)
-    updateSessionTitle(sessionId, title)
-    const payload: SessionTitleUpdatedPayload = { sessionId, title }
-    sender.send(IpcChannel.SessionTitleUpdated, payload)
   }
 }
