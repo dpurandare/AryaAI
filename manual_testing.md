@@ -90,7 +90,7 @@ This is the exact task that failed twice. **Fresh session, Agent: Auto.** Keep t
 > I need you to create a word document that shows bar charts for top 10 customers every year from the Northwind database. Plan the activities well and make sure the document has the required bar charts.
 
 **Prompt B (the two-turn variant that failed on 9/26):**
-> We need to find top 10 customers for each year and create column charts for each year. I am referring to Northwind database. We want these charts to be added to a Word file and saved. Plan the activities before executing.
+> We need to find top 10 customers for each year and create column charts for each year from Northwind database. Add these charts to a Word file and save it. 
 
 Then, if it stops or hands anything back to you: `You can execute Python. Run the scripts and complete the task.`
 
