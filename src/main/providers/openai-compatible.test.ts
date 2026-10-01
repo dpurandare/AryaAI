@@ -170,4 +170,23 @@ describe('streamOpenAICompatible structured output', () => {
     expect(seen[0]).not.toHaveProperty('response_format')
     expect(seen[1].response_format).toEqual({ type: 'json_schema', json_schema: { name: 'classify_and_plan', strict: true, schema: planSchema } })
   })
+
+  it('sends temperature when the request sets it, and omits it entirely when it does not', async () => {
+    const seen: Record<string, unknown>[] = []
+    const client = {
+      chat: {
+        completions: {
+          create: async (params: Record<string, unknown>) => {
+            seen.push(params)
+            return { [Symbol.asyncIterator]: async function* () { yield { choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] } } }
+          }
+        }
+      }
+    } as unknown as OpenAI
+    const base = { model: 'm', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }], maxTokens: 10 }
+    await collect(streamOpenAICompatible(client, base))
+    await collect(streamOpenAICompatible(client, { ...base, temperature: 0.2 }))
+    expect(seen[0]).not.toHaveProperty('temperature')
+    expect(seen[1].temperature).toBe(0.2)
+  })
 })

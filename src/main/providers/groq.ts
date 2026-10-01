@@ -16,9 +16,11 @@ import type { CompletionRequest, Message, ModelProvider, StreamEvent } from './t
  *
  * Groq's docs list real OpenAI-compatibility gaps (`logprobs`, `logit_bias`,
  * `top_logprobs`, `messages[].name`, `N != 1`, and `temperature: 0` silently
- * becoming `1e-8`) — none of them are ever sent by this app: `toOpenAIMessages`/
- * `streamOpenAICompatible` (openai-compatible.ts) never set any of those
- * fields, so none of Groq's documented deviations are actually reachable here.
+ * becoming `1e-8`) — `toOpenAIMessages`/`streamOpenAICompatible` (openai-compatible.ts) never set
+ * `logprobs`/`logit_bias`/`top_logprobs`/`messages[].name`/`N`, so those stay unreachable here, but
+ * `temperature` (CompletionRequest.temperature, Settings > Model behavior) now is sent when set — its
+ * floor there is a safe 0..1, so an exact `0` is possible if someone sets the slider to its minimum;
+ * Groq's silent 0 -> 1e-8 substitution is a real, reachable quirk for that one value on this provider.
  *
  * No `/v1/embeddings` endpoint exists on Groq (confirmed against its API
  * reference) — unlike OpenAI/Ollama, this does not implement

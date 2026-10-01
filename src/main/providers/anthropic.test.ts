@@ -227,6 +227,13 @@ describe('AnthropicProvider', () => {
       expect(p.tools).toBeUndefined()
     })
 
+    it('sends temperature when the request sets it, and omits the field entirely when it does not (the provider default then applies)', () => {
+      const withTemp = buildAnthropicParams({ model: 'm', messages: history, maxTokens: 10, temperature: 0.2 })
+      expect(withTemp.temperature).toBe(0.2)
+      const withoutTemp = buildAnthropicParams({ model: 'm', messages: history, maxTokens: 10 })
+      expect(withoutTemp).not.toHaveProperty('temperature')
+    })
+
     it('is deterministic: the same request produces byte-identical parameters (the prefix must not vary between rounds)', () => {
       const req = { model: 'm', system: 'sys', messages: history, tools: [tool('a'), tool('b')], maxTokens: 10 }
       expect(JSON.stringify(buildAnthropicParams(req))).toBe(JSON.stringify(buildAnthropicParams(req)))

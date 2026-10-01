@@ -84,6 +84,7 @@ export class GoogleProvider implements ModelProvider, EmbeddingProvider {
         systemInstruction: request.system,
         maxOutputTokens: request.maxTokens,
         abortSignal: request.signal,
+        ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
         // TASKS.md #147: opt-in — Gemini does not stream thought summaries unless explicitly asked.
         // Whether the configured model actually returns any (gemini-3.5-flash-lite may not) is a live
         // fact, not something knowable from this code — a model that doesn't support it simply never

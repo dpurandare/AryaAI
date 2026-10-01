@@ -852,6 +852,14 @@ export class Orchestrator {
        * ends before its next round starts) is a known, accepted gap for this first pass.
        */
       drainSteeringComments?: () => string[]
+      /**
+       * 0..1, forwarded unchanged to every `provider.stream()` call this turn makes (classify, every
+       * round, the wrap-up). Absent = send nothing, the provider's own default applies — unlike every
+       * other optional callback here, this isn't DB-free-file plumbing, it is itself the actual value
+       * (ipc/register.ts reads it from Settings > Model behavior once per turn and passes it straight
+       * through), so there is no separate getter to keep this file DB-free with.
+       */
+      temperature?: number
     } = { planningEnabled: false }
   ) {}
 
@@ -1178,6 +1186,7 @@ export class Orchestrator {
             // this existed (finish_reason:"length", 0 visible chars).
             maxTokens: state.maxOutputTokens,
             signal: roundTimer.signal,
+            temperature: this.options.temperature,
             ...(structured ? { structuredOutput: { name: 'classify_and_plan', schema: buildPlanSchema(this.plannableRoleIds()) } } : {})
           })) {
             if (event.type === 'text_delta') text += event.text
@@ -1758,7 +1767,8 @@ export class Orchestrator {
           messages: messagesToSend,
           maxTokens: state.maxOutputTokens,
           tools: toolDefs.length ? toolDefs : undefined,
-          signal: roundTimer.signal
+          signal: roundTimer.signal,
+          temperature: this.options.temperature
         })) {
           if (event.type === 'text_delta') {
             assistantText += event.text
@@ -2125,7 +2135,8 @@ export class Orchestrator {
         system: wrapUpSystem,
         messages: wrapUpMessages,
         maxTokens: state.maxOutputTokens,
-        signal: wrapUpTimer.signal
+        signal: wrapUpTimer.signal,
+        temperature: this.options.temperature
         // No `tools` — forces a text-only reply, so this genuinely cannot loop further.
       })) {
         if (event.type === 'text_delta') wrapUpText += event.text

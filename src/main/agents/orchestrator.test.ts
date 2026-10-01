@@ -204,6 +204,28 @@ describe('Orchestrator (integration, mocked provider)', () => {
     expect(provider.requests).toHaveLength(1)
   })
 
+  it('forwards options.temperature to every provider.stream() call this turn makes; omits it when unset (2026-10-01)', async () => {
+    // Found live: the classify step, at a provider's own default temperature, occasionally misrouted
+    // an otherwise-correctly-worded request on a local model — Settings > Model behavior's whole point
+    // is that this is reachable and actually takes effect, not just plumbed through and silently dropped.
+    const registry = buildRegistry()
+    const agents = createAgents(registry)
+
+    const withTemp = new MockProvider([{ text: 'Hello!', stopReason: 'end_turn' }])
+    const orchestratorWithTemp = new Orchestrator(
+      withTemp, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false, temperature: 0.2 }
+    )
+    await collect(orchestratorWithTemp, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+    expect(withTemp.requests[0].temperature).toBe(0.2)
+
+    const withoutTemp = new MockProvider([{ text: 'Hello!', stopReason: 'end_turn' }])
+    const orchestratorWithoutTemp = new Orchestrator(
+      withoutTemp, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false }
+    )
+    await collect(orchestratorWithoutTemp, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+    expect(withoutTemp.requests[0].temperature).toBeUndefined()
+  })
+
   it('a denied confirmation surfaces as an error tool_result without writing the file', async () => {
     const registry = buildRegistry()
     const agents = createAgents(registry)

@@ -33,6 +33,13 @@ export interface CompletionRequest {
   signal?: AbortSignal
   /** Only meaningful without `tools`. */
   structuredOutput?: StructuredOutputRequest
+  /**
+   * 0 (deterministic) .. 1 (provider default-ish). Undefined = send nothing, provider's own default
+   * applies. Settings > Model behavior (ipc/register.ts's TEMPERATURE_SETTING_KEY), threaded through
+   * unchanged by every adapter — never clamped or reinterpreted per-provider here, since 0..1 is a safe
+   * subset of every supported provider's own range (Anthropic caps at 1; OpenAI/Google go to 2).
+   */
+  temperature?: number
 }
 
 /** Per-turn provider construction options, read from Settings by the caller. Only Anthropic uses `promptCaching` today. */

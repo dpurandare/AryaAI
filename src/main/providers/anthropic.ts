@@ -68,6 +68,7 @@ export function buildAnthropicParams(request: CompletionRequest, options: { prom
     max_tokens: request.maxTokens,
     messages,
     tools,
+    ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
     ...(forced ? { tool_choice: { type: 'tool' as const, name: forced.name } } : {})
   }
 }

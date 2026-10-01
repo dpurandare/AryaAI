@@ -79,6 +79,15 @@ describe('GoogleProvider', () => {
     expect(params.config.thinkingConfig).toEqual({ includeThoughts: true })
   })
 
+  it('sends temperature when the request sets it, and omits it entirely when it does not', async () => {
+    mockGenerateContentStream.mockResolvedValue(fakeStream([{ candidates: [{ finishReason: 'STOP' }] }]))
+    const provider = new GoogleProvider('key')
+    await collect(provider.stream({ model: 'gemini-flash-latest', messages: [], maxTokens: 100 }))
+    expect(mockGenerateContentStream.mock.calls[0][0].config).not.toHaveProperty('temperature')
+    await collect(provider.stream({ model: 'gemini-flash-latest', messages: [], maxTokens: 100, temperature: 0.2 }))
+    expect(mockGenerateContentStream.mock.calls[1][0].config.temperature).toBe(0.2)
+  })
+
   it('routes a part.thought=true part to thinking_delta, keeping it separate from real answer text', async () => {
     mockGenerateContentStream.mockResolvedValue(
       fakeStream([

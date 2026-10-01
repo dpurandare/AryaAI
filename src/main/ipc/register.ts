@@ -150,6 +150,26 @@ function providerOptions(): ProviderOptions {
   return { promptCaching: getSetting(PROMPT_CACHING_SETTING_KEY) !== 'false' }
 }
 
+/**
+ * Settings key: 0..1, how deterministic the model should be. Default 0.2 — most of what Sachivji does
+ * (querying data, writing code, planning/classifying, building documents) benefits from precision over
+ * variety; this is not a creative-writing app. Found live (2026-10-01): the classify step, at a
+ * provider's own default temperature, occasionally misrouted an otherwise-correctly-worded request
+ * (Northwind top-10-customers -> Researcher instead of Data Access, on a local 20B model) — a plain
+ * sampling-variance flake a lower temperature reduces, not something the classify prompt's wording
+ * could fix on its own. Unset or unparseable = the default, never undefined (unlike promptCaching's
+ * undefined-is-a-valid-provider-option shape above, "send no temperature at all" is a real, different
+ * choice from "send a specific low one" — a corrupt setting should fail toward the safer default, not
+ * toward the provider's own, usually much higher, default).
+ */
+export const TEMPERATURE_SETTING_KEY = 'temperature'
+const DEFAULT_TEMPERATURE = 0.2
+
+function resolveTemperature(): number {
+  const raw = Number(getSetting(TEMPERATURE_SETTING_KEY))
+  return Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : DEFAULT_TEMPERATURE
+}
+
 /** Settings key: `'true'` when the user chose to continue without Python (design-discussion.md section 4.3). */
 export const PYTHON_RUNTIME_DISABLED_SETTING_KEY = 'pythonRuntimeDisabled'
 
@@ -780,6 +800,7 @@ async function runChat(
     {
       // Missing/unset reads as enabled — default on (see PLANNING_ENABLED_SETTING_KEY's own doc comment).
       planningEnabled: getSetting(PLANNING_ENABLED_SETTING_KEY) !== 'false',
+      temperature: resolveTemperature(),
       confirmContinue: makeConfirmContinue(sender, streamId, sessionId),
       // TASKS.md #95, phase 2 — persists every real classify-and-plan
       // result alongside the deterministic gate's own verdict, so the

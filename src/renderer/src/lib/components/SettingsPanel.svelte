@@ -606,6 +606,20 @@
     await window.sachiv.setSetting(PROMPT_CACHING_SETTING_KEY, on ? 'true' : 'false')
   }
 
+  // --- Temperature (2026-10-01) --- 0..1, default 0.2; most work here is business-operations work
+  // (data, code, documents, routing), not creative writing, so low-and-precise is the right default.
+  const TEMPERATURE_SETTING_KEY = 'temperature'
+  const DEFAULT_TEMPERATURE = 0.2
+  let temperature = $state(DEFAULT_TEMPERATURE)
+  window.sachiv.getSetting(TEMPERATURE_SETTING_KEY).then((v) => {
+    const n = Number(v)
+    temperature = Number.isFinite(n) && n >= 0 && n <= 1 ? n : DEFAULT_TEMPERATURE
+  })
+  async function setTemperature(value: number): Promise<void> {
+    temperature = value
+    await window.sachiv.setSetting(TEMPERATURE_SETTING_KEY, String(value))
+  }
+
   // --- Secret storage backend (TASKS.md #75) ---
   let secretStorageMode = $state<'keychain' | 'file'>('keychain')
   let secretStorageEnvPath = $state('')
@@ -1576,6 +1590,26 @@
     <label class="checkbox-row">
       <input type="checkbox" checked={promptCaching} onchange={(e) => setPromptCaching(e.currentTarget.checked)} />
       Use prompt caching
+    </label>
+
+    <hr />
+
+    <h2>Model behavior</h2>
+    <p class="status">
+      How deterministic the model should be, from 0 (always the most likely answer) to 1 (more variety). Applies to every
+      request — routing, planning, specialists, everything. Lower is better for business-operations work (data, code,
+      documents); raise it only if you want more varied/creative text. Applies to your next message.
+    </p>
+    <label class="checkbox-row">
+      Temperature: {temperature.toFixed(1)}
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.1"
+        value={temperature}
+        oninput={(e) => setTemperature(Number(e.currentTarget.value))}
+      />
     </label>
 
     <hr />

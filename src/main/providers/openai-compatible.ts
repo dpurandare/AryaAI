@@ -91,6 +91,7 @@ export async function* streamOpenAICompatible(
       model: request.model,
       messages: toOpenAIMessages(request.system, request.messages),
       max_completion_tokens: request.maxTokens,
+      ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
       tools: request.tools?.map((t) => ({
         type: 'function' as const,
         function: { name: t.name, description: t.description, parameters: t.inputSchema }
