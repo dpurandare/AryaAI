@@ -1344,13 +1344,17 @@ export class Orchestrator {
       let outcome = yield* this.dispatchDelegate(role, { task: step.description }, conversation, state, planContext)
 
       // out_of_scope → redirect ONCE per turn to the role the specialist named (5.2). A second
-      // out_of_scope, or a suggestion that is not a real role, is left as-is for the final round to explain.
+      // out_of_scope, a suggestion that is not a real role, or a real-but-not-plannable role (e.g.
+      // page-creator — isolated, fixed one-slide brief shape, never a sane target for an arbitrary
+      // step description) is left as-is for the final round to explain. Found live: Document Creator
+      // declined an image-embedding step and, despite its own prompt naming "the Developer", picked
+      // "page-creator" instead — a syntactically valid agent id but a dead end for a Word document.
       const suggested = outcome.result?.suggestedRole
       if (
         outcome.result?.status === 'out_of_scope' &&
         suggested &&
         suggested !== role &&
-        this.agents.has(suggested as AgentRole) &&
+        this.plannableRoleIds().includes(suggested) &&
         state.handoff.redirects < 1
       ) {
         state.handoff.redirects++
@@ -1497,7 +1501,15 @@ export class Orchestrator {
       "one — each tool's description says what that specialist does and does not do. Anything that needs code " +
       'written AND run, or files created or changed, should usually go to the Developer rather than being ' +
       'handled directly. For simple or general requests, just answer directly (or use your own tools) ' +
-      'without delegating.'
+      "without delegating. The workspace is shared across every session, so a file you find there (e.g. " +
+      "via list_directory) may be real but may also predate this turn or belong to a different request. " +
+      "Before telling the user a document/file/deliverable was created or updated, make sure that is " +
+      "actually true of THIS turn — a step's own result text saying \"Files created or changed (verified " +
+      "by the app, not self-reported)\" is real evidence; a file simply existing on disk is not. If a plan " +
+      "step ended NEEDS INPUT, OUT OF SCOPE, or FAILED for the deliverable the user asked for, say plainly " +
+      "that it was not produced — never present an old file from a previous turn as if it were this turn's " +
+      "output. If you genuinely cannot tell whether something you see is new or pre-existing, say so and " +
+      'ask the user rather than guessing.'
     )
   }
 
@@ -2348,7 +2360,7 @@ export class Orchestrator {
     // delegate call) — it is the "other steps belong elsewhere, that's not your problem" framing a plan
     // step specifically needs that an ordinary single delegation doesn't.
     const planScopeNote = planContext
-      ? `\n\n(This is step ${planContext.index + 1} of ${planContext.total} in a multi-step plan for the user's original request — the other step(s) are being handled by other specialists in this same turn, not by you. Do only THIS step, with your own tools. A part of the original request that belongs to a different step is not a reason to call THIS step out of scope — only call [handoff: out_of_scope -> <role-id>] if THIS step's own task genuinely needs a tool/capability you don't have. If you do, name a real role id, one of: ${[...this.agents.keys()].join(', ')}.)`
+      ? `\n\n(This is step ${planContext.index + 1} of ${planContext.total} in a multi-step plan for the user's original request — the other step(s) are being handled by other specialists in this same turn, not by you. Do only THIS step, with your own tools. A part of the original request that belongs to a different step is not a reason to call THIS step out of scope — only call [handoff: out_of_scope -> <role-id>] if THIS step's own task genuinely needs a tool/capability you don't have. If you do, name a real role id, one of: ${this.plannableRoleIds().join(', ')}.)`
       : ''
     // The real outputs of earlier delegates this turn (files they produced, data they retrieved) are
     // appended to the brief by the app — typed inputs, not something the router has to remember to pass.

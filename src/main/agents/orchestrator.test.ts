@@ -4141,6 +4141,22 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(provider.requests).toHaveLength(4) // classify, coding, research, final — no redirect into a role that does not exist
     })
 
+    it('ignores a suggested role that is real but not plannable (page-creator) instead of redirecting into a dead end', async () => {
+      // Found live (manual_testing.md section 4, Prompt B): document-creator declined an image-embedding
+      // step and named "page-creator" — a syntactically valid agent id, but isolated/one-slide-only and
+      // never a sane target for an arbitrary redirected task. The redirect-once safety net must reject it
+      // the same way it already rejects a hallucinated role id, not just dispatch into the dead end.
+      const { provider, userTexts } = await run([
+        planOf(['document-creator', 'embed charts into a Word document'], ['research', 'find a caption']),
+        { text: 'Not mine.\n[handoff: out_of_scope -> page-creator]', stopReason: 'end_turn' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'Document Creator could not do this part.', stopReason: 'end_turn' }
+      ])
+      expect(provider.requests).toHaveLength(4) // classify, document-creator, research, final — no redirect into page-creator
+      const step = userTexts.find((t) => t.includes('[Plan step 1')) ?? ''
+      expect(step).toContain('(OUT OF SCOPE — not done)')
+    })
+
     it('no_information is named plainly on the step, and does not pause the plan or trigger a redirect (design-discussion.md §13.2(b), TASKS #143)', async () => {
       const { provider, userTexts } = await run([
         planOf(['mcp-operator', 'look up the inverter maintenance policy'], ['research', 'find a caption']),

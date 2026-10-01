@@ -358,7 +358,9 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'original document, so nothing is lost by refining it more than once. You have no shell and ' +
         'office_create_document has no image support, so you cannot embed charts computed from data — ' +
         'if the user wants charts or images in a document, say a script is needed and that the ' +
-        'Developer does that (python-docx).',
+        'Developer does that (python-docx). If you hand this off, the role id for Developer is ' +
+        '`coding` — end with `[handoff: out_of_scope -> coding]`, never a role that only builds ' +
+        'presentation slides or anything else that is not actually Developer.',
       get tools() {
         return pickTools(registry, [
           'office_read_document',

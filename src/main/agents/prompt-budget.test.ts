@@ -78,12 +78,21 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 // trigger for the native shell) — real, requested content, raised deliberately. role:coding also grew: the
 // same defaults are restated in the Developer role's own prompt (matplotlib named explicitly, the OS-target
 // shell fact interpolated from process.platform).
+// 2026-10-01 (live Prompt-B failure, manual_testing.md section 4): Document Creator declined an
+// image-embedding step and its own thinking considered "the Developer" but named the wrong role id
+// (page-creator — a dead end, isolated/one-slide-only) in its `[handoff: out_of_scope -> ...]` tag.
+// role:document-creator now states the id explicitly (`coding`) instead of leaving the model to guess it
+// from a role list — 2130 -> 2172 measured, ceiling raised to 2220. buildOrchestratorSystemPrompt (every
+// routerPrompt/routerBare/slimRouterBare number) also gained an instruction not to present a pre-existing
+// workspace file as this turn's output — the second half of the same incident (the stalled plan's final
+// round presented an old .docx, from a different session, as freshly created) — routerPrompt 1030 -> 1200
+// measured, ceiling raised to 1230; routerBare/slimRouterBare raised to match.
 const CEILINGS = {
-  routerPrompt: 1030,
+  routerPrompt: 1230,
   routerToolSchemas: 9930,
-  routerBare: 10930,
+  routerBare: 11160,
   slimRouterToolSchemas: 2130,
-  slimRouterBare: 3080,
+  slimRouterBare: 3360,
   routerCore: 800,
   classifyPrompt: 950,
   'role:planning': 65,
@@ -92,7 +101,7 @@ const CEILINGS = {
   'role:coding': 2710,
   'role:data': 2640,
   'role:data-processor': 2070,
-  'role:document-creator': 2130,
+  'role:document-creator': 2220,
   'role:configurator': 1290,
   'role:mcp-operator': 390,
   'role:page-creator': 820,
