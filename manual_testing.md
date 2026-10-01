@@ -498,3 +498,35 @@ to actually exercise the native Export/Import Settings dialogs at all.
 ingested a real folder, or added an existing SQLite file or Context7 through the normal Settings UI on a fresh install —
 13.2.5 (Northwind chart scenario against SQL Server) and 13.3.6–13.3.8 (a real ingested folder through the MCP Operator,
 including the compound domain-knowledge-plus-data case) are the most informative rows if you only have time for part of it.
+
+---
+
+## Scratch — macOS-specific checks (discard after trying on Mac)
+
+Not part of the numbered plan — suggestions for the upcoming first real macOS pass, grounded in actual gaps/code, not
+generic "does it run" checks. **Discard this section once tried on Mac** (fold anything that found a real bug into the
+numbered sections or TASKS.md instead of keeping it here).
+
+1. **Python/venv on real macOS — the one TASKS.md already flags as untested.** `ensureWorkspace` (the managed Python
+   venv) and `python_run` have only ever been unit-tested, never run live on real Windows or macOS (TASKS #131) —
+   Linux is the only platform this has actually been exercised on. Highest-value Mac check.
+   - Bonus: try it on a machine with only the stock Xcode Command Line Tools' Python (no Homebrew/python.org
+     install) — the README says CLT's bundled Python is too old; confirm onboarding detects that and guides to a
+     real fix rather than failing confusingly.
+2. **macOS Keychain for secret storage should "just work."** Unlike Linux (needs a running `libsecret`/keyring
+   daemon), macOS's native Keychain backs `safeStorage` directly. Confirm first-launch "Continue with OS Keychain"
+   succeeds with zero extra setup.
+3. **Native file dialogs — never tested on any platform.** Export/Import Settings and chat export (PDF/Markdown/JSON)
+   use real OS-native Save/Open panels (`manual_testing.md` 11d.9/11d.10 already flag these as never clicked through
+   by a human at all). macOS's native panel is a different code path than Linux's GTK one.
+4. **A packaged `dist:mac` build, not just `npm run dev`.** The one spot with actual prior Mac-specific trouble: a
+   native-binary-in-`asar` `dlopen` bug (better-sqlite3, `sqlite-vec`) was found and fixed specifically on a packaged
+   Mac build (TASKS #13), verified only once. Also the only way to see the real unsigned-build Gatekeeper flow
+   (right-click → Open) end to end — builds still aren't code-signed (TASKS #11).
+5. **Keyboard shortcuts — checked against the code, not guessed.** `Cmd+O` (tool-detail toggle) and `Cmd +/-/0`
+   (zoom) are genuinely platform-aware (`isMac` branches in `App.svelte`/`zoom.ts`). `Ctrl+Tab` for the agent picker
+   deliberately stays Ctrl even on Mac — `Cmd+Tab` is OS-reserved for app switching and can't be intercepted, so
+   that's correct by design, not a bug to report. Just confirm they feel right in practice.
+6. **Quick visual sanity check**: the window uses `titleBarStyle: 'hiddenInset'` with a custom traffic-light position
+   and matching CSS padding (`main/index.ts`, `App.svelte`) — dedicated Mac-only window-chrome code, never visually
+   confirmed since all prior live testing was Linux.
