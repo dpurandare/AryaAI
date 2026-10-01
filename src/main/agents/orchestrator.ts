@@ -686,6 +686,17 @@ const MAX_EMPTY_RESPONSE_RETRIES = 2
 const EMPTY_RESPONSE_NUDGE =
   'Your previous reply was empty. Continue with the task: use the tool results above and either call the next tool you need or give your answer in plain text.'
 
+/**
+ * TASKS.md #140/#141: a local reasoning model (gpt-oss especially) can burn its whole output budget on
+ * hidden reasoning and return literally no visible text for classify-and-plan's one-shot probe — confirmed
+ * live (console: "classify-and-plan response was not valid JSON ... the model returned no text"). Before
+ * this, the very first empty reply failed open straight to "no plan," silently losing a compound request's
+ * step split with no recovery — unlike `runLoop`'s own round loop, which already retries an empty response
+ * (`MAX_EMPTY_RESPONSE_RETRIES`). One retry only (TASKS #141's own stated preference, option (a)) — cheap
+ * (one extra call, only on an empty reply) and does not depend on #140's still-open root-cause telemetry.
+ */
+const MAX_EMPTY_PLAN_RETRIES = 1
+
 const MAX_PLAN_STEPS = 5
 
 
@@ -1140,72 +1151,93 @@ export class Orchestrator {
     // per app session, not one per message.
     const structuredKey = `${this.provider.id}:${this.model}`
     let structured = !structuredOutputRejected.has(structuredKey)
+    let emptyPlanRetries = 0
+    let parsed: ReturnType<typeof parsePlan>
+    let plan: Plan | undefined
 
-    for (;;) {
-      text = ''
-      stopReason = 'end_turn'
-      roundUsage = undefined
-      // Always a fresh (non-retried) budget — this is a one-shot probe that
-      // falls open on timeout rather than retrying, so the adaptive growth
-      // that a real retry loop gets doesn't apply here.
-      const roundTimer = this.startRoundTimer(state.deadlineAt, 0)
-      try {
-        for await (const event of this.provider.stream({
-          model: this.model,
-          system: this.buildClassifySystemPrompt(),
-          messages: latestMessage ? [latestMessage] : conversation,
-          // Shares the same real, scaled-when-possible budget as every other
-          // round (see resolveMaxOutputTokens) — a flat small value here
-          // starved gpt-oss's hidden reasoning into an empty response before
-          // this existed (finish_reason:"length", 0 visible chars).
-          maxTokens: state.maxOutputTokens,
-          signal: roundTimer.signal,
-          ...(structured ? { structuredOutput: { name: 'classify_and_plan', schema: buildPlanSchema(this.plannableRoleIds()) } } : {})
-        })) {
-          if (event.type === 'text_delta') text += event.text
-          else if (event.type === 'usage') roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
-          else if (event.type === 'message_stop') stopReason = event.stopReason
-        }
-        break
-      } catch (err) {
-        // TASKS.md #91: a rate limit here falls open the same way a timeout
-        // already does, just below — no retry loop for a one-shot probe (the
-        // real round loop right after this gets the full retry treatment via
-        // handleRateLimitError, and will hit the identical rate limit again
-        // immediately if it's still in effect, at which point it's handled
-        // properly rather than twice over in two different ways here).
-        if (isRateLimitError(err)) return undefined
-        if (!roundTimer.signal.aborted) {
-          // Only a client-error rejection (400/404/422 — the request shape or the model does not support it) counts; auth failures, rate limits,
-          // network errors and 5xx are not the schema's fault and rethrow as before.
-          const status = (err as { status?: number }).status
-          if (structured && (status === 400 || status === 404 || status === 422)) {
-            structuredOutputRejected.add(structuredKey)
-            structured = false
-            console.error(
-              `orchestrator: ${structuredKey} rejected structured output for the planning call (${err instanceof Error ? err.message : String(err)}) — retrying it as a plain prompt`
-            )
-            continue
+    // Outer loop: retries once on a genuinely empty reply (TASKS #140/#141) — distinct from the inner
+    // loop just below, which retries (also via `continue`, its own separate concern) when the provider
+    // rejects structured output outright and falls back to a plain prompt.
+    outer: for (;;) {
+      for (;;) {
+        text = ''
+        stopReason = 'end_turn'
+        roundUsage = undefined
+        // Always a fresh (non-retried) budget — this is a one-shot probe that
+        // falls open on timeout rather than retrying, so the adaptive growth
+        // that a real retry loop gets doesn't apply here.
+        const roundTimer = this.startRoundTimer(state.deadlineAt, 0)
+        try {
+          for await (const event of this.provider.stream({
+            model: this.model,
+            system: this.buildClassifySystemPrompt(),
+            messages: latestMessage ? [latestMessage] : conversation,
+            // Shares the same real, scaled-when-possible budget as every other
+            // round (see resolveMaxOutputTokens) — a flat small value here
+            // starved gpt-oss's hidden reasoning into an empty response before
+            // this existed (finish_reason:"length", 0 visible chars).
+            maxTokens: state.maxOutputTokens,
+            signal: roundTimer.signal,
+            ...(structured ? { structuredOutput: { name: 'classify_and_plan', schema: buildPlanSchema(this.plannableRoleIds()) } } : {})
+          })) {
+            if (event.type === 'text_delta') text += event.text
+            else if (event.type === 'usage') roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
+            else if (event.type === 'message_stop') stopReason = event.stopReason
           }
-          throw err
+          break
+        } catch (err) {
+          // TASKS.md #91: a rate limit here falls open the same way a timeout
+          // already does, just below — no retry loop for a one-shot probe (the
+          // real round loop right after this gets the full retry treatment via
+          // handleRateLimitError, and will hit the identical rate limit again
+          // immediately if it's still in effect, at which point it's handled
+          // properly rather than twice over in two different ways here).
+          if (isRateLimitError(err)) return undefined
+          if (!roundTimer.signal.aborted) {
+            // Only a client-error rejection (400/404/422 — the request shape or the model does not support it) counts; auth failures, rate limits,
+            // network errors and 5xx are not the schema's fault and rethrow as before.
+            const status = (err as { status?: number }).status
+            if (structured && (status === 400 || status === 404 || status === 422)) {
+              structuredOutputRejected.add(structuredKey)
+              structured = false
+              console.error(
+                `orchestrator: ${structuredKey} rejected structured output for the planning call (${err instanceof Error ? err.message : String(err)}) — retrying it as a plain prompt`
+              )
+              continue
+            }
+            throw err
+          }
+          // A timed-out classify call falls open exactly like a genuinely
+          // malformed one already does (see the no-plan branch below) — it's
+          // a probe, not the real answer, so there's nothing here worth
+          // surfacing beyond just proceeding without a plan.
+          return undefined
+        } finally {
+          roundTimer.clear()
         }
-        // A timed-out classify call falls open exactly like a genuinely
-        // malformed one already does (see the no-plan branch below) — it's
-        // a probe, not the real answer, so there's nothing here worth
-        // surfacing beyond just proceeding without a plan.
-        return undefined
-      } finally {
-        roundTimer.clear()
       }
+
+      if (roundUsage) {
+        state.inputTokens += roundUsage.inputTokens
+        state.outputTokens += roundUsage.outputTokens
+        yield { kind: 'stream', event: { type: 'usage', ...roundUsage } }
+      }
+
+      parsed = parsePlan(text, new Set(this.plannableRoleIds()))
+      plan = parsed?.plan
+
+      // A genuinely empty reply (no text, no tool call, not cut off by the token limit) is the specific
+      // hidden-reasoning-exhaustion symptom, not an ordinary "chose not to plan" result — worth one retry
+      // before accepting it and falling open. A non-empty-but-unparseable reply (prose, a fenced block,
+      // malformed JSON) is left alone here; that is the routine, expected case already handled below.
+      if (!plan && stopReason !== 'max_tokens' && text.trim() === '' && emptyPlanRetries < MAX_EMPTY_PLAN_RETRIES) {
+        emptyPlanRetries++
+        console.error('orchestrator: classify-and-plan returned no text at all — retrying once before falling open to no plan')
+        continue outer
+      }
+      break
     }
 
-    if (roundUsage) {
-      state.inputTokens += roundUsage.inputTokens
-      state.outputTokens += roundUsage.outputTokens
-      yield { kind: 'stream', event: { type: 'usage', ...roundUsage } }
-    }
-
-    const parsed = parsePlan(text, new Set(this.plannableRoleIds()))
     if (parsed?.truncated) {
       const message =
         `This request's plan had more steps than the ${MAX_PLAN_STEPS}-step limit — proceeding with just the ` +
@@ -1213,7 +1245,6 @@ export class Orchestrator {
       yield { kind: 'stream', event: { type: 'warning', message } }
       yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message }] }
     }
-    const plan = parsed?.plan
     if (!plan) {
       if (stopReason === 'max_tokens') {
         // Surfaced to the user, not just logged — this is the one real
@@ -1309,7 +1340,8 @@ export class Orchestrator {
     for (const [index, step] of steps.entries()) {
       yield { kind: 'stream', event: { type: 'plan_step_start', index } }
       let role = step.role
-      let outcome = yield* this.dispatchDelegate(role, { task: step.description }, conversation, state)
+      const planContext = { index, total: steps.length }
+      let outcome = yield* this.dispatchDelegate(role, { task: step.description }, conversation, state, planContext)
 
       // out_of_scope → redirect ONCE per turn to the role the specialist named (5.2). A second
       // out_of_scope, or a suggestion that is not a real role, is left as-is for the final round to explain.
@@ -1324,7 +1356,7 @@ export class Orchestrator {
         state.handoff.redirects++
         yield { kind: 'stream', event: { type: 'status', message: `${this.labelOf(role)} handed this to ${this.labelOf(suggested as AgentRole)}…` } }
         role = suggested as AgentRole
-        outcome = yield* this.dispatchDelegate(role, { task: step.description }, conversation, state)
+        outcome = yield* this.dispatchDelegate(role, { task: step.description }, conversation, state, planContext)
       }
       yield { kind: 'stream', event: { type: 'plan_step_done', index, isError: outcome.isError } }
 
@@ -2300,17 +2332,29 @@ export class Orchestrator {
     role: AgentRole,
     input: Record<string, unknown>,
     conversation: Message[],
-    state: RunState
+    state: RunState,
+    planContext?: { index: number; total: number }
   ): AsyncGenerator<OrchestratorEvent, DelegateOutcome> {
     const agent = this.agents.get(role)
     if (!agent) return { content: `Unknown agent role "${role}".`, isError: true }
 
     const task = String(input.task ?? '')
+    // Found live: given a plan step that was squarely within its own tools (a database query), a
+    // specialist instead looked at the whole non-isolated parent conversation — which also named a
+    // later step's own work ("...then put it in a Word document") — and called its OWN step out of
+    // scope, never attempting the query at all. The step's `[handoff: out_of_scope -> ...]` then named
+    // a role id ("document-generation") that doesn't exist, so even the redirect safety net below
+    // couldn't recover it. This note is deliberately only added for a plan-dispatched step (not every
+    // delegate call) — it is the "other steps belong elsewhere, that's not your problem" framing a plan
+    // step specifically needs that an ordinary single delegation doesn't.
+    const planScopeNote = planContext
+      ? `\n\n(This is step ${planContext.index + 1} of ${planContext.total} in a multi-step plan for the user's original request — the other step(s) are being handled by other specialists in this same turn, not by you. Do only THIS step, with your own tools. A part of the original request that belongs to a different step is not a reason to call THIS step out of scope — only call [handoff: out_of_scope -> <role-id>] if THIS step's own task genuinely needs a tool/capability you don't have. If you do, name a real role id, one of: ${[...this.agents.keys()].join(', ')}.)`
+      : ''
     // The real outputs of earlier delegates this turn (files they produced, data they retrieved) are
     // appended to the brief by the app — typed inputs, not something the router has to remember to pass.
     const taskMessage: Message = {
       role: 'user',
-      content: [{ type: 'text', text: `[Orchestrator -> ${this.labelOf(role)}]: ${task}${formatInputs(state.handoff.items)}` }]
+      content: [{ type: 'text', text: `[Orchestrator -> ${this.labelOf(role)}]: ${task}${formatInputs(state.handoff.items)}${planScopeNote}` }]
     }
     // `isolated` (#77) controls conversation scoping only — this brief alone
     // vs. the whole parent conversation. The round *budget* is always its

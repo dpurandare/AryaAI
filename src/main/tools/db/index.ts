@@ -21,8 +21,14 @@ export const dbListConnectionsTool: Tool = {
     if (!connections.length) {
       return 'No data connections configured yet. Ask the user to add one in Settings > Data sources.'
     }
+    // The name is quoted — not just space-separated from `(engine)` — because a connection's own
+    // name is free text (Settings has no restriction against it) and can itself contain parentheses,
+    // e.g. "Northwind (Docker)". Found live: unquoted, that produced the line
+    // "- Northwind (Docker) (mssql): ..." — genuinely ambiguous between the name being "Northwind" or
+    // "Northwind (Docker)" — and the model oscillated between both wrong guesses for several rounds
+    // before giving up, since db_introspect_schema only ever does an exact match against the real name.
     return connections
-      .map((c) => `- ${c.name} (${c.engine}): ${formatSchemaSummary(c.schemaSummary)}`)
+      .map((c) => `- "${c.name}" (${c.engine}): ${formatSchemaSummary(c.schemaSummary)}`)
       .join('\n')
   }
 }

@@ -1828,6 +1828,81 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // Still falls open to normal behavior — the real reply still happens.
       expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hi there!' })
     })
+
+    it('a classify-and-plan call returning a genuinely empty reply (no text at all, not cut off) retries once and recovers a real plan — TASKS #140/#141', async () => {
+      // Found live against Ollama gpt-oss-custom: the classify call returned literally no text (hidden
+      // reasoning exhausted the output budget) and the request fell open to "no plan" on the very first
+      // such reply, with no recovery — losing a compound request's step split. Distinct from the malformed-
+      // but-non-empty case above (routine, left alone) and the output-token-limit case (already surfaced).
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '', stopReason: 'end_turn' }, // attempt 1: genuinely empty
+        {
+          text: JSON.stringify({
+            complexity: 'compound',
+            steps: [
+              { role: 'research', description: 'find X' },
+              { role: 'data', description: 'find Y' }
+            ]
+          }),
+          stopReason: 'end_turn'
+        }, // attempt 2 (the one retry): a real plan
+        { text: 'X is 5.', stopReason: 'end_turn' }, // step 1 — Researcher
+        { text: 'Y is 10.', stopReason: 'end_turn' }, // step 2 — Data Access
+        { text: 'Both found.', stopReason: 'end_turn' } // final synthesis
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      // requests: [0] classify attempt 1 (empty), [1] classify attempt 2 (the plan), [2] research, [3] data, [4] final
+      expect(provider.requests).toHaveLength(5)
+      expect(streamEvents.some((e) => e.type === 'plan')).toBe(true)
+      expect(streamEvents.find((e) => e.type === 'warning')).toBeUndefined()
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Both found.' })
+    })
+
+    it('two genuinely empty classify-and-plan replies in a row still fall open to no plan — only one retry, not a loop', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '', stopReason: 'end_turn' }, // attempt 1: empty
+        { text: '', stopReason: 'end_turn' }, // attempt 2 (the one retry): still empty
+        { text: 'Hi there!', stopReason: 'end_turn' } // falls open — ordinary round proceeds
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      // requests: [0] classify attempt 1, [1] classify attempt 2 (the one retry) — not a third attempt.
+      expect(provider.requests).toHaveLength(3)
+      // Falls open silently (console-only), same as the malformed-non-empty case above.
+      expect(streamEvents.find((e) => e.type === 'warning')).toBeUndefined()
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hi there!' })
+    })
   })
 
   describe('exhausting the MAX_TOTAL_ROUNDS budget (previously untested — a real bug found live)', () => {
