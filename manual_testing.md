@@ -343,6 +343,132 @@ Cleanup: remove any test MCP server/DB connection/exported file created above.
   "Talk about it", default-tooling prompt guidance, and settings import/export were all live-verified against exactly one
   local model (Ollama `qwen3.5:9b-custom`) — none against a real cloud model. The native Export/Import Settings file dialogs
   (11d.9/11d.10) were never clicked through by a human at all — only their underlying IPC calls were exercised directly.
+- **Section 13 (new):** adding a SQL Server connection, an LLMWiki MCP server, an existing SQLite file, and Context7
+  through the ordinary Settings UI on a normal (non-throwaway) fresh install — none of the actual **app-side** behavior
+  (13.1.2-4, 13.2.2-5, 13.3.4-8, 13.4) has been exercised before, by anyone, in this app; only the container/MCP-server
+  *setup* steps outside the app were checked. **13.2's recipe was fully verified live** (2026-10-01, this machine): the
+  upstream repo's documented steps are genuinely broken on a current image pull (two confirmed bugs, written up in 13.2
+  itself) and the replacement recipe there was confirmed end-to-end (13 tables, 91 real customers, a connection scoped
+  to the `Northwind` database succeeding) — but still never through Sachivji's own Settings UI. **13.3's LLMWiki
+  commands are transcribed from that project's README, not run here** — expect its exact flags to need adjusting on the
+  day the way 13.2's did.
+
+---
+
+## 13. Setting up real data sources and MCP servers from scratch — P1 (45–60 min, needs Docker/Node/Python)
+
+New since the last pass. Unlike sections 4/6/9 (which assume a Northwind DB and an `energy_wiki` MCP server already exist
+from earlier sessions), this section builds those from nothing on a **fresh install** — the setup flow itself is what's
+under test here, not just the resulting Q&A. None of this has been exercised before; expect rough edges.
+
+### 13.1 Add an existing SQLite database
+
+| # | Do | Expect |
+|---|----|--------|
+| 13.1.1 | Make a copy of your own app database so you're not pointing a live connection at the file the app itself is writing to: `cp ~/.config/Sachivji/sachiv.db ~/Documents/"Sachivji Workspace"/resources/existing-sample.db` (adjust the source path per your OS's userData folder if not Linux) | Copy succeeds. |
+| 13.1.2 | Settings > Data sources > **+ Add connection**: name `Existing SQLite sample`, engine **SQLite**, path to the copy from 13.1.1 | Saves with no error; appears in the list as `sqlite`, no password/host fields shown. |
+| 13.1.3 | Ask "What tables are in the Existing SQLite sample database?" | Data Access delegates; `db_introspect_schema` lists the real tables (`sessions`, `messages`, `app_settings`, `roles`, …) — not an error, not empty. |
+| 13.1.4 | Ask "How many rows are in the sessions table?" | A real, plausible count via `db_count_rows`/`db_execute_sql` — 0 is fine if this really is a fresh profile, but it should be a genuine count, not an error. Check the tool call is a read-only `SELECT`/`COUNT`. |
+
+Cleanup: remove the connection in Settings if you don't want to keep it; delete the copied `.db` file.
+
+### 13.2 Create the Northwind database in a container and connect to it
+
+Builds [`syedhassaanahmed/northwind-sql-db-container`](https://github.com/syedhassaanahmed/northwind-sql-db-container) — a
+SQL Server 2022 image that's *supposed* to seed the real Northwind dataset on startup. Needs Docker installed and running.
+
+**The repo as published does not actually work against a current `mssql/server:2022-latest` pull — confirmed by actually
+building and running it, not assumed — for two independent, real bugs, both in `init-db.sh`/the repo's own `instnwnd.sql`
+dependency, not in Sachivji:**
+
+1. `init-db.sh` hard-codes `/opt/mssql-tools/bin/sqlcmd`. Current SQL Server Linux images ship only
+   `/opt/mssql-tools18/bin/sqlcmd` (the repo hasn't been touched since Jan 2023; Microsoft moved to the ODBC-18-based
+   `mssql-tools18` package since). Every iteration of the script's own 60-try wait loop fails with
+   `No such file or directory` (exit 127, not a real "not ready yet") and the final seed call fails the same way — the
+   container comes up, but `instnwnd.sql` never actually runs.
+2. Separately — and this is masked by bug 1, so it wasn't visible before — **`instnwnd.sql` itself never creates a
+   `Northwind` database.** It's Microsoft's stock script, and its own header says so outright: *"This script does not
+   create a database. Run this script in the database you want the objects to be created."* `init-db.sh` never runs
+   `CREATE DATABASE Northwind` or passes `-d Northwind` either, so even with bug 1 fixed, the script would create all the
+   Northwind tables inside `master`, never inside a database actually named `Northwind` — exactly matching the error in
+   the log you got (`Failed to open the explicitly specified database 'Northwind'`): nothing by that name ever exists.
+   (The repo's own `smoke-test.sh` queries `-d "Northwind"` too, so this script would never have passed its own smoke
+   test on a current image either.)
+
+**Working recipe** (build/run as the repo documents, then do its missing database-creation and seed step yourself with
+the correct tool path):
+
+```bash
+git clone https://github.com/syedhassaanahmed/northwind-sql-db-container.git
+cd northwind-sql-db-container
+docker build . --build-arg MSSQL_SA_PASSWORD='YourStrong!Passw0rd1' -t nwndsqldbimg
+docker run -p 1433:1433 -d --name nwndsqldbcont nwndsqldbimg
+
+# wait for SQL Server itself to accept connections (ignore the container's own
+# "SQL Server not ready yet..." loop — that one's permanently broken, bug 1 above)
+for i in $(seq 1 30); do
+  docker exec nwndsqldbcont /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P 'YourStrong!Passw0rd1' -C -Q "SELECT 1" >/dev/null 2>&1 && break
+  sleep 1
+done
+
+# do what init-db.sh should have done: create the database, then seed it
+docker exec nwndsqldbcont /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P 'YourStrong!Passw0rd1' -C -Q "CREATE DATABASE Northwind"
+docker exec nwndsqldbcont /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P 'YourStrong!Passw0rd1' -C -d Northwind -i /northwind/instnwnd.sql
+```
+
+(`MSSQL_SA_PASSWORD` must meet SQL Server's complexity rule — 8+ chars with upper/lower/digit/symbol — or the build fails; reuse whatever you pass here as the connection password below. The `-C` flag trusts the container's self-signed cert — `mssql-tools18`'s ODBC 18 driver refuses to connect without it or an equivalent `Encrypt=no`.)
+
+**Verified live** (this machine, 2026-10-01): with the fix, `SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'` against `Northwind` returns **13**, `SELECT COUNT(*) FROM Customers` returns **91** (the stock Northwind count), and a connection with `Northwind` as the initial catalog (exactly how Sachivji's own `mssql-driver.ts` connects) succeeds. Without the fix — i.e. following the repo's own documented steps verbatim — the `Northwind` database never exists at all, reproducing the exact login failure in the log above. If `/opt/mssql-tools18` ever changes again upstream, `docker exec nwndsqldbcont bash -c "find / -iname sqlcmd"` finds the real current path.
+
+| # | Do | Expect |
+|---|----|--------|
+| 13.2.1 | Run the full recipe above (build, run, wait loop, `CREATE DATABASE`, seed) | Both `docker exec ... sqlcmd` commands exit 0 with no error output. |
+| 13.2.2 | Settings > Data sources > **+ Add connection**: name `Northwind (Docker)`, engine **SQL Server**, host `localhost`, port `1433` (auto-filled), database `Northwind`, username `sa`, password from the build arg | Saves with no error — no TLS/certificate error, since the app already connects with `trustServerCertificate: true` for exactly this local/self-signed case (`src/main/tools/db/mssql-driver.ts`). |
+| 13.2.3 | Ask "What tables are in the Northwind (Docker) database?" | Data Access → `db_introspect_schema`; real Northwind tables (`Customers`, `Orders`, `Order Details`, `Products`, …) — 13 of them. |
+| 13.2.4 | Ask "How many customers are there in Northwind (Docker)?" | A real count — 91, the stock Northwind dataset. |
+| 13.2.5 | Re-run the Northwind chart scenario (section 4's exact prompt) naming **Northwind (Docker)** instead | Same expectations as 4.1–4.9. This is the first time that scenario has run against **SQL Server** rather than Postgres/SQLite — watch for the model writing T-SQL-incorrect raw SQL (e.g. `LIMIT` instead of `TOP`) in any ad hoc `db_execute_sql` call; the mechanical `db_*` tools handle identifier quoting correctly either way. |
+
+Cleanup: `docker rm -f nwndsqldbcont` (it keeps running and using resources until removed), `docker rmi nwndsqldbimg`; remove the connection in Settings if you don't want to keep it.
+
+### 13.3 Build LLMWiki from source, ingest a folder, and configure it as an MCP server
+
+Builds [`lucasastorian/llmwiki`](https://github.com/lucasastorian/llmwiki) fresh (distinct from any pre-existing `llmwiki`/`energy_wiki` MCP entries from earlier sessions — give this one its own name so both can coexist). Needs Python 3.10+ and Node.
+
+```bash
+git clone https://github.com/lucasastorian/llmwiki.git
+cd llmwiki
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r api/requirements.txt -r mcp/requirements.txt
+cd web && npm install && cd ..
+```
+
+| # | Do | Expect |
+|---|----|--------|
+| 13.3.1 | Run the install commands above | All three installs succeed with no errors. |
+| 13.3.2 | Pick a folder with a handful of real documents — or drop 2-3 sample `.md`/`.txt` files into one first, e.g. `~/Documents/Sachivji Workspace/resources` — then run `./llmwiki open <folder>` | Indexing completes; the printed `localhost:3000` URL shows the ingested documents in llmwiki's own web UI. |
+| 13.3.3 | Run `./llmwiki mcp-config <same folder>` and note the printed `command`, `args`, and any `env` | Prints a real MCP config block naming this one workspace/folder (per the README, one workspace = one MCP server entry). |
+| 13.3.4 | Settings > MCP servers > **+ Add MCP server**: a name distinct from any existing wiki server (e.g. `llmwiki-fresh`), a real description (e.g. "Indexed docs from \<folder\>"), **Local (stdio)**, the `command` from 13.3.3 into **Command**, its `args` (space-separated) into **Args**, any `env` entries one `KEY=value` per line into **Env** | Shows **Connected · N tools**. (Sachivji has its own Settings form, not a `claude_desktop_config.json` file — transcribe the printed values rather than pasting raw JSON.) |
+| 13.3.5 | Ask "What MCP servers are connected?" | Names your new server by **your description**, via the MCP Operator. |
+| 13.3.6 | Ask a content question about something genuinely in the ingested folder (e.g. "What does \<a real document\> say about \<a real topic in it\>?") | Delegates to **MCP Operator**; calls a real `mcp__<your-server-name>__*` tool; the answer is traceable to the actual document content, not invented. |
+| 13.3.7 | Ask about something clearly **not** in the ingested folder | Either an honest "nothing relevant" from the server, or the `no_information` → web fallback chain (`design-discussion.md` §13.2, TASKS #142–#146, exercised live in §9.11 above) — it should not invent an answer either way. |
+| 13.3.8 | One request combining both: "Look up \<a real topic\> in \<your server name\> and also tell me how many customers are in Northwind (Docker)" | Compound plan, one step to **MCP Operator**, one to **Data Access** (the "domain knowledge + data" pattern, TASKS #142) — both steps show real results, not just one. |
+
+Cleanup: stop `./llmwiki open` (Ctrl+C) if it's still running; remove this MCP server from Settings if you don't want to keep it.
+
+### 13.4 Add the Context7 MCP server
+
+Local, stdio, keyless — `npx` fetches `@upstash/context7-mcp` on first connect, no separate install step. (Previously
+verified once in an isolated throwaway profile per TASKS #153 — this is the first time it's added through a normal
+install.)
+
+| # | Do | Expect |
+|---|----|--------|
+| 13.4.1 | Settings > MCP servers > **+ Add MCP server**: name `Context7`, description "Up-to-date library/API docs for coding", **Local (stdio)**, command `npx`, args `-y @upstash/context7-mcp` | First connect takes a few seconds (npx downloading the package); then **Connected · 2 tools** (`resolve-library-id`, `query-docs`). |
+| 13.4.2 | Ask "What MCP servers are connected?" | Names `Context7` with your description. |
+| 13.4.3 | Ask a coding question needing current library docs, e.g. "How do I set a default request timeout in axios?" | Delegates to **MCP Operator**; calls `mcp__Context7__resolve-library-id` then `mcp__Context7__query-docs`; the answer is traceable to a real returned doc excerpt, not just the model's training-data memory. |
+| 13.4.4 | Pin Agent to **Page Creator** or **Email** and ask the same kind of question | No `mcp__Context7__*` call — those roles don't carry MCP tools at all (only the MCP Operator and, in Auto mode, the top-level orchestrator do, per the MCP containment design, TASKS #117). It should say it can't, not silently answer from memory while pretending it checked. |
+
+Cleanup: remove the `Context7` MCP server if you don't want to keep it (it's stateless and keyless, reasonable to leave connected).
 
 ---
 
@@ -368,3 +494,7 @@ next most useful — nothing in the wiki/database fallback chain (#142–#146) h
 **Section 11d (new 9/29)** is next after that — 11d.1/11d.2 (reasoning display) and 11d.5–11d.7 (default tooling) are the
 rows most likely to behave differently on a real cloud model than they did on local Ollama; 11d.9/11d.10 are the only way
 to actually exercise the native Export/Import Settings dialogs at all.
+**Section 13 (new, this pass)** is the first time anyone has built the Northwind container, built LLMWiki from source and
+ingested a real folder, or added an existing SQLite file or Context7 through the normal Settings UI on a fresh install —
+13.2.5 (Northwind chart scenario against SQL Server) and 13.3.6–13.3.8 (a real ingested folder through the MCP Operator,
+including the compound domain-knowledge-plus-data case) are the most informative rows if you only have time for part of it.
