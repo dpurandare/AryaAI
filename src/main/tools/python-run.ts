@@ -69,6 +69,7 @@ export const pythonRunTool: Tool = {
     'Give EITHER `code` (source; saved to code/run_<time>.py) OR `script` (an existing .py path in the workspace), plus optional `args`. ' +
     'No shell is involved, so nothing to quote: put multi-line code straight in `code`. Returns the exit code, stdout, stderr and the files ' +
     'the run created or changed (found by the app). Runs in the workspace root; save charts to a file (plots never display). ' +
+    "Earlier `.sachiv-handoff/` data: read it in the script (`open`/`json.load`), never retype its rows into the source. " +
     'Not a sandbox — the user approves every run.',
   inputSchema: {
     type: 'object',
