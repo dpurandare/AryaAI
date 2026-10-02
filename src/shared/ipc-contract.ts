@@ -232,6 +232,8 @@ export interface MessageDto {
   role: 'user' | 'assistant'
   content: ContentBlock[]
   createdAt: number
+  /** "<providerId>:<model>" that answered — assistant messages only, shown optionally (Settings > off by default). */
+  model?: string
 }
 
 export interface SessionUsageDto {

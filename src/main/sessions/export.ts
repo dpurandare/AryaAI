@@ -8,20 +8,44 @@ import type { ContentBlock } from '@shared/protocol'
 import { IpcChannel, type SessionExportResult } from '@shared/ipc-contract'
 import { listMessages, type MessageRecord } from '../db/messages'
 import { listSessions, type SessionRecord } from '../db/sessions'
+import { getSetting } from '../db/settings'
+
+/**
+ * TASKS.md #181: Markdown and PDF export now honor the same three-state tool-output display the live
+ * chat view uses (Settings key `toolDisplayMode`, cycled via Cmd/Ctrl+O — see App.svelte/ChatView.svelte)
+ * — read directly here since it's already persisted to app_settings and export runs in the main process
+ * regardless of whether a chat window is even open. User-confirmed requirement, 2026-10-02: "Save
+ * Session... should reflect this behavior." JSON export is deliberately exempt — see `sessionToJson`'s
+ * own doc comment for why.
+ */
+export type ToolDisplayMode = 'hidden' | 'partial' | 'shown'
+
+function currentToolDisplayMode(): ToolDisplayMode {
+  const stored = getSetting('toolDisplayMode')
+  return stored === 'hidden' || stored === 'partial' || stored === 'shown' ? stored : 'partial'
+}
 
 /** A pure-tool_result message is the continuation of the tool call just shown, not a new turn — same convention already used by App.svelte/prepare-context.ts. An `image` block (TASKS.md #82) rides alongside its `show_media` call's own `tool_result` in the same message, so it counts as a continuation too. A `user_note` (TASKS.md #158, a mid-run steering comment) is the same shape of continuation. */
 function isPureToolResult(message: MessageRecord): boolean {
   return message.content.length > 0 && message.content.every((b) => b.type === 'tool_result' || b.type === 'image' || b.type === 'user_note')
 }
 
-function blockToMarkdown(block: ContentBlock): string {
+/**
+ * `null` means "omit this block entirely" — only reachable for `tool_use`/a tool `tool_result` in
+ * `'hidden'` mode (TASKS.md #181). An `image` block is never affected by `mode`, any value — "Hidden
+ * should show the image as it is important part of the output" (explicit user decision, 2026-10-02):
+ * a content-type rule, not a per-tool one, matching the live chat view's identical exception.
+ */
+function blockToMarkdown(block: ContentBlock, mode: ToolDisplayMode): string | null {
   if (block.type === 'text') {
     const prefix = block.agentRole ? `*${roleLabel(block.agentRole)} agent:* ` : ''
     return `${prefix}${block.text}`
   }
   if (block.type === 'tool_use') {
+    if (mode === 'hidden') return null
     const prefix = block.agentRole ? `*${roleLabel(block.agentRole)} agent* ` : ''
-    return `> ${prefix}🔧 **${block.name}**(${JSON.stringify(block.input)})`
+    const call = mode === 'shown' ? `**${block.name}**(${JSON.stringify(block.input)})` : `**${block.name}** (called)`
+    return `> ${prefix}🔧 ${call}`
   }
   if (block.type === 'warning') {
     return `> ⚠️ ${block.message}`
@@ -35,27 +59,32 @@ function blockToMarkdown(block: ContentBlock): string {
     return `> 💬 **Mid-run note:** ${block.text}`
   }
   if (block.type === 'thinking') {
-    return `> 🧠 *Thinking:* ${block.text}`
+    // 'hidden'/'partial': same as the live view's collapsed thinking block — a marker that reasoning
+    // happened, never the full text; 'shown' only unlocks the content, same as a tool result below.
+    return mode === 'shown' ? `> 🧠 *Thinking:* ${block.text}` : '> 🧠 *Thinking* (collapsed)'
   }
+  // tool_result
+  if (mode === 'hidden') return null
   const label = block.isError ? '⚠️ Error' : '→ Result'
-  return `> ${label}: ${block.content}`
+  return mode === 'shown' ? `> ${label}: ${block.content}` : `> ${label.replace(/:.*$/, '')}`
 }
 
-/** Human-readable transcript — `## User`/`## Assistant` sections in order, tool calls and their results rendered inline. */
-export function sessionToMarkdown(session: SessionRecord, messages: MessageRecord[]): string {
+/** Human-readable transcript — `## User`/`## Assistant` sections in order, tool calls and their results rendered inline. Tool output respects the same `toolDisplayMode` the live chat view uses (TASKS.md #181). */
+export function sessionToMarkdown(session: SessionRecord, messages: MessageRecord[], mode: ToolDisplayMode = currentToolDisplayMode()): string {
   const lines: string[] = [`# ${session.title}`, '']
   for (const message of messages) {
     if (!isPureToolResult(message)) {
       lines.push(message.role === 'user' ? '## User' : '## Assistant', '')
     }
     for (const block of message.content) {
-      lines.push(blockToMarkdown(block), '')
+      const line = blockToMarkdown(block, mode)
+      if (line !== null) lines.push(line, '')
     }
   }
   return lines.join('\n')
 }
 
-/** Full-fidelity dump of exactly what's in the DB. */
+/** Full-fidelity dump of exactly what's in the DB — deliberately exempt from `toolDisplayMode` (TASKS.md #181): unlike Markdown/PDF (a human-readable transcript, where the display preference is a reasonable default), JSON's whole stated purpose is being the complete, unfiltered record. */
 export function sessionToJson(session: SessionRecord, messages: MessageRecord[]): string {
   return JSON.stringify({ session, messages }, null, 2)
 }

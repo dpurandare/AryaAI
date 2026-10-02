@@ -36,6 +36,8 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     statusText?: string
     plan?: { steps: { role: AgentRole; description: string }[]; stepStatus: ('pending' | 'running' | 'done' | 'error')[] }
     segments: DisplaySegment[]
+    /** "<providerId>:<model>" that answered — shown only when showAnsweringModel is on. */
+    model?: string
   }
 
   interface Provider {
@@ -58,8 +60,8 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     onNeedKey,
     sessionUsage,
     contextWindow,
-    toolDetailsExpanded,
-    onToggleToolDetails,
+    toolDisplayMode,
+    onCycleToolDisplayMode,
     isMac,
     pendingConfirm,
     autoApproveTools,
@@ -72,11 +74,14 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     pendingLimit,
     onRespondLimit,
     roleRoster = [],
-    onSteer
+    onSteer,
+    showAnsweringModel = false
   }: {
     messages: DisplayMessage[]
     statusLine: string
     sending: boolean
+    /** Off by default — shows each assistant message's "<providerId>:<model>" badge. */
+    showAnsweringModel?: boolean
     /** Built-in and user-defined roles (the picker, and labels for user-defined ones). Empty until the first load: the built-ins are used. */
     roleRoster?: readonly RoleRosterEntryDto[]
     onSend: (text: string, forcedRole?: AgentRole | null) => void
@@ -90,9 +95,9 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     onNeedKey: () => void
     sessionUsage: { inputTokens: number; outputTokens: number }
     contextWindow: { tokens: number; isEstimate: boolean } | null
-    /** Global "show full tool output" toggle (Cmd/Ctrl+O, owned by App.svelte so the hotkey works regardless of what has focus) — see the .tool-call rendering below. */
-    toolDetailsExpanded: boolean
-    onToggleToolDetails: () => void
+    /** Global tool-output display state — 'hidden' | 'partial' | 'shown' (Cmd/Ctrl+O cycles it, owned by App.svelte so the hotkey works regardless of what has focus) — see the .tool-call rendering below. An `image` block is never affected by this, any state — see TASKS.md #181. */
+    toolDisplayMode: 'hidden' | 'partial' | 'shown'
+    onCycleToolDisplayMode: () => void
     /** For the tool-output toggle's tooltip label only — the real Cmd/Ctrl+O handling lives in App.svelte. */
     isMac: boolean
     /**
@@ -172,7 +177,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
    * TASKS.md #88 — separate from `expandedIds` above (that one caps a
    * single block's own *content* preview; this one is a per-tool-call
    * override of the whole block's collapsed/expanded state, layered on top
-   * of #72's global `toolDetailsExpanded` toggle). `undefined` = no
+   * of #72/#181's global `toolDisplayMode` state). `undefined` = no
    * explicit choice yet, so the default below applies; `true`/`false` once
    * the user has clicked that specific entry's head line.
    */
@@ -289,13 +294,13 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     return last
   })
 
-  /** Whether a given tool-call segment's body should currently render in full — see `toolBlockOverride`'s own doc comment for the default-vs-override split. */
+  /** Whether a given tool-call segment's body should currently render in full — see `toolBlockOverride`'s own doc comment for the default-vs-override split. Only meaningful in 'shown' mode — 'hidden'/'partial' never show a full body (the row itself may not even render — see the .tool-call markup below). */
   function isToolBlockExpanded(segmentId: string): boolean {
-    return toolDetailsExpanded && (toolBlockOverride[segmentId] ?? segmentId === lastToolSegmentId)
+    return toolDisplayMode === 'shown' && (toolBlockOverride[segmentId] ?? segmentId === lastToolSegmentId)
   }
 
   function toggleToolBlock(segmentId: string): void {
-    if (!toolDetailsExpanded) return
+    if (toolDisplayMode !== 'shown') return
     toolBlockOverride[segmentId] = !isToolBlockExpanded(segmentId)
   }
 
@@ -317,11 +322,11 @@ import { formatToolInputForDisplay } from '../tool-input-display'
   })
 
   function isThinkingBlockExpanded(segmentId: string): boolean {
-    return toolDetailsExpanded && (toolBlockOverride[segmentId] ?? segmentId === lastThinkingSegmentId)
+    return toolDisplayMode === 'shown' && (toolBlockOverride[segmentId] ?? segmentId === lastThinkingSegmentId)
   }
 
   function toggleThinkingBlock(segmentId: string): void {
-    if (!toolDetailsExpanded) return
+    if (toolDisplayMode !== 'shown') return
     toolBlockOverride[segmentId] = !isThinkingBlockExpanded(segmentId)
   }
 </script>
@@ -333,6 +338,9 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     {/if}
     {#each messages as message (message.id)}
       <div class="bubble {message.role}">
+        {#if showAnsweringModel && message.role === 'assistant' && message.model}
+          <div class="model-badge">{message.model}</div>
+        {/if}
         {#if message.plan}
           <div class="plan-checklist">
             {#each message.plan.steps as step, i (i)}
@@ -356,34 +364,37 @@ import { formatToolInputForDisplay } from '../tool-input-display'
             {@const isDelegate = segment.toolCall.name.startsWith('delegate_to_')}
             {@const isResolved = segment.toolCall.result !== undefined}
             {@const showFull = isToolBlockExpanded(segment.id)}
-            {@const blockClickable = toolDetailsExpanded && !isDelegate && isResolved}
+            {@const blockClickable = toolDisplayMode === 'shown' && !isDelegate && isResolved}
+            {@const rowHidden = toolDisplayMode === 'hidden'}
             <div class="tool-call" class:collapsed={!showFull}>
-              <svelte:element
-                this={blockClickable ? 'button' : 'div'}
-                class="tool-call-head"
-                class:clickable={blockClickable}
-                type={blockClickable ? 'button' : undefined}
-                role={blockClickable ? 'button' : undefined}
-                onclick={blockClickable ? () => toggleToolBlock(segment.id) : undefined}
-              >
-                <span class="tool-icon">⚙</span>
-                <code>{segment.toolCall.name}</code>
-                {#if !(showFull && !isDelegate)}
-                  <span class="tool-input">{segment.toolCall.input}</span>
-                {/if}
-                {#if !showFull && !isDelegate && isResolved}
-                  <!-- Collapsed + already resolved: a one-glyph result indicator
-                       instead of the full body below — full detail is one
-                       Cmd/Ctrl+O (or a click on this entry, TASKS.md #88) away,
-                       not lost, just not filling the transcript by default.
-                       Reported directly: full tool output shown for every call
-                       by default made the chat look broken/noisy even when the
-                       app was working correctly. -->
-                  <span class="tool-status" class:error={segment.toolCall.isError} title={segment.toolCall.isError ? 'Error — click or Cmd/Ctrl+O for details' : 'Done — click or Cmd/Ctrl+O for details'}>
-                    {segment.toolCall.isError ? '✗' : '✓'}
-                  </span>
-                {/if}
-              </svelte:element>
+              {#if !rowHidden}
+                <svelte:element
+                  this={blockClickable ? 'button' : 'div'}
+                  class="tool-call-head"
+                  class:clickable={blockClickable}
+                  type={blockClickable ? 'button' : undefined}
+                  role={blockClickable ? 'button' : undefined}
+                  onclick={blockClickable ? () => toggleToolBlock(segment.id) : undefined}
+                >
+                  <span class="tool-icon">⚙</span>
+                  <code>{segment.toolCall.name}</code>
+                  {#if !(showFull && !isDelegate)}
+                    <span class="tool-input">{segment.toolCall.input}</span>
+                  {/if}
+                  {#if !showFull && !isDelegate && isResolved}
+                    <!-- Collapsed + already resolved: a one-glyph result indicator
+                         instead of the full body below — full detail is one
+                         Cmd/Ctrl+O (or a click on this entry, TASKS.md #88) away,
+                         not lost, just not filling the transcript by default.
+                         Reported directly: full tool output shown for every call
+                         by default made the chat look broken/noisy even when the
+                         app was working correctly. -->
+                    <span class="tool-status" class:error={segment.toolCall.isError} title={segment.toolCall.isError ? 'Error — click or Cmd/Ctrl+O for details' : 'Done — click or Cmd/Ctrl+O for details'}>
+                      {segment.toolCall.isError ? '✗' : '✓'}
+                    </span>
+                  {/if}
+                </svelte:element>
+              {/if}
               {#if showFull && !isDelegate && segment.toolCall.input}
                 <!-- TASKS.md #109: an expanded block shows the whole command, wrapped (the collapsed head's single ellipsised line
                      hid most of a long command even after opening the block). Same capped-preview-plus-toggle as the result body
@@ -409,6 +420,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
                   alt={segment.toolCall.image.path}
                 />
               {/if}
+              {#if !rowHidden}
               {#if !isDelegate}
                 {#if isResolved}
                   {#if showFull}
@@ -463,12 +475,13 @@ import { formatToolInputForDisplay } from '../tool-input-display'
                   Delegating to {label(delegateRole)} agent…
                 </div>
               {/if}
+              {/if}
             </div>
           {:else if segment.kind === 'thinking'}
             <!-- TASKS.md #147: real model reasoning, collapsed by default — reuses #72/#88's tool-output
                  collapse toggle/state rather than a new convention (isThinkingBlockExpanded/toggleThinkingBlock). -->
             {@const showFull = isThinkingBlockExpanded(segment.id)}
-            {@const thinkingClickable = toolDetailsExpanded}
+            {@const thinkingClickable = toolDisplayMode === 'shown'}
             <div class="thinking-block" class:collapsed={!showFull}>
               <svelte:element
                 this={thinkingClickable ? 'button' : 'div'}
@@ -644,12 +657,12 @@ import { formatToolInputForDisplay } from '../tool-input-display'
       <div class="status-right">
         <button
           class="tool-details-toggle"
-          class:on={toolDetailsExpanded}
+          class:on={toolDisplayMode === 'shown'}
           type="button"
-          onclick={onToggleToolDetails}
-          title={`${toolDetailsExpanded ? 'Hide' : 'Show'} full tool output (${isMac ? 'Cmd' : 'Ctrl'}+O)`}
+          onclick={onCycleToolDisplayMode}
+          title={`Cycle tool output display — hidden / partial / full (${isMac ? 'Cmd' : 'Ctrl'}+O)`}
         >
-          {toolDetailsExpanded ? 'Tool output: shown' : 'Tool output: hidden'}
+          Tool output: {toolDisplayMode}
         </button>
         <ModelPicker
           {providers}
@@ -713,6 +726,17 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     color: var(--accent);
     font-size: 0.7rem;
     font-weight: 600;
+  }
+  .model-badge {
+    display: inline-block;
+    margin-bottom: 0.3rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-family: monospace;
   }
   .bubble.assistant :global(.markdown-body) {
     white-space: normal;

@@ -10,10 +10,12 @@
   let roster = $state<RoleRosterEntryDto[]>([])
   /** The roster's label (covers user-defined roles), else the built-in / humanized one. */
   const label = (id: string): string => roster.find((r) => r.id === id)?.label ?? roleLabel(id)
+  /** TASKS.md #181: same three-state tool-output display the live chat view and Markdown export use — read from the same persisted setting so a PDF export matches what the other two formats would show. */
+  let toolDisplayMode = $state<'hidden' | 'partial' | 'shown'>('partial')
 
   /** A pure-tool_result message is the continuation of the tool call just shown, not a new turn — same convention as export.ts's Markdown export. */
   function isPureToolResult(message: MessageDto): boolean {
-    return message.content.length > 0 && message.content.every((b) => b.type === 'tool_result')
+    return message.content.length > 0 && message.content.every((b) => b.type === 'tool_result' || b.type === 'image')
   }
 
   onMount(async () => {
@@ -21,12 +23,14 @@
       const sessionId = new URLSearchParams(location.search).get('sessionId')
       if (!sessionId) throw new Error('Missing sessionId in print URL')
       window.sachiv.getRoles().then((r) => (roster = r.roles)).catch(() => {})
-      const [sessions, records] = await Promise.all([
+      const [sessions, records, storedMode] = await Promise.all([
         window.sachiv.listSessions(),
-        window.sachiv.listMessages(sessionId)
+        window.sachiv.listMessages(sessionId),
+        window.sachiv.getSetting('toolDisplayMode')
       ])
       title = sessions.find((s) => s.id === sessionId)?.title ?? title
       messages = records
+      if (storedMode === 'hidden' || storedMode === 'partial' || storedMode === 'shown') toolDisplayMode = storedMode
     } catch (err) {
       error = err instanceof Error ? err.message : String(err)
     } finally {
@@ -55,16 +59,25 @@
           <div class="agent-chip">{label(block.agentRole)} agent</div>
         {/if}
         <MarkdownText text={block.text} />
-      {:else if block.type === 'tool_use'}
+      {:else if block.type === 'tool_use' && toolDisplayMode !== 'hidden'}
         <div class="tool-call">
           <div class="tool-call-head">
             <span class="tool-icon">⚙</span>
             <code>{block.name}</code>
-            <span class="tool-input">{JSON.stringify(block.input)}</span>
+            {#if toolDisplayMode === 'shown'}
+              <span class="tool-input">{JSON.stringify(block.input)}</span>
+            {/if}
           </div>
         </div>
-      {:else if block.type === 'tool_result'}
-        <div class="tool-result" class:error={block.isError}>{block.content}</div>
+      {:else if block.type === 'tool_result' && toolDisplayMode !== 'hidden'}
+        <div class="tool-result" class:error={block.isError}>
+          {toolDisplayMode === 'shown' ? block.content : block.isError ? 'Error' : 'Done'}
+        </div>
+      {:else if block.type === 'image'}
+        <!-- TASKS.md #82/#181 — always shown regardless of toolDisplayMode: "Hidden should show the
+             image as it is important part of the output" (explicit user decision, 2026-10-02). Also
+             fixes a real pre-existing gap: PDF export never rendered image blocks at all before this. -->
+        <img class="tool-image" src={`data:${block.mimeType};base64,${block.dataBase64}`} alt={block.path} />
       {/if}
     {/each}
   {/each}
@@ -143,5 +156,13 @@
   }
   .tool-result.error {
     color: var(--warn);
+  }
+  .tool-image {
+    display: block;
+    max-width: 100%;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    margin: 0.5rem 0;
+    object-fit: contain;
   }
 </style>

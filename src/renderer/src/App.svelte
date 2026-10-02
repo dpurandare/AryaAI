@@ -46,6 +46,8 @@
     id: string
     role: 'user' | 'assistant'
     pending?: boolean
+    /** "<providerId>:<model>" that answered — assistant messages only, shown optionally (Settings > off by default, see showAnsweringModel). */
+    model?: string
     /** Live-only "what's happening" hint from the backend's `status` stream
      * event (see orchestrator.ts's `roundStatusMessage`) — never persisted,
      * just shown by ChatView while `pending` and there's no active segment
@@ -189,8 +191,21 @@
   // long per-round "thinking" phase. Mirrors this app's default-on-missing
   // settings convention (see main/ipc/register.ts's own read of this key).
   let planningEnabled = $state(true)
-  /** Global, not per-tool-call — matches Claude Code's own Cmd/Ctrl+O convention this was explicitly modeled on: one toggle for "how much tool detail is on screen," not a per-block expand state. Defaults to collapsed (false) — reported directly: full tool_result dumps in the transcript by default made the chat "look" broken/noisy even when the app was working correctly. */
-  let toolDetailsExpanded = $state(false)
+  /**
+   * TASKS.md #181: three states, uniform across every tool (no per-tool rule — deliberately rejected
+   * in favor of one global cycle, same Cmd/Ctrl+O this replaces). 'hidden' shows no tool-call row at
+   * all; 'partial' shows a name + done/error status, no input/result body (today's original
+   * collapsed-by-default behavior, kept as the default — reported directly: full tool_result dumps by
+   * default made the chat "look" broken/noisy even when the app was working correctly); 'shown' is the
+   * old last-expanded-by-default + per-block click-to-toggle behavior, unchanged. An `image` block
+   * (a chart, TASKS.md #82) is never affected by any of the three states — "Hidden should show the
+   * image as it is important part of the output" (explicit user decision, 2026-10-02): showing it *is*
+   * the point of that tool, not noise to suppress, so this stays a content-type rule, not a tool rule.
+   */
+  type ToolDisplayMode = 'hidden' | 'partial' | 'shown'
+  let toolDisplayMode = $state<ToolDisplayMode>('partial')
+  /** Off by default — a debugging/curiosity aid (which provider/model answered each message), not needed for normal use. */
+  let showAnsweringModel = $state(false)
 
   function mapMessagesToDisplay(records: MessageDto[]): DisplayMessage[] {
     const result: DisplayMessage[] = []
@@ -244,7 +259,7 @@
           toolSegmentsById.set(b.id, seg)
         }
       }
-      result.push({ id: m.id, role: m.role, segments })
+      result.push({ id: m.id, role: m.role, segments, model: m.model })
     }
     return result
   }
@@ -332,7 +347,11 @@
       id: crypto.randomUUID(),
       role: 'assistant',
       segments: [],
-      pending: true
+      pending: true,
+      // Stamped from the same (providerId, currentModel) runChat resolves from Settings for this exact
+      // send — accurate for a live response; a stored message's own `model` (set server-side) is still
+      // the source of truth once reloaded from history, this is just so it doesn't wait for that round trip.
+      model: `${providerId}:${currentModel}`
     }
     runtime.messages.push(userMsg, assistantMsg)
     // runtime.messages is $state, and push() deep-proxies the pushed objects —
@@ -488,9 +507,17 @@
     window.sachiv.setSetting('planningEnabled', String(value))
   }
 
-  function toggleToolDetails(): void {
-    toolDetailsExpanded = !toolDetailsExpanded
-    window.sachiv.setSetting('toolDetailsExpanded', String(toolDetailsExpanded))
+  function changeShowAnsweringModel(value: boolean): void {
+    showAnsweringModel = value
+    window.sachiv.setSetting('showAnsweringModel', String(value))
+  }
+
+  const TOOL_DISPLAY_MODE_CYCLE: ToolDisplayMode[] = ['hidden', 'partial', 'shown']
+
+  function cycleToolDisplayMode(): void {
+    const next = TOOL_DISPLAY_MODE_CYCLE[(TOOL_DISPLAY_MODE_CYCLE.indexOf(toolDisplayMode) + 1) % TOOL_DISPLAY_MODE_CYCLE.length]
+    toolDisplayMode = next
+    window.sachiv.setSetting('toolDisplayMode', next)
   }
 
   /** Cmd+O on macOS, Ctrl+O elsewhere — same cross-platform split already used for the mode-picker's Ctrl+Tab (see ChatView.svelte), and the exact convention this feature was explicitly modeled on (Claude Code's own tool-output toggle). Global (window-level), not scoped to the composer, so it works regardless of what has focus — matching how a real app-wide view toggle should behave. */
@@ -498,7 +525,7 @@
     const modifierHeld = isMac ? e.metaKey : e.ctrlKey
     if (modifierHeld && e.key.toLowerCase() === 'o') {
       e.preventDefault()
-      toggleToolDetails()
+      cycleToolDisplayMode()
     }
   }
 
@@ -675,8 +702,12 @@
     if (stored !== null && stored !== undefined) planningEnabled = stored !== 'false'
   })
 
-  window.sachiv.getSetting('toolDetailsExpanded').then((stored) => {
-    if (stored !== null && stored !== undefined) toolDetailsExpanded = stored === 'true'
+  window.sachiv.getSetting('showAnsweringModel').then((stored) => {
+    if (stored !== null && stored !== undefined) showAnsweringModel = stored === 'true'
+  })
+
+  window.sachiv.getSetting('toolDisplayMode').then((stored) => {
+    if (stored === 'hidden' || stored === 'partial' || stored === 'shown') toolDisplayMode = stored
   })
 
   // checkFirstRun's "is this genuinely a fresh install" check reads the
@@ -767,6 +798,7 @@
         {providers}
         {themeMode}
         {planningEnabled}
+        {showAnsweringModel}
         onSave={saveApiKey}
         onClose={() => {
           showSettings = false
@@ -775,6 +807,7 @@
         onToggleAutoApproveRule={toggleAutoApproveTool}
         onChangeTheme={changeThemeMode}
         onChangePlanningEnabled={changePlanningEnabled}
+        onChangeShowAnsweringModel={changeShowAnsweringModel}
       />
     {:else}
       <ChatView
@@ -794,8 +827,9 @@
         onNeedKey={() => (showSettings = true)}
         sessionUsage={activeRuntime.sessionUsage}
         {contextWindow}
-        {toolDetailsExpanded}
-        onToggleToolDetails={toggleToolDetails}
+        {toolDisplayMode}
+        onCycleToolDisplayMode={cycleToolDisplayMode}
+        {showAnsweringModel}
         {isMac}
         pendingConfirm={activeRuntime.pendingConfirm}
         {autoApproveTools}

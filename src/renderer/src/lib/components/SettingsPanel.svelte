@@ -11,6 +11,7 @@
     providers,
     themeMode,
     planningEnabled,
+    showAnsweringModel = false,
     leaveRequested = false,
     onSave,
     onClose,
@@ -18,7 +19,8 @@
     onLeaveResolved,
     onToggleAutoApproveRule,
     onChangeTheme,
-    onChangePlanningEnabled
+    onChangePlanningEnabled,
+    onChangeShowAnsweringModel
   }: {
     providerDisplayName: string
     providerRequiresApiKey?: boolean
@@ -27,6 +29,8 @@
     providers: ProviderDescriptor[]
     themeMode: ThemeMode
     planningEnabled: boolean
+    /** Off by default — shows which provider/model answered each message in the chat transcript. */
+    showAnsweringModel?: boolean
     /** The user tried to leave Settings (another session, New chat, Back) while entries are unsaved: show the Save / Discard / Cancel prompt. */
     leaveRequested?: boolean
     /** `keepOpen`: save without closing Settings (used when saving from the leave prompt). */
@@ -40,6 +44,7 @@
     onToggleAutoApproveRule: (name: string, value: boolean) => void
     onChangeTheme: (mode: ThemeMode) => void
     onChangePlanningEnabled: (value: boolean) => void
+    onChangeShowAnsweringModel: (value: boolean) => void
   } = $props()
 
   let apiKey = $state('')
@@ -916,6 +921,20 @@
         onchange={(e) => onChangePlanningEnabled((e.target as HTMLInputElement).checked)}
       />
       <span class="conn-name">Plan complex requests before acting</span>
+    </label>
+
+    <h2>Transcript</h2>
+    <p class="status">
+      Show which provider/model answered each message in the chat transcript — useful when you switch
+      models mid-investigation and want to know which one produced a given reply. Off by default.
+    </p>
+    <label class="tool-rule">
+      <input
+        type="checkbox"
+        checked={showAnsweringModel}
+        onchange={(e) => onChangeShowAnsweringModel((e.target as HTMLInputElement).checked)}
+      />
+      <span class="conn-name">Show which model answered each message</span>
     </label>
 
     <hr />

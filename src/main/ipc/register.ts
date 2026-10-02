@@ -170,6 +170,9 @@ function resolveTemperature(): number {
   return Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : DEFAULT_TEMPERATURE
 }
 
+/** Settings key: `'true'` shows which provider/model answered each message in the chat transcript. Off by default — purely a debugging/curiosity aid, not needed for normal use. */
+export const SHOW_ANSWERING_MODEL_SETTING_KEY = 'showAnsweringModel'
+
 /** Settings key: `'true'` when the user chose to continue without Python (design-discussion.md section 4.3). */
 export const PYTHON_RUNTIME_DISABLED_SETTING_KEY = 'pythonRuntimeDisabled'
 
@@ -831,7 +834,12 @@ async function runChat(
           addUsage(sessionId, orchestratorEvent.event.inputTokens, orchestratorEvent.event.outputTokens)
         }
       } else {
-        const record = insertMessage(sessionId, orchestratorEvent.role, orchestratorEvent.content)
+        const record = insertMessage(
+          sessionId,
+          orchestratorEvent.role,
+          orchestratorEvent.content,
+          orchestratorEvent.role === 'assistant' ? `${providerId}:${model}` : undefined
+        )
         enqueueMessage(record.id, sessionId, record.content)
       }
     }

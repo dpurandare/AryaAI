@@ -8,6 +8,8 @@ export interface MessageRecord {
   role: 'user' | 'assistant'
   content: ContentBlock[]
   createdAt: number
+  /** "<providerId>:<model>" that produced this message — assistant messages only; undefined for user messages and for any message persisted before this field existed. Optionally shown in the UI (Settings toggle), off by default. */
+  model?: string
 }
 
 interface MessageRow {
@@ -16,27 +18,29 @@ interface MessageRow {
   role: string
   content: string
   createdAt: number
+  model: string | null
 }
 
-export function insertMessage(
-  sessionId: string,
-  role: 'user' | 'assistant',
-  content: ContentBlock[]
-): MessageRecord {
+export function insertMessage(sessionId: string, role: 'user' | 'assistant', content: ContentBlock[], model?: string): MessageRecord {
   const now = Date.now()
   const id = randomUUID()
   const db = getDb()
-  db.prepare(
-    'INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(id, sessionId, role, JSON.stringify(content), now)
+  db.prepare('INSERT INTO messages (id, session_id, role, content, created_at, model) VALUES (?, ?, ?, ?, ?, ?)').run(
+    id,
+    sessionId,
+    role,
+    JSON.stringify(content),
+    now,
+    model ?? null
+  )
   db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(now, sessionId)
-  return { id, sessionId, role, content, createdAt: now }
+  return { id, sessionId, role, content, createdAt: now, model }
 }
 
 export function listMessages(sessionId: string): MessageRecord[] {
   const rows = getDb()
     .prepare(
-      'SELECT id, session_id AS sessionId, role, content, created_at AS createdAt FROM messages WHERE session_id = ? ORDER BY created_at ASC'
+      'SELECT id, session_id AS sessionId, role, content, created_at AS createdAt, model FROM messages WHERE session_id = ? ORDER BY created_at ASC'
     )
     .all(sessionId) as MessageRow[]
 
@@ -45,6 +49,7 @@ export function listMessages(sessionId: string): MessageRecord[] {
     sessionId: row.sessionId,
     role: row.role as 'user' | 'assistant',
     content: JSON.parse(row.content) as ContentBlock[],
-    createdAt: row.createdAt
+    createdAt: row.createdAt,
+    model: row.model ?? undefined
   }))
 }

@@ -47,8 +47,12 @@ vi.mock('node:fs/promises', () => ({ writeFile: mockWriteFile }))
 
 const mockListSessions = vi.fn()
 const mockListMessages = vi.fn()
+// Defaults to 'partial' (undefined -> currentToolDisplayMode()'s own fallback) — tests exercising full
+// tool content pass 'shown' explicitly to sessionToMarkdown rather than relying on this mock's value.
+const mockGetSetting = vi.fn().mockReturnValue(undefined)
 vi.mock('../db/sessions', () => ({ listSessions: mockListSessions }))
 vi.mock('../db/messages', () => ({ listMessages: mockListMessages }))
+vi.mock('../db/settings', () => ({ getSetting: mockGetSetting }))
 
 const { IpcChannel } = await import('@shared/ipc-contract')
 const { exportSession, sessionToJson, sessionToMarkdown } = await import('./export')
@@ -127,7 +131,7 @@ describe('sessionToMarkdown', () => {
         createdAt: 2
       }
     ]
-    const md = sessionToMarkdown(session, messages)
+    const md = sessionToMarkdown(session, messages, 'shown')
     expect(md).toContain('🔧 **write_file**({"path":"a.txt"})')
     expect(md).toContain('→ Result: Wrote 1 file.')
     // The tool_result message must not start a new "## User" section.
@@ -144,7 +148,69 @@ describe('sessionToMarkdown', () => {
         createdAt: 1
       }
     ]
-    expect(sessionToMarkdown(session, messages)).toContain('⚠️ Error: boom')
+    expect(sessionToMarkdown(session, messages, 'shown')).toContain('⚠️ Error: boom')
+  })
+
+  describe('toolDisplayMode (TASKS.md #181)', () => {
+    const toolMessages: MessageRecord[] = [
+      {
+        id: 'm1',
+        sessionId: 's1',
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'call_1', name: 'find_files', input: { pattern: '*.ts' } }],
+        createdAt: 1
+      },
+      {
+        id: 'm2',
+        sessionId: 's1',
+        role: 'user',
+        content: [{ type: 'tool_result', toolUseId: 'call_1', content: 'lots of real file paths here' }],
+        createdAt: 2
+      },
+      {
+        id: 'm3',
+        sessionId: 's1',
+        role: 'assistant',
+        content: [{ type: 'image', toolUseId: 'call_2', path: 'chart.png', mimeType: 'image/png', dataBase64: 'abc123' }],
+        createdAt: 3
+      }
+    ]
+
+    it("'hidden' omits tool_use/tool_result entirely but still shows the image — \"Hidden should show the image as it is important part of the output\"", () => {
+      const md = sessionToMarkdown(session, toolMessages, 'hidden')
+      expect(md).not.toContain('find_files')
+      expect(md).not.toContain('lots of real file paths here')
+      expect(md).toContain('🖼️ Displayed image: chart.png')
+    })
+
+    it("'partial' shows the tool name and a done/error status, never the real input or result content", () => {
+      const md = sessionToMarkdown(session, toolMessages, 'partial')
+      expect(md).toContain('find_files')
+      expect(md).toContain('(called)')
+      expect(md).not.toContain('*.ts') // the real input, never shown in partial mode
+      expect(md).toContain('→ Result')
+      expect(md).not.toContain('lots of real file paths here') // the real result, never shown in partial mode
+      expect(md).toContain('🖼️ Displayed image: chart.png')
+    })
+
+    it("'shown' (the default behavior tested above) shows everything, same as before this feature existed", () => {
+      const md = sessionToMarkdown(session, toolMessages, 'shown')
+      expect(md).toContain('*.ts')
+      expect(md).toContain('lots of real file paths here')
+    })
+
+    it('exportSession reads the persisted toolDisplayMode setting for Markdown exports, not a hardcoded default', async () => {
+      mockListSessions.mockReturnValue([session])
+      mockListMessages.mockReturnValue(toolMessages)
+      mockGetSetting.mockReturnValueOnce('hidden')
+      mockShowSaveDialog.mockResolvedValue({ canceled: false, filePath: '/tmp/out.md' })
+
+      await exportSession('s1', null)
+
+      const written = mockWriteFile.mock.calls[0][1] as string
+      expect(written).not.toContain('find_files')
+      expect(written).toContain('🖼️ Displayed image: chart.png')
+    })
   })
 })
 

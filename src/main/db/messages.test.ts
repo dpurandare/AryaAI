@@ -57,4 +57,14 @@ describe('messages repository', () => {
     deleteSession(session.id)
     expect(listMessages(session.id)).toEqual([])
   })
+
+  it('round-trips the answering model on an assistant message, and leaves it undefined for a user message', () => {
+    const session = createSession('Chat')
+    insertMessage(session.id, 'user', [{ type: 'text', text: 'hi' }])
+    insertMessage(session.id, 'assistant', [{ type: 'text', text: 'hello!' }], 'openai:gpt-4o-mini')
+
+    const messages = listMessages(session.id)
+    expect(messages[0].model).toBeUndefined()
+    expect(messages[1].model).toBe('openai:gpt-4o-mini')
+  })
 })

@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS messages (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   role TEXT NOT NULL,
   content TEXT NOT NULL, -- JSON-serialized ContentBlock[]
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  model TEXT -- "<providerId>:<model>" that answered (assistant messages only); NULL for user messages and pre-existing rows
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
