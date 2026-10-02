@@ -392,6 +392,21 @@
           agentRole: event.agentRole,
           text: event.message
         })
+        // TASKS.md #174: a `warning` carrying a `failureCategory` IS the turn's only/final signal (the
+        // backend's own convention — see orchestrator.ts's `isTopLevel && !assistantText` reasoning and
+        // prepare-context.ts's `failedTurnWarning`, which uses this exact same presence check to tell a
+        // failed turn apart from a mid-turn FYI). Before this, every `warning` was treated as purely
+        // informational — only `error`/`message_stop` ever reset `sending`/`pending` and unsubscribed —
+        // so a turn that ended on a bare failure warning (e.g. "No model configured", or the user
+        // clicking Stop before any response) left the composer permanently stuck in mid-turn "steering"
+        // mode and Stop permanently inert, since there was no live stream left to cancel. A warning with
+        // no `failureCategory` (a pinned-role fallback notice, a dropped-context FYI, etc.) still leaves
+        // `sending` alone — the turn continues normally right after it.
+        if (event.failureCategory) {
+          msg.pending = false
+          runtime.sending = false
+          unsubscribe()
+        }
       } else if (event.type === 'user_note') {
         // TASKS.md #158: a mid-run steering comment, streamed alongside the matching persisted message —
         // appended inline to the ongoing assistant message, same placement `warning` already uses.
