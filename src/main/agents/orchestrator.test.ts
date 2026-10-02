@@ -1369,6 +1369,100 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(provider.requests[1].system ?? '').toMatch(/MCP Operator specialist/)
     })
 
+    it('inserts a domain-knowledge step when needsDomainKnowledge is true but the plan omitted one, and a server is connected (TASKS #173)', async () => {
+      // Found live 2026-10-02: the planner's own step list omitted mcp-operator entirely for a question
+      // needing domain interpretation (a connected wiki had directly relevant content for it), on two
+      // different models, despite the planning prompt's prose rule saying this should always be compound.
+      // Moving the judgment into a structured needsDomainKnowledge field and enforcing it here in code
+      // closes the gap regardless of what a given model's own step list says.
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "needsDomainKnowledge": true, "needsUserData": true, "steps": [' +
+            '{"role": "data", "description": "query the sensor readings"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'Rule: a deviation over 5% counts as an anomaly.', stopReason: 'end_turn' },
+        { text: 'Readings deviate by 8%.', stopReason: 'end_turn' },
+        { text: 'Yes, this is an anomaly by that rule.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 1, apis: 0, email: 0, mcp: 1 }) }
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'analyze the sensor readings and check if they are anomalous per our rules' }] }
+      ])
+
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const planSteps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : undefined
+      expect(planSteps).toHaveLength(2)
+      expect(planSteps?.[0].role).toBe('mcp-operator') // inserted — not in the model's own plan
+      expect(planSteps?.[1].role).toBe('data') // the model's own step, untouched
+      expect(provider.requests[1].system ?? '').toMatch(/MCP Operator specialist/)
+    })
+
+    it('does not insert a domain-knowledge step when no MCP server is connected, even if needsDomainKnowledge is true', async () => {
+      // The no-server case is substituteUnavailableMcpOperator's job, not this one's — inserting a step
+      // that can't run would just waste a round on "no connected server fits."
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "needsDomainKnowledge": true, "needsUserData": true, "steps": [' +
+            '{"role": "data", "description": "query the sensor readings"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'Readings deviate by 8%.', stopReason: 'end_turn' },
+        { text: 'Here is what I found.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 1, apis: 0, email: 0, mcp: 0 }) }
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'analyze the sensor readings and check if they are anomalous per our rules' }] }
+      ])
+
+      // No insertion happened, so the plan stays at 1 step — which never emits a 'plan' event at all and
+      // runs through the ordinary top-level round instead (same as any other single-step plan; see the
+      // sibling mcp-availability tests' own comment on why a 2-step plan is used there and not here).
+      expect(events.find((e) => e.kind === 'stream' && e.event.type === 'plan')).toBeUndefined()
+    })
+
+    it('does not insert a duplicate domain-knowledge step when the plan already includes one', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "needsDomainKnowledge": true, "needsUserData": true, "steps": [' +
+            '{"role": "mcp-operator", "description": "look up the anomaly rule"}, ' +
+            '{"role": "data", "description": "query the sensor readings"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'Rule: a deviation over 5% counts as an anomaly.', stopReason: 'end_turn' },
+        { text: 'Readings deviate by 8%.', stopReason: 'end_turn' },
+        { text: 'Yes, this is an anomaly by that rule.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 1, apis: 0, email: 0, mcp: 1 }) }
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'analyze the sensor readings and check if they are anomalous per our rules' }] }
+      ])
+
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const planSteps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : undefined
+      expect(planSteps).toHaveLength(2) // not 3 — no duplicate inserted
+      expect(planSteps?.[0].role).toBe('mcp-operator')
+      expect(planSteps?.[1].role).toBe('data')
+    })
+
     it('tells the classifier a later step only sees written results, so an earlier step must return the actual values (Appendix D2: fabricated chart data)', async () => {
       const registry = buildRegistry()
       const provider = new MockProvider([
@@ -1650,6 +1744,61 @@ describe('Orchestrator (integration, mocked provider)', () => {
         (e) => e.kind === 'message' && e.content.some((c) => c.type === 'warning')
       )
       expect(persistedWarning).toBeDefined()
+    })
+
+    it('a round truncated mid-tool-call (max_tokens with a tool call already started) retries once with an informative tool_result instead of failing the step outright (TASKS #172/#173)', async () => {
+      // Found live 2026-10-02: gpt-4o-mini's output hit the per-round token limit mid-tool-call
+      // (python_run, right after being told to read captured data from its handoff file rather than
+      // embed it), leaving a garbage/empty call that previously just ended the whole step with
+      // "(no response)" — no chance to recover.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_1', name: 'read_file', input: {}, rawInput: '{"path": "unfinished' }], stopReason: 'max_tokens' },
+        { text: 'All done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'read the file' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      // The truncated call was never actually executed — a real read_file call on a missing path
+      // would error with a path-not-found message, not this one's specific wording.
+      const toolResults = streamEvents.filter((e) => e.type === 'tool_result')
+      expect(toolResults).toHaveLength(1)
+      expect(toolResults[0]).toMatchObject({ isError: true })
+      expect((toolResults[0] as { content: string }).content).toMatch(/cut off by the output-length limit/i)
+
+      // The round recovered instead of failing the whole step/turn.
+      const finalText = streamEvents
+        .filter((e) => e.type === 'text_delta')
+        .map((e) => (e.type === 'text_delta' ? e.text : ''))
+        .join('')
+      expect(finalText).toBe('All done.')
+      expect(provider.requests).toHaveLength(2) // one retry, not more
+    })
+
+    it('stops retrying after MAX_TRUNCATED_TOOL_CALL_RETRIES and fails the round like before, rather than looping forever', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_1', name: 'read_file', input: {} }], stopReason: 'max_tokens' },
+        { toolCalls: [{ id: 'call_2', name: 'read_file', input: {} }], stopReason: 'max_tokens' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'read the file' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      // One retry happened (2 requests total: the original + the one retry), then it gave up — not
+      // an unbounded loop.
+      expect(provider.requests).toHaveLength(2)
+      const warning = streamEvents.find((e) => e.type === 'warning')
+      expect(warning).toMatchObject({ type: 'warning' })
     })
 
     it('a round that ends cleanly (not max_tokens) with no text and no tool call reports a warning instead of ending in total silence', async () => {
@@ -4269,6 +4418,56 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const step = userTexts.find((t) => t.includes('[Plan step 1 — MCP Operator]')) ?? ''
       expect(step).not.toMatch(/may use web_search or delegate_to_research/)
       expect(step).toMatch(/no web fallback should be attempted/)
+    })
+
+    it('incomplete (found something, not enough) inserts a real follow-up Research step, not just a hopeful note (TASKS #178)', async () => {
+      // Found live 2026-10-02 retesting #172/#173/#175/#176 end-to-end: an MCP search returned 2 hits
+      // from the right document, but the snippets (a table fragment, a citation) were useless — and it
+      // got reported as done, with no mechanism to say "found something, but not enough." Unlike
+      // no_information's note-only fallback, `incomplete` inserts a real plan step.
+      const { provider, userTexts } = await run([
+        planOf(['mcp-operator', 'look up the yaw misalignment definition'], ['coding', 'write a note']),
+        {
+          text: 'Found the right document, but only a table fragment and a citation.\n[handoff: incomplete] the actual methodology section was not in the snippet',
+          stopReason: 'end_turn'
+        },
+        { text: 'Found more detail on the open web.', stopReason: 'end_turn' }, // the inserted Research step
+        { text: 'A note.', stopReason: 'end_turn' }, // the originally-planned coding step
+        { text: 'Final answer.', stopReason: 'end_turn' }
+      ])
+      // classify, mcp-operator, (inserted) research, coding, final synthesis — 5, not the original 4.
+      expect(provider.requests).toHaveLength(5)
+
+      const step1 = userTexts.find((t) => t.includes('[Plan step 1 — MCP Operator]')) ?? ''
+      expect(step1).toContain('(PARTIAL INFORMATION — found something, but not enough)')
+      expect(step1).toMatch(/a follow-up step has been added to fill the gap/)
+
+      const step2 = userTexts.find((t) => t.includes('[Plan step 2 — Researcher]')) ?? ''
+      expect(step2).toContain('yaw misalignment definition') // the inserted step's own description references the original gap
+      expect(step2).toContain('Found more detail on the open web.')
+
+      // The originally-planned step is still there too, just pushed to step 3 — nothing lost.
+      expect(userTexts.some((t) => t.includes('[Plan step 3 — Developer]') && t.includes('A note.'))).toBe(true)
+    })
+
+    it('caps incomplete follow-up insertion at one per turn, so two incomplete steps cannot each insert their own (TASKS #178)', async () => {
+      const { provider, userTexts } = await run([
+        planOf(
+          ['mcp-operator', 'look up the first definition'],
+          ['mcp-operator', 'look up the second definition']
+        ),
+        { text: 'Thin result.\n[handoff: incomplete] missing detail', stopReason: 'end_turn' },
+        { text: 'Follow-up search result.', stopReason: 'end_turn' }, // the one inserted Research step
+        { text: 'Also thin.\n[handoff: incomplete] missing detail again', stopReason: 'end_turn' },
+        { text: 'Final answer.', stopReason: 'end_turn' }
+      ])
+      // classify, mcp-operator(1), inserted research, mcp-operator(2), final — exactly one insertion, not two.
+      expect(provider.requests).toHaveLength(5)
+      expect(userTexts.filter((t) => t.includes('— Researcher]')).length).toBe(1)
+      // The second incomplete step still gets its honest marker — it just didn't get its own follow-up.
+      const step3 = userTexts.find((t) => t.includes('look up the second definition')) ?? ''
+      expect(step3).toContain('(PARTIAL INFORMATION — found something, but not enough)')
+      expect(step3).toMatch(/no further source is available to fill the gap/)
     })
 
     it('an ordinary reply with no tag, no files and no data is passed through exactly as before', async () => {

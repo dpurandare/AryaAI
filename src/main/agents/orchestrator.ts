@@ -638,6 +638,8 @@ interface HandoffState {
   seq: number
   /** How many times a step has been auto-redirected to another role after an `out_of_scope` answer — capped at one per turn so two roles cannot ping-pong. */
   redirects: number
+  /** TASKS.md #178: how many times `ensureFollowUpOnIncomplete` has inserted a follow-up step after an `incomplete` answer — capped at one per turn, same reasoning as `redirects`. */
+  incompleteFollowUps: number
 }
 
 /** What `dispatchDelegate` returns: the text the caller folds into the conversation, plus the typed result behind it. */
@@ -657,6 +659,14 @@ export interface PlanStep {
 
 interface Plan {
   complexity: 'simple' | 'compound'
+  /** TASKS.md #173: a structured, provider-enforced answer to "does this need rules/definitions/standard
+   * practice from a wiki/MCP server (or the web)?" — enforced in code (`ensureDomainKnowledgeStep`) rather
+   * than left to the model's own `steps` choice reliably matching its own prose rule above. */
+  needsDomainKnowledge: boolean
+  /** Captured for the same reason as `needsDomainKnowledge`, but not yet enforced — no demonstrated case
+   * of a data-needing plan omitting a data step the way #173 omitted a domain-knowledge one; adding
+   * enforcement here without a real incident to ground it would be speculative. */
+  needsUserData: boolean
   steps: PlanStep[]
 }
 
@@ -687,6 +697,17 @@ const EMPTY_RESPONSE_NUDGE =
   'Your previous reply was empty. Continue with the task: use the tool results above and either call the next tool you need or give your answer in plain text.'
 
 /**
+ * TASKS.md #172/#173: found live — a round hit the per-round output-token limit mid-tool-call (gpt-4o-mini
+ * writing a Python script, right after being told to read captured data from its handoff file), leaving a
+ * garbage/empty tool call (`python_run` with no `code` at all) that would otherwise just end the whole step
+ * with "(no response)" — no chance to recover, even though the model usually just needs to be told its
+ * output was too long and try again shorter. Bounded the same way `MAX_EMPTY_RESPONSE_RETRIES` is: one
+ * retry only, not unlimited, so a model that keeps generating oversized output still fails the round
+ * eventually rather than looping forever.
+ */
+const MAX_TRUNCATED_TOOL_CALL_RETRIES = 1
+
+/**
  * TASKS.md #140/#141: a local reasoning model (gpt-oss especially) can burn its whole output budget on
  * hidden reasoning and return literally no visible text for classify-and-plan's one-shot probe — confirmed
  * live (console: "classify-and-plan response was not valid JSON ... the model returned no text"). Before
@@ -711,6 +732,17 @@ export function buildPlanSchema(roleIds: readonly string[]): Record<string, unkn
     type: 'object',
     properties: {
       complexity: { type: 'string', enum: ['simple', 'compound'] },
+      needsDomainKnowledge: {
+        type: 'boolean',
+        description:
+          'Does answering need rules, definitions, or standard practice (from a connected wiki/MCP server, ' +
+          'or the web) to interpret the data correctly — e.g. judging whether something is an anomaly, a ' +
+          'violation, or matches a named technical concept? True even without the user naming a document.'
+      },
+      needsUserData: {
+        type: 'boolean',
+        description: "Does answering need the user's own data — a configured database/API/file — not just general knowledge?"
+      },
       steps: {
         type: 'array',
         items: {
@@ -724,7 +756,7 @@ export function buildPlanSchema(roleIds: readonly string[]): Record<string, unkn
         }
       }
     },
-    required: ['complexity', 'steps'],
+    required: ['complexity', 'needsDomainKnowledge', 'needsUserData', 'steps'],
     additionalProperties: false
   }
 }
@@ -773,7 +805,19 @@ export function parsePlan(text: string, validRoles: ReadonlySet<string>): { plan
       steps.push({ role: s.role as AgentRole, description: s.description })
     }
     const truncated = steps.length > MAX_PLAN_STEPS
-    return { plan: { complexity: parsed.complexity, steps: truncated ? steps.slice(0, MAX_PLAN_STEPS) : steps }, truncated }
+    return {
+      plan: {
+        complexity: parsed.complexity,
+        // Defaults to false rather than rejecting the whole plan — the plain-prompt fallback path (a
+        // model that rejected structured output) can omit these two newer fields entirely, and a
+        // broken/partial classifier response must still fail open to "no domain step inserted," never
+        // to "no plan at all" (same reasoning as every other field here).
+        needsDomainKnowledge: parsed.needsDomainKnowledge === true,
+        needsUserData: parsed.needsUserData === true,
+        steps: truncated ? steps.slice(0, MAX_PLAN_STEPS) : steps
+      },
+      truncated
+    }
   } catch {
     return undefined
   }
@@ -938,7 +982,7 @@ export class Orchestrator {
       deadlineAt: Date.now() + TURN_DEADLINE_MS,
       consecutiveRoundTimeouts: 0,
       consecutiveRateLimitRetries: 0,
-      handoff: { turnId: randomUUID().slice(0, 8), items: [], seq: 0, redirects: 0 }
+      handoff: { turnId: randomUUID().slice(0, 8), items: [], seq: 0, redirects: 0, incompleteFollowUps: 0 }
     }
     // Old captured-data folders are only useful within (roughly) the turn that made them.
     const workspaceRoot = this.toolContext.workspaceGuard?.root
@@ -997,7 +1041,11 @@ export class Orchestrator {
       return
     }
 
-    if (!plan || plan.steps.length <= 1) {
+    // TASKS.md #173: a single-step plan normally skips executePlan entirely (the plain top-level round
+    // already covers it) — but if that one step omitted a needed domain-knowledge step, it must still go
+    // through executePlan, where ensureDomainKnowledgeStep actually inserts it; otherwise this whole fix
+    // would never fire for the common case of a model planning just one (non-mcp-operator) step.
+    if (!plan || (plan.steps.length <= 1 && !this.shouldInsertDomainKnowledgeStep(plan))) {
       yield* this.runLoop(
         this.buildOrchestratorSystemPrompt(),
         this.defaultTools,
@@ -1330,6 +1378,78 @@ export class Orchestrator {
   }
 
   /**
+   * TASKS.md #173: found live — a real connected wiki had directly relevant content (a loss-taxonomy
+   * document covering exactly "yaw misalignment" and "power curve adjustment") for a question asking to
+   * interpret turbine telemetry against both, and the planner's own step list never included an
+   * `mcp-operator` step at all, on two different models (local and cloud), despite the planning prompt's
+   * existing prose rule saying this should always be compound. Moving the judgment into `needsDomainKnowledge`
+   * (a structured field the planner must explicitly answer, same mechanism `complexity` already uses) and
+   * enforcing it here in code closes the gap regardless of whether a given model's own step list honored
+   * the prose. Only inserts when a server is actually connected — the no-server case is
+   * `substituteUnavailableMcpOperator`'s job, not this one's, and inserting a step that can't run would
+   * just waste a round on "no connected server fits." A no-op if the planner already included its own
+   * `mcp-operator` step, so this never produces a duplicate.
+   */
+  /** Split out from `ensureDomainKnowledgeStep` so the "is this plan really just 1 step" gate (below, where
+   * `executePlan` vs. the plain single-round path is decided) can know a step is coming *before* any
+   * conversation text is needed, not just at insertion time. */
+  private shouldInsertDomainKnowledgeStep(plan: Plan): boolean {
+    const mcpAgent = this.agents.get('mcp-operator')
+    const alreadyPlanned = plan.steps.some((s) => s.role === 'mcp-operator')
+    return plan.needsDomainKnowledge && !alreadyPlanned && !!mcpAgent && isRoleAvailable(mcpAgent, this.options.getConfiguration?.())
+  }
+
+  private ensureDomainKnowledgeStep(plan: Plan, conversation: Message[]): PlanStep[] {
+    if (!this.shouldInsertDomainKnowledgeStep(plan)) return plan.steps
+    const request = latestMessageText(conversation)
+    const inserted: PlanStep = {
+      role: 'mcp-operator',
+      description:
+        "Look up domain knowledge (rules, definitions, standard practice) relevant to the user's request, " +
+        `via the connected wiki/MCP server(s), for a later step to use. Original request: ${request}`
+    }
+    return [inserted, ...plan.steps]
+  }
+
+  /**
+   * TASKS.md #178: `no_information` (MCP found nothing at all relevant) already had a fallback — a note
+   * hoping a later round picks up `web_search` on its own (see the `fallbackNote` logic in `executePlan`
+   * below). `incomplete` (found *something*, but not enough — e.g. the right document, but only a table
+   * fragment or a citation, not real usable content) gets a stronger, code-enforced version: insert one
+   * real follow-up step into the plan itself, right here, rather than leaving it to a passive note —
+   * found live, a hopeful note is exactly how a partial result slips through uncorrected (the original
+   * `no_information` fallback note never actually fires for a status that was never reported as
+   * `no_information` in the first place, since the step technically found *something*). Bounded by
+   * `state.handoff.incompleteFollowUps` (capped at 1 per turn, same `redirects`-style cap this file
+   * already uses for `out_of_scope`) so an incomplete-on-the-follow-up-too case can't ping-pong forever —
+   * past that point it's the final synthesis's job (`buildOrchestratorSystemPrompt`) to disclose the
+   * remaining gap, not this mechanism's job to keep retrying. One-directional only: MCP Operator
+   * incomplete -> Research follow-up. The reverse isn't built — no live incident motivates it, and by
+   * the time a Research step runs at all, `ensureDomainKnowledgeStep` has usually already tried MCP
+   * Operator first if one was connected.
+   */
+  private ensureFollowUpOnIncomplete(
+    steps: PlanStep[],
+    afterIndex: number,
+    fromRole: AgentRole,
+    originalDescription: string,
+    state: RunState
+  ): boolean {
+    if (fromRole !== 'mcp-operator' || !this.agents.has('research') || state.handoff.incompleteFollowUps >= 1) {
+      return false
+    }
+    state.handoff.incompleteFollowUps++
+    steps.splice(afterIndex + 1, 0, {
+      role: 'research',
+      description:
+        'The connected wiki/knowledge base had partial but incomplete information for the previous step: ' +
+        `"${originalDescription}" — search the open web to fill the specific gap, and say plainly in your ` +
+        'own result what you found versus what is still unconfirmed.'
+    })
+    return true
+  }
+
+  /**
    * Walks a compound plan's steps in order, each one dispatched exactly
    * like today's single delegate call, then runs one final top-level round
    * so the model can synthesize everything the steps produced into the
@@ -1340,7 +1460,7 @@ export class Orchestrator {
    * full text even though the live checklist animation doesn't replay.
    */
   private async *executePlan(plan: Plan, conversation: Message[], state: RunState): AsyncIterable<OrchestratorEvent> {
-    const steps = this.applyMcpAvailabilityFallback(plan.steps)
+    const steps = this.applyMcpAvailabilityFallback(this.ensureDomainKnowledgeStep(plan, conversation))
     // Computed once, before any step message is pushed onto `conversation` — by the time a later step
     // runs, its last entry would be the previous step's own message, not the user's original request.
     const sourcingRestricted = detectsSourceRestriction(latestMessageText(conversation))
@@ -1391,7 +1511,14 @@ export class Orchestrator {
             ? ' (OUT OF SCOPE — not done)'
             : d?.status === 'no_information'
               ? ' (NO INFORMATION FOUND — nothing relevant in the connected source)'
-              : ''
+              : d?.status === 'incomplete'
+                ? ' (PARTIAL INFORMATION — found something, but not enough)'
+                : ''
+      // TASKS.md #178: unlike `no_information`'s fallback (a note only, below), an `incomplete` result
+      // gets a real, code-inserted follow-up step when one is available — computed here, before the
+      // note text, so the note can honestly say whether a follow-up is actually coming.
+      const insertedFollowUp =
+        d?.status === 'incomplete' && !sourcingRestricted ? this.ensureFollowUpOnIncomplete(steps, index, role, step.description, state) : false
       // design-discussion.md §13.2(c),(d), §13.5, TASKS #144: a `no_information` step's own text is where
       // a later step or the final round gets its ONLY view of what happened here — so the fallback
       // permission and the provenance requirement both have to live in this same code-inserted text, not
@@ -1407,7 +1534,17 @@ export class Orchestrator {
           : d?.status === 'no_information' && sourcingRestricted
             ? '\n\n(The user\'s own request restricts where this information may come from, so no web fallback should be attempted ' +
               'here — report plainly that the connected source had nothing on this and stop.)'
-            : ''
+            : d?.status === 'incomplete' && sourcingRestricted
+              ? '\n\n(The user\'s own request restricts where this information may come from, so no follow-up to another source ' +
+                'should be attempted here — report plainly that this source only had partial information and stop.)'
+              : d?.status === 'incomplete' && insertedFollowUp
+                ? '\n\n(This source had only partial information — a follow-up step has been added to fill the gap from another ' +
+                  'source. The final answer must still say plainly what came from where if the two disagree or only partly overlap.)'
+                : d?.status === 'incomplete'
+                  ? '\n\n(This source had only partial information, and no further source is available to fill the gap — your ' +
+                    'final answer must say plainly what could and could not be confirmed, rather than presenting this partial ' +
+                    'result as a complete answer.)'
+                  : ''
       const stepLabel = `[Plan step ${index + 1} — ${this.labelOf(role)}]${marker}`
       const stepMessage: Message = {
         role: 'user',
@@ -1502,7 +1639,14 @@ export class Orchestrator {
       'embed.\n' +
       'Domain knowledge (rules/constraints, or how to interpret something — from a wiki/MCP server, or the ' +
       'web if none is connected) together with the data those rules apply to (database/API) is always ' +
-      'compound, one step per source, even in a single sentence.\n' +
+      'compound, one step per source, even in a single sentence and even without an explicit "look this up" ' +
+      "cue — see needsDomainKnowledge below, which this must agree with. This is two DIFFERENT kinds of " +
+      'source (rules vs. the data they apply to), not two sources for the same thing: never plan an MCP ' +
+      'Operator step AND a Research/web step for one domain-knowledge question up front — found live, a ' +
+      'pure definitional question with no database involved got both anyway, and web ran right after the ' +
+      'wiki had already given a complete answer. Plan the wiki/MCP step alone; add web up front only if the ' +
+      'user asked for it or for outside sources — an insufficient wiki result is handled after the fact ' +
+      '(`no_information`/`incomplete`), not by planning both "just in case."\n' +
       "A later step only sees the written result of earlier steps: when a step needs data an earlier step " +
       'retrieves (query rows, figures, file contents), word the earlier step so it returns the actual ' +
       'values, not just a summary, and word the later step as working from those values — never from ' +
@@ -1534,7 +1678,11 @@ export class Orchestrator {
       "step ended NEEDS INPUT, OUT OF SCOPE, or FAILED for the deliverable the user asked for, say plainly " +
       "that it was not produced — never present an old file from a previous turn as if it were this turn's " +
       "output. If you genuinely cannot tell whether something you see is new or pre-existing, say so and " +
-      'ask the user rather than guessing.'
+      'ask the user rather than guessing. If any step ended PARTIAL INFORMATION, your final answer must ' +
+      'say plainly what could and could not actually be confirmed — giving a confident-sounding answer ' +
+      'built on an acknowledged information gap is worse than stating the gap outright; propose how to ' +
+      'close it (what source/document/access would help) or ask the user for it, rather than quietly ' +
+      'treating the partial result as if it fully answered the question.'
     )
   }
 
@@ -1703,6 +1851,8 @@ export class Orchestrator {
     // result): re-ask up to MAX_EMPTY_RESPONSE_RETRIES times with a one-off nudge instead of ending the turn with nothing done.
     let emptyRetries = 0
     let nudgeAfterEmptyRound = false
+    // TASKS.md #172/#173: bounded recovery for a round truncated mid-tool-call — see MAX_TRUNCATED_TOOL_CALL_RETRIES.
+    let truncatedToolCallRetries = 0
 
     while (state.roundsUsed < maxRounds && Date.now() < state.deadlineAt) {
       state.roundsUsed++
@@ -2026,6 +2176,32 @@ export class Orchestrator {
 
       if (assistantBlocks.length) yield { kind: 'message', role: 'assistant', content: assistantBlocks }
       conversation.push({ role: 'assistant', content: assistantBlocks })
+
+      if (stopReason === 'max_tokens' && toolCalls.length > 0 && truncatedToolCallRetries < MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+        // Every dangling tool_use just pushed above still needs a matching tool_result (an unresolved
+        // tool_call followed by anything else is rejected by at least one real provider — see the
+        // conversationBeforeThisRound comment below for the identical reasoning) — so each gets a real,
+        // actionable error instead of being executed with whatever garbage input survived truncation,
+        // and the round retries once with that explanation already in context.
+        truncatedToolCallRetries++
+        const truncatedResultBlocks: ContentBlock[] = toolCalls.map((call) => ({
+          type: 'tool_result',
+          toolUseId: call.id,
+          content:
+            "This call's arguments were cut off by the output-length limit before they finished, so it " +
+            'was not run. Produce a SHORTER response this time — if you are working with captured data, ' +
+            'read it from its file (open/json.load) instead of embedding it — then try again.',
+          isError: true
+        }))
+        for (const block of truncatedResultBlocks) {
+          if (block.type === 'tool_result') {
+            yield { kind: 'stream', event: { type: 'tool_result', toolUseId: block.toolUseId, content: block.content, isError: block.isError } }
+          }
+        }
+        yield { kind: 'message', role: 'user', content: truncatedResultBlocks }
+        conversation.push({ role: 'user', content: truncatedResultBlocks })
+        continue
+      }
 
       if (stopReason !== 'tool_use' || toolCalls.length === 0) {
         return { text: assistantText, isError: stopReason === 'max_tokens' || !assistantText }
