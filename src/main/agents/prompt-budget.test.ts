@@ -96,23 +96,49 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 // classifyPrompt gained an explicit rule: chart/image generation AND embedding it into a document is ONE
 // Developer step, never split and never routed to Document Creator for this — 942 -> 1104 measured,
 // ceiling raised to 1150. Deliberate growth: this is the fix, not drift.
+// TASKS.md #172: db_execute_sql's description gained truncation/aggregation-steering guidance (a
+// silent driver-level row cap was found reporting a misleading "complete" row count; the fix adds
+// honest-truncation reporting plus a nudge toward GROUP BY over raw row pulls) — 9930 -> 9934
+// measured, routerToolSchemas/routerBare ceilings raised to cover it. Deliberate growth, not drift.
+// TASKS.md #172 (continued): a live retest showed Developer calling python_run with no code at all
+// right after reading two handoff files, so python_run's own description and the Developer role
+// prompt both now say explicitly to read a `.sachiv-handoff/` file with real file I/O rather than
+// retype its rows — 9940 -> 9968 (routerToolSchemas), 2710 -> 2751 (role:coding). Deliberate, not drift.
 const CEILINGS = {
-  routerPrompt: 1230,
-  routerToolSchemas: 9930,
-  routerBare: 11160,
+  // TASKS.md #178: the final-synthesis prompt now requires explicit disclosure when a plan step ended
+  // PARTIAL INFORMATION, not just NEEDS INPUT/OUT OF SCOPE/FAILED — 1230 -> 1278. Deliberate, not drift.
+  routerPrompt: 1290,
+  // TASKS.md #172 (continued again): db_execute_sql's description reworded to describe the large-result
+  // file-export behavior (writes to a file instead of "gets truncated") — 9970 -> 9983. Deliberate, not drift.
+  routerToolSchemas: 9990,
+  routerBare: 11280,
   slimRouterToolSchemas: 2130,
   slimRouterBare: 3360,
   routerCore: 800,
-  classifyPrompt: 1150,
+  // TASKS.md #179: the planning prompt's compound-step rule now explicitly says not to plan an MCP
+  // Operator step AND a Research/web step for one domain-knowledge question up front (found live — a
+  // pure definitional question got both, and web ran right after the wiki already gave a complete
+  // answer) — 1150 -> 1255. Deliberate growth, not drift.
+  classifyPrompt: 1270,
   'role:planning': 65,
-  'role:research': 1340,
+  // TASKS.md #178: Research can now also report `[handoff: incomplete]` when filling an MCP gap only
+  // partly closes it — 1340 -> 1345. Deliberate.
+  'role:research': 1350,
   'role:history-analyst': 500,
-  'role:coding': 2710,
-  'role:data': 2640,
+  // TASKS.md #176/#177: found live retesting #172/#173/#175's fixes end-to-end — the resulting chart
+  // compared a turbine's real data against... its own real data again (never recognized a real
+  // `theoretical_power_kw` reference column already in the schema), plotted as a meaningless zigzag
+  // (unsorted real data drawn as a line). role:coding 2760 -> 2801, role:data 2640 -> 2737. Deliberate.
+  'role:coding': 2810,
+  'role:data': 2740,
   'role:data-processor': 2070,
   'role:document-creator': 2220,
   'role:configurator': 1290,
-  'role:mcp-operator': 390,
+  // TASKS.md #176: a weak/irrelevant search snippet (a table fragment, a citation) got reported as
+  // real domain knowledge found, instead of retrying or reading further — 390 -> 514. Deliberate.
+  // TASKS.md #178: MCP Operator can now report `[handoff: incomplete]` (found something, not enough)
+  // distinct from `no_information` (found nothing) — 520 -> 567. Deliberate.
+  'role:mcp-operator': 580,
   'role:page-creator': 820,
   'role:email': 630
 } as const
@@ -225,7 +251,10 @@ describe('per-tool schema budget', () => {
   })
 
   it('the whole built-in registry stays under its total ceiling', () => {
+    // TASKS.md #172: db_execute_sql and python_run both gained a few words of real guidance
+    // (file-export behavior for a large result; read handoff files via real file I/O) — 8900 -> 8942
+    // measured. Deliberate growth, not drift.
     const total = registry.list().reduce((n, t) => n + tokensFor(t), 0)
-    expect(total).toBeLessThanOrEqual(8900) // 8,710 measured
+    expect(total).toBeLessThanOrEqual(8950)
   })
 })
