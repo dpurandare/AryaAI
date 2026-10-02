@@ -3,6 +3,7 @@ import type { SavedQueryDto, SavedQueryParamType } from '@shared/ipc-contract'
 import type { Tool } from '../types'
 import { openDriver } from './driver-factory'
 import { bindNamedParams } from './param-binding'
+import { formatQueryResult } from './types'
 
 const JSON_SCHEMA_TYPE: Record<SavedQueryParamType, 'string' | 'number'> = { string: 'string', number: 'number' }
 
@@ -54,15 +55,12 @@ export function buildSavedQueryTool(query: SavedQueryDto): Tool {
     describe(input) {
       return `Run saved query "${query.name}" on "${connectionName}": ${JSON.stringify(input)}`
     },
-    async execute(input) {
+    async execute(input, ctx) {
       const driver = openDriver(query.connectionId)
       try {
         const { sql, params } = bindNamedParams(query.sql, input, driver.engine)
         const result = await driver.execute(sql, params)
-        if (result.rows) {
-          return `${result.rowCount} row(s):\n${JSON.stringify(result.rows, null, 2)}`
-        }
-        return `${result.rowCount} row(s) affected.`
+        return await formatQueryResult(result, ctx.workspaceGuard.root)
       } finally {
         await driver.close()
       }

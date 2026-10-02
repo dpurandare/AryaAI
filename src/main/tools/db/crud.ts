@@ -3,7 +3,7 @@ import type { Tool } from '../types'
 import { openDriver } from './driver-factory'
 import { quoteIdentifier } from './identifier'
 import { positionalPlaceholder } from './param-binding'
-import type { DbDriver, DbTable } from './types'
+import { formatQueryResult, type DbDriver, type DbTable } from './types'
 
 const DEFAULT_LIST_LIMIT = 50
 const MAX_LIST_LIMIT = 200
@@ -87,7 +87,7 @@ export const dbListRowsTool: Tool = {
     required: ['connection', 'table']
   },
   mutates: false,
-  async execute(input) {
+  async execute(input, ctx) {
     const driver = openDriver(String(input.connection ?? ''))
     try {
       const table = await requireTable(driver, String(input.table ?? ''))
@@ -95,7 +95,7 @@ export const dbListRowsTool: Tool = {
       const offset = Math.max(0, Number(input.offset) || 0)
       const { sql, params } = buildPagedSelect(driver.engine, quoteIdentifier(table.name, driver.engine), limit, offset)
       const result = await driver.execute(sql, params)
-      return `${result.rowCount} row(s):\n${JSON.stringify(result.rows, null, 2)}`
+      return await formatQueryResult(result, ctx.workspaceGuard.root)
     } finally {
       await driver.close()
     }
@@ -142,7 +142,7 @@ export const dbFindRowsTool: Tool = {
     required: ['connection', 'table', 'column', 'value']
   },
   mutates: false,
-  async execute(input) {
+  async execute(input, ctx) {
     const driver = openDriver(String(input.connection ?? ''))
     try {
       const table = await requireTable(driver, String(input.table ?? ''))
@@ -155,7 +155,7 @@ export const dbFindRowsTool: Tool = {
         FIND_LIMIT
       )
       const result = await driver.execute(sql, [input.value])
-      return `${result.rowCount} row(s):\n${JSON.stringify(result.rows, null, 2)}`
+      return await formatQueryResult(result, ctx.workspaceGuard.root)
     } finally {
       await driver.close()
     }

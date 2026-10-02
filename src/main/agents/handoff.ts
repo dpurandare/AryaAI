@@ -120,7 +120,23 @@ export function isCapturableDataTool(name: string): boolean {
   return DATA_TOOLS.has(name) || name.startsWith('db_query_')
 }
 
-function describeCapture(content: string): string {
+/**
+ * TASKS.md #172: used to regex-parse the chat header's claimed row count ("52704 row(s):") and
+ * report that as the handoff summary — but the driver-level cap (`MAX_RETURNED_ROWS`, each
+ * `*-driver.ts`) means the header's count and what's actually captured to disk can differ, so a
+ * later step reading this summary was told "52704 rows" for a file that genuinely has 200.
+ * Counting the real parsed array length (when the capture is JSON) is honest regardless of what
+ * the header claims; the regex stays only as a fallback for a non-JSON (`.txt`) capture.
+ */
+function describeCapture(content: string, pureJson: string | undefined): string {
+  if (pureJson !== undefined) {
+    try {
+      const parsed: unknown = JSON.parse(pureJson)
+      if (Array.isArray(parsed)) return `${parsed.length} rows`
+    } catch {
+      // not a JSON array after all — fall through to the header-text guess below
+    }
+  }
   const m = /^(\d+) row\(s\):/.exec(content)
   if (m) return `${m[1]} rows`
   return `${content.length.toLocaleString('en-US')} characters`
@@ -168,7 +184,7 @@ export async function saveHandoffData(root: string, turnId: string, seq: number,
   } catch {
     return undefined // capture is best-effort; the run itself must never fail because of it
   }
-  return { path: rel, tool, summary: describeCapture(content) }
+  return { path: rel, tool, summary: describeCapture(content, pureJson) }
 }
 
 /** Removes handoff folders older than `maxAgeMs`. Best-effort. */

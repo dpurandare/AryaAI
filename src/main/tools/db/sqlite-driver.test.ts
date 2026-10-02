@@ -40,6 +40,21 @@ describe('SqliteDriver', () => {
     expect(result.rowCount).toBe(2)
   })
 
+  it('returns well over the old 200-row UX cap for a genuinely large result, not silently truncated (TASKS #172)', async () => {
+    const seed = new Database(dbPath)
+    const insert = seed.prepare('INSERT INTO users (name) VALUES (?)')
+    const insertMany = seed.transaction((n: number) => {
+      for (let i = 0; i < n; i++) insert.run(`user-${i}`)
+    })
+    insertMany(5000)
+    seed.close()
+
+    const result = await driver.execute('SELECT name FROM users')
+    // 5000 new + the 2 seeded in beforeEach.
+    expect(result.rowCount).toBe(5002)
+    expect(result.rows).toHaveLength(5002) // not capped at 200 — the real data is all there
+  })
+
   it('writes and reports the affected row count', async () => {
     const result = await driver.execute("INSERT INTO users (name) VALUES ('Katherine')")
     expect(result.rows).toBeUndefined()

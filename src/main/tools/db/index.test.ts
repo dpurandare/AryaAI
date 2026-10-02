@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -89,6 +89,36 @@ describe('db_* tools', () => {
     expect(result).toContain('2 row(s):')
     expect(result).toContain('Ada')
     expect(result).toContain('Grace')
+  })
+
+  it('db_execute_sql writes a large result to a workspace file instead of inlining it, returning only a small honest summary (TASKS #172)', async () => {
+    // User correction, 2026-10-02: large data must never become message/context content at all, not be
+    // produced large and relied on other layers (provider-context trim, search_history's size skip) to
+    // contain. A result over DISPLAY_ROW_LIMIT (200) rows now goes straight to a file.
+    saveConnection({ name: 'Local', engine: 'sqlite', filePath: dbPath })
+    const seed = new Database(dbPath)
+    const insert = seed.prepare('INSERT INTO users (name) VALUES (?)')
+    const insertMany = seed.transaction((n: number) => {
+      for (let i = 0; i < n; i++) insert.run(`user-${i}`)
+    })
+    insertMany(300)
+    seed.close()
+
+    // A local ctx pointed at this test's own (auto-cleaned) temp dir, not the shared module-level one —
+    // this is the one test that actually needs a real, writable, verifiable workspace root.
+    const localCtx = { workspaceGuard: new WorkspaceGuard(dir), currentSessionId: 'test-session' }
+    const result = await dbExecuteSqlTool.execute({ connection: 'Local', sql: 'SELECT name FROM users' }, localCtx)
+
+    expect(result).toContain('302 row(s)') // 300 new + the 2 seeded in beforeEach
+    expect(result).toContain('too large to show inline')
+    expect(result).toContain('Sample (first 5 of 302)')
+    expect(result).not.toContain('user-299') // the bulk of the data is not in the returned text at all
+
+    const pathMatch = result.match(/resources\/db_export_[a-f0-9]+\.json/)
+    expect(pathMatch).toBeTruthy()
+    const written = JSON.parse(await readFile(join(dir, pathMatch![0]), 'utf-8'))
+    expect(written).toHaveLength(302) // the full result really is in the file
+    expect(written.map((r: { name: string }) => r.name)).toContain('user-299')
   })
 
   it('db_execute_sql runs a write and reports the affected count', async () => {

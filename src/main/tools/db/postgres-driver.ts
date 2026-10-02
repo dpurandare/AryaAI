@@ -1,7 +1,8 @@
 import { Client } from 'pg'
 import type { DbDriver, DbQueryResult, DbTable } from './types'
 
-const MAX_RETURNED_ROWS = 200
+/** TASKS.md #172: raised from a 200-row UX cap to a safety backstop — see sqlite-driver.ts's identical constant for the full reasoning. */
+const MAX_SAFETY_ROWS = 100_000
 const STATEMENT_TIMEOUT_MS = 10_000
 
 export interface PostgresConfig {
@@ -64,7 +65,7 @@ export class PostgresDriver implements DbDriver {
     await this.ensureConnected()
     const result = await this.client.query(sql, params)
     if (result.rows && result.rows.length > 0) {
-      return { rows: result.rows.slice(0, MAX_RETURNED_ROWS), rowCount: result.rowCount ?? result.rows.length }
+      return { rows: result.rows.slice(0, MAX_SAFETY_ROWS), rowCount: result.rowCount ?? result.rows.length }
     }
     return { rowCount: result.rowCount ?? 0 }
   }

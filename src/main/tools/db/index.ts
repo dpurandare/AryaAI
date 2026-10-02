@@ -3,6 +3,7 @@ import type { Tool } from '../types'
 import { openDriver } from './driver-factory'
 import { buildSchemaSummary, formatSchemaSummary } from './schema-summary'
 import { isMutatingSql } from './sql-classifier'
+import { formatQueryResult } from './types'
 
 export { dbListRowsTool, dbCountRowsTool, dbFindRowsTool } from './crud'
 export { dbSaveQueryTool } from './save-query-tool'
@@ -69,7 +70,10 @@ export const dbExecuteSqlTool: Tool = {
   name: 'db_execute_sql',
   description:
     'Run SQL against a configured data connection. Reads run immediately; writes ' +
-    '(INSERT/UPDATE/DELETE/DDL, or multiple statements) require approval first.',
+    '(INSERT/UPDATE/DELETE/DDL, or multiple statements) require approval first. ' +
+    'A large result is written to a file (path given back) rather than shown inline — for a ' +
+    'trend/pattern/comparison question, prefer GROUP BY/aggregation over a raw row pull so the summary ' +
+    'is small enough to read directly.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -82,14 +86,11 @@ export const dbExecuteSqlTool: Tool = {
   describe(input) {
     return `Execute SQL on "${String(input.connection ?? '')}": ${String(input.sql ?? '')}`
   },
-  async execute(input) {
+  async execute(input, ctx) {
     const driver = openDriver(String(input.connection ?? ''))
     try {
       const result = await driver.execute(String(input.sql ?? ''))
-      if (result.rows) {
-        return `${result.rowCount} row(s):\n${JSON.stringify(result.rows, null, 2)}`
-      }
-      return `${result.rowCount} row(s) affected.`
+      return await formatQueryResult(result, ctx.workspaceGuard.root)
     } finally {
       await driver.close()
     }
