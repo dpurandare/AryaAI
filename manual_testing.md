@@ -38,6 +38,18 @@ Rough time: P1 ≈ 60–75 min, P2 ≈ 30 min, P3 ≈ 30 min.
    ```
 5. **Your existing data is used** (real DB, real workspace, real MCP config). Nothing in this plan deletes anything except
    where marked **⚠ destructive**. Skip those if you'd rather not.
+6. **macOS first run (2026-10-02 — untracked gap, TASKS #131: Windows/macOS runtime paths only unit-tested, never run live).**
+   Everything up to and including today's `#171`–`#181` fixes (commit `0fdfcdf`) has only ever run on this Linux dev box —
+   treat this as the first real macOS smoke test, not a re-run of something already verified there.
+   - `npm install` then `npm run dev`. If `better-sqlite3` fails to load (a native-module error, not a GLIBC one — that's
+     Linux-only), it's almost certainly an Electron ABI mismatch: try `npx electron-rebuild`, or
+     `npm rebuild better-sqlite3 --runtime=electron --target=<electron version> --abi=<abi>`.
+   - Note which model/provider you test with (cloud vs. local Ollama) — if local, the `nomic-embed-text` `num_ctx` mismatch
+     fixed today (`ModelFileNomicEmbed`) was specific to this Linux box's Ollama install; a Mac Ollama install has its own
+     separate model copy and may or may not need the same fix — check `ollama show --parameters nomic-embed-text` there if
+     local embedding search crashes.
+   - A handful of P1 prompts plus one tool-using round is enough for a first sanity pass — the goal is "does it run at all
+     on macOS," not a full re-verification of today's fixes.
 
 ---
 
