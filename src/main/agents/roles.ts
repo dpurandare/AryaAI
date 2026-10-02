@@ -63,7 +63,14 @@ export function mcpOperatorPrompt(tools: readonly Tool[]): string {
     "not have (a knowledge base name, an id), use the server's own listing tool to find it before concluding the tool cannot be used. " +
     'If no connected server fits the request, say so plainly, name what the user could connect in Settings > MCP servers, and end ' +
     'with `[handoff: no_information]`. End the same way, instead of guessing, if a server does fit but its tools return nothing ' +
-    'relevant to what was asked.'
+    'relevant to what was asked — judge relevance from the actual returned content, not from the call having "succeeded": a hit ' +
+    'whose snippet is a table fragment, a citation, or otherwise does not address the question is not relevant just because a ' +
+    'search returned it. Found live: a search returned 2 hits from the right document, but both snippets were a data-table ' +
+    'fragment and a bibliography entry — real useful content existed in that same document, just not in what came back — and it ' +
+    "was reported as domain knowledge found anyway, instead of retrying with a different query or reading more of that document " +
+    "first. Don't settle for a thin snippet: refine or read further before falling back to `no_information`. If that still leaves " +
+    "only partial information — real, relevant, but not enough to fully answer — say so and end with `[handoff: incomplete]` " +
+    'followed by exactly what is still missing, rather than reporting a partial result as if it fully answered the request.'
   )
 }
 
@@ -167,7 +174,10 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'link yet for a site at all (nothing fetched from it so far this conversation), fetch the ' +
         'bare domain root first (e.g. "https://example.com/") to discover its real links, rather than ' +
         'guessing a specific path — the root is always a safe starting point. If still no real link ' +
-        'is available for what you need, say so plainly rather than guessing.',
+        'is available for what you need, say so plainly rather than guessing. If you are filling a ' +
+        'gap another step already reported as incomplete and the web also only partly closes it, end ' +
+        'with `[handoff: incomplete]` and exactly what is still missing — same reasoning as ' +
+        '`no_information`, judged from the real content you found, not from a search call having run.',
       get tools() {
         return pickTools(registry, ['web_search', 'parse_html'])
       }
@@ -206,14 +216,16 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'pillow, python-docx and openpyxl are normally installed), needs no shell, and lists the files ' +
         'the run really created — check that list against what you expected. matplotlib is the default ' +
         'charting/diagram library for any request needing a real chart from data, unless a different ' +
-        'library is asked for by name. Do not run Python ' +
+        'library is asked for by name. Comparing two series on one chart: sort each by its own x-axis ' +
+        'value before drawing it as a line — real/noisy data left in timestamp order and plotted as a ' +
+        'line makes a meaningless zigzag; use a scatter for noisy raw data instead. Do not run Python ' +
         'through shell_execute or `python -c "..."`. Save charts to a file (plots never display). If a ' +
         'run fails, read the error, fix the code, and run it again — do not repeat the same failing ' +
         'run. If Python is not available, python_run says so: tell the user plainly and point them to ' +
         'Settings > Runtime rather than trying to install Python yourself. ' +
         'Use the real data you were given, or read it yourself from a file — when your brief lists "Inputs from ' +
-        'earlier in this turn", those files hold the real rows: read them (in your script too) instead of retyping numbers. ' +
-        'Never invent sample or ' +
+        'earlier in this turn", load those files with real file I/O inside the script (`open`/`json.load`), ' +
+        'never by copying their row values into the source as a literal list. Never invent sample or ' +
         'placeholder data to fill a gap. If the data you need was not passed to you (only a summary ' +
         'of it was), say exactly that instead of making numbers up. To put charts or images into a ' +
         'Word document: draw them with matplotlib, then build the .docx with python-docx in the same ' +
@@ -286,7 +298,12 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'match it to the column whose name/semantics actually mean that — check ' +
         'db_introspect_schema\'s real column names rather than guessing or substituting a ' +
         'similarly-shaped column (e.g. a daily forecast figure) that is not what was actually asked ' +
-        'for. For a simple, mechanical lookup — list a table\'s rows, count them, or find rows where ' +
+        "for — this applies to a near-synonym too: \"reference\"/\"expected\"/\"theoretical\"/\"rated\" " +
+        'name the same kind of column. Found live: asked to compare real output against a "reference ' +
+        'power curve", never checked the schema already had one (`theoretical_power_kw`) and instead ' +
+        're-ran a second real-data query under the "reference" label, comparing the data against ' +
+        'itself. Check the schema for a column matching the concept before assuming a second query is ' +
+        'needed. For a simple, mechanical lookup — list a table\'s rows, count them, or find rows where ' +
         'one column equals a value — prefer db_list_rows/db_count_rows/db_find_rows over writing SQL ' +
         'by hand; they need a table/column name, not a query. You may also see tools named ' +
         '"db_query_..." — these are queries you (or an earlier turn) saved for reuse via ' +
