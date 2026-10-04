@@ -36,7 +36,7 @@ import { enqueueMessage, getEmbeddingConfig, getIndexState, rebuildIndex, runBac
 import { getSetting, setSetting } from '../db/settings'
 import { addUsage, getUsage } from '../db/usage'
 import { logClassifyGateSample } from '../db/classify-gate-log'
-import { setApiKey, getApiKey, envFilePath, getSecretStorageMode, switchToFileStorage } from '../security/keychain'
+import { setApiKey, getApiKey, getApiKeyPreview, envFilePath, getSecretStorageMode, switchToFileStorage } from '../security/keychain'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import {
   deleteConnection,
@@ -316,6 +316,9 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle(IpcChannel.ProvidersHasApiKey, (_event, providerId: string) =>
     Boolean(getApiKey(providerId))
+  )
+  ipcMain.handle(IpcChannel.ProvidersGetApiKeyPreview, (_event, providerId: string) =>
+    getApiKeyPreview(providerId) ?? null
   )
   ipcMain.handle(IpcChannel.ProvidersListModels, async (_event, providerId: string) => {
     const descriptor = providerRegistry.get(providerId)

@@ -25,6 +25,8 @@ export const IpcChannel = {
   WebSearchProvidersList: 'web-search-providers:list',
   ProvidersSetApiKey: 'providers:set-api-key',
   ProvidersHasApiKey: 'providers:has-api-key',
+  /** Masked first-10/last-5 preview of a configured key, or null if none — lets Settings show every provider's status without ever sending a full key to the renderer. */
+  ProvidersGetApiKeyPreview: 'providers:get-api-key-preview',
   ProvidersListModels: 'providers:list-models',
 
   SettingsGet: 'settings:get',

@@ -75,6 +75,8 @@ const api = {
     ipcRenderer.invoke(IpcChannel.ProvidersSetApiKey, providerId, apiKey),
   hasApiKey: (providerId: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannel.ProvidersHasApiKey, providerId),
+  getApiKeyPreview: (providerId: string): Promise<string | null> =>
+    ipcRenderer.invoke(IpcChannel.ProvidersGetApiKeyPreview, providerId),
   listModels: (providerId: string): Promise<string[]> =>
     ipcRenderer.invoke(IpcChannel.ProvidersListModels, providerId),
 

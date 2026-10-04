@@ -173,6 +173,14 @@ export function getApiKey(key: string): string | undefined {
   return keychainGet(key)
 }
 
+/** First 10 + last 5 characters, for Settings' "which key is this?" display — never the full key. Short keys (nothing in between to hide) come back fully masked instead. */
+export function getApiKeyPreview(key: string): string | undefined {
+  const value = getApiKey(key)
+  if (!value) return undefined
+  if (value.length <= 15) return '•'.repeat(value.length)
+  return `${value.slice(0, 10)}…${value.slice(-5)}`
+}
+
 export function deleteApiKey(key: string): void {
   if (getSecretStorageMode() === 'file') {
     envDelete(key)

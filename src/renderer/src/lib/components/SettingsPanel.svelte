@@ -4,17 +4,13 @@
   import type { RuntimeState } from '@shared/runtime'
 
   let {
-    providerDisplayName,
-    providerRequiresApiKey = true,
-    hasKey,
     autoApproveRules,
     providers,
     themeMode,
     planningEnabled,
     showAnsweringModel = false,
     leaveRequested = false,
-    onSave,
-    onClose,
+    onApiKeyChanged,
     onBack,
     onLeaveResolved,
     onToggleAutoApproveRule,
@@ -22,9 +18,6 @@
     onChangePlanningEnabled,
     onChangeShowAnsweringModel
   }: {
-    providerDisplayName: string
-    providerRequiresApiKey?: boolean
-    hasKey: boolean
     autoApproveRules: Record<string, boolean>
     providers: ProviderDescriptor[]
     themeMode: ThemeMode
@@ -33,10 +26,8 @@
     showAnsweringModel?: boolean
     /** The user tried to leave Settings (another session, New chat, Back) while entries are unsaved: show the Save / Discard / Cancel prompt. */
     leaveRequested?: boolean
-    /** `keepOpen`: save without closing Settings (used when saving from the leave prompt). */
-    onSave: (apiKey: string, keepOpen?: boolean) => void | Promise<void>
-    /** Closes Settings unconditionally (the key form's own Cancel/Close). */
-    onClose: () => void
+    /** A provider's key was just saved — lets App.svelte refresh `hasKey`/model list when it's the currently active chat provider. */
+    onApiKeyChanged: (providerId: string) => void
     /** Header "Back to chat": leaves Settings, asking first if anything is unsaved. */
     onBack: () => void
     /** Answer to the leave prompt: `true` = go ahead and leave (discarding what's left), `false` = stay in Settings. */
@@ -47,14 +38,49 @@
     onChangeShowAnsweringModel: (value: boolean) => void
   } = $props()
 
-  let apiKey = $state('')
-  let saving = $state(false)
+  // --- Provider API keys (shows every provider's status at once, not just the currently selected chat one) ---
+  let providerKeyDrafts = $state<Record<string, string>>({})
+  let providerKeyPreviews = $state<Record<string, string | null>>({})
+  type KeyCheckStatus = 'saving' | 'checking' | 'valid' | 'invalid'
+  let providerKeyStatus = $state<Record<string, KeyCheckStatus | undefined>>({})
+  let providerKeyError = $state<Record<string, string>>({})
 
-  async function save(): Promise<void> {
-    if (!apiKey.trim()) return
-    saving = true
-    await onSave(apiKey.trim())
-    saving = false
+  async function loadProviderKeyPreviews(): Promise<void> {
+    const entries = await Promise.all(
+      providers
+        .filter((p) => p.requiresApiKey)
+        .map(async (p) => [p.id, await window.sachiv.getApiKeyPreview(p.id)] as const)
+    )
+    providerKeyPreviews = Object.fromEntries(entries)
+  }
+  loadProviderKeyPreviews()
+
+  /** Saves the key, then makes a real `listModels` call against the provider — the lightest authenticated endpoint every adapter already
+      implements — so a bad key is caught immediately instead of surfacing later mid-chat. */
+  async function saveProviderApiKey(providerId: string): Promise<void> {
+    const value = (providerKeyDrafts[providerId] ?? '').trim()
+    if (!value) return
+    providerKeyError[providerId] = ''
+    providerKeyStatus[providerId] = 'saving'
+    try {
+      await window.sachiv.setApiKey(providerId, value)
+      providerKeyDrafts[providerId] = ''
+      providerKeyPreviews[providerId] = await window.sachiv.getApiKeyPreview(providerId)
+      onApiKeyChanged(providerId)
+    } catch (err) {
+      providerKeyStatus[providerId] = undefined
+      providerKeyError[providerId] = err instanceof Error ? err.message : String(err)
+      return
+    }
+
+    providerKeyStatus[providerId] = 'checking'
+    try {
+      await window.sachiv.listModels(providerId)
+      providerKeyStatus[providerId] = 'valid'
+    } catch (err) {
+      providerKeyStatus[providerId] = 'invalid'
+      providerKeyError[providerId] = err instanceof Error ? err.message : String(err)
+    }
   }
 
   // --- Data sources (db_* tools' connections — TASKS.md #35) ---
@@ -529,19 +555,10 @@
 
   function pendingChanges(): PendingChange[] {
     const list: PendingChange[] = []
-    if (apiKey.trim()) {
-      list.push({
-        label: `${providerDisplayName} API key`,
-        save: async () => {
-          saving = true
-          try {
-            await onSave(apiKey.trim(), true)
-            apiKey = ''
-          } finally {
-            saving = false
-          }
-        }
-      })
+    for (const provider of providers) {
+      if ((providerKeyDrafts[provider.id] ?? '').trim()) {
+        list.push({ label: `${provider.displayName} API key`, save: () => saveProviderApiKey(provider.id) })
+      }
     }
     if (embeddingApiKey.trim()) list.push({ label: 'Search-history embedding API key', save: saveEmbeddingKey })
     if (embeddingModelDraft.trim() && embeddingModelDraft !== embeddingModel) {
@@ -939,30 +956,57 @@
 
     <hr />
 
-    <h2>{providerDisplayName} API key</h2>
-    {#if providerRequiresApiKey}
-      <p class="status">
-        {hasKey ? 'A key is currently configured.' : 'No key configured yet.'} Pick a different provider
-        from the model picker in the chat footer.
-      </p>
-      <input
-        id="anthropic-key"
-        type="password"
-        placeholder="Paste your API key"
-        bind:value={apiKey}
-        onkeydown={(e) => e.key === 'Enter' && save()}
-      />
-      <div class="actions">
-        <button onclick={onClose}>Cancel</button>
-        <button class="primary" disabled={saving || !apiKey.trim()} onclick={save}>
-          {saving ? 'Saving...' : 'Save'}
-        </button>
-      </div>
-    {:else}
-      <!-- #167: no Close button here any more — it only ever appeared for a no-key-needed provider (in
-           practice, only Ollama), redundant with the header's always-visible "Back to chat". -->
-      <p class="status">This provider runs locally — no API key needed.</p>
-    {/if}
+    <h2>Provider API keys</h2>
+    <p class="status">Every connected provider, and whether a key is already configured for it.</p>
+    <ul class="connection-list">
+      {#each providers as provider (provider.id)}
+        <li class="edit-row">
+          <div class="role-head">
+            <span class="conn-name">{provider.displayName}</span>
+          </div>
+          <p class="status">
+            {#if !provider.requiresApiKey}
+              Runs locally — no API key needed
+            {:else if providerKeyPreviews[provider.id]}
+              Key configured: <code>{providerKeyPreviews[provider.id]}</code>
+            {:else}
+              No key configured yet
+            {/if}
+          </p>
+          {#if provider.requiresApiKey && providerKeyStatus[provider.id]}
+            <p class="status key-check" class:key-ok={providerKeyStatus[provider.id] === 'valid'} class:key-bad={providerKeyStatus[provider.id] === 'invalid'}>
+              {#if providerKeyStatus[provider.id] === 'saving'}
+                Saving…
+              {:else if providerKeyStatus[provider.id] === 'checking'}
+                Checking the key against {provider.displayName}…
+              {:else if providerKeyStatus[provider.id] === 'valid'}
+                ✓ Key verified — {provider.displayName} accepted it.
+              {:else if providerKeyStatus[provider.id] === 'invalid'}
+                ✗ Key rejected{providerKeyError[provider.id] ? `: ${providerKeyError[provider.id]}` : ''}
+              {/if}
+            </p>
+          {/if}
+          {#if provider.requiresApiKey}
+            <input
+              type="password"
+              placeholder="Paste your API key"
+              value={providerKeyDrafts[provider.id] ?? ''}
+              oninput={(e) => (providerKeyDrafts[provider.id] = (e.target as HTMLInputElement).value)}
+              onkeydown={(e) => e.key === 'Enter' && saveProviderApiKey(provider.id)}
+            />
+            <div class="actions">
+              <button
+                class="primary"
+                disabled={providerKeyStatus[provider.id] === 'saving' || providerKeyStatus[provider.id] === 'checking' || !(providerKeyDrafts[provider.id] ?? '').trim()}
+                onclick={() => saveProviderApiKey(provider.id)}
+              >
+                {providerKeyStatus[provider.id] === 'saving' ? 'Saving...' : providerKeyStatus[provider.id] === 'checking' ? 'Checking...' : 'Save'}
+              </button>
+            </div>
+          {/if}
+        </li>
+      {/each}
+    </ul>
 
     <hr />
 
@@ -1873,6 +1917,15 @@
     color: var(--text-muted);
     font-size: 0.75rem;
     text-transform: uppercase;
+  }
+  .key-check {
+    font-weight: 500;
+  }
+  .key-check.key-ok {
+    color: var(--success);
+  }
+  .key-check.key-bad {
+    color: var(--danger);
   }
   .tool-rule {
     display: flex;
