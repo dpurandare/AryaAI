@@ -135,6 +135,10 @@ export interface AppInfo {
   version: string
   platform: NodeJS.Platform
   userName: string
+  /** Runtime details for the About screen — not used anywhere else today. */
+  electronVersion: string
+  chromeVersion: string
+  nodeVersion: string
 }
 
 /** Pushed from main to renderer when electron-updater finds a newer release. */

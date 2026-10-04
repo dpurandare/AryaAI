@@ -1,7 +1,12 @@
 <script lang="ts">
   import type { SettingsExportPayload, SettingsImportPreviewItem } from '@shared/ipc-contract'
 
-  let { userName, showSettings, onOpenSettings }: { userName: string; showSettings: boolean; onOpenSettings: () => void } = $props()
+  let {
+    userName,
+    showSettings,
+    onOpenSettings,
+    onOpenAbout
+  }: { userName: string; showSettings: boolean; onOpenSettings: () => void; onOpenAbout: () => void } = $props()
 
   let wrap = $state<HTMLDivElement | undefined>(undefined)
   let open = $state(false)
@@ -21,6 +26,11 @@
   function selectSettings(): void {
     open = false
     onOpenSettings()
+  }
+
+  function selectAbout(): void {
+    open = false
+    onOpenAbout()
   }
 
   async function doExport(): Promise<void> {
@@ -82,6 +92,7 @@
       <button type="button" role="menuitem" onclick={selectSettings}>{showSettings ? 'Close settings' : 'Settings'}</button>
       <button type="button" role="menuitem" onclick={doExport}>Export Settings…</button>
       <button type="button" role="menuitem" onclick={doImportPreview}>Import Settings…</button>
+      <button type="button" role="menuitem" onclick={selectAbout}>About</button>
     </div>
   {/if}
 

@@ -4,13 +4,15 @@
   import SettingsPanel from './lib/components/SettingsPanel.svelte'
   import FirstRunSetup from './lib/components/FirstRunSetup.svelte'
   import AccountMenu from './lib/components/AccountMenu.svelte'
+  import SplashScreen from './lib/components/SplashScreen.svelte'
   import {
     DEFAULT_SESSION_TITLE,
     type SessionDto,
     type MessageDto,
     type ToolConfirmRequestPayload,
     type LimitReachedRequestPayload,
-    type ProviderDescriptor
+    type ProviderDescriptor,
+    type AppInfo
   } from '@shared/ipc-contract'
   import type { AgentRole } from '@shared/agents'
   import type { RoleRosterEntryDto } from '@shared/ipc-contract'
@@ -132,6 +134,11 @@
   let sidebarWidth = $state(260)
   let isMac = $state(false)
   let userName = $state('')
+  let appInfo = $state<AppInfo | null>(null)
+  /** Shown immediately on launch, dismissed once checkFirstRun/initProvider/loadSessions below have all settled. */
+  let showSplash = $state(true)
+  /** The same screen, reopened on demand from the account menu's "About" item — see AccountMenu.svelte. */
+  let showAbout = $state(false)
   let updateAvailable = $state<{ version: string; releaseUrl: string } | null>(null)
   // initTheme() already resolved (main.ts awaits it before mount), so this
   // reflects the real persisted/resolved mode from the very first render.
@@ -553,10 +560,9 @@
     await refreshContextWindow()
   }
 
-  async function saveApiKey(apiKey: string, keepOpen = false): Promise<void> {
-    await window.sachiv.setApiKey(providerId, apiKey)
-    await loadProviderState(providerId)
-    if (!keepOpen) showSettings = false
+  /** A provider's key was just saved in Settings (which now manages every provider's key itself) — refresh `hasKey`/model list only when it's the one currently active in chat. */
+  async function onProviderApiKeyChanged(id: string): Promise<void> {
+    if (id === providerId) await loadProviderState(id)
   }
 
   // --- Leaving Settings (session click, New chat, the account row, Back) ---
@@ -650,6 +656,7 @@
       document.title = statusLine
       isMac = info.platform === 'darwin'
       userName = info.userName
+      appInfo = info
     })
     .catch((err: unknown) => {
       statusLine = `IPC error: ${String(err)}`
@@ -717,9 +724,21 @@
   // first-run screen silently never appeared because loadSessions' own
   // session sometimes landed first, making the fresh-check see a
   // "pre-existing" session that was actually just its own side effect.
+  /** However fast real loading finishes, the startup splash stays up at least this long — the About
+      screen (dismissible=true) has no such floor, it only ever closes on user action. */
+  const SPLASH_MIN_MS = 4000
+  const splashStartedAt = Date.now()
+  function dismissSplash(): void {
+    setTimeout(() => (showSplash = false), Math.max(0, SPLASH_MIN_MS - (Date.now() - splashStartedAt)))
+  }
+
   checkFirstRun().then(() => {
-    initProvider()
-    loadSessions()
+    if (showFirstRunSetup) {
+      // Onboarding takes over from here — no point holding the splash up behind it.
+      dismissSplash()
+      return
+    }
+    Promise.all([initProvider(), loadSessions()]).finally(dismissSplash)
   })
 </script>
 
@@ -769,7 +788,7 @@
       onDelete={removeSession}
       onExport={exportSession}
     />
-    <AccountMenu {userName} {showSettings} onOpenSettings={toggleSettings} />
+    <AccountMenu {userName} {showSettings} onOpenSettings={toggleSettings} onOpenAbout={() => (showAbout = true)} />
   </aside>
   {#if !sidebarCollapsed}
     <div
@@ -791,19 +810,12 @@
           if (leave && target) void completeLeave(target)
           else leaveRequest = null
         }}
-        providerDisplayName={providers.find((p) => p.id === providerId)?.displayName ?? providerId}
-        providerRequiresApiKey={providers.find((p) => p.id === providerId)?.requiresApiKey ?? true}
-        {hasKey}
         {autoApproveRules}
         {providers}
         {themeMode}
         {planningEnabled}
         {showAnsweringModel}
-        onSave={saveApiKey}
-        onClose={() => {
-          showSettings = false
-          void loadRoleRoster()
-        }}
+        onApiKeyChanged={onProviderApiKeyChanged}
         onToggleAutoApproveRule={toggleAutoApproveTool}
         onChangeTheme={changeThemeMode}
         onChangePlanningEnabled={changePlanningEnabled}
@@ -845,6 +857,13 @@
     {/if}
   </section>
 </main>
+
+{#if showSplash}
+  <SplashScreen info={appInfo} />
+{/if}
+{#if showAbout}
+  <SplashScreen info={appInfo} dismissible onClose={() => (showAbout = false)} />
+{/if}
 
 <style>
   /* Base palette + font/color resets live in theme.css, shared with

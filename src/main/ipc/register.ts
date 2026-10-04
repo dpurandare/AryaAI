@@ -284,7 +284,10 @@ export function registerIpcHandlers(): void {
       name: 'Sachivji',
       version: app.getVersion(),
       platform: process.platform,
-      userName: userInfo().username
+      userName: userInfo().username,
+      electronVersion: process.versions.electron,
+      chromeVersion: process.versions.chrome,
+      nodeVersion: process.versions.node
     })
   )
 
