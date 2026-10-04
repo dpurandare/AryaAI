@@ -304,6 +304,19 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     toolBlockOverride[segmentId] = !isToolBlockExpanded(segmentId)
   }
 
+  /** In 'hidden' mode, a round whose only segments were tool calls (no image) renders nothing at all — this
+      keeps the message's own bubble from still showing as an empty box around that nothing. Always true for
+      a plan, a still-in-flight message, or any segment kind other than 'tool' (text/thinking/warning/note all
+      render something regardless of toolDisplayMode). */
+  function messageHasVisibleContent(message: DisplayMessage): boolean {
+    if (message.plan || message.pending) return true
+    return message.segments.some((segment) =>
+      segment.kind === 'tool' && segment.toolCall
+        ? toolDisplayMode !== 'hidden' || Boolean(segment.toolCall.image)
+        : true
+    )
+  }
+
   /**
    * TASKS.md #147 — same pattern as `lastToolSegmentId`/`isToolBlockExpanded`/`toggleToolBlock` above,
    * reusing the shared `toolDetailsExpanded` toggle and `toolBlockOverride` map rather than a new
@@ -337,6 +350,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
       <p class="placeholder">Say hello to get started.</p>
     {/if}
     {#each messages as message (message.id)}
+      {#if messageHasVisibleContent(message)}
       <div class="bubble {message.role}">
         {#if showAnsweringModel && message.role === 'assistant' && message.model}
           <div class="model-badge">{message.model}</div>
@@ -357,7 +371,8 @@ import { formatToolInputForDisplay } from '../tool-input-display'
         {/if}
         {#each message.segments as segment, i (segment.id)}
           {@const prevRole = i > 0 ? message.segments[i - 1].agentRole : undefined}
-          {#if segment.agentRole && segment.agentRole !== prevRole}
+          {@const chipHiddenToolCall = segment.kind === 'tool' && segment.toolCall && toolDisplayMode === 'hidden' && !segment.toolCall.image}
+          {#if segment.agentRole && segment.agentRole !== prevRole && !chipHiddenToolCall}
             <div class="agent-chip">{label(segment.agentRole)} agent</div>
           {/if}
           {#if segment.kind === 'tool' && segment.toolCall}
@@ -366,6 +381,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
             {@const showFull = isToolBlockExpanded(segment.id)}
             {@const blockClickable = toolDisplayMode === 'shown' && !isDelegate && isResolved}
             {@const rowHidden = toolDisplayMode === 'hidden'}
+            {#if !rowHidden || segment.toolCall.image}
             <div class="tool-call" class:collapsed={!showFull}>
               {#if !rowHidden}
                 <svelte:element
@@ -477,6 +493,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
               {/if}
               {/if}
             </div>
+            {/if}
           {:else if segment.kind === 'thinking'}
             <!-- TASKS.md #147: real model reasoning, collapsed by default — reuses #72/#88's tool-output
                  collapse toggle/state rather than a new convention (isThinkingBlockExpanded/toggleThinkingBlock). -->
@@ -548,6 +565,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
           {/if}
         {/if}
       </div>
+      {/if}
     {/each}
   </div>
 
