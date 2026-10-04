@@ -9,6 +9,7 @@
     themeMode,
     planningEnabled,
     showAnsweringModel = false,
+    showTimestamps = false,
     leaveRequested = false,
     onApiKeyChanged,
     onBack,
@@ -16,7 +17,8 @@
     onToggleAutoApproveRule,
     onChangeTheme,
     onChangePlanningEnabled,
-    onChangeShowAnsweringModel
+    onChangeShowAnsweringModel,
+    onChangeShowTimestamps
   }: {
     autoApproveRules: Record<string, boolean>
     providers: ProviderDescriptor[]
@@ -24,6 +26,8 @@
     planningEnabled: boolean
     /** Off by default — shows which provider/model answered each message in the chat transcript. */
     showAnsweringModel?: boolean
+    /** Off by default — shows when each message was sent/answered, both on the bubble and on an expanded tool/thinking block. */
+    showTimestamps?: boolean
     /** The user tried to leave Settings (another session, New chat, Back) while entries are unsaved: show the Save / Discard / Cancel prompt. */
     leaveRequested?: boolean
     /** A provider's key was just saved — lets App.svelte refresh `hasKey`/model list when it's the currently active chat provider. */
@@ -36,6 +40,7 @@
     onChangeTheme: (mode: ThemeMode) => void
     onChangePlanningEnabled: (value: boolean) => void
     onChangeShowAnsweringModel: (value: boolean) => void
+    onChangeShowTimestamps: (value: boolean) => void
   } = $props()
 
   // --- Provider API keys (shows every provider's status at once, not just the currently selected chat one) ---
@@ -952,6 +957,19 @@
         onchange={(e) => onChangeShowAnsweringModel((e.target as HTMLInputElement).checked)}
       />
       <span class="conn-name">Show which model answered each message</span>
+    </label>
+    <p class="status">
+      Show how long each reply took and when it finished ("Took 1m 20s · done 4:05 PM"), called out in red if
+      anything in that turn errored — plus a plain timestamp next to a tool or thinking block once you expand
+      it. Off by default.
+    </p>
+    <label class="tool-rule">
+      <input
+        type="checkbox"
+        checked={showTimestamps}
+        onchange={(e) => onChangeShowTimestamps((e.target as HTMLInputElement).checked)}
+      />
+      <span class="conn-name">Show message timestamps</span>
     </label>
 
     <hr />

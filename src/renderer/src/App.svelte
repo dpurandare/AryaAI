@@ -63,6 +63,13 @@
      * shows the full text even without this overlay. */
     plan?: { steps: { role: AgentRole; description: string }[]; stepStatus: ('pending' | 'running' | 'done' | 'error')[] }
     segments: DisplaySegment[]
+    /** For a **user** message: when it was sent. For an **assistant** message: when that round's content was
+        *finished* (re-stamped at completion for a live message — see the pending=false branches below —
+        matching the DB's own `createdAt`, written once a round's content is finalized, not when it began).
+        Together these let ChatView compute a real "took Xm Ys" duration per turn by diffing an assistant
+        bubble's `createdAt` against the preceding user message's. Shown optionally (Settings > off by
+        default, see showTimestamps). */
+    createdAt?: number
   }
 
   /**
@@ -213,6 +220,8 @@
   let toolDisplayMode = $state<ToolDisplayMode>('partial')
   /** Off by default — a debugging/curiosity aid (which provider/model answered each message), not needed for normal use. */
   let showAnsweringModel = $state(false)
+  /** Off by default, same as showAnsweringModel — when timestamps on each message bubble (and, once expanded, each tool/thinking block) are worth the extra visual noise. */
+  let showTimestamps = $state(false)
 
   function mapMessagesToDisplay(records: MessageDto[]): DisplayMessage[] {
     const result: DisplayMessage[] = []
@@ -266,7 +275,7 @@
           toolSegmentsById.set(b.id, seg)
         }
       }
-      result.push({ id: m.id, role: m.role, segments, model: m.model })
+      result.push({ id: m.id, role: m.role, segments, model: m.model, createdAt: m.createdAt })
     }
     return result
   }
@@ -348,7 +357,8 @@
     const userMsg: DisplayMessage = {
       id: crypto.randomUUID(),
       role: 'user',
-      segments: [{ id: crypto.randomUUID(), kind: 'text', text }]
+      segments: [{ id: crypto.randomUUID(), kind: 'text', text }],
+      createdAt: Date.now()
     }
     const assistantMsg: DisplayMessage = {
       id: crypto.randomUUID(),
@@ -358,7 +368,8 @@
       // Stamped from the same (providerId, currentModel) runChat resolves from Settings for this exact
       // send — accurate for a live response; a stored message's own `model` (set server-side) is still
       // the source of truth once reloaded from history, this is just so it doesn't wait for that round trip.
-      model: `${providerId}:${currentModel}`
+      model: `${providerId}:${currentModel}`,
+      createdAt: Date.now()
     }
     runtime.messages.push(userMsg, assistantMsg)
     // runtime.messages is $state, and push() deep-proxies the pushed objects —
@@ -430,6 +441,7 @@
         // `sending` alone — the turn continues normally right after it.
         if (event.failureCategory) {
           msg.pending = false
+          msg.createdAt = Date.now()
           runtime.sending = false
           unsubscribe()
         }
@@ -446,6 +458,7 @@
       } else if (event.type === 'error') {
         appendDeltaSegment(msg, 'text', `Error: ${event.message}`)
         msg.pending = false
+        msg.createdAt = Date.now()
         runtime.sending = false
         unsubscribe()
       } else if (event.type === 'message_stop') {
@@ -454,6 +467,7 @@
         if (event.stopReason === 'tool_use' || event.agentRole) return
         if (event.stopReason === 'aborted') appendDeltaSegment(msg, 'text', '\n\n⏹ Stopped.')
         msg.pending = false
+        msg.createdAt = Date.now()
         runtime.sending = false
         unsubscribe()
       }
@@ -517,6 +531,11 @@
   function changeShowAnsweringModel(value: boolean): void {
     showAnsweringModel = value
     window.sachiv.setSetting('showAnsweringModel', String(value))
+  }
+
+  function changeShowTimestamps(value: boolean): void {
+    showTimestamps = value
+    window.sachiv.setSetting('showTimestamps', String(value))
   }
 
   const TOOL_DISPLAY_MODE_CYCLE: ToolDisplayMode[] = ['hidden', 'partial', 'shown']
@@ -713,6 +732,10 @@
     if (stored !== null && stored !== undefined) showAnsweringModel = stored === 'true'
   })
 
+  window.sachiv.getSetting('showTimestamps').then((stored) => {
+    if (stored !== null && stored !== undefined) showTimestamps = stored === 'true'
+  })
+
   window.sachiv.getSetting('toolDisplayMode').then((stored) => {
     if (stored === 'hidden' || stored === 'partial' || stored === 'shown') toolDisplayMode = stored
   })
@@ -815,11 +838,13 @@
         {themeMode}
         {planningEnabled}
         {showAnsweringModel}
+        {showTimestamps}
         onApiKeyChanged={onProviderApiKeyChanged}
         onToggleAutoApproveRule={toggleAutoApproveTool}
         onChangeTheme={changeThemeMode}
         onChangePlanningEnabled={changePlanningEnabled}
         onChangeShowAnsweringModel={changeShowAnsweringModel}
+        onChangeShowTimestamps={changeShowTimestamps}
       />
     {:else}
       <ChatView
@@ -842,6 +867,7 @@
         {toolDisplayMode}
         onCycleToolDisplayMode={cycleToolDisplayMode}
         {showAnsweringModel}
+        {showTimestamps}
         {isMac}
         pendingConfirm={activeRuntime.pendingConfirm}
         {autoApproveTools}

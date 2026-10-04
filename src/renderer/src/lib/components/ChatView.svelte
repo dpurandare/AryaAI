@@ -38,6 +38,9 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     segments: DisplaySegment[]
     /** "<providerId>:<model>" that answered — shown only when showAnsweringModel is on. */
     model?: string
+    /** User message: when sent. Assistant message: when that round finished (see App.svelte's doc comment
+        on this same field). Message-level only — no finer per-segment timestamp exists. */
+    createdAt?: number
   }
 
   interface Provider {
@@ -75,13 +78,16 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     onRespondLimit,
     roleRoster = [],
     onSteer,
-    showAnsweringModel = false
+    showAnsweringModel = false,
+    showTimestamps = false
   }: {
     messages: DisplayMessage[]
     statusLine: string
     sending: boolean
     /** Off by default — shows each assistant message's "<providerId>:<model>" badge. */
     showAnsweringModel?: boolean
+    /** Off by default — shows each message's createdAt, both on the bubble and (once expanded) on a tool/thinking block. */
+    showTimestamps?: boolean
     /** Built-in and user-defined roles (the picker, and labels for user-defined ones). Empty until the first load: the built-ins are used. */
     roleRoster?: readonly RoleRosterEntryDto[]
     onSend: (text: string, forcedRole?: AgentRole | null) => void
@@ -317,6 +323,74 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     )
   }
 
+  /** `h:mm:ss AM/PM` — seconds included, for the per-segment stamp next to an expanded tool/thinking block
+      (see formatClockTime below for the coarser turn-summary version, which doesn't need that precision). */
+  function formatTimestamp(epochMs: number): string {
+    return new Date(epochMs).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' })
+  }
+
+  /** `8:54 PM` — no seconds, matching how Claude Code's own "done" stamp reads. */
+  function formatClockTime(epochMs: number): string {
+    return new Date(epochMs).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  }
+
+  /** `4m 41s` / `41s` / `1h 4m` — same shape as Claude Code's own status line ("Cogitated for 4m 41s"). */
+  function formatDuration(ms: number): string {
+    const totalSeconds = Math.max(0, Math.round(ms / 1000))
+    const h = Math.floor(totalSeconds / 3600)
+    const m = Math.floor((totalSeconds % 3600) / 60)
+    const s = totalSeconds % 60
+    if (h > 0) return `${h}h ${m}m`
+    if (m > 0) return `${m}m ${s}s`
+    return `${s}s`
+  }
+
+  /** True when the assistant message at `index` is the last bubble of its turn — either the end of the list,
+      or immediately followed by the next user message. A multi-round turn produces one bubble per round (see
+      App.svelte's mapMessagesToDisplay), so only the last one should carry the turn's overall "took Xm Ys ·
+      done H:MM" summary below, not every round. */
+  function isTurnEnd(index: number): boolean {
+    const next = messages[index + 1]
+    return !next || next.role === 'user'
+  }
+
+  /** Walks back from `index` to the user message that started this turn — the reference point `turnDuration`
+      diffs against. `undefined` only for a malformed/partial history (an assistant message with no user
+      message before it at all). */
+  function turnStart(index: number): DisplayMessage | undefined {
+    for (let i = index - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') return messages[i]
+    }
+    return undefined
+  }
+
+  /** Whether any bubble in this turn (from its starting user message through `index`, inclusive) carries an
+      error — a failed tool call, a `warning` segment, or the live-only plain-text "Error: ..." the backend's
+      `error` stream event appends (see App.svelte's sendMessage) — so the turn summary is called out even
+      when the error happened in an earlier round than the one ending the turn. */
+  function turnHasError(index: number): boolean {
+    let start = 0
+    for (let i = index - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        start = i + 1
+        break
+      }
+    }
+    for (let i = start; i <= index; i++) {
+      if (
+        messages[i].segments.some(
+          (s) =>
+            s.kind === 'warning' ||
+            (s.kind === 'tool' && s.toolCall?.isError) ||
+            (s.kind === 'text' && s.text?.startsWith('Error:'))
+        )
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
   /**
    * TASKS.md #147 — same pattern as `lastToolSegmentId`/`isToolBlockExpanded`/`toggleToolBlock` above,
    * reusing the shared `toolDetailsExpanded` toggle and `toolBlockOverride` map rather than a new
@@ -349,7 +423,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     {#if messages.length === 0}
       <p class="placeholder">Say hello to get started.</p>
     {/if}
-    {#each messages as message (message.id)}
+    {#each messages as message, msgIndex (message.id)}
       {#if messageHasVisibleContent(message)}
       <div class="bubble {message.role}">
         {#if showAnsweringModel && message.role === 'assistant' && message.model}
@@ -394,6 +468,9 @@ import { formatToolInputForDisplay } from '../tool-input-display'
                 >
                   <span class="tool-icon">⚙</span>
                   <code>{segment.toolCall.name}</code>
+                  {#if showTimestamps && showFull && message.createdAt}
+                    <span class="segment-timestamp" class:error={segment.toolCall.isError}>{formatTimestamp(message.createdAt)}</span>
+                  {/if}
                   {#if !(showFull && !isDelegate)}
                     <span class="tool-input">{segment.toolCall.input}</span>
                   {/if}
@@ -510,6 +587,9 @@ import { formatToolInputForDisplay } from '../tool-input-display'
               >
                 <span class="thinking-icon">🧠</span>
                 <span class="thinking-label">{showFull ? 'Thinking' : 'Thinking (click to expand)'}</span>
+                {#if showTimestamps && showFull && message.createdAt}
+                  <span class="segment-timestamp">{formatTimestamp(message.createdAt)}</span>
+                {/if}
               </svelte:element>
               {#if showFull}
                 {@const thinkingPreview = previewOf(segment.text ?? '')}
@@ -562,6 +642,14 @@ import { formatToolInputForDisplay } from '../tool-input-display'
                  pending label ("Waiting for confirmation...", "Delegating
                  to X agent…") — this would just duplicate it. -->
             <span class="thinking">{message.statusText ?? 'Thinking…'}</span>
+          {/if}
+        {/if}
+        {#if showTimestamps && !message.pending && message.role === 'assistant' && message.createdAt && isTurnEnd(msgIndex)}
+          {@const start = turnStart(msgIndex)}
+          {#if start?.createdAt}
+            <div class="turn-summary" class:error={turnHasError(msgIndex)}>
+              Took {formatDuration(message.createdAt - start.createdAt)} · done {formatClockTime(message.createdAt)}
+            </div>
           {/if}
         {/if}
       </div>
@@ -755,6 +843,24 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     color: var(--text-muted);
     font-size: 0.68rem;
     font-family: monospace;
+  }
+  .turn-summary {
+    margin-top: 0.5rem;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+  }
+  .turn-summary.error {
+    color: var(--danger);
+    font-weight: 600;
+  }
+  .segment-timestamp {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-weight: 400;
+    flex-shrink: 0;
+  }
+  .segment-timestamp.error {
+    color: var(--danger);
   }
   .bubble.assistant :global(.markdown-body) {
     white-space: normal;
