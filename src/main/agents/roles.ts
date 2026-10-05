@@ -376,6 +376,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'conversation content into a document, include ALL of it — every section, table with all its ' +
         'columns, list item, query, figure and note — unabridged and unchanged, as real headings, tables ' +
         'and lists; drop only chat filler like "let me know if...". Never summarize, shorten or reword it. ' +
+        'A document holds only what its reader needs: never put file paths, tool names or step references in it. ' +
         'For your previous answer use fromPreviousAnswer: true. You have no shell and ' +
         'office_create_document has no image support, so you cannot embed charts computed from data — ' +
         'if the user wants charts or images in a document, say a script is needed and that the ' +

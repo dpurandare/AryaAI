@@ -407,6 +407,14 @@ export const officeCreateDocumentTool: Tool = {
     if (extension !== 'docx' && extension !== 'pptx') {
       throw new Error(`office_create_document only supports .docx and .pptx (got "${relPath}").`)
     }
+    // Internal working files (the handoff folder) are plumbing, not content for the reader. Found live: a model
+    // wrote "retrieved from data file .sachiv-handoff/…json" into a report's opening line. Refuse and let it rewrite.
+    if (/\.sachiv-handoff[\\/]/.test(JSON.stringify([input.title, input.sections, input.slides]))) {
+      throw new Error(
+        'The document text mentions an internal working file (.sachiv-handoff/…). Remove every file path, tool name and ' +
+          'step reference from it — the document is for the reader, who only needs the content — and call again.'
+      )
+    }
     const absPath = resolveNewFilePath(ctx.workspaceGuard, relPath)
     await mkdir(dirname(absPath), { recursive: true })
     const title = typeof input.title === 'string' ? input.title : undefined

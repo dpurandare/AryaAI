@@ -253,6 +253,8 @@ export function formatInputs(items: readonly HandoffItem[]): string {
   const recent = items.slice(-MAX_LISTED)
   const lines = recent.map((i) => `- ${i.kind === 'data' ? 'Data' : 'File'} from ${i.fromRole}: ${i.path} — ${i.note}`)
   return (
-    '\n\nInputs from earlier in this turn (real outputs — read and use these files; never invent, assume or retype the data):\n' + lines.join('\n')
+    '\n\nInputs from earlier in this turn (real outputs — read and use these files; never invent, assume or retype the data). ' +
+      'These paths are for you to read only: never mention a file path, tool or step in any document or message for the user:\n' +
+      lines.join('\n')
   )
 }

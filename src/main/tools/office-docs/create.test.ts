@@ -240,4 +240,10 @@ describe('office_create_document', () => {
     expect(xml).toContain('<w:i/>')
   })
 
+  it('refuses document text that mentions an internal handoff file, and writes nothing', async () => {
+    const input = { path: 'h.docx', sections: [{ paragraphs: ['Retrieved from data file .sachiv-handoff/e1fe290f/01-db_query.json.'] }] }
+    await expect(officeCreateDocumentTool.execute(input, ctx)).rejects.toThrow(/internal working file/)
+    await expect(stat(join(root, 'documents', 'h.docx'))).rejects.toThrow()
+    await expect(officeCreateDocumentTool.execute({ path: 'h2.docx', sections: [{ paragraphs: ['Clean text.'] }] }, ctx)).resolves.toMatch(/Created/)
+  })
 })

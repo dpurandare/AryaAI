@@ -111,6 +111,8 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 // role:document-creator 2220 -> 2250. Found live: a Word doc built from an earlier answer dropped tables' columns, use cases, notes and queries. Deliberate.
 // Final synthesis must not repeat step replies the user already saw (found live: the same top-5 list appeared three
 // times) — routerPrompt 1350 -> 1390. Deliberate.
+// Documents must not carry internal file paths/tool/step references (found live: a handoff .json path in a Word
+// intro line) — role:document-creator 2290 -> 2310. Deliberate.
 const CEILINGS = {
   // TASKS.md #178: the final-synthesis prompt now requires explicit disclosure when a plan step ended
   // PARTIAL INFORMATION, not just NEEDS INPUT/OUT OF SCOPE/FAILED — 1230 -> 1278. Deliberate, not drift.
@@ -139,7 +141,7 @@ const CEILINGS = {
   'role:coding': 2810,
   'role:data': 2740,
   'role:data-processor': 2070,
-  'role:document-creator': 2290,
+  'role:document-creator': 2310,
   'role:configurator': 1330,
   // TASKS.md #176: a weak/irrelevant search snippet (a table fragment, a citation) got reported as
   // real domain knowledge found, instead of retrying or reading further — 390 -> 514. Deliberate.
