@@ -18,6 +18,21 @@ describe('workspaceVenvBinDir', () => {
   })
 })
 
+describe('withWorkspaceVenv — CA bundle on macOS', () => {
+  const exists = (p: string) => p === '/ws/venv/bin/python' || p === '/etc/ssl/cert.pem'
+
+  it('points Python at the system CA bundle on macOS, so script downloads verify TLS', () => {
+    const { env } = withWorkspaceVenv('/ws', { PATH: '/usr/bin' }, { platform: 'darwin', exists })
+    expect(env.SSL_CERT_FILE).toBe('/etc/ssl/cert.pem')
+  })
+
+  it('leaves a bundle the user already configured alone, and does nothing on other platforms', () => {
+    expect(withWorkspaceVenv('/ws', { PATH: '/usr/bin', SSL_CERT_FILE: '/mine.pem' }, { platform: 'darwin', exists }).env.SSL_CERT_FILE).toBe('/mine.pem')
+    expect(withWorkspaceVenv('/ws', { PATH: '/usr/bin', REQUESTS_CA_BUNDLE: '/mine.pem' }, { platform: 'darwin', exists }).env.SSL_CERT_FILE).toBeUndefined()
+    expect(withWorkspaceVenv('/ws', { PATH: '/usr/bin' }, { platform: 'linux', exists }).env.SSL_CERT_FILE).toBeUndefined()
+  })
+})
+
 describe('withWorkspaceVenv', () => {
   it('puts the venv first on PATH, sets VIRTUAL_ENV and clears PYTHONHOME, leaving the input untouched', () => {
     const base = { PATH: '/usr/bin:/bin', PYTHONHOME: '/somewhere', HOME: '/h' }

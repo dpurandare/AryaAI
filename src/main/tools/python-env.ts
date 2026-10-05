@@ -18,6 +18,8 @@ import path from 'node:path'
  */
 export const WORKSPACE_VENV_DIR = 'venv'
 
+const MAC_SYSTEM_CA_BUNDLE = '/etc/ssl/cert.pem'
+
 export interface VenvOptions {
   platform?: NodeJS.Platform
   /** Injectable so the platform branches are unit-testable on any OS. */
@@ -59,6 +61,14 @@ export function withWorkspaceVenv(
     [pathKey]: baseEnv[pathKey] ? `${bin}${p.delimiter}${baseEnv[pathKey]}` : bin
   }
   delete env.PYTHONHOME
+  // python.org's macOS Python ships no CA bundle until its "Install Certificates" step is run, so a script's own
+  // downloads (urllib, e.g. easyocr fetching its model) fail with CERTIFICATE_VERIFY_FAILED even though `pip` works.
+  // macOS always has the system bundle at /etc/ssl/cert.pem — point Python at it unless the user has set their own.
+  const platform = opts.platform ?? process.platform
+  const exists = opts.exists ?? existsSync
+  if (platform === 'darwin' && !env.SSL_CERT_FILE && !env.REQUESTS_CA_BUNDLE && exists(MAC_SYSTEM_CA_BUNDLE)) {
+    env.SSL_CERT_FILE = MAC_SYSTEM_CA_BUNDLE
+  }
   return { env, active: true }
 }
 
