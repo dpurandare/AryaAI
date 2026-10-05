@@ -1682,7 +1682,9 @@ export class Orchestrator {
       'say plainly what could and could not actually be confirmed — giving a confident-sounding answer ' +
       'built on an acknowledged information gap is worse than stating the gap outright; propose how to ' +
       'close it (what source/document/access would help) or ask the user for it, rather than quietly ' +
-      'treating the partial result as if it fully answered the question.'
+      'treating the partial result as if it fully answered the question. The user already saw each step reply: ' +
+      'do not repeat their content in your final answer — say briefly what was done, where any file is, and ' +
+      'what failed or needs attention.'
     )
   }
 
@@ -2563,7 +2565,7 @@ export class Orchestrator {
     // delegate call) — it is the "other steps belong elsewhere, that's not your problem" framing a plan
     // step specifically needs that an ordinary single delegation doesn't.
     const planScopeNote = planContext
-      ? `\n\n(This is step ${planContext.index + 1} of ${planContext.total} in a multi-step plan for the user's original request — the other step(s) are being handled by other specialists in this same turn, not by you. Do only THIS step, with your own tools. A part of the original request that belongs to a different step is not a reason to call THIS step out of scope — only call [handoff: out_of_scope -> <role-id>] if THIS step's own task genuinely needs a tool/capability you don't have. If you do, name a real role id, one of: ${this.plannableRoleIds().join(', ')}.)`
+      ? `\n\n(This is step ${planContext.index + 1} of ${planContext.total} in a multi-step plan for the user's original request — the other step(s) are being handled by other specialists in this same turn, not by you. Do only THIS step, with your own tools. A part of the original request that belongs to a different step is not a reason to call THIS step out of scope — only call [handoff: out_of_scope -> <role-id>] if THIS step's own task genuinely needs a tool/capability you don't have. If you do, name a real role id, one of: ${this.plannableRoleIds().join(', ')}. The user sees each step's reply as it is written, so keep yours short: give figures or content only if this step is the one that produced them — never repeat what an earlier step already showed or what you just wrote into a file; name the file instead.)`
       : ''
     // The real outputs of earlier delegates this turn (files they produced, data they retrieved) are
     // appended to the brief by the app — typed inputs, not something the router has to remember to pass.

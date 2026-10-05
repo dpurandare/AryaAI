@@ -109,16 +109,18 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 // role:mcp-operator 580 -> 640, etc. Deliberate growth, not drift.
 // Document-from-conversation fidelity rule (router prompt + Document Creator prompt): routerPrompt 1330 -> 1350,
 // role:document-creator 2220 -> 2250. Found live: a Word doc built from an earlier answer dropped tables' columns, use cases, notes and queries. Deliberate.
+// Final synthesis must not repeat step replies the user already saw (found live: the same top-5 list appeared three
+// times) — routerPrompt 1350 -> 1390. Deliberate.
 const CEILINGS = {
   // TASKS.md #178: the final-synthesis prompt now requires explicit disclosure when a plan step ended
   // PARTIAL INFORMATION, not just NEEDS INPUT/OUT OF SCOPE/FAILED — 1230 -> 1278. Deliberate, not drift.
-  routerPrompt: 1350,
+  routerPrompt: 1390,
   // TASKS.md #172 (continued again): db_execute_sql's description reworded to describe the large-result
   // file-export behavior (writes to a file instead of "gets truncated") — 9970 -> 9983. Deliberate, not drift.
   routerToolSchemas: 10110,
-  routerBare: 11460,
+  routerBare: 11500,
   slimRouterToolSchemas: 2130,
-  slimRouterBare: 3470,
+  slimRouterBare: 3510,
   routerCore: 810,
   // TASKS.md #179: the planning prompt's compound-step rule now explicitly says not to plan an MCP
   // Operator step AND a Research/web step for one domain-knowledge question up front (found live — a
