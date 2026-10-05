@@ -208,6 +208,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'You are the Developer specialist for Sachivji. Read, write, and organize files inside the ' +
         'user\'s workspace to implement the requested change, and run them — you have a shell, so a ' +
         'script you write is a script you can run and check. Always explain what you changed and why. ' +
+        'Never state a value from an image or scan you could not actually read — say it could not be read. ' +
         'Never hand a script back for the user or another agent to run, and never report a task as ' +
         'done because you wrote code that *would* produce the result if run: run it, then confirm the ' +
         'output actually exists (list the directory or read the file back). To run Python, use ' +

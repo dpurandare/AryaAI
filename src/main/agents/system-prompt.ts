@@ -59,6 +59,10 @@ export const SYSTEM_PROMPT =
   'What is configured or connected (MCP servers, databases, APIs, email) changes whenever the user adds or ' +
   'deletes one: answer from describe_capabilities or mcp_list_connections called fresh this turn — never from ' +
   'search_history or an earlier answer. ' +
+  // Found live: a scanned passport PDF could not be read (no OCR, images are display-only), and the model
+  // answered with an invented expiry date instead of saying so.
+  'Never state a value (a date, number or name) from an image or document you could not actually read: if ' +
+  'every way of reading it failed, say so plainly and what would help — a guess given as a reading is worse than no answer. ' +
   'When asked to put earlier answers into a document, all of that content goes in whole, never summarized. ' +
   // TASKS.md #156: default tooling for diagrams/scripts/general code, so agents stop guessing/searching
   // for alternatives. These are two SEPARATE rules, not one blended default — treat the literal word

@@ -113,16 +113,18 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 // times) — routerPrompt 1350 -> 1390. Deliberate.
 // Documents must not carry internal file paths/tool/step references (found live: a handoff .json path in a Word
 // intro line) — role:document-creator 2290 -> 2310. Deliberate.
+// Never state a value from an image/scan that could not be read (found live: an invented passport expiry date) —
+// routerPrompt 1390 -> 1440, role:coding 2810 -> 2830. Deliberate.
 const CEILINGS = {
   // TASKS.md #178: the final-synthesis prompt now requires explicit disclosure when a plan step ended
   // PARTIAL INFORMATION, not just NEEDS INPUT/OUT OF SCOPE/FAILED — 1230 -> 1278. Deliberate, not drift.
-  routerPrompt: 1390,
+  routerPrompt: 1440,
   // TASKS.md #172 (continued again): db_execute_sql's description reworded to describe the large-result
   // file-export behavior (writes to a file instead of "gets truncated") — 9970 -> 9983. Deliberate, not drift.
   routerToolSchemas: 10110,
-  routerBare: 11500,
+  routerBare: 11550,
   slimRouterToolSchemas: 2130,
-  slimRouterBare: 3510,
+  slimRouterBare: 3560,
   routerCore: 810,
   // TASKS.md #179: the planning prompt's compound-step rule now explicitly says not to plan an MCP
   // Operator step AND a Research/web step for one domain-knowledge question up front (found live — a
@@ -138,7 +140,7 @@ const CEILINGS = {
   // compared a turbine's real data against... its own real data again (never recognized a real
   // `theoretical_power_kw` reference column already in the schema), plotted as a meaningless zigzag
   // (unsorted real data drawn as a line). role:coding 2760 -> 2801, role:data 2640 -> 2737. Deliberate.
-  'role:coding': 2810,
+  'role:coding': 2830,
   'role:data': 2740,
   'role:data-processor': 2070,
   'role:document-creator': 2310,
