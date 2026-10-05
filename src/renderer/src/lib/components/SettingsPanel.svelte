@@ -1834,8 +1834,10 @@
   }
   hr {
     border: none;
-    border-top: 1px solid var(--border);
-    margin: 0.5rem 0;
+    /* Thick enough that each settings group reads as its own configuration item. */
+    border-top: 3px solid var(--border);
+    border-radius: 2px;
+    margin: 0.9rem 0;
     width: 100%;
   }
   input,
