@@ -50,6 +50,8 @@
     pending?: boolean
     /** "<providerId>:<model>" that answered — assistant messages only, shown optionally (Settings > off by default, see showAnsweringModel). */
     model?: string
+    /** An app-generated "[Plan step N — Role]" hand-off note (stored as a user-role message so the model sees it, but it is not the user's input) — drawn left-aligned as an app note, and hidden with Tool output: hidden. */
+    stepNote?: { label: string; body: string }
     /** Live-only "what's happening" hint from the backend's `status` stream
      * event (see orchestrator.ts's `roundStatusMessage`) — never persisted,
      * just shown by ChatView while `pending` and there's no active segment
@@ -223,6 +225,16 @@
   /** On by default (unlike showAnsweringModel) — a time on each turn, and on an expanded tool/thinking block, matters most when something errored. A stored choice from Settings overrides this. */
   let showTimestamps = $state(true)
 
+  /** `[Plan step 2 — Developer] (FAILED …): description\n\nResult:\n…` → a short label and the rest. See DisplayMessage.stepNote. */
+  function parseStepNote(content: MessageDto['content']): { label: string; body: string } | undefined {
+    const first = content[0]
+    if (content.length !== 1 || first?.type !== 'text') return undefined
+    const match = /^\[Plan step (\d+) — ([^\]]+)\]([^:]*):\s*([\s\S]*)$/.exec(first.text)
+    if (!match) return undefined
+    const marker = match[3].trim()
+    return { label: `Step ${match[1]} · ${match[2]}${marker ? ` ${marker}` : ''}`, body: match[4] }
+  }
+
   function mapMessagesToDisplay(records: MessageDto[]): DisplayMessage[] {
     const result: DisplayMessage[] = []
     const toolSegmentsById = new Map<string, DisplaySegment>()
@@ -253,6 +265,12 @@
             seg.toolCall.image = { path: b.path, mimeType: b.mimeType, dataBase64: b.dataBase64 }
           }
         }
+        continue
+      }
+
+      const stepNote = m.role === 'user' ? parseStepNote(m.content) : undefined
+      if (stepNote) {
+        result.push({ id: m.id, role: 'assistant', segments: [], stepNote, createdAt: m.createdAt })
         continue
       }
 

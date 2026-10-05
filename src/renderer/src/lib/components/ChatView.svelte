@@ -36,6 +36,8 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     statusText?: string
     plan?: { steps: { role: AgentRole; description: string }[]; stepStatus: ('pending' | 'running' | 'done' | 'error')[] }
     segments: DisplaySegment[]
+    /** App-generated plan-step hand-off note — see App.svelte's DisplayMessage.stepNote. */
+    stepNote?: { label: string; body: string }
     /** "<providerId>:<model>" that answered — shown only when showAnsweringModel is on. */
     model?: string
     /** User message: when sent. Assistant message: when that round finished (see App.svelte's doc comment
@@ -315,6 +317,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
       a plan, a still-in-flight message, or any segment kind other than 'tool' (text/thinking/warning/note all
       render something regardless of toolDisplayMode). */
   function messageHasVisibleContent(message: DisplayMessage): boolean {
+    if (message.stepNote) return toolDisplayMode !== 'hidden'
     if (message.plan || message.pending) return true
     return message.segments.some((segment) =>
       segment.kind === 'tool' && segment.toolCall
@@ -364,31 +367,10 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     return undefined
   }
 
-  /** Whether any bubble in this turn (from its starting user message through `index`, inclusive) carries an
-      error — a failed tool call, a `warning` segment, or the live-only plain-text "Error: ..." the backend's
-      `error` stream event appends (see App.svelte's sendMessage) — so the turn summary is called out even
-      when the error happened in an earlier round than the one ending the turn. */
-  function turnHasError(index: number): boolean {
-    let start = 0
-    for (let i = index - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') {
-        start = i + 1
-        break
-      }
-    }
-    for (let i = start; i <= index; i++) {
-      if (
-        messages[i].segments.some(
-          (s) =>
-            s.kind === 'warning' ||
-            (s.kind === 'tool' && s.toolCall?.isError) ||
-            (s.kind === 'text' && s.text?.startsWith('Error:'))
-        )
-      ) {
-        return true
-      }
-    }
-    return false
+  /** Whether the turn's last bubble itself ends in a failure: an `Error:` reply or a warning notice. A tool call that
+      failed earlier and was worked around does not count — the turn still produced its answer. */
+  function turnEndedInError(message: DisplayMessage): boolean {
+    return message.segments.some((s) => s.kind === 'warning' || (s.kind === 'text' && s.text?.startsWith('Error:')))
   }
 
   /**
@@ -425,9 +407,20 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     {/if}
     {#each messages as message, msgIndex (message.id)}
       {#if messageHasVisibleContent(message)}
-      <div class="bubble {message.role}">
+      <div class="bubble {message.role}" class:step-note={Boolean(message.stepNote)}>
         {#if showAnsweringModel && message.role === 'assistant' && message.model}
           <div class="model-badge">{message.model}</div>
+        {/if}
+        {#if message.stepNote}
+          {@const notePreview = previewOf(message.stepNote.body)}
+          {@const noteExpanded = Boolean(expandedIds[message.id])}
+          <div class="step-note-head">{message.stepNote.label}</div>
+          <div class="step-note-body">{noteExpanded ? message.stepNote.body : notePreview.text}{#if notePreview.truncated && !noteExpanded}…{/if}</div>
+          {#if notePreview.truncated}
+            <button class="expand-toggle" onclick={() => toggleExpand(message.id)}>
+              {noteExpanded ? 'Show less' : 'Show more'}
+            </button>
+          {/if}
         {/if}
         {#if message.plan}
           <div class="plan-checklist">
@@ -650,12 +643,12 @@ import { formatToolInputForDisplay } from '../tool-input-display'
             <span class="thinking">{message.statusText ?? 'Thinking…'}</span>
           {/if}
         {/if}
-        {#if !message.pending && message.role === 'assistant' && message.createdAt && isTurnEnd(msgIndex)}
+        {#if !message.pending && message.role === 'assistant' && !message.stepNote && message.createdAt && isTurnEnd(msgIndex)}
           {@const start = turnStart(msgIndex)}
-          {@const failed = turnHasError(msgIndex)}
-          <!-- With timestamps off, only a failed turn still gets its time: when an error happened matters most. -->
-          {#if start?.createdAt && (showTimestamps || failed)}
-            <div class="turn-summary" class:error={failed}>
+          <!-- With timestamps off, only a turn that actually ENDED in an error gets a time line. An error the run
+               recovered from (a failed tool call it then worked around) already shows its own red time on that call. -->
+          {#if start?.createdAt && (showTimestamps || turnEndedInError(message))}
+            <div class="turn-summary" class:error={turnEndedInError(message)}>
               {#if showTimestamps}
                 Took {formatDuration(message.createdAt - start.createdAt)} · done {formatClockTime(message.createdAt)}
               {:else}
@@ -833,6 +826,21 @@ import { formatToolInputForDisplay } from '../tool-input-display'
        so the same 70% cap left a lot of unused horizontal space. */
     max-width: 92%;
     background: var(--panel);
+  }
+  /* App-generated hand-off between plan steps: app output (left), visibly secondary to real replies. */
+  .bubble.step-note {
+    white-space: normal;
+    background: transparent;
+    border: 1px dashed var(--border);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+  .step-note-head {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+  .step-note-body {
+    white-space: pre-wrap;
   }
   .agent-chip {
     display: inline-block;
