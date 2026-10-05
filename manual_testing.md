@@ -416,8 +416,8 @@ cd northwind-sql-db-container
 docker build . --build-arg MSSQL_SA_PASSWORD='YourStrong!Passw0rd1' -t nwndsqldbimg
 docker run -p 1433:1433 -d --name nwndsqldbcont nwndsqldbimg
 
-# wait for SQL Server itself to accept connections (ignore the container's own
-# "SQL Server not ready yet..." loop — that one's permanently broken, bug 1 above)
+# wait for SQL Server itself to accept connections, ignoring the container startup loop
+# that prints SQL Server not ready yet, which is permanently broken because of bug 1 above
 for i in $(seq 1 30); do
   docker exec nwndsqldbcont /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P 'YourStrong!Passw0rd1' -C -Q "SELECT 1" >/dev/null 2>&1 && break
   sleep 1
@@ -431,6 +431,47 @@ docker exec nwndsqldbcont /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P 'Y
 (`MSSQL_SA_PASSWORD` must meet SQL Server's complexity rule — 8+ chars with upper/lower/digit/symbol — or the build fails; reuse whatever you pass here as the connection password below. The `-C` flag trusts the container's self-signed cert — `mssql-tools18`'s ODBC 18 driver refuses to connect without it or an equivalent `Encrypt=no`.)
 
 **Verified live** (this machine, 2026-10-01): with the fix, `SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'` against `Northwind` returns **13**, `SELECT COUNT(*) FROM Customers` returns **91** (the stock Northwind count), and a connection with `Northwind` as the initial catalog (exactly how Sachivji's own `mssql-driver.ts` connects) succeeds. Without the fix — i.e. following the repo's own documented steps verbatim — the `Northwind` database never exists at all, reproducing the exact login failure in the log above. If `/opt/mssql-tools18` ever changes again upstream, `docker exec nwndsqldbcont bash -c "find / -iname sqlcmd"` finds the real current path.
+
+**Apple Silicon (ARM Mac) variant — use this instead of the recipe above.** Microsoft publishes
+`mcr.microsoft.com/mssql/server:2022-latest` (and `2025-latest`) for **amd64 only** — confirmed from the image manifests, there
+is no arm64 build — so the repo's `docker build .` builds an amd64 image and the steps above don't map cleanly onto an ARM
+Docker. The recipe above also isn't needed: this one skips the repo's Dockerfile entirely and seeds Northwind itself from
+Microsoft's stock `instnwnd.sql` (the same file the repo downloads). The alternative, `azure-sql-edge`, *is* multi-arch but was
+retired by Microsoft in Sept 2025 and ships no `sqlcmd`, so it isn't used here. Needs Docker Desktop (Apple Silicon) running;
+Docker runs the amd64 image under emulation, so first start is slower than on Intel.
+
+```bash
+SA_PW='YourStrong!Passw0rd1'
+nwsql() { docker exec nwndsqldbcont /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P "$SA_PW" -C "$@"; }
+
+# start SQL Server 2022, amd64 only image, emulated on Apple Silicon
+docker run --platform linux/amd64 -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$SA_PW" \
+  -p 1433:1433 -d --name nwndsqldbcont mcr.microsoft.com/mssql/server:2022-latest
+
+# wait until it accepts connections, up to about 2 minutes
+for i in $(seq 1 60); do
+  nwsql -Q "SELECT 1" >/dev/null 2>&1 && break
+  sleep 2
+done
+
+# fetch the stock Microsoft Northwind script, copy it in, create the DB, seed it
+curl -fsSL -o /tmp/instnwnd.sql https://raw.githubusercontent.com/microsoft/sql-server-samples/master/samples/databases/northwind-pubs/instnwnd.sql
+docker cp /tmp/instnwnd.sql nwndsqldbcont:/tmp/instnwnd.sql
+nwsql -Q "CREATE DATABASE Northwind"
+nwsql -d Northwind -i /tmp/instnwnd.sql
+```
+
+Check it: `nwsql -d Northwind -Q "SELECT COUNT(*) FROM Customers"` should print **91** (the `nwsql` helper is defined in the
+first two lines above, so run those in the same shell first). The script is written to paste into zsh, macOS's default shell:
+zsh does not word-split an unquoted `$VAR` the way bash does (an earlier version of this script used one and failed with
+`no such file or directory`), and it reads `#` comments containing parentheses as commands when pasted interactively — so the
+helper is a function and the comments avoid `(`, `)` and apostrophes. Use the same container name/port as above, so remove any earlier one first:
+`docker rm -f nwndsqldbcont`. Then continue at 13.2.1's table below — steps 13.2.2–13.2.5 are identical (host `localhost`,
+port `1433`, database `Northwind`, user `sa`, password = `SA_PW`).
+
+**Verified live** (Apple Silicon Mac, Docker Desktop 29.7.2, 2026-10-05, run through `zsh -i`): the script above ran start to finish with no errors;
+`Northwind` has **13** base tables and `Customers` has **91** rows, and port 1433 is reachable from the host (what Sachivji's
+`mssql-driver.ts` connects to). The Sachivji connection steps (13.2.2–13.2.5) were not re-run against this container.
 
 | # | Do | Expect |
 |---|----|--------|
