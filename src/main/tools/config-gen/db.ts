@@ -9,6 +9,35 @@ import { SqliteDriver } from '../db/sqlite-driver'
 import type { DbDriver } from '../db/types'
 import type { Tool, ToolContext } from '../types'
 
+/**
+ * Maps what a model or user actually says to the stored engine id. Found live: the Settings dropdown labels the
+ * engine "SQL Server", the model passed that label through, and the tool rejected it as an unknown engine even
+ * though the user had named a supported one. Matching ignores case, spaces and punctuation ("SQL Server",
+ * "sql-server", "Microsoft SQL Server", "PostgreSQL", "MariaDB" all resolve). Unrecognised input is returned
+ * unchanged, so the caller's "unknown engine" error still names exactly what was given.
+ */
+const ENGINE_ALIASES: Record<string, DbEngine> = {
+  sqlite: 'sqlite',
+  sqlite3: 'sqlite',
+  postgres: 'postgres',
+  postgresql: 'postgres',
+  pg: 'postgres',
+  psql: 'postgres',
+  mssql: 'mssql',
+  sqlserver: 'mssql',
+  microsoftsqlserver: 'mssql',
+  msqlserver: 'mssql',
+  tsql: 'mssql',
+  azuresql: 'mssql',
+  mysql: 'mysql',
+  mariadb: 'mysql'
+}
+
+export function normalizeEngine(raw: unknown): string {
+  const text = String(raw ?? '').trim()
+  return ENGINE_ALIASES[text.toLowerCase().replace(/[^a-z0-9]/g, '')] ?? text
+}
+
 const IGNORED_DIR_NAMES = new Set(['node_modules', '.git'])
 const MAX_WORKSPACE_MATCHES = 5
 
@@ -92,7 +121,7 @@ function resolveSqliteFilePath(rawPath: string, workspaceRoot: string): string {
  * raw one the model passed in.
  */
 async function probeConnection(input: Record<string, unknown>, ctx: ToolContext): Promise<string | undefined> {
-  const engine = String(input.engine ?? '') as DbEngine
+  const engine = normalizeEngine(input.engine) as DbEngine
   let driver: DbDriver
   let resolvedFilePath: string | undefined
   if (engine === 'sqlite') {
@@ -111,7 +140,7 @@ async function probeConnection(input: Record<string, unknown>, ctx: ToolContext)
     else if (engine === 'mssql') driver = new MssqlDriver(config)
     else driver = new MysqlDriver(config)
   } else {
-    throw new Error(`Unknown engine "${engine}" — must be "sqlite", "postgres", "mssql", or "mysql".`)
+    throw new Error(`Unknown engine "${engine}" — must be "sqlite", "postgres", "mssql" (SQL Server), or "mysql".`)
   }
   try {
     await driver.introspectSchema()
@@ -154,7 +183,7 @@ export const dbCreateConnectionTool: Tool = {
   mutates: true,
   secretFields: ['password'],
   describe(input) {
-    const engine = String(input.engine ?? '')
+    const engine = normalizeEngine(input.engine)
     const target = engine === 'sqlite' ? String(input.filePath ?? '') : `${String(input.host ?? '')}/${String(input.database ?? '')}`
     return `Create ${engine} connection "${String(input.name ?? '')}" → ${target}`
   },
@@ -165,7 +194,7 @@ export const dbCreateConnectionTool: Tool = {
     const resolvedFilePath = await probeConnection(input, ctx)
     const saveInput: SaveDataConnectionInput = {
       name: String(input.name ?? ''),
-      engine: String(input.engine ?? '') as DbEngine,
+      engine: normalizeEngine(input.engine) as DbEngine,
       filePath: resolvedFilePath ?? (typeof input.filePath === 'string' ? input.filePath : undefined),
       host: typeof input.host === 'string' ? input.host : undefined,
       port: typeof input.port === 'number' ? input.port : undefined,
