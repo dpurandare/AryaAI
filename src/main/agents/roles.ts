@@ -404,7 +404,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'fails clearly right away. You only set connections up — using them afterwards (queries, API ' +
         'calls, MCP tools) is another specialist\'s job.',
       get tools() {
-        return pickTools(registry, ['db_create_connection', 'api_create_connection', 'mcp_create_connection'])
+        return pickTools(registry, ['db_create_connection', 'api_create_connection', 'mcp_create_connection', 'mcp_list_connections'])
       }
     },
     {
@@ -417,7 +417,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         return mcpOperatorPrompt(mcpTools(registry)) + COMPLETENESS_NOTE + HANDOFF_TAG_INSTRUCTION
       },
       get tools() {
-        return mcpTools(registry)
+        return [...pickTools(registry, ['mcp_list_connections']), ...mcpTools(registry)]
       }
     },
     {

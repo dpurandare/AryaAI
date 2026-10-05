@@ -20,6 +20,7 @@ import type { Agent } from './orchestrator'
  */
 export const ROUTER_CORE_TOOLS: readonly string[] = [
   'describe_capabilities',
+  'mcp_list_connections',
   'shell_execute',
   'read_file',
   'list_directory',

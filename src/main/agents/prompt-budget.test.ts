@@ -104,17 +104,20 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 // right after reading two handoff files, so python_run's own description and the Developer role
 // prompt both now say explicitly to read a `.sachiv-handoff/` file with real file I/O rather than
 // retype its rows — 9940 -> 9968 (routerToolSchemas), 2710 -> 2751 (role:coding). Deliberate, not drift.
+// Live-state fix (mcp_list_connections added to the router core, Configurator and MCP Operator; a fresh-state rule in
+// the router prompt; a staleness note on search_history) — routerCore 800 -> 810, routerPrompt 1290 -> 1330,
+// role:mcp-operator 580 -> 640, etc. Deliberate growth, not drift.
 const CEILINGS = {
   // TASKS.md #178: the final-synthesis prompt now requires explicit disclosure when a plan step ended
   // PARTIAL INFORMATION, not just NEEDS INPUT/OUT OF SCOPE/FAILED — 1230 -> 1278. Deliberate, not drift.
-  routerPrompt: 1290,
+  routerPrompt: 1330,
   // TASKS.md #172 (continued again): db_execute_sql's description reworded to describe the large-result
   // file-export behavior (writes to a file instead of "gets truncated") — 9970 -> 9983. Deliberate, not drift.
-  routerToolSchemas: 9990,
-  routerBare: 11280,
+  routerToolSchemas: 10090,
+  routerBare: 11420,
   slimRouterToolSchemas: 2130,
-  slimRouterBare: 3360,
-  routerCore: 800,
+  slimRouterBare: 3450,
+  routerCore: 810,
   // TASKS.md #179: the planning prompt's compound-step rule now explicitly says not to plan an MCP
   // Operator step AND a Research/web step for one domain-knowledge question up front (found live — a
   // pure definitional question got both, and web ran right after the wiki already gave a complete
@@ -124,7 +127,7 @@ const CEILINGS = {
   // TASKS.md #178: Research can now also report `[handoff: incomplete]` when filling an MCP gap only
   // partly closes it — 1340 -> 1345. Deliberate.
   'role:research': 1350,
-  'role:history-analyst': 500,
+  'role:history-analyst': 520,
   // TASKS.md #176/#177: found live retesting #172/#173/#175's fixes end-to-end — the resulting chart
   // compared a turbine's real data against... its own real data again (never recognized a real
   // `theoretical_power_kw` reference column already in the schema), plotted as a meaningless zigzag
@@ -133,12 +136,12 @@ const CEILINGS = {
   'role:data': 2740,
   'role:data-processor': 2070,
   'role:document-creator': 2220,
-  'role:configurator': 1290,
+  'role:configurator': 1330,
   // TASKS.md #176: a weak/irrelevant search snippet (a table fragment, a citation) got reported as
   // real domain knowledge found, instead of retrying or reading further — 390 -> 514. Deliberate.
   // TASKS.md #178: MCP Operator can now report `[handoff: incomplete]` (found something, not enough)
   // distinct from `no_information` (found nothing) — 520 -> 567. Deliberate.
-  'role:mcp-operator': 580,
+  'role:mcp-operator': 640,
   'role:page-creator': 820,
   'role:email': 630
 } as const
@@ -255,6 +258,6 @@ describe('per-tool schema budget', () => {
     // (file-export behavior for a large result; read handoff files via real file I/O) — 8900 -> 8942
     // measured. Deliberate growth, not drift.
     const total = registry.list().reduce((n, t) => n + tokensFor(t), 0)
-    expect(total).toBeLessThanOrEqual(8950)
+    expect(total).toBeLessThanOrEqual(9050)
   })
 })

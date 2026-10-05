@@ -5,7 +5,7 @@ import { getSetting } from '../db/settings'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import { apiCallTool, apiCheckStatusTool, apiIntrospectTool, apiListConnectionsTool } from './api'
 import { awsCliTool, azureCliTool, gcloudCliTool } from './cloud-cli'
-import { apiCreateConnectionTool, dbCreateConnectionTool, mcpCreateConnectionTool } from './config-gen'
+import { apiCreateConnectionTool, dbCreateConnectionTool, mcpCreateConnectionTool, mcpListConnectionsTool } from './config-gen'
 import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from './deck'
 import { listEmailConnectionsTool, sendEmailTool } from './email'
 import { parseCsvTool, parseHtmlTool, parseJsonTool, parseXmlTool } from './data-formats'
@@ -102,6 +102,7 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(dbCreateConnectionTool)
   registry.register(apiCreateConnectionTool)
   registry.register(mcpCreateConnectionTool)
+  registry.register(mcpListConnectionsTool)
   registry.register(pptxStartDeckTool)
   registry.register(pptxAddSlideTool)
   registry.register(pptxComposeSlideTool)

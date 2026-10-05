@@ -33,7 +33,8 @@ export const searchHistoryTool: Tool = {
     'conversation that may have aged out of your own visible context if it has grown long. ' +
     'Returns tagged excerpts with session and date so you can reason about recency/provenance. ' +
     "If it reports it's unavailable, tell the user plainly rather than silently working around " +
-    'it or guessing.',
+    'it or guessing. Excerpts are past statements, not current state — never use one to say what is ' +
+    'configured or available now; check live (describe_capabilities).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -85,6 +86,7 @@ export const searchHistoryTool: Tool = {
         const excerpt = hit.text.slice(0, SEARCH_HISTORY_EXCERPT_MAX_CHARS)
         return `<historical_result session="${hit.sessionTitle}" date="${date}" relevance="${relevance}">\n${excerpt}\n</historical_result>`
       })
-      .join('\n')
+      .join('\n') +
+      '\n(Note: these are past statements — any configuration or availability they mention may have changed since; verify current state with a live tool.)'
   }
 }

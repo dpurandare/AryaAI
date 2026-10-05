@@ -1,6 +1,7 @@
 import type pptxgen from 'pptxgenjs'
 import type { SavedQueryDto } from '@shared/ipc-contract'
 import type { WorkspaceGuard } from '../security/workspace-guard'
+import type { McpServerStatusInfo } from '../mcp/manager'
 
 export interface ToolContext {
   workspaceGuard: WorkspaceGuard
@@ -15,6 +16,8 @@ export interface ToolContext {
   registerSavedQuery?: (query: SavedQueryDto) => void
   /** Live-reconnects a freshly-saved MCP server (see mcp_create_connection in tools/config-gen/mcp.ts) so its tools appear immediately — same call the Settings > MCP servers save flow already makes. Optional/absent in tests, same reasoning as registerSavedQuery. */
   connectMcpServer?: (id: string) => Promise<void>
+  /** Live connection state of a configured MCP server (mcp_list_connections) — undefined when the server isn't tracked. Optional/absent in tests. */
+  mcpServerStatus?: (id: string) => McpServerStatusInfo | undefined
   /**
    * In-progress decks (#78), keyed by an id `pptx_start_deck` generates —
    * the only way state can survive across the top-level `pptx_add_slide`

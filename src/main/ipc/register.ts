@@ -212,7 +212,11 @@ export function registerIpcHandlers(): void {
       getConnections: () => ({
         databases: listConnections().map((c) => ({ name: c.name, engine: c.engine })),
         apis: listApiConnections().map((c) => ({ name: c.name, baseUrl: c.baseUrl })),
-        email: listEmailConnections().map((c) => ({ name: c.name, emailAddress: c.emailAddress, isDefault: c.isDefault }))
+        email: listEmailConnections().map((c) => ({ name: c.name, emailAddress: c.emailAddress, isDefault: c.isDefault })),
+        mcp: listServerConfigs().map((c) => {
+          const live = mcpManager.getStatus(c.id)
+          return { name: c.name, status: live?.status ?? 'unknown', error: live?.error }
+        })
       }),
       getRuntime: () => workspaceRuntime.getState()
     })
@@ -802,6 +806,7 @@ async function runChat(
       currentSessionId: sessionId,
       registerSavedQuery: (query) => savedQueryManager.register(query, toolRegistry),
       connectMcpServer: (id) => mcpManager.reconnect(id, toolRegistry),
+      mcpServerStatus: (id) => mcpManager.getStatus(id),
       runtimeState: () => workspaceRuntime.getState(),
       activeDecks
     },

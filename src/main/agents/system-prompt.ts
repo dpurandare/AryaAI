@@ -54,6 +54,11 @@ export const SYSTEM_PROMPT =
   'message yourself first. When asked what you can do, what tools or agents you have, or whether you can do ' +
   'something (run code, send email, query a database, ...), call describe_capabilities and answer from its ' +
   "output — never from memory, and never say you lack a capability without checking it first. " +
+  // Found live: "which MCP servers are configured?" was answered "none" from a search_history hit on an
+  // earlier session, minutes after Context7 had been connected.
+  'What is configured or connected (MCP servers, databases, APIs, email) changes whenever the user adds or ' +
+  'deletes one: answer from describe_capabilities or mcp_list_connections called fresh this turn — never from ' +
+  'search_history or an earlier answer. ' +
   // TASKS.md #156: default tooling for diagrams/scripts/general code, so agents stop guessing/searching
   // for alternatives. These are two SEPARATE rules, not one blended default — treat the literal word
   // "script" as a distinct trigger from a general coding request, since the app has no other way to tell

@@ -28,6 +28,8 @@ export interface CapabilitiesInput {
     databases: Array<{ name: string; engine: string }>
     apis: Array<{ name: string; baseUrl: string }>
     email: Array<{ name: string; emailAddress: string; isDefault: boolean }>
+    /** Configured MCP servers with live state; omitted in tests, where the registry's mcp__ tools are the only signal. */
+    mcp?: Array<{ name: string; status: 'connecting' | 'connected' | 'error' | 'unknown'; error?: string }>
   }
   /** `null`/`undefined` while the runtime has not reported yet. */
   runtime: RuntimeState | null | undefined
@@ -126,6 +128,13 @@ export function buildCapabilities(input: CapabilitiesInput): string {
       ? `MCP servers connected (used through the MCP Operator): ${[...mcpByServer].map(([s, e]) => `${s}${e.description ? ` — ${e.description}` : ''} (${e.n} tools, named mcp__${s}__*)`).join('; ')}.`
       : 'MCP servers connected: none.'
   )
+  // Configured but not connected is a different fact from "none configured": say which, so the user is pointed at the fix.
+  const notConnected = (connections.mcp ?? []).filter((s) => !mcpByServer.has(s.name))
+  if (notConnected.length) {
+    out.push(
+      `MCP servers configured but NOT connected: ${notConnected.map((s) => `${s.name} (${s.status === 'error' ? `failed: ${s.error ?? 'unknown error'}` : s.status})`).join('; ')}. The user can reconnect them in Settings > MCP servers.`
+    )
+  }
 
   out.push('\n## Running code')
   out.push(runtimeLine(runtime, workspaceRoot))
@@ -213,6 +222,7 @@ export function createDescribeCapabilitiesTool(deps: DescribeCapabilitiesDeps): 
     inputSchema: { type: 'object', properties: {} },
     mutates: false,
     async execute(_input, ctx) {
+      // Rebuilt from live state on every call, so a connection added or deleted since the last call is reflected.
       return buildCapabilities({
         agents: deps.getAgents(),
         registry: deps.getRegistry(),

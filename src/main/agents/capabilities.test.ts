@@ -168,3 +168,23 @@ describe('isRoleAvailable (design-discussion.md §13.3, TASKS #145)', () => {
     expect(isRoleAvailable(dataAccess, { databases: 0, apis: 0, email: 0, mcp: 0 })).toBe(false)
   })
 })
+
+describe('buildCapabilities — configured MCP servers that are not connected', () => {
+  it('reports a configured-but-failing server instead of "none", and reflects a deletion on the next call', () => {
+    const withFailing = buildCapabilities(
+      input({ connections: { databases: [], apis: [], email: [], mcp: [{ name: 'context7', status: 'error', error: 'spawn npx ENOENT' }] } })
+    )
+    expect(withFailing).toContain('configured but NOT connected: context7 (failed: spawn npx ENOENT)')
+
+    const afterDelete = buildCapabilities(input({ connections: { databases: [], apis: [], email: [], mcp: [] } }))
+    expect(afterDelete).not.toContain('context7')
+  })
+
+  it('does not list a connected server as not connected', () => {
+    const out = buildCapabilities(
+      input({ connections: { databases: [], apis: [], email: [], mcp: [{ name: 'energy_wiki', status: 'connected' }] } })
+    )
+    expect(out).toContain('MCP servers connected')
+    expect(out).not.toContain('NOT connected')
+  })
+})
