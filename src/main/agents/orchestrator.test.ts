@@ -2800,6 +2800,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
         expect(warning).toBeDefined()
         expect((warning as { message: string }).message).toMatch(/rate limit/i)
         expect((warning as { message: string }).message).toMatch(/attempt 1\/5/i)
+        // Transient: the renderer drops it after the wait (2s backoff + 4s grace), and it is never persisted as a message.
+        expect((warning as { transientMs?: number }).transientMs).toBe(6000)
+        expect(events.some((e) => e.kind === 'message' && e.content.some((c) => c.type === 'warning'))).toBe(false)
         expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hello!' })
         expect(streamEvents.at(-1)).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
       })

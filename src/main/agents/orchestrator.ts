@@ -1809,7 +1809,9 @@ export class Orchestrator {
     const message =
       `The provider says you've hit its rate limit — waiting ${Math.round(waitMs / 1000)}s before retrying ` +
       `(attempt ${state.consecutiveRateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}).`
-    yield { kind: 'stream', event: tagEvent({ type: 'warning', message }, agentRole) }
+    // Transient: a status while we wait, not part of the conversation. It is only streamed (never yielded as a `message`,
+    // so never persisted) and the renderer drops it shortly after the wait ends.
+    yield { kind: 'stream', event: tagEvent({ type: 'warning', message, transientMs: waitMs + 4000 }, agentRole) }
 
     const waited = await sleepAbortable(waitMs, this.signal)
     if (this.signal.aborted) {

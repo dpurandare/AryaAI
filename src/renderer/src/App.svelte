@@ -423,12 +423,22 @@
       } else if (event.type === 'context_window') {
         contextWindow = { tokens: event.tokens, isEstimate: event.isEstimate }
       } else if (event.type === 'warning') {
+        const warningId = crypto.randomUUID()
         msg.segments.push({
-          id: crypto.randomUUID(),
+          id: warningId,
           kind: 'warning',
           agentRole: event.agentRole,
           text: event.message
         })
+        // A transient notice (rate-limit wait) disappears on its own. Looked up again through `runtime.messages`
+        // when the timer fires — `msg` may be a stale reference by then (see feedback on Svelte 5 runes).
+        if (event.transientMs) {
+          setTimeout(() => {
+            const current = runtime.messages[assistantIdx]
+            const at = current?.segments.findIndex((s) => s.id === warningId) ?? -1
+            if (at >= 0) current.segments.splice(at, 1)
+          }, event.transientMs)
+        }
         // TASKS.md #174: a `warning` carrying a `failureCategory` IS the turn's only/final signal (the
         // backend's own convention — see orchestrator.ts's `isTopLevel && !assistantText` reasoning and
         // prepare-context.ts's `failedTurnWarning`, which uses this exact same presence check to tell a

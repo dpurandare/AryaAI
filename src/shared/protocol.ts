@@ -134,7 +134,14 @@ export type StreamEvent =
   | { type: 'context_window'; tokens: number; isEstimate: boolean }
   | { type: 'error'; message: string }
   /** Live counterpart of `ContentBlock`'s `warning` — see its doc comment, including `failureCategory`. Streamed immediately and also included in the `kind: 'message'` event that gets persisted, exactly like `tool_use`/`text`. */
-  | { type: 'warning'; message: string; agentRole?: AgentRole; failureCategory?: 'communication_failure' | 'stopped_by_user' | 'no_answer' }
+  | {
+      type: 'warning'
+      message: string
+      agentRole?: AgentRole
+      failureCategory?: 'communication_failure' | 'stopped_by_user' | 'no_answer'
+      /** Live-only notice (a rate-limit wait): the renderer removes it after this many ms. Never persisted, so a reload never shows it. */
+      transientMs?: number
+    }
   /**
    * A human-readable "what's happening right now" hint, sent once per round
    * right before the provider call that produces it — not persisted, purely
