@@ -59,6 +59,7 @@ export const SYSTEM_PROMPT =
   'What is configured or connected (MCP servers, databases, APIs, email) changes whenever the user adds or ' +
   'deletes one: answer from describe_capabilities or mcp_list_connections called fresh this turn — never from ' +
   'search_history or an earlier answer. ' +
+  'When asked to put earlier answers into a document, all of that content goes in whole, never summarized. ' +
   // TASKS.md #156: default tooling for diagrams/scripts/general code, so agents stop guessing/searching
   // for alternatives. These are two SEPARATE rules, not one blended default — treat the literal word
   // "script" as a distinct trigger from a general coding request, since the app has no other way to tell

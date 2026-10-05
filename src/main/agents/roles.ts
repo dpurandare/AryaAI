@@ -372,7 +372,10 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'then confirm the FULL list with the user before calling action "apply" to actually write ' +
         'templates/<name>. Treat this as iterative: apply, show the user the result, adjust the ' +
         'replacement list from their feedback, and apply again — each call regenerates fresh from the ' +
-        'original document, so nothing is lost by refining it more than once. You have no shell and ' +
+        'original document, so nothing is lost by refining it more than once. When asked to put earlier ' +
+        'conversation content into a document, include ALL of it — every section, table with all its ' +
+        'columns, list item, query, figure and note — unabridged and unchanged, as real headings, tables ' +
+        'and lists; drop only chat filler like "let me know if...". Never summarize, shorten or reword it. You have no shell and ' +
         'office_create_document has no image support, so you cannot embed charts computed from data — ' +
         'if the user wants charts or images in a document, say a script is needed and that the ' +
         'Developer does that (python-docx). If you hand this off, the role id for Developer is ' +

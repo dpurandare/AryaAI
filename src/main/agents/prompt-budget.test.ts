@@ -107,16 +107,18 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 // Live-state fix (mcp_list_connections added to the router core, Configurator and MCP Operator; a fresh-state rule in
 // the router prompt; a staleness note on search_history) — routerCore 800 -> 810, routerPrompt 1290 -> 1330,
 // role:mcp-operator 580 -> 640, etc. Deliberate growth, not drift.
+// Document-from-conversation fidelity rule (router prompt + Document Creator prompt): routerPrompt 1330 -> 1350,
+// role:document-creator 2220 -> 2250. Found live: a Word doc built from an earlier answer dropped tables' columns, use cases, notes and queries. Deliberate.
 const CEILINGS = {
   // TASKS.md #178: the final-synthesis prompt now requires explicit disclosure when a plan step ended
   // PARTIAL INFORMATION, not just NEEDS INPUT/OUT OF SCOPE/FAILED — 1230 -> 1278. Deliberate, not drift.
-  routerPrompt: 1330,
+  routerPrompt: 1350,
   // TASKS.md #172 (continued again): db_execute_sql's description reworded to describe the large-result
   // file-export behavior (writes to a file instead of "gets truncated") — 9970 -> 9983. Deliberate, not drift.
   routerToolSchemas: 10090,
-  routerBare: 11420,
+  routerBare: 11440,
   slimRouterToolSchemas: 2130,
-  slimRouterBare: 3450,
+  slimRouterBare: 3470,
   routerCore: 810,
   // TASKS.md #179: the planning prompt's compound-step rule now explicitly says not to plan an MCP
   // Operator step AND a Research/web step for one domain-knowledge question up front (found live — a
@@ -135,7 +137,7 @@ const CEILINGS = {
   'role:coding': 2810,
   'role:data': 2740,
   'role:data-processor': 2070,
-  'role:document-creator': 2220,
+  'role:document-creator': 2250,
   'role:configurator': 1330,
   // TASKS.md #176: a weak/irrelevant search snippet (a table fragment, a citation) got reported as
   // real domain knowledge found, instead of retrying or reading further — 390 -> 514. Deliberate.
