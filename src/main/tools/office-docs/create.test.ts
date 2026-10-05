@@ -225,4 +225,19 @@ describe('office_create_document', () => {
       expect(officeCreateDocumentTool.describe?.({ path: 'a.docx', fromPreviousAnswer: true })).toBe('Create "a.docx" from the previous answer')
     })
   })
+
+  it('keeps underscores inside snake_case names and file names, but still renders real _italic_ at word edges', async () => {
+    await officeCreateDocumentTool.execute(
+      { path: 'u.docx', sections: [{ paragraphs: ['Read exports/01-db_query_top_customers_by_sales_39f3d4.json and Order_Details_x, then _really_ stop.'] }] },
+      ctx
+    )
+    const xml = await readDocumentXml(join(root, 'documents', 'u.docx'))
+    const text = extractTextRuns(xml).join('')
+    expect(text).toContain('01-db_query_top_customers_by_sales_39f3d4.json')
+    expect(text).toContain('Order_Details_x')
+    expect(text).toContain('really')
+    expect(text).not.toContain('_really_')
+    expect(xml).toContain('<w:i/>')
+  })
+
 })

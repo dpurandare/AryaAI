@@ -52,7 +52,9 @@ const NUMBERED_LIST_REFERENCE = 'office-create-document-numbered-list'
  * ***bold italic***) — real output from this app has never needed more
  * than one level, and a full CommonMark inline parser is overkill here.
  */
-const INLINE_MARKDOWN = /\*\*(.+?)\*\*|__(.+?)__|\*(.+?)\*|_(.+?)_|`(.+?)`/g
+// `_`/`__` only count as emphasis at a word edge: inside snake_case names and file names (db_query_top_customers.json)
+// they are just characters — found live, a path in a document lost every underscore to "italics".
+const INLINE_MARKDOWN = /\*\*(.+?)\*\*|(?<![A-Za-z0-9_])__(.+?)__(?![A-Za-z0-9_])|\*(.+?)\*|(?<![A-Za-z0-9_])_(.+?)_(?![A-Za-z0-9_])|`(.+?)`/g
 
 function parseInlineRuns(text: string): TextRun[] {
   const runs: TextRun[] = []
