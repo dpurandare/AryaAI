@@ -961,7 +961,7 @@
     <p class="status">
       Show how long each reply took and when it finished ("Took 1m 20s · done 4:05 PM"), called out in red if
       anything in that turn errored — plus a plain timestamp next to a tool or thinking block once you expand
-      it. On by default.
+      it. On by default. Errors always show their time, even with this off.
     </p>
     <label class="tool-rule">
       <input

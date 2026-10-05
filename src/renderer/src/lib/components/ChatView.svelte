@@ -468,7 +468,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
                 >
                   <span class="tool-icon">⚙</span>
                   <code>{segment.toolCall.name}</code>
-                  {#if showTimestamps && showFull && message.createdAt}
+                  {#if message.createdAt && ((showTimestamps && showFull) || segment.toolCall.isError)}
                     <span class="segment-timestamp" class:error={segment.toolCall.isError}>{formatTimestamp(message.createdAt)}</span>
                   {/if}
                   {#if !(showFull && !isDelegate)}
@@ -618,9 +618,15 @@ import { formatToolInputForDisplay } from '../tool-input-display'
               {/if}
             {:else}
               <MarkdownText text={segment.text ?? ''} />
+              {#if message.createdAt && segment.text?.startsWith('Error:')}
+                <div class="segment-timestamp error">{formatTimestamp(message.createdAt)}</div>
+              {/if}
             {/if}
           {:else if segment.kind === 'warning'}
-            <div class="warning-note">⚠️ {segment.text}</div>
+            <div class="warning-note">
+              ⚠️ {segment.text}
+              {#if message.createdAt}<span class="segment-timestamp error">{formatTimestamp(message.createdAt)}</span>{/if}
+            </div>
           {:else if segment.kind === 'user_note'}
             <!-- TASKS.md #158: a mid-run steering comment — visually distinct from both the assistant's own
                  text and a warning, since it's the user's own words injected partway through. -->
@@ -644,11 +650,17 @@ import { formatToolInputForDisplay } from '../tool-input-display'
             <span class="thinking">{message.statusText ?? 'Thinking…'}</span>
           {/if}
         {/if}
-        {#if showTimestamps && !message.pending && message.role === 'assistant' && message.createdAt && isTurnEnd(msgIndex)}
+        {#if !message.pending && message.role === 'assistant' && message.createdAt && isTurnEnd(msgIndex)}
           {@const start = turnStart(msgIndex)}
-          {#if start?.createdAt}
-            <div class="turn-summary" class:error={turnHasError(msgIndex)}>
-              Took {formatDuration(message.createdAt - start.createdAt)} · done {formatClockTime(message.createdAt)}
+          {@const failed = turnHasError(msgIndex)}
+          <!-- With timestamps off, only a failed turn still gets its time: when an error happened matters most. -->
+          {#if start?.createdAt && (showTimestamps || failed)}
+            <div class="turn-summary" class:error={failed}>
+              {#if showTimestamps}
+                Took {formatDuration(message.createdAt - start.createdAt)} · done {formatClockTime(message.createdAt)}
+              {:else}
+                Error · {formatClockTime(message.createdAt)}
+              {/if}
             </div>
           {/if}
         {/if}
