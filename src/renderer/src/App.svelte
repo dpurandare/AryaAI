@@ -220,8 +220,8 @@
   let toolDisplayMode = $state<ToolDisplayMode>('partial')
   /** Off by default — a debugging/curiosity aid (which provider/model answered each message), not needed for normal use. */
   let showAnsweringModel = $state(false)
-  /** Off by default, same as showAnsweringModel — when timestamps on each message bubble (and, once expanded, each tool/thinking block) are worth the extra visual noise. */
-  let showTimestamps = $state(false)
+  /** On by default (unlike showAnsweringModel) — a time on each turn, and on an expanded tool/thinking block, matters most when something errored. A stored choice from Settings overrides this. */
+  let showTimestamps = $state(true)
 
   function mapMessagesToDisplay(records: MessageDto[]): DisplayMessage[] {
     const result: DisplayMessage[] = []

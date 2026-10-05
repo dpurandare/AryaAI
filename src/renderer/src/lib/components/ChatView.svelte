@@ -79,7 +79,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     roleRoster = [],
     onSteer,
     showAnsweringModel = false,
-    showTimestamps = false
+    showTimestamps = true
   }: {
     messages: DisplayMessage[]
     statusLine: string
