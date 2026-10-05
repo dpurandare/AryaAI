@@ -1,0 +1,27 @@
+import { describe, expect, it } from 'vitest'
+import type { ContentBlock } from '@shared/protocol'
+import { previousAnswerText } from './previous-answer'
+
+const user = (text: string) => ({ role: 'user' as const, content: [{ type: 'text', text }] as ContentBlock[] })
+const assistant = (...content: ContentBlock[]) => ({ role: 'assistant' as const, content })
+const toolResult = { role: 'user' as const, content: [{ type: 'tool_result', toolUseId: 'x', content: 'r', isError: false }] as ContentBlock[] }
+
+describe('previousAnswerText', () => {
+  it('returns the last answer before the current request, ignoring this turn\'s own rounds', () => {
+    const messages = [
+      user('describe it'),
+      assistant({ type: 'tool_use', id: 'x', name: 'db_introspect_schema', input: {} }),
+      toolResult,
+      assistant({ type: 'thinking', text: 'hmm' }, { type: 'text', text: 'THE FULL ANSWER' }),
+      user('make a Word doc of this'),
+      assistant({ type: 'text', text: 'Sure, creating it' }),
+      assistant({ type: 'tool_use', id: 'y', name: 'office_create_document', input: {} })
+    ]
+    expect(previousAnswerText(messages)).toBe('THE FULL ANSWER')
+  })
+
+  it('is undefined when nothing was answered yet', () => {
+    expect(previousAnswerText([user('make a doc')])).toBeUndefined()
+    expect(previousAnswerText([])).toBeUndefined()
+  })
+})

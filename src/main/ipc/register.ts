@@ -32,6 +32,7 @@ import { isValidRoleId, roleLabel, type AgentRole } from '@shared/agents'
 import type { RuntimeState } from '@shared/runtime'
 import { createSession, listSessions, deleteSession, getSession, updateSessionTitle, titleFromMessage } from '../db/sessions'
 import { insertMessage, listMessages } from '../db/messages'
+import { previousAnswerText } from '../agents/previous-answer'
 import { enqueueMessage, getEmbeddingConfig, getIndexState, rebuildIndex, runBackfill } from '../search-history/indexer'
 import { getSetting, setSetting } from '../db/settings'
 import { addUsage, getUsage } from '../db/usage'
@@ -807,6 +808,7 @@ async function runChat(
       registerSavedQuery: (query) => savedQueryManager.register(query, toolRegistry),
       connectMcpServer: (id) => mcpManager.reconnect(id, toolRegistry),
       mcpServerStatus: (id) => mcpManager.getStatus(id),
+      previousAnswerText: () => previousAnswerText(listMessages(sessionId)),
       runtimeState: () => workspaceRuntime.getState(),
       activeDecks
     },

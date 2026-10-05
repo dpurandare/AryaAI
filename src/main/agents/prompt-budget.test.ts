@@ -115,8 +115,8 @@ const CEILINGS = {
   routerPrompt: 1350,
   // TASKS.md #172 (continued again): db_execute_sql's description reworded to describe the large-result
   // file-export behavior (writes to a file instead of "gets truncated") — 9970 -> 9983. Deliberate, not drift.
-  routerToolSchemas: 10090,
-  routerBare: 11440,
+  routerToolSchemas: 10110,
+  routerBare: 11460,
   slimRouterToolSchemas: 2130,
   slimRouterBare: 3470,
   routerCore: 810,
@@ -137,7 +137,7 @@ const CEILINGS = {
   'role:coding': 2810,
   'role:data': 2740,
   'role:data-processor': 2070,
-  'role:document-creator': 2250,
+  'role:document-creator': 2290,
   'role:configurator': 1330,
   // TASKS.md #176: a weak/irrelevant search snippet (a table fragment, a citation) got reported as
   // real domain knowledge found, instead of retrying or reading further — 390 -> 514. Deliberate.
@@ -226,7 +226,7 @@ describe('prompt budget (no conversation, no MCP servers)', () => {
  */
 const DEFAULT_TOOL_CEILING = 320
 const TOOL_CEILINGS: Record<string, number> = {
-  office_create_document: 590,
+  office_create_document: 600, // + fromPreviousAnswer (copies the previous answer into a .docx whole)
   parse_csv: 450,
   office_extract_template: 410,
   pptx_compose_slide: 400,
@@ -260,6 +260,6 @@ describe('per-tool schema budget', () => {
     // (file-export behavior for a large result; read handoff files via real file I/O) — 8900 -> 8942
     // measured. Deliberate growth, not drift.
     const total = registry.list().reduce((n, t) => n + tokensFor(t), 0)
-    expect(total).toBeLessThanOrEqual(9050)
+    expect(total).toBeLessThanOrEqual(9070)
   })
 })

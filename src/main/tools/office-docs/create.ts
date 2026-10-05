@@ -113,6 +113,11 @@ function splitTableRowLine(line: string): string[] {
     .map((cell) => cell.trim())
 }
 
+/** A table cell's text, with each `<br>` (how chat tables put several lines in one cell) becoming its own paragraph. */
+function cellParagraphs(cell: string): Paragraph[] {
+  return cell.split(/<br\s*\/?>/i).map((line) => new Paragraph({ children: parseInlineRuns(line.trim()) }))
+}
+
 function buildTable(table: DocxTable): Table {
   const rows: TableRow[] = []
   if (table.headers?.length) {
@@ -132,7 +137,7 @@ function buildTable(table: DocxTable): Table {
   for (const row of table.rows) {
     rows.push(
       new TableRow({
-        children: row.map((cell) => new TableCell({ children: [new Paragraph({ children: parseInlineRuns(cell) })] }))
+        children: row.map((cell) => new TableCell({ children: cellParagraphs(cell) }))
       })
     )
   }
@@ -198,9 +203,86 @@ function renderParagraphText(text: string): (Paragraph | Table)[] {
   return blocks
 }
 
-async function buildDocx(title: string | undefined, sections: DocxSection[]): Promise<Buffer> {
+const HEADING_LEVELS = [
+  HeadingLevel.HEADING_1,
+  HeadingLevel.HEADING_2,
+  HeadingLevel.HEADING_3,
+  HeadingLevel.HEADING_4,
+  HeadingLevel.HEADING_5,
+  HeadingLevel.HEADING_6
+]
+
+/**
+ * A whole chat answer (Markdown) as Word blocks, for `fromPreviousAnswer`. Unlike `renderParagraphText` this also
+ * covers what a long answer contains: headings, fenced code, horizontal rules, quotes and nested bullets. Every line
+ * of the source ends up in the document — nothing is summarised or skipped; the only thing dropped is the
+ * horizontal-rule line itself, which is a divider rather than content.
+ */
+function renderMarkdownBlocks(markdown: string): (Paragraph | Table)[] {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
+  const blocks: (Paragraph | Table)[] = []
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    if (line.trim() === '') {
+      i++
+      continue
+    }
+    const fence = /^\s*(```|~~~)/.exec(line)
+    if (fence) {
+      i++
+      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) {
+        blocks.push(new Paragraph({ children: [new TextRun({ text: lines[i], font: 'Courier New' })] }))
+        i++
+      }
+      i++ // closing fence
+      continue
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line) && !/^\s*[-*]\s+\S/.test(line)) {
+      i++
+      continue
+    }
+    const heading = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line)
+    if (heading) {
+      blocks.push(new Paragraph({ children: parseInlineRuns(heading[2]), heading: HEADING_LEVELS[heading[1].length - 1] }))
+      i++
+      continue
+    }
+    if (isTableRowLine(line)) {
+      const start = i
+      while (i < lines.length && (isTableRowLine(lines[i]) || isTableSeparatorLine(lines[i]))) i++
+      blocks.push(...renderParagraphText(lines.slice(start, i).join('\n')))
+      continue
+    }
+    const quote = /^\s*>\s?(.*)$/.exec(line)
+    if (quote) {
+      blocks.push(new Paragraph({ indent: { left: 720 }, children: parseInlineRuns(quote[1]) }))
+      i++
+      continue
+    }
+    const bullet = /^(\s*)[-*•]\s+(.*)$/.exec(line)
+    if (bullet) {
+      const level = Math.min(8, Math.floor(bullet[1].replace(/\t/g, '    ').length / 2))
+      blocks.push(new Paragraph({ bullet: { level }, children: parseInlineRuns(bullet[2]) }))
+      i++
+      continue
+    }
+    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line)
+    if (numbered) {
+      blocks.push(new Paragraph({ numbering: { reference: NUMBERED_LIST_REFERENCE, level: 0 }, children: parseInlineRuns(numbered[1]) }))
+      i++
+      continue
+    }
+    blocks.push(new Paragraph({ children: parseInlineRuns(line.trim()) }))
+    i++
+  }
+  return blocks
+}
+
+async function buildDocx(title: string | undefined, sections: DocxSection[], bodyMarkdown?: string): Promise<Buffer> {
   const children: (Paragraph | Table)[] = []
   if (title) children.push(new Paragraph({ children: parseInlineRuns(title), heading: HeadingLevel.TITLE }))
+  if (bodyMarkdown) children.push(...renderMarkdownBlocks(bodyMarkdown))
   for (const section of sections) {
     if (section.heading) {
       children.push(new Paragraph({ children: parseInlineRuns(section.heading), heading: HeadingLevel.HEADING_1 }))
@@ -271,6 +353,7 @@ export const officeCreateDocumentTool: Tool = {
     properties: {
       path: { type: 'string', description: 'Output path relative to the workspace root, .docx or .pptx' },
       title: { type: 'string', description: 'Optional document title / opening title slide' },
+      fromPreviousAnswer: { type: 'boolean', description: 'docx only: your previous answer, in full, as the body' },
       sections: {
         type: 'array',
         description: 'docx only',
@@ -314,7 +397,7 @@ export const officeCreateDocumentTool: Tool = {
   },
   mutates: true,
   describe(input) {
-    return `Create "${String(input.path ?? '')}"`
+    return `Create "${String(input.path ?? '')}"${input.fromPreviousAnswer === true ? ' from the previous answer' : ''}`
   },
   async execute(input, ctx) {
     const relPath = String(input.path ?? '')
@@ -325,10 +408,16 @@ export const officeCreateDocumentTool: Tool = {
     const absPath = resolveNewFilePath(ctx.workspaceGuard, relPath)
     await mkdir(dirname(absPath), { recursive: true })
     const title = typeof input.title === 'string' ? input.title : undefined
+    if (input.fromPreviousAnswer === true && extension !== 'docx') throw new Error('fromPreviousAnswer works for .docx only.')
 
     if (extension === 'docx') {
       const sections = Array.isArray(input.sections) ? (input.sections as DocxSection[]) : []
-      const buffer = await buildDocx(title, sections)
+      let body: string | undefined
+      if (input.fromPreviousAnswer === true) {
+        body = ctx.previousAnswerText?.()
+        if (!body) throw new Error('There is no previous answer in this conversation to put in the document — write the sections yourself.')
+      }
+      const buffer = await buildDocx(title, sections, body)
       await writeFile(absPath, buffer)
     } else {
       const slides = Array.isArray(input.slides) ? (input.slides as PptxSlide[]) : []

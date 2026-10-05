@@ -16,6 +16,8 @@ export interface ToolContext {
   registerSavedQuery?: (query: SavedQueryDto) => void
   /** Live-reconnects a freshly-saved MCP server (see mcp_create_connection in tools/config-gen/mcp.ts) so its tools appear immediately — same call the Settings > MCP servers save flow already makes. Optional/absent in tests, same reasoning as registerSavedQuery. */
   connectMcpServer?: (id: string) => Promise<void>
+  /** The previous assistant answer in this conversation, as Markdown (office_create_document's fromPreviousAnswer) — undefined when there is none. Optional/absent in tests. */
+  previousAnswerText?: () => string | undefined
   /** Live connection state of a configured MCP server (mcp_list_connections) — undefined when the server isn't tracked. Optional/absent in tests. */
   mcpServerStatus?: (id: string) => McpServerStatusInfo | undefined
   /**

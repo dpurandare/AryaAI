@@ -167,4 +167,62 @@ describe('office_create_document', () => {
   it('respects the workspace boundary', async () => {
     await expect(officeCreateDocumentTool.execute({ path: '../escape.docx' }, ctx)).rejects.toThrow(/workspace boundary/)
   })
+
+  describe('fromPreviousAnswer', () => {
+    const answer = [
+      '**Northwind - a classic sample database**',
+      '',
+      '| What it is | Purpose |',
+      '|---|---|',
+      '| **Typical use cases** | CRUD tutorials<br>ER diagrams<br>Reporting demos |',
+      '',
+      '---',
+      '',
+      '### 1. Core tables',
+      '',
+      '| Table | Key columns | What it stores |',
+      '|---|---|---|',
+      '| **Orders** | `OrderID`, `OrderDate` | Order header |',
+      '',
+      '* Parent bullet',
+      '  * Nested bullet',
+      '',
+      '1. First step',
+      '2. Second step',
+      '',
+      '```',
+      'SELECT * FROM Orders;',
+      '```',
+      '',
+      '> **Note:** the data is static.'
+    ].join('\n')
+
+    it('puts every part of the answer in the document: headings, both tables with all columns, nested bullets, steps, code and the note', async () => {
+      const withAnswer = { ...ctx, previousAnswerText: () => answer }
+      await officeCreateDocumentTool.execute({ path: 'a.docx', title: 'Northwind', fromPreviousAnswer: true }, withAnswer)
+      const xml = await readDocumentXml(join(root, 'documents', 'a.docx'))
+      const text = extractTextRuns(xml).join(' ')
+      for (const expected of [
+        'a classic sample database', 'What it is', 'Typical use cases', 'CRUD tutorials', 'ER diagrams', 'Reporting demos',
+        '1. Core tables', 'Key columns', 'OrderDate', 'Order header', 'Parent bullet', 'Nested bullet', 'First step', 'Second step',
+        'SELECT * FROM Orders;', 'Note:', 'the data is static.'
+      ]) {
+        expect(text, `missing: ${expected}`).toContain(expected)
+      }
+      expect(xml.match(/<w:tbl>/g)).toHaveLength(2)
+      expect(text).not.toContain('|')
+      expect(text).not.toContain('<br>')
+      expect(text).not.toContain('**')
+      expect(xml).toContain('Heading3')
+    })
+
+    it('fails clearly when there is no previous answer, and for pptx', async () => {
+      await expect(officeCreateDocumentTool.execute({ path: 'a.docx', fromPreviousAnswer: true }, ctx)).rejects.toThrow(/no previous answer/)
+      await expect(officeCreateDocumentTool.execute({ path: 'a.pptx', fromPreviousAnswer: true }, { ...ctx, previousAnswerText: () => 'x' })).rejects.toThrow(/\.docx only/)
+    })
+
+    it('says so in the confirmation text', () => {
+      expect(officeCreateDocumentTool.describe?.({ path: 'a.docx', fromPreviousAnswer: true })).toBe('Create "a.docx" from the previous answer')
+    })
+  })
 })

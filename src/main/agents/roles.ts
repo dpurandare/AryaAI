@@ -375,7 +375,8 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'original document, so nothing is lost by refining it more than once. When asked to put earlier ' +
         'conversation content into a document, include ALL of it — every section, table with all its ' +
         'columns, list item, query, figure and note — unabridged and unchanged, as real headings, tables ' +
-        'and lists; drop only chat filler like "let me know if...". Never summarize, shorten or reword it. You have no shell and ' +
+        'and lists; drop only chat filler like "let me know if...". Never summarize, shorten or reword it. ' +
+        'For your previous answer use fromPreviousAnswer: true. You have no shell and ' +
         'office_create_document has no image support, so you cannot embed charts computed from data — ' +
         'if the user wants charts or images in a document, say a script is needed and that the ' +
         'Developer does that (python-docx). If you hand this off, the role id for Developer is ' +
