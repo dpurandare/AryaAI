@@ -441,35 +441,52 @@ retired by Microsoft in Sept 2025 and ships no `sqlcmd`, so it isn't used here. 
 Docker runs the amd64 image under emulation, so first start is slower than on Intel.
 
 ```bash
+setopt interactive_comments 2>/dev/null
 SA_PW='YourStrong!Passw0rd1'
 nwsql() { docker exec nwndsqldbcont /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P "$SA_PW" -C "$@"; }
 
-# start SQL Server 2022, amd64 only image, emulated on Apple Silicon
-docker run --platform linux/amd64 -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$SA_PW" \
-  -p 1433:1433 -d --name nwndsqldbcont mcr.microsoft.com/mssql/server:2022-latest
+nwndsetup() {
+  # remove any earlier container of this name so the script can be re-run
+  docker rm -f nwndsqldbcont >/dev/null 2>&1
 
-# wait until it accepts connections, up to about 2 minutes
-for i in $(seq 1 60); do
-  nwsql -Q "SELECT 1" >/dev/null 2>&1 && break
-  sleep 2
-done
+  # SQL Server 2022 CU27, pinned, amd64 only image, emulated on Apple Silicon
+  docker run --platform linux/amd64 -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$SA_PW" \
+    -p 1433:1433 -d --name nwndsqldbcont mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04 || { echo "ERROR: could not start the container. Is Docker running and is port 1433 free?"; return 1; }
 
-# fetch the stock Microsoft Northwind script, copy it in, create the DB, seed it
-curl -fsSL -o /tmp/instnwnd.sql https://raw.githubusercontent.com/microsoft/sql-server-samples/master/samples/databases/northwind-pubs/instnwnd.sql
-docker cp /tmp/instnwnd.sql nwndsqldbcont:/tmp/instnwnd.sql
-nwsql -Q "CREATE DATABASE Northwind"
-nwsql -d Northwind -i /tmp/instnwnd.sql
+  # wait until it accepts connections, up to about 3 minutes
+  local ready=0
+  for i in $(seq 1 90); do
+    if nwsql -Q "SELECT 1" >/dev/null 2>&1; then ready=1; break; fi
+    sleep 2
+  done
+  [ "$ready" = 1 ] || { echo "ERROR: SQL Server did not become ready in 3 minutes. Check: docker logs nwndsqldbcont"; return 1; }
+
+  # fetch the stock Microsoft Northwind script, copy it in, create the DB, seed it
+  curl -fsSL -o /tmp/instnwnd.sql https://raw.githubusercontent.com/microsoft/sql-server-samples/master/samples/databases/northwind-pubs/instnwnd.sql || { echo "ERROR: could not download instnwnd.sql"; return 1; }
+  docker cp /tmp/instnwnd.sql nwndsqldbcont:/tmp/instnwnd.sql || return 1
+  nwsql -b -Q "CREATE DATABASE Northwind" || return 1
+  nwsql -b -d Northwind -i /tmp/instnwnd.sql || return 1
+
+  # prove it worked
+  echo "Northwind customers: $(nwsql -d Northwind -h -1 -W -Q 'SET NOCOUNT ON; SELECT COUNT(*) FROM Customers' | tr -d '[:space:]') - expected 91"
+}
+nwndsetup
 ```
 
-Check it: `nwsql -d Northwind -Q "SELECT COUNT(*) FROM Customers"` should print **91** (the `nwsql` helper is defined in the
-first two lines above, so run those in the same shell first). The script is written to paste into zsh, macOS's default shell:
-zsh does not word-split an unquoted `$VAR` the way bash does (an earlier version of this script used one and failed with
-`no such file or directory`), and it reads `#` comments containing parentheses as commands when pasted interactively — so the
-helper is a function and the comments avoid `(`, `)` and apostrophes. Use the same container name/port as above, so remove any earlier one first:
-`docker rm -f nwndsqldbcont`. Then continue at 13.2.1's table below — steps 13.2.2–13.2.5 are identical (host `localhost`,
-port `1433`, database `Northwind`, user `sa`, password = `SA_PW`).
+The script prints `Northwind customers: 91 - expected 91` when it worked (the `nwsql` helper it defines also stays
+available in your shell, for example `nwsql -d Northwind -Q "SELECT COUNT(*) FROM Customers"`). Then continue at 13.2.1's table
+below — steps 13.2.2–13.2.5 are identical (host `localhost`, port `1433`, database `Northwind`, user `sa`, password = `SA_PW`).
 
-**Verified live** (Apple Silicon Mac, Docker Desktop 29.7.2, 2026-10-05, run through `zsh -i`): the script above ran start to finish with no errors;
+**Re-runnable and pinned.** It removes any earlier `nwndsqldbcont` first (so running it again rebuilds from scratch, and the
+old container's data is gone), uses the pinned image `2022-CU27-ubuntu-22.04` instead of a floating `latest`, and stops with a
+plain `ERROR:` line if the container cannot start (Docker not running, port 1433 taken), SQL Server is not ready after 3
+minutes, or the download fails — instead of carrying on and failing later with unrelated errors. It is written to paste into
+zsh, macOS's default shell: zsh does not word-split an unquoted `$VAR` the way bash does (an earlier version used one and
+failed with `no such file or directory`), and it only treats `#` as a comment when `interactive_comments` is on, which the first
+line turns on; the comments also avoid parentheses and apostrophes. `exit` is never used, because pasted into a terminal it
+would close the window — the work lives in a function that uses `return`.
+
+**Verified live** (Apple Silicon Mac, Docker Desktop 29.7.2, 2026-10-05 and again 2026-10-06, run through `zsh -i`, including a first pull of the pinned tag, a re-run on top of an existing container, a port conflict and a bad download URL): the script above ran start to finish with no errors;
 `Northwind` has **13** base tables and `Customers` has **91** rows, and port 1433 is reachable from the host (what Sachivji's
 `mssql-driver.ts` connects to). The Sachivji connection steps (13.2.2–13.2.5) were not re-run against this container.
 
