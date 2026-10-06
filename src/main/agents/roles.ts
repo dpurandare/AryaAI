@@ -177,9 +177,12 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'is available for what you need, say so plainly rather than guessing. If you are filling a ' +
         'gap another step already reported as incomplete and the web also only partly closes it, end ' +
         'with `[handoff: incomplete]` and exactly what is still missing — same reasoning as ' +
-        '`no_information`, judged from the real content you found, not from a search call having run.',
+        '`no_information`, judged from the real content you found, not from a search call having run. ' +
+        'For a picture: web_search images:true or parse_html (lists a page\'s images and its main one), then ' +
+        'download_image an exact URL from those, never an invented one; a team-page photo may be a placeholder. ' +
+        'Never give a reason for a failure you did not observe.',
       get tools() {
-        return pickTools(registry, ['web_search', 'parse_html'])
+        return pickTools(registry, ['web_search', 'parse_html', 'download_image'])
       }
     },
     {
@@ -208,7 +211,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'You are the Developer specialist for Sachivji. Read, write, and organize files inside the ' +
         'user\'s workspace to implement the requested change, and run them — you have a shell, so a ' +
         'script you write is a script you can run and check. Always explain what you changed and why. ' +
-        'Never state a value from an image or scan you could not actually read — say it could not be read. ' +
+        'Never state a value from an image or scan you could not actually read — say it could not be read — and never give a reason for a failure you did not observe. ' +
         'Never hand a script back for the user or another agent to run, and never report a task as ' +
         'done because you wrote code that *would* produce the result if run: run it, then confirm the ' +
         'output actually exists (list the directory or read the file back). To run Python, use ' +

@@ -263,4 +263,35 @@ describe('parse_html', () => {
       expect(result).toContain('A Real Listing Page')
     })
   })
+
+  describe('page images', () => {
+    const TEAM_HTML = `<html><body>
+      <div class="team"><div class="card"><img src="/wp-content/team-4.png" alt=""><div class="bio"><h2>Vinod Himatsinghani</h2><h5>Founder</h5></div></div>
+      <div class="card"><img data-src="https://cdn.example.com/a.jpg" alt="Deepak Chandwani"><h2>Deepak Chandwani</h2></div></div>
+      <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="inline">
+      <img src="/pixel.gif" width="1" height="1">
+      <img src="/wp-content/team-4.png" alt="duplicate">
+    </body></html>`
+
+    it('lists a page\'s real images with alt and nearby text, skipping data URIs, tiny pixels and duplicates — even from sections Readability drops', async () => {
+      const out = String(await parseHtmlTool.execute({ text: TEAM_HTML }, ctx))
+      expect(out).toContain('Images on this page')
+      expect(out).toContain('http://localhost/wp-content/team-4.png [near: Vinod Himatsinghani Founder]')
+      expect(out).toContain('https://cdn.example.com/a.jpg (alt: Deepak Chandwani)')
+      expect(out).not.toContain('data:image')
+      expect(out).not.toContain('pixel.gif')
+      expect(out.match(/team-4\.png/g)).toHaveLength(1)
+    })
+
+    it("lists the page's own declared main image (og:image) first — often the only real photo on a page whose img tags are filled in by script", async () => {
+      const html = '<html><head><meta property="og:image" content="https://cdn.example.com/og/profile.jpg"></head><body><h1>Someone</h1><div id="app"></div></body></html>'
+      const out = String(await parseHtmlTool.execute({ text: html }, ctx))
+      expect(out).toContain("- https://cdn.example.com/og/profile.jpg [near: the page's own main image (og:image)]")
+    })
+
+    it('says nothing about images when a page has none', async () => {
+      const out = String(await parseHtmlTool.execute({ text: ARTICLE_HTML }, ctx))
+      expect(out).not.toContain('Images on this page')
+    })
+  })
 })

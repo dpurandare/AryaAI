@@ -10,6 +10,7 @@ import { ToolRegistry } from '../tools/registry'
 import { readFileTool, listDirectoryTool, writeFileTool } from '../tools/file-ops'
 import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from '../tools/deck'
 import { officeReadDocumentTool } from '../tools/office-docs/read'
+import { downloadImageTool } from '../tools/download-image'
 import { showMediaTool } from '../tools/show-media'
 import type { Tool, ToolContext } from '../tools/types'
 import { createAgents } from './roles'
@@ -3376,6 +3377,32 @@ describe('Orchestrator (integration, mocked provider)', () => {
         (e) => e.kind === 'message' && e.role === 'user' && e.content.some((c) => c.type === 'image')
       )
       expect(persistedResultMessage).toBeDefined()
+    })
+
+    it('download_image\'s result is displayed too, not stored as raw base64 text — and the model is told it has not seen the picture (found live: the photo never appeared)', async () => {
+      const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c626001000000050001fce34d970000000049454e44ae426082', 'hex')
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(png, { status: 200 })))
+      try {
+        const registry = buildRegistry()
+        registry.register(downloadImageTool)
+        const agents = createAgents(registry)
+        const provider = new MockProvider([
+          { toolCalls: [{ id: 'call_dl', name: 'download_image', input: { url: 'https://img.test/p.png', name: 'p' } }], stopReason: 'tool_use' },
+          { text: 'Done.', stopReason: 'end_turn' }
+        ])
+        const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false })
+        const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'get the picture' }] }])
+        const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+        const image = streamEvents.find((e) => e.type === 'image') as { path: string; dataBase64: string } | undefined
+        expect(image?.path).toBe('resources/p.png')
+        expect(image?.dataBase64).toBe(png.toString('base64'))
+        const result = (streamEvents.find((e) => e.type === 'tool_result') as { content: string }).content
+        expect(result).toMatch(/^Displayed resources\/p\.png to the user\. You have not seen the image/)
+        expect(result).not.toContain('dataBase64')
+        expect(result.length).toBeLessThan(400)
+      } finally {
+        vi.unstubAllGlobals()
+      }
     })
 
     it('a genuinely failed show_media call (unsupported file type) surfaces as an ordinary tool error, no image block emitted', async () => {

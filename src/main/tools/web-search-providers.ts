@@ -16,6 +16,8 @@
 export interface WebSearchOptions {
   topic: 'general' | 'news'
   limit: number
+  /** Also return image results where the provider can (Tavily). */
+  images?: boolean
 }
 
 export interface WebSearchProviderDescriptor {
@@ -42,6 +44,7 @@ export class WebSearchProviderRegistry {
 }
 
 const TAVILY_TIMEOUT_MS = 20_000
+const MAX_IMAGE_RESULTS = 8
 const DEFAULT_LIMIT = 5
 const MAX_LIMIT = 10
 
@@ -54,6 +57,7 @@ interface TavilyResult {
 
 interface TavilyResponse {
   results?: TavilyResult[]
+  images?: Array<string | { url?: string; description?: string }>
 }
 
 /**
@@ -75,7 +79,7 @@ async function searchTavily(apiKey: string | undefined, query: string, options: 
     const response = await fetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ query, max_results: limit, topic: options.topic }),
+      body: JSON.stringify({ query, max_results: limit, topic: options.topic, ...(options.images ? { include_images: true, include_image_descriptions: true } : {}) }),
       signal: controller.signal
     })
     if (!response.ok) {
@@ -86,11 +90,14 @@ async function searchTavily(apiKey: string | undefined, query: string, options: 
     }
     const data = (await response.json()) as TavilyResponse
     const results = data.results ?? []
-    if (!results.length) return '(no results found for this query)'
-    return results
+    const images = (data.images ?? []).map((i) => (typeof i === 'string' ? { url: i } : i)).filter((i) => i.url).slice(0, MAX_IMAGE_RESULTS)
+    if (!results.length && !images.length) return '(no results found for this query)'
+    const text = results
       .filter((r) => r.title && r.url)
       .map((r) => `- ${r.title}: ${r.url}${r.published_date ? ` (${r.published_date})` : ''}\n  ${r.content ?? ''}`.trimEnd())
       .join('\n')
+    if (!images.length) return text
+    return `${text}\n\nImage results (download_image saves one; the description is only a caption, not proof of who is shown):\n${images.map((i) => `- ${i.url}${i.description ? ` (${i.description.slice(0, 100)})` : ''}`).join('\n')}`
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`Tavily search timed out after ${TAVILY_TIMEOUT_MS}ms.`)

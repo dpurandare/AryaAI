@@ -191,6 +191,27 @@ describe('web_search', () => {
       expect(body.topic).toBe('general')
     })
 
+    it('asks Tavily for images when images:true and lists them with their captions', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ results: [{ title: 'Bio', url: 'https://example.com/bio', content: 'text' }], images: [{ url: 'https://cdn.example.com/a.jpg', description: 'A portrait' }, 'https://cdn.example.com/b.png'] }), { status: 200 })
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      const out = await webSearchTool.execute({ query: 'someone', images: true }, ctx)
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+      expect(body.include_images).toBe(true)
+      expect(body.include_image_descriptions).toBe(true)
+      expect(out).toContain('Image results')
+      expect(out).toContain('- https://cdn.example.com/a.jpg (A portrait)')
+      expect(out).toContain('- https://cdn.example.com/b.png')
+    })
+
+    it('does not ask for images unless told to', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [] }), { status: 200 }))
+      vi.stubGlobal('fetch', fetchMock)
+      await webSearchTool.execute({ query: 'x' }, ctx)
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).include_images).toBeUndefined()
+    })
+
     it('passes topic: news through when requested — matters for the exact "latest on X" queries that kept failing', async () => {
       const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [] }), { status: 200 }))
       vi.stubGlobal('fetch', fetchMock)

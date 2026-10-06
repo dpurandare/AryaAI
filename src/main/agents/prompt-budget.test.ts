@@ -115,17 +115,21 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 // intro line) — role:document-creator 2290 -> 2310. Deliberate.
 // Never state a value from an image/scan that could not be read (found live: an invented passport expiry date) —
 // routerPrompt 1390 -> 1440, role:coding 2810 -> 2830. Deliberate.
+// download_image + parse_html image listing + "never give a reason you did not observe" (found live: a photo could
+// not be fetched and the model blamed login walls it never tested) — routerPrompt 1440 -> 1460, role:research
+// 1350 -> 1530, parse_html 330 -> 335; web_search gains images:true (router core 810 -> 850), role:research -> 1580.
+// Deliberate.
 const CEILINGS = {
   // TASKS.md #178: the final-synthesis prompt now requires explicit disclosure when a plan step ended
   // PARTIAL INFORMATION, not just NEEDS INPUT/OUT OF SCOPE/FAILED — 1230 -> 1278. Deliberate, not drift.
-  routerPrompt: 1440,
+  routerPrompt: 1460,
   // TASKS.md #172 (continued again): db_execute_sql's description reworded to describe the large-result
   // file-export behavior (writes to a file instead of "gets truncated") — 9970 -> 9983. Deliberate, not drift.
-  routerToolSchemas: 10110,
-  routerBare: 11550,
-  slimRouterToolSchemas: 2130,
-  slimRouterBare: 3560,
-  routerCore: 810,
+  routerToolSchemas: 10290,
+  routerBare: 11750,
+  slimRouterToolSchemas: 2160,
+  slimRouterBare: 3620,
+  routerCore: 850,
   // TASKS.md #179: the planning prompt's compound-step rule now explicitly says not to plan an MCP
   // Operator step AND a Research/web step for one domain-knowledge question up front (found live — a
   // pure definitional question got both, and web ran right after the wiki already gave a complete
@@ -134,13 +138,13 @@ const CEILINGS = {
   'role:planning': 65,
   // TASKS.md #178: Research can now also report `[handoff: incomplete]` when filling an MCP gap only
   // partly closes it — 1340 -> 1345. Deliberate.
-  'role:research': 1350,
+  'role:research': 1580,
   'role:history-analyst': 520,
   // TASKS.md #176/#177: found live retesting #172/#173/#175's fixes end-to-end — the resulting chart
   // compared a turbine's real data against... its own real data again (never recognized a real
   // `theoretical_power_kw` reference column already in the schema), plotted as a meaningless zigzag
   // (unsorted real data drawn as a line). role:coding 2760 -> 2801, role:data 2640 -> 2737. Deliberate.
-  'role:coding': 2830,
+  'role:coding': 2840,
   'role:data': 2740,
   'role:data-processor': 2070,
   'role:document-creator': 2310,
@@ -240,7 +244,7 @@ const TOOL_CEILINGS: Record<string, number> = {
   api_call: 360,
   db_create_connection: 350,
   mcp_create_connection: 340,
-  parse_html: 330
+  parse_html: 335
 }
 
 describe('per-tool schema budget', () => {
@@ -266,6 +270,6 @@ describe('per-tool schema budget', () => {
     // (file-export behavior for a large result; read handoff files via real file I/O) — 8900 -> 8942
     // measured. Deliberate growth, not drift.
     const total = registry.list().reduce((n, t) => n + tokensFor(t), 0)
-    expect(total).toBeLessThanOrEqual(9070)
+    expect(total).toBeLessThanOrEqual(9250)
   })
 })

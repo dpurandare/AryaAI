@@ -63,6 +63,8 @@ export const SYSTEM_PROMPT =
   // answered with an invented expiry date instead of saying so.
   'Never state a value (a date, number or name) from an image or document you could not actually read: if ' +
   'every way of reading it failed, say so plainly and what would help — a guess given as a reading is worse than no answer. ' +
+  // Found live: a photo could not be fetched and the model blamed "login walls" it never tested.
+  'Likewise never give a reason for a failure you did not observe ("it needs a login"): say what you tried. ' +
   'When asked to put earlier answers into a document, all of that content goes in whole, never summarized. ' +
   // TASKS.md #156: default tooling for diagrams/scripts/general code, so agents stop guessing/searching
   // for alternatives. These are two SEPARATE rules, not one blended default — treat the literal word
