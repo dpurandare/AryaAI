@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RuntimeState } from '@shared/runtime'
 import { WorkspaceGuard } from '../security/workspace-guard'
-import { pythonRunTool } from './python-run'
+import { PRESENTATION_BY_SCRIPT_MESSAGE, createsPresentation, pythonRunTool } from './python-run'
 import type { ToolContext } from './types'
 
 const isWindows = process.platform === 'win32'
@@ -139,6 +139,23 @@ describe('python_run', () => {
       expect(none).toMatch(/Files created or changed by this run: none\. If you expected output/)
     })
 
+    runIt('files a bulk of loose root-level outputs away (images to resources/, the rest to tmp/) and reports the new paths — but leaves one or two requested outputs where the script wrote them', async () => {
+      await installVenv()
+      const few = await pythonRunTool.execute({ code: 'open("answer.json","w").write("{}")\nopen("note.txt","w").write("x")' }, ctx)
+      expect(few).toContain('Files created or changed by this run (found by the app): answer.json, note.txt')
+      expect(few).not.toContain('Moved')
+      expect(existsSync(join(root, 'answer.json'))).toBe(true)
+
+      const code = 'import os\nfor i in range(5):\n    open(f"page_{i}.png","w").write("x")\nopen("scratch.csv","w").write("a")\nprint(os.environ["SACHIV_TMP"])'
+      const bulk = await pythonRunTool.execute({ code }, ctx)
+      expect(bulk).toMatch(/Moved 6 file\(s\) the script left in the workspace root: page_0\.png -> resources\/page_0\.png/)
+      expect(bulk).toContain('scratch.csv -> tmp/scratch.csv')
+      expect(bulk).toContain(join(root, 'tmp')) // SACHIV_TMP points at the scratch folder
+      expect(existsSync(join(root, 'page_0.png'))).toBe(false)
+      expect(existsSync(join(root, 'resources', 'page_4.png'))).toBe(true)
+      expect(existsSync(join(root, 'tmp', 'scratch.csv'))).toBe(true)
+    })
+
     runIt('reports a failing script with its exit code and traceback (not as a tool error), so the model can fix it', async () => {
       await installVenv()
       const out = await pythonRunTool.execute({ code: 'import json\nprint(undefined_name)' }, ctx)
@@ -189,6 +206,23 @@ describe('python_run', () => {
       await writeFile(join(root, 'notes.txt'), 'x')
       await expect(pythonRunTool.execute({ script: 'notes.txt' }, ctx)).rejects.toThrow(/must be a \.py file/)
       await expect(pythonRunTool.execute({ script: 'nope.py' }, ctx)).rejects.toThrow(/Script not found/)
+    })
+  })
+
+  describe('presentations are not built by script (found live: python-pptx instead of the deck tools)', () => {
+    it('recognises code that creates a .pptx with python-pptx, and leaves other code alone — including code that only reads one', () => {
+      const create = 'from pptx import Presentation\nprs = Presentation()\nprs.save("documents/deck.pptx")'
+      expect(createsPresentation(create)).toBe(true)
+      expect(createsPresentation('import pptx\np = pptx.Presentation()\np.save(path + ".pptx")')).toBe(true)
+      expect(createsPresentation('from pptx import Presentation\nfor s in Presentation("a.pptx").slides: print(s)')).toBe(false)
+      expect(createsPresentation('import docx\ndoc.save("documents/report.docx")')).toBe(false)
+      expect(createsPresentation('print("a deck.pptx is a file")')).toBe(false)
+    })
+
+    it('refuses to run such code and points at the deck tools, before running anything', async () => {
+      const code = 'from pptx import Presentation\nPresentation().save("documents/deck.pptx")'
+      await expect(pythonRunTool.execute({ code }, ctx)).rejects.toThrow(PRESENTATION_BY_SCRIPT_MESSAGE)
+      expect(PRESENTATION_BY_SCRIPT_MESSAGE).toMatch(/pptx_start_deck.*delegate_to_page-creator.*pptx_save_deck/)
     })
   })
 })

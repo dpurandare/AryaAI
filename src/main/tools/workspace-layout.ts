@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
-import { extname, join, relative, sep } from 'node:path'
+import { mkdir, readdir, rename, rm, rmdir, stat } from 'node:fs/promises'
+import { basename, extname, join, relative, sep } from 'node:path'
 import type { WorkspaceGuard } from '../security/workspace-guard'
 
 /**
@@ -103,4 +104,74 @@ export function resolveNewFilePath(workspaceGuard: WorkspaceGuard, relPath: stri
  */
 export function workspaceRelativePath(root: string, absPath: string): string {
   return relative(root, absPath).split(sep).join('/')
+}
+
+/** Where scripts put scratch and intermediate files (page images, crops, temp data). Cleared automatically after a while — see `pruneScratchDir`. */
+export const SCRATCH_DIR = 'tmp'
+
+export interface MovedFile {
+  from: string
+  to: string
+}
+
+/**
+ * Keeps the workspace root clean after a script run. Scripts run with the workspace root as their working directory,
+ * so a bare `open('page_0.png', 'wb')` lands there — found live: one scanned-passport session left 120 loose images
+ * in the root. Every NEW file a run left directly in the root is moved by the same convention file tools already use
+ * (documents/, code/, resources/), and anything that fits none of them goes to `tmp/`. Files the script put in a
+ * folder itself, hidden files and files that already existed are never touched. A name that is taken gets a numbered
+ * suffix. Best-effort per file: a failed move leaves that file where it was.
+ *
+ * Only a BULK of loose files is tidied (`minCount`, default 4): one or two are normally the output the user asked
+ * for ("save it as data.json"), which must stay exactly where the script put it — moving those, or deleting them
+ * with the scratch folder later, would lose a deliverable. A run that scatters many files is scratch work.
+ */
+export const LOOSE_FILE_SWEEP_THRESHOLD = 4
+
+export async function tidyRootStrays(root: string, created: readonly string[], minCount = LOOSE_FILE_SWEEP_THRESHOLD): Promise<MovedFile[]> {
+  const moved: MovedFile[] = []
+  const loose = created.filter((rel) => !rel.includes('/') && !rel.includes(sep) && !rel.startsWith('.'))
+  if (loose.length < minCount) return moved
+  for (const rel of loose) {
+    const folder = classifyManagedFolder(rel) ?? SCRATCH_DIR
+    try {
+      await mkdir(join(root, folder), { recursive: true })
+      const ext = extname(rel)
+      const stem = basename(rel, ext)
+      let target = `${folder}/${rel}`
+      for (let n = 2; existsSync(join(root, target)); n++) target = `${folder}/${stem}-${n}${ext}`
+      await rename(join(root, rel), join(root, target))
+      moved.push({ from: rel, to: target })
+    } catch {
+      // leave it where it is
+    }
+  }
+  return moved
+}
+
+/** Deletes files under `tmp/` not touched for `maxAgeMs`, then any folders left empty. Best-effort; never throws. */
+export async function pruneScratchDir(root: string, maxAgeMs: number, now = Date.now()): Promise<void> {
+  async function walk(dir: string): Promise<void> {
+    let names: string[]
+    try {
+      names = await readdir(dir)
+    } catch {
+      return
+    }
+    for (const name of names) {
+      const full = join(dir, name)
+      try {
+        const info = await stat(full)
+        if (info.isDirectory()) {
+          await walk(full)
+          await rmdir(full).catch(() => undefined) // only succeeds when empty
+        } else if (now - info.mtimeMs > maxAgeMs) {
+          await rm(full, { force: true })
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+  await walk(join(root, SCRATCH_DIR))
 }

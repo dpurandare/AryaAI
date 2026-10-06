@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { WORKSPACE_VENV_DIR, withWorkspaceVenv, workspaceVenvBinDir } from './python-env'
 import { diffSnapshots, snapshotWorkspace } from './workspace-snapshot'
+import { SCRATCH_DIR, tidyRootStrays } from './workspace-layout'
 import type { Tool, ToolContext } from './types'
 
 /**
@@ -62,6 +63,17 @@ function resolveInterpreter(ctx: ToolContext): { python: string } | { error: str
   return { python: path.join(bin, process.platform === 'win32' ? 'python.exe' : 'python') }
 }
 
+/** python-pptx (or similar) used to CREATE a .pptx: imports the library and saves a .pptx. Reading a presentation with it is fine. */
+export function createsPresentation(source: string): boolean {
+  return /\b(?:from|import)\s+pptx\b/.test(source) && /\.save\s*\(/.test(source) && /\.pptx\b/i.test(source)
+}
+
+export const PRESENTATION_BY_SCRIPT_MESSAGE =
+  'A presentation is not built with a script: use the deck tools — pptx_start_deck, then for each slide pptx_add_slide and ' +
+  'delegate_to_page-creator with a brief for that slide (put any picture, already saved with download_image, in the brief by its ' +
+  'resources/ path), then pptx_save_deck once. The deck tools support fonts (fontFace), slide background colours, images, ' +
+  'shapes, charts and tables.'
+
 export const pythonRunTool: Tool = {
   name: 'python_run',
   description:
@@ -96,6 +108,11 @@ export const pythonRunTool: Tool = {
     const args = Array.isArray(input.args) ? input.args.map(String) : []
     const timeoutS = Math.min(Math.max(Number(input.timeoutSeconds) || DEFAULT_TIMEOUT_S, 1), MAX_TIMEOUT_S)
 
+    {
+      const source = hasScript ? await readFile(ctx.workspaceGuard.assertWithinWorkspace(String(input.script)), 'utf-8').catch(() => '') : String(input.code)
+      if (createsPresentation(source)) throw new Error(PRESENTATION_BY_SCRIPT_MESSAGE)
+    }
+
     const interpreter = resolveInterpreter(ctx)
     if ('error' in interpreter) throw new Error(interpreter.error)
 
@@ -122,6 +139,10 @@ export const pythonRunTool: Tool = {
     env.MPLBACKEND ??= 'Agg'
     env.PYTHONUNBUFFERED = '1'
     env.PYTHONIOENCODING = 'utf-8'
+    // Where scratch and intermediate files belong (auto-cleared); scripts can read it instead of hard-coding a path.
+    const scratchDir = path.join(root, SCRATCH_DIR)
+    await mkdir(scratchDir, { recursive: true })
+    env.SACHIV_TMP = scratchDir
 
     const before = await snapshotWorkspace(root)
     const outcome = await new Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }>((resolvePromise, reject) => {
@@ -142,6 +163,12 @@ export const pythonRunTool: Tool = {
       )
     })
     const diff = diffSnapshots(before, await snapshotWorkspace(root))
+    // A bulk of loose new files in the workspace root is filed away (see tidyRootStrays); report their new locations.
+    const moved = await tidyRootStrays(root, diff.created)
+    if (moved.length) {
+      const renamed = new Map(moved.map((m) => [m.from, m.to]))
+      diff.created = diff.created.map((f) => renamed.get(f) ?? f)
+    }
 
     const parts = [outcome.timedOut ? `exit code: none — timed out after ${timeoutS}s and was stopped` : `exit code: ${outcome.code}`]
     // Found live (2026-10-01): "re-run it with `script`", with no caveat, read naturally as "reference this
@@ -151,6 +178,11 @@ export const pythonRunTool: Tool = {
     parts.push(`script: ${scriptRel}${generated ? ' (saved from `code`; to re-run it UNCHANGED, pass `script` ALONE — never together with `code`; for a fix, pass the revised source as `code` again instead)' : ''}`)
     if (outcome.stdout.trim()) parts.push(`stdout:\n${clip(outcome.stdout)}`)
     if (outcome.stderr.trim()) parts.push(`stderr:\n${clip(outcome.stderr)}`)
+    if (moved.length) {
+      parts.push(
+        `Moved ${moved.length} file(s) the script left in the workspace root: ${moved.slice(0, MAX_LISTED_FILES).map((m) => `${m.from} -> ${m.to}`).join(', ')}${moved.length > MAX_LISTED_FILES ? ', ...' : ''}. Use the new paths — and put scratch files in tmp/ (env SACHIV_TMP) next time.`
+      )
+    }
     // The generated script itself is not a result of the run.
     const produced = [...diff.created, ...diff.modified].filter((f) => !(generated && f === scriptRel))
     if (produced.length) {
