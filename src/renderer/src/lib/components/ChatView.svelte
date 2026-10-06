@@ -318,7 +318,9 @@ import { formatToolInputForDisplay } from '../tool-input-display'
       render something regardless of toolDisplayMode). */
   function messageHasVisibleContent(message: DisplayMessage): boolean {
     if (message.stepNote) return toolDisplayMode !== 'hidden'
-    if (message.plan || message.pending) return true
+    if (message.pending) return true
+    // The live plan checklist is tool-level detail like a tool call: Tool output "hidden" hides it too.
+    if (message.plan && toolDisplayMode !== 'hidden') return true
     return message.segments.some((segment) =>
       segment.kind === 'tool' && segment.toolCall
         ? toolDisplayMode !== 'hidden' || Boolean(segment.toolCall.image)
@@ -422,7 +424,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
             </button>
           {/if}
         {/if}
-        {#if message.plan}
+        {#if message.plan && toolDisplayMode !== 'hidden'}
           <div class="plan-checklist">
             {#each message.plan.steps as step, i (i)}
               {@const status = message.plan.stepStatus[i]}
