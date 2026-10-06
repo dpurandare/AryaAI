@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { Tool } from './types'
+import type { Tool, ToolContext } from './types'
 import { checkUrlAllowed, recordKnownUrl } from './data-formats/link-registry'
 import { FETCH_USER_AGENT } from './data-formats/source'
 import { SHOW_MEDIA_MARKER, type ShowMediaPayload } from './show-media'
@@ -41,78 +41,104 @@ function safeBaseName(url: URL, hint: unknown): string {
   return cleaned || 'image'
 }
 
+interface Downloaded {
+  saved: string
+  bytes: Uint8Array
+  ext: 'png' | 'jpg' | 'gif' | 'webp' | 'svg'
+}
+
+async function downloadOne(urlText: string, nameHint: unknown, ctx: ToolContext): Promise<Downloaded> {
+  let url: URL
+  try {
+    url = new URL(urlText)
+  } catch {
+    throw new Error(`"${urlText}" is not a valid URL.`)
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Only http and https image URLs can be downloaded.')
+  if (isPrivateHost(url.hostname)) throw new Error('That address is on this machine or a private network; only public web images can be downloaded.')
+  const check = checkUrlAllowed(ctx.currentSessionId, urlText)
+  if (!check.allowed) throw new Error(check.reason)
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  let bytes: Uint8Array
+  try {
+    const response = await fetch(url, { signal: controller.signal, redirect: 'follow', headers: { 'User-Agent': FETCH_USER_AGENT, Accept: 'image/*' } })
+    if (!response.ok) {
+      const wikimedia = response.status === 400 && /(^|\.)wikimedia\.org$/i.test(url.hostname)
+      throw new Error(
+        `Downloading ${urlText} failed: ${response.status} ${response.statusText}` +
+          (wikimedia ? ' — Wikimedia serves only fixed thumbnail widths; take the exact image URL from the file page via parse_html instead of changing the number in it.' : '')
+      )
+    }
+    if (isPrivateHost(new URL(response.url || urlText).hostname)) throw new Error('The image URL redirected to a private address; refused.')
+    const declared = Number(response.headers.get('content-length') ?? 0)
+    if (declared > MAX_DOWNLOAD_IMAGE_BYTES) throw new Error(`The image is ${declared} bytes, over the ${MAX_DOWNLOAD_IMAGE_BYTES}-byte limit — pick a smaller version of it (a thumbnail or lower resolution) from the page.`)
+    bytes = new Uint8Array(await response.arrayBuffer())
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw new Error(`Downloading ${urlText} timed out after ${FETCH_TIMEOUT_MS / 1000}s.`)
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+  if (bytes.byteLength > MAX_DOWNLOAD_IMAGE_BYTES) throw new Error(`The image is ${bytes.byteLength} bytes, over the ${MAX_DOWNLOAD_IMAGE_BYTES}-byte limit — pick a smaller version of it (a thumbnail or lower resolution) from the page.`)
+  const ext = sniffImageExtension(bytes)
+  if (!ext) throw new Error('That URL did not return a PNG, JPEG, GIF, WebP or SVG image (it may be a web page or need a login).')
+
+  const base = safeBaseName(url, nameHint)
+  let rel = `resources/${base}.${ext}`
+  for (let n = 2; existsSync(resolveNewFilePath(ctx.workspaceGuard, rel)); n++) rel = `resources/${base}-${n}.${ext}`
+  const abs = resolveNewFilePath(ctx.workspaceGuard, rel)
+  await mkdir(dirname(abs), { recursive: true })
+  await writeFile(abs, bytes)
+  recordKnownUrl(ctx.currentSessionId, urlText)
+  return { saved: workspaceRelativePath(ctx.workspaceGuard.root, abs), bytes, ext }
+}
+
+const MAX_BATCH = 12
+
 export const downloadImageTool: Tool = {
   name: 'download_image',
   description:
-    'Download one web image (PNG/JPEG/GIF/WebP/SVG, up to 5 MB) from a URL listed by parse_html or given by the user, ' +
-    'save it to resources/ and show it to the user. You cannot see it: never say who or what it shows.',
+    'Download web images (PNG/JPEG/GIF/WebP/SVG, up to 5 MB each) from URLs listed by parse_html, find_stock_images or the user, and save them ' +
+    'to resources/. One url is shown to the user; images:[{url,name}] saves up to 12 at once, quietly (for a deck). You cannot see them: never say who or what one shows.',
   inputSchema: {
     type: 'object',
     properties: {
-      url: { type: 'string', description: 'http(s) URL of the image' },
-      name: { type: 'string', description: 'Optional file name to save as, without extension' }
-    },
-    required: ['url']
+      url: { type: 'string', description: 'http(s) URL of one image' },
+      name: { type: 'string', description: 'Optional file name to save as, without extension' },
+      images: { type: 'array', items: { type: 'object', properties: { url: { type: 'string' }, name: { type: 'string' } } }, description: 'Several images at once' }
+    }
   },
   mutates: true,
   describe(input) {
+    if (Array.isArray(input.images)) return `Download ${input.images.length} images`
     return `Download image ${String(input.url ?? '')}`
   },
   async execute(input, ctx) {
-    const urlText = String(input.url ?? '').trim()
-    let url: URL
-    try {
-      url = new URL(urlText)
-    } catch {
-      throw new Error(`"${urlText}" is not a valid URL.`)
-    }
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Only http and https image URLs can be downloaded.')
-    if (isPrivateHost(url.hostname)) throw new Error('That address is on this machine or a private network; only public web images can be downloaded.')
-    const check = checkUrlAllowed(ctx.currentSessionId, urlText)
-    if (!check.allowed) throw new Error(check.reason)
-
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-    let bytes: Uint8Array
-    try {
-      const response = await fetch(url, { signal: controller.signal, redirect: 'follow', headers: { 'User-Agent': FETCH_USER_AGENT, Accept: 'image/*' } })
-      if (!response.ok) {
-        const wikimedia = response.status === 400 && /(^|\.)wikimedia\.org$/i.test(url.hostname)
-        throw new Error(
-          `Downloading ${urlText} failed: ${response.status} ${response.statusText}` +
-            (wikimedia ? ' — Wikimedia serves only fixed thumbnail widths; take the exact image URL from the file page via parse_html instead of changing the number in it.' : '')
-        )
+    if (Array.isArray(input.images) && input.images.length > 0) {
+      const items = (input.images as Array<{ url?: unknown; name?: unknown }>).slice(0, MAX_BATCH)
+      const lines: string[] = []
+      for (const item of items) {
+        const urlText = String(item?.url ?? '').trim()
+        try {
+          const done = await downloadOne(urlText, item?.name, ctx)
+          lines.push(`- saved ${done.saved} (${Math.round(done.bytes.byteLength / 1024)} KB)`)
+        } catch (err) {
+          lines.push(`- FAILED ${urlText}: ${err instanceof Error ? err.message : String(err)}`)
+        }
       }
-      if (isPrivateHost(new URL(response.url || urlText).hostname)) throw new Error('The image URL redirected to a private address; refused.')
-      const declared = Number(response.headers.get('content-length') ?? 0)
-      if (declared > MAX_DOWNLOAD_IMAGE_BYTES) throw new Error(`The image is ${declared} bytes, over the ${MAX_DOWNLOAD_IMAGE_BYTES}-byte limit — pick a smaller version of it (a thumbnail or lower resolution) from the page.`)
-      bytes = new Uint8Array(await response.arrayBuffer())
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') throw new Error(`Downloading ${urlText} timed out after ${FETCH_TIMEOUT_MS / 1000}s.`)
-      throw err
-    } finally {
-      clearTimeout(timer)
+      return `${lines.filter((l) => l.startsWith('- saved')).length} of ${items.length} images saved:\n${lines.join('\n')}`
     }
-    if (bytes.byteLength > MAX_DOWNLOAD_IMAGE_BYTES) throw new Error(`The image is ${bytes.byteLength} bytes, over the ${MAX_DOWNLOAD_IMAGE_BYTES}-byte limit — pick a smaller version of it (a thumbnail or lower resolution) from the page.`)
-    const ext = sniffImageExtension(bytes)
-    if (!ext) throw new Error('That URL did not return a PNG, JPEG, GIF, WebP or SVG image (it may be a web page or need a login).')
-
-    const base = safeBaseName(url, input.name)
-    let rel = `resources/${base}.${ext}`
-    for (let n = 2; existsSync(resolveNewFilePath(ctx.workspaceGuard, rel)); n++) rel = `resources/${base}-${n}.${ext}`
-    const abs = resolveNewFilePath(ctx.workspaceGuard, rel)
-    await mkdir(dirname(abs), { recursive: true })
-    await writeFile(abs, bytes)
-    recordKnownUrl(ctx.currentSessionId, urlText)
-    const saved = workspaceRelativePath(ctx.workspaceGuard.root, abs)
-    const mimeType = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' }[ext]
+    const done = await downloadOne(String(input.url ?? '').trim(), input.name, ctx)
+    const mimeType = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' }[done.ext]
     // Same payload show_media returns: the orchestrator turns it into a display-only image block for the user and tells
     // the model only "Displayed … to the user".
     const payload: ShowMediaPayload = {
       [SHOW_MEDIA_MARKER]: true,
-      path: saved,
+      path: done.saved,
       mimeType,
-      dataBase64: Buffer.from(bytes).toString('base64'),
+      dataBase64: Buffer.from(done.bytes).toString('base64'),
       note: 'You have not seen the image: do not say who or what it shows, and do not call it official or genuine. If it came from a team or template page, say it may be a placeholder.'
     }
     return JSON.stringify(payload)

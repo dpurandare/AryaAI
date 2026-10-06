@@ -111,4 +111,21 @@ describe('download_image', () => {
     const payload = JSON.parse(String(await downloadImageTool.execute({ url: 'https://example.com/p.png' }, ctx)))
     expect(payload.note).toMatch(/not seen the image.*placeholder/)
   })
+
+  it('saves several images in one call without displaying any, and reports each failure without losing the others', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: URL | string) => (String(url).includes('bad') ? new Response('nope', { status: 404 }) : new Response(Buffer.from(PNG), { status: 200 }))))
+    const out = String(
+      await downloadImageTool.execute(
+        { images: [{ url: 'https://one.test/a.png', name: 'first' }, { url: 'https://two.test/bad.png', name: 'second' }, { url: 'https://three.test/c.png', name: 'third' }] },
+        ctx
+      )
+    )
+    expect(out).toContain('2 of 3 images saved')
+    expect(out).toContain('- saved resources/first.png')
+    expect(out).toMatch(/- FAILED https:\/\/two\.test\/bad\.png: .*404/)
+    expect(out).toContain('- saved resources/third.png')
+    expect(out).not.toContain('__sachivShowMedia') // quiet: nothing is shown in the chat
+    expect(existsSync(join(root, 'resources', 'first.png'))).toBe(true)
+    expect(downloadImageTool.describe?.({ images: [{}, {}, {}] })).toBe('Download 3 images')
+  })
 })

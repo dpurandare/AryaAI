@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WorkspaceGuard } from '../../security/workspace-guard'
 import { officeReadDocumentTool } from '../office-docs/read'
 import type { ToolContext } from '../types'
+import { normalizeElement } from './elements'
 import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from './index'
 
 // Smallest possible valid PNG (1x1, transparent) — real bytes, for tests that
@@ -69,7 +70,7 @@ describe('deck tools (#78)', () => {
             w: 5,
             h: 3
           },
-          { type: 'table', rows: [['Name', 'Total'], ['Ada', '150']], x: 0.5, y: 4, w: 4, h: 2 }
+          { type: 'table', rows: [['Name', 'Total'], ['Ada', '150']], x: 0.5, y: 3.6, w: 4, h: 1.8 }
         ]
       },
       ctx
@@ -246,5 +247,180 @@ describe('deck tools (#78)', () => {
     await expect(pptxStartDeckTool.execute({}, { workspaceGuard: ctx.workspaceGuard, currentSessionId: 't' })).rejects.toThrow(
       'Deck tools are unavailable in this context.'
     )
+  })
+
+  describe('line breaks and what is reported back (found live: literal \\n in a slide, and invented content)', () => {
+    it('turns a literal backslash-n (an escape escaped twice) into a real line break in text and table cells, so no "\\n" shows on the slide', async () => {
+      const deckId = /"([^"]+)"/.exec(await pptxStartDeckTool.execute({}, ctx))?.[1]
+      await pptxAddSlideTool.execute({ deckId }, ctx)
+      await pptxComposeSlideTool.execute(
+        {
+          deckId,
+          elements: [
+            { type: 'text', text: '• First\\n• Second\\r\\n• Third', x: 0.5, y: 0.5, w: 4, h: 2 },
+            { type: 'table', rows: [['a\\nb', 'c']], x: 5, y: 0.5, w: 4, h: 1 }
+          ]
+        },
+        ctx
+      )
+      const saved = String(await pptxSaveDeckTool.execute({ deckId, path: 'breaks.pptx' }, ctx))
+      const text = String(await officeReadDocumentTool.execute({ path: saved.match(/documents\/\S+\.pptx/)?.[0] ?? '' }, ctx))
+      expect(text).toContain('First')
+      expect(text).toContain('Second')
+      expect(text).not.toContain('\\n')
+      expect(text).not.toContain('\\r')
+    })
+
+    it('quotes the text now on the slide in the compose result, so what is reported matches what is there', async () => {
+      const deckId = /"([^"]+)"/.exec(await pptxStartDeckTool.execute({}, ctx))?.[1]
+      await pptxAddSlideTool.execute({ deckId }, ctx)
+      const out = await pptxComposeSlideTool.execute(
+        { deckId, elements: [{ type: 'text', text: 'Project Aurora roadmap', x: 1, y: 1, w: 8, h: 1 }, { type: 'shape', shape: 'rect', x: 1, y: 3, w: 8, h: 0.1 }, { type: 'text', text: 'Home-energy dashboard', x: 1, y: 2, w: 8, h: 0.6 }] },
+        ctx
+      )
+      expect(out).toContain('Text on the slide: "Project Aurora roadmap" | "Home-energy dashboard".')
+    })
+  })
+
+  describe('a deck started with all its slides at once (saves a round per slide)', () => {
+    it('creates N empty slides in one call, and an unindexed compose fills the first still-empty slide in order', async () => {
+      const started = await pptxStartDeckTool.execute({ slides: 3 }, ctx)
+      expect(started).toMatch(/with 3 empty slides \(indexes 0 to 2\)/)
+      const deckId = /"([^"]+)"/.exec(started)?.[1]
+      const compose = (text: string, slideIndex?: number): Promise<string> =>
+        pptxComposeSlideTool.execute({ deckId, ...(slideIndex === undefined ? {} : { slideIndex }), elements: [{ type: 'text', text, x: 1, y: 1, w: 4, h: 1 }] }, ctx)
+      expect(await compose('first')).toContain('Composed slide 0')
+      expect(await compose('second')).toContain('Composed slide 1')
+      expect(await compose('explicit third', 2)).toContain('Composed slide 2')
+      expect(await compose('fourth, nothing empty left')).toContain('Composed slide 2') // falls back to the last slide
+    })
+
+    it('clamps the count, and a plain start still creates no slides', async () => {
+      expect(await pptxStartDeckTool.execute({ slides: 500 }, ctx)).toMatch(/with 40 empty slides/)
+      expect(await pptxStartDeckTool.execute({}, ctx)).toMatch(/^Started deck "[^"]+"\.$/)
+    })
+  })
+
+  describe('pictures and overlays (design tools for the Page Creator)', () => {
+    async function savedSlideXml(elements: Array<Record<string, unknown>>): Promise<string> {
+      const deckId = /"([^"]+)"/.exec(await pptxStartDeckTool.execute({}, ctx))?.[1]
+      await pptxAddSlideTool.execute({ deckId }, ctx)
+      await pptxComposeSlideTool.execute({ deckId, elements }, ctx)
+      const saved = String(await pptxSaveDeckTool.execute({ deckId, path: 'pic.pptx' }, ctx))
+      const { default: JSZip } = await import('jszip')
+      const zip = await JSZip.loadAsync(await (await import('node:fs/promises')).readFile(join(root, saved.match(/documents\/\S+\.pptx/)?.[0] ?? '')))
+      return zip.files['ppt/slides/slide1.xml'].async('string')
+    }
+
+    it('crops a picture to fill its box by default instead of stretching it, and can letterbox or stretch on request', async () => {
+      await writeFile(join(root, 'wide.png'), Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.from([0, 0, 7, 128, 0, 0, 3, 232]), Buffer.alloc(8)])) // 1920 x 1000
+      const cover = await savedSlideXml([{ type: 'image', path: 'wide.png', x: 0, y: 0, w: 5, h: 5 }])
+      expect(cover).toMatch(/<a:srcRect/) // cropped to a square from a 1.92:1 picture
+      const stretch = await savedSlideXml([{ type: 'image', path: 'wide.png', fit: 'stretch', x: 0, y: 0, w: 5, h: 5 }])
+      expect(stretch).not.toMatch(/<a:srcRect/)
+    })
+
+    it('draws a semi-transparent shape, so text over a photo stays readable', async () => {
+      const xml = await savedSlideXml([{ type: 'shape', shape: 'rect', fill: '000000', transparency: 45, x: 0, y: 3, w: 10, h: 2.6 }])
+      expect(xml).toMatch(/<a:alpha val="55000"\/>/)
+    })
+  })
+
+  describe('fonts and slide background (the gap that sent a model to python-pptx)', () => {
+    it('writes the requested font family, italics and slide colour into the saved file', async () => {
+      const deckId = /"([^"]+)"/.exec(await pptxStartDeckTool.execute({}, ctx))?.[1]
+      await pptxAddSlideTool.execute({ deckId }, ctx)
+      await pptxComposeSlideTool.execute(
+        { deckId, background: '0F172A', elements: [{ type: 'text', text: 'Styled', fontFace: 'Georgia', italic: true, valign: 'middle', x: 1, y: 1, w: 5, h: 1 }] },
+        ctx
+      )
+      const saved = String(await pptxSaveDeckTool.execute({ deckId, path: 'styled.pptx' }, ctx))
+      const rel = saved.match(/documents\/\S+\.pptx/)?.[0] ?? ''
+      const { default: JSZip } = await import('jszip')
+      const zip = await JSZip.loadAsync(await (await import('node:fs/promises')).readFile(join(root, rel)))
+      const xml = await zip.files['ppt/slides/slide1.xml'].async('string')
+      expect(xml).toContain('Georgia')
+      expect(xml).toMatch(/i="1"/)
+      expect(xml).toMatch(/0F172A/i)
+    })
+  })
+
+  describe('element geometry (found live: a deck whose every element piled up in the corner)', () => {
+    async function composeOne(element: Record<string, unknown>): Promise<string> {
+      const deckId = /"([^"]+)"/.exec(await pptxStartDeckTool.execute({}, ctx))?.[1]
+      await pptxAddSlideTool.execute({ deckId }, ctx)
+      return pptxComposeSlideTool.execute({ deckId, elements: [element] }, ctx)
+    }
+
+    it('reads left/top/width/height and numeric strings as x/y/w/h, and says it did', async () => {
+      const out = await composeOne({ type: 'text', text: 'Hi', left: 0.8, top: '0.8', width: 8.4, height: 1 })
+      expect(out).toContain('with 1 element(s)')
+      expect(out).toContain('1 element(s) had a missing or malformed "type"')
+    })
+
+    it('rejects an element with no position at all instead of silently defaulting it to the corner', async () => {
+      await expect(composeOne({ type: 'text', text: 'Hi', fontSize: 20 })).rejects.toThrow(/needs a numeric "x" \(x, y, w and h in inches/)
+      await expect(composeOne({ type: 'text', text: 'Hi', x: 1, y: 1, w: 3 })).rejects.toThrow(/needs a numeric "h"/)
+    })
+
+    it('rejects a zero or negative size (a flat line is the one exception) and anything running off the 10 x 5.625 in slide', async () => {
+      await expect(composeOne({ type: 'text', text: 'Hi', x: 1, y: 1, w: 3, h: 0 })).rejects.toThrow(/greater than 0/)
+      await expect(composeOne({ type: 'shape', shape: 'line', x: 1, y: 2, w: 5, h: 0 })).resolves.toContain('with 1 element(s)')
+      await expect(composeOne({ type: 'text', text: 'Hi', x: 1, y: 5, w: 3, h: 1.5 })).rejects.toThrow(/runs off the slide: a slide is 10 x 5\.625 inches/)
+      await expect(composeOne({ type: 'text', text: 'Hi', x: 8, y: 1, w: 3, h: 1 })).rejects.toThrow(/runs off the slide/)
+      await expect(composeOne({ type: 'text', text: 'Hi', x: 0.5, y: 4.4, w: 9, h: 1.2 })).resolves.toContain('with 1 element(s)')
+    })
+
+    it('a rejected element leaves the slide untouched, so a corrected retry does not duplicate anything', async () => {
+      const deckId = /"([^"]+)"/.exec(await pptxStartDeckTool.execute({}, ctx))?.[1]
+      await pptxAddSlideTool.execute({ deckId }, ctx)
+      await expect(pptxComposeSlideTool.execute({ deckId, elements: [{ type: 'text', text: 'ok', x: 1, y: 1, w: 3, h: 1 }, { type: 'text', text: 'bad', fontSize: 9 }] }, ctx)).rejects.toThrow()
+      await pptxComposeSlideTool.execute({ deckId, elements: [{ type: 'text', text: 'ok', x: 1, y: 1, w: 3, h: 1 }] }, ctx)
+      const out = String(await pptxSaveDeckTool.execute({ deckId, path: 'once.pptx' }, ctx))
+      const text = await officeReadDocumentTool.execute({ path: out.match(/documents\/\S+\.pptx/)?.[0] ?? 'documents/once.pptx' }, ctx)
+      expect(String(text).match(/ok/g)).toHaveLength(1)
+    })
+  })
+
+  describe('recovering a corrupted element type (found live: the roadmap deck loop)', () => {
+    const el = { x: 1, y: 1, w: 4, h: 1 }
+
+    it('keeps a valid type as is, recovers a valid leading word from a garbled one, and infers a missing one from the other fields', () => {
+      expect(normalizeElement({ ...el, type: 'text', text: 'a' })).toMatchObject({ corrected: false })
+      expect(normalizeElement({ ...el, type: 'text,x:1.1,y:2.55,w:0.9,h:0.4},{align:', text: 'Q1' })).toMatchObject({ corrected: true, element: { type: 'text', text: 'Q1' } })
+      expect(normalizeElement({ ...el, shape: 'roundRect', fill: 'F8FAFC' })).toMatchObject({ corrected: true, element: { type: 'shape' } })
+      expect(normalizeElement({ ...el, text: 'plain' })).toMatchObject({ corrected: true, element: { type: 'text' } })
+      expect(normalizeElement({ ...el, path: 'resources/a.png' })).toMatchObject({ element: { type: 'image' } })
+      expect(normalizeElement({ ...el, rows: [['a']] })).toMatchObject({ element: { type: 'table' } })
+      expect(normalizeElement({ ...el, chartType: 'bar', series: [] })).toMatchObject({ element: { type: 'chart' } })
+    })
+
+    it('leaves what it cannot place alone, so validation still reports the real problem', () => {
+      expect(normalizeElement({ ...el, type: '???' })).toMatchObject({ corrected: false })
+      expect(normalizeElement('nonsense')).toMatchObject({ corrected: false })
+    })
+
+    it('composes a slide from the actual garbled calls instead of failing, and says it corrected them', async () => {
+      const deckId = /"([^"]+)"/.exec(await pptxStartDeckTool.execute({}, ctx))?.[1]
+      await pptxAddSlideTool.execute({ deckId }, ctx)
+      const out = await pptxComposeSlideTool.execute(
+        {
+          deckId,
+          elements: [
+            { x: 0.8, y: 0.8, w: 8.4, h: 1.2, shape: 'roundRect', fill: 'F8FAFC', line: 'CBD5E1' },
+            { x: 0.8, y: 2.4, w: 8.4, h: 0.8, type: 'text,x:1.2,y:1.1,w:7.6,h:0.6},{fill:', text: 'Roadmap Overview', fontSize: 26 }
+          ]
+        },
+        ctx
+      )
+      expect(out).toContain('with 2 element(s)')
+      expect(out).toContain('2 element(s) had a missing or malformed "type" and were corrected')
+    })
+
+    it('still rejects an element with nothing to infer a type from, with a message that says what to do', async () => {
+      const deckId = /"([^"]+)"/.exec(await pptxStartDeckTool.execute({}, ctx))?.[1]
+      await pptxAddSlideTool.execute({ deckId }, ctx)
+      await expect(pptxComposeSlideTool.execute({ deckId, elements: [{ x: 1, y: 1, w: 1, h: 1, color: '000000' }] }, ctx)).rejects.toThrow(/Unknown element type "undefined" — every element needs "type" set to exactly one of/)
+    })
   })
 })

@@ -18,6 +18,8 @@ export interface WebSearchOptions {
   limit: number
   /** Also return image results where the provider can (Tavily). */
   images?: boolean
+  /** "advanced" asks Tavily for a slower, deeper search with fuller excerpts per result. */
+  depth?: 'basic' | 'advanced'
 }
 
 export interface WebSearchProviderDescriptor {
@@ -79,7 +81,7 @@ async function searchTavily(apiKey: string | undefined, query: string, options: 
     const response = await fetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ query, max_results: limit, topic: options.topic, ...(options.images ? { include_images: true, include_image_descriptions: true } : {}) }),
+      body: JSON.stringify({ query, max_results: limit, topic: options.topic, ...(options.depth === 'advanced' ? { search_depth: 'advanced' } : {}), ...(options.images ? { include_images: true, include_image_descriptions: true } : {}) }),
       signal: controller.signal
     })
     if (!response.ok) {

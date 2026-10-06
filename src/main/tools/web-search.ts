@@ -45,7 +45,8 @@ export const webSearchTool: Tool = {
       query: { type: 'string', description: 'What to search for' },
       topic: { type: 'string', enum: ['general', 'news'], description: '"news" for current-events/latest-update queries, where the active provider supports it' },
       limit: { type: 'number', description: `Max results, where the active provider supports it (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})` },
-      images: { type: 'boolean', description: 'Add image URLs (Tavily)' }
+      images: { type: 'boolean', description: 'Add image URLs (Tavily)' },
+      depth: { type: 'string', enum: ['basic', 'advanced'], description: '"advanced": deeper search, fuller excerpts (Tavily)' }
     },
     required: ['query']
   },
@@ -59,7 +60,8 @@ export const webSearchTool: Tool = {
     const limit = Math.min(MAX_LIMIT, Math.max(1, Number(input.limit) || DEFAULT_LIMIT))
     const topic = input.topic === 'news' ? 'news' : 'general'
     const images = input.images === true
-    const text = await descriptor.search(apiKey, query, { topic, limit, images })
+    const depth = input.depth === 'advanced' ? 'advanced' : 'basic'
+    const text = await descriptor.search(apiKey, query, { topic, limit, images, depth })
     // Every URL the search actually returned counts as a real one for this session (see link-registry.ts).
     for (const url of text.match(/https?:\/\/[^\s)]+/g) ?? []) recordKnownUrl(ctx.currentSessionId, url)
     if (images && id !== 'tavily') {

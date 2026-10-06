@@ -205,6 +205,15 @@ describe('web_search', () => {
       expect(out).toContain('- https://cdn.example.com/b.png')
     })
 
+    it('asks Tavily for a deeper search only when depth is "advanced"', async () => {
+      const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ results: [] }), { status: 200 }))
+      vi.stubGlobal('fetch', fetchMock)
+      await webSearchTool.execute({ query: 'x', depth: 'advanced' }, ctx)
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).search_depth).toBe('advanced')
+      await webSearchTool.execute({ query: 'x' }, ctx)
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body).search_depth).toBeUndefined()
+    })
+
     it('does not ask for images unless told to', async () => {
       const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [] }), { status: 200 }))
       vi.stubGlobal('fetch', fetchMock)
