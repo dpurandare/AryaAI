@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises'
 import type { ToolContext } from '../types'
 
 const FETCH_TIMEOUT_MS = 30_000
+/** Identifies the app honestly while staying browser-compatible: Node's default user agent is refused outright (connection reset) by sites such as Wikimedia, which made every page there unreadable. Shared with download_image. */
+export const FETCH_USER_AGENT = 'Mozilla/5.0 (compatible; Sachivji/0.2; +https://github.com/dpurandare/AryaAI)'
 /** Generous compared to read_file's 200KB cap — that number exists because its content goes straight to the model; a data-format tool processes the file itself and only sends a condensed result, so the risk here is a pathological load, not context bloat. */
 export const MAX_SOURCE_BYTES = 5_000_000
 
@@ -41,7 +43,7 @@ export async function resolveSource(input: SourceInput, ctx: ToolContext): Promi
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
     try {
-      const response = await fetch(url, { signal: controller.signal })
+      const response = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': FETCH_USER_AGENT } })
       if (!response.ok) throw new Error(`Fetching ${url} failed: ${response.status} ${response.statusText}`)
       return { text: await response.text() }
     } catch (err) {
