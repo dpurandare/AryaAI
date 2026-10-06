@@ -44,6 +44,9 @@
   } = $props()
 
   let editedJson = $state('')
+  /** The outside-the-workspace folder request (name "external_folder_access") is not a tool run: no editable JSON, no auto-approve, and — for reading — a choice of how long to remember the folder. */
+  const isFolderAccess = $derived(name === 'external_folder_access')
+  let remember = $state<'once' | 'session' | 'always'>('once')
   let jsonError = $state('')
   let secretValues = $state<Record<string, string>>({})
   let validating = $state(false)
@@ -75,6 +78,7 @@
     validating = false
     showTalkAboutIt = false
     talkAboutItText = ''
+    remember = 'once'
   })
 
   function sendTalkAboutIt(): void {
@@ -98,6 +102,10 @@
   }
 
   async function approve(): Promise<void> {
+    if (isFolderAccess) {
+      onApprove({ ...input, remember })
+      return
+    }
     const merged = combinedInput()
     if (!merged) return
 
@@ -125,11 +133,28 @@
      structurally instead of relying on a separately-rendered layer. -->
 <div class="confirm" role="group" aria-label="Tool call confirmation">
   <div class="confirm-header">
-    <h2>Run <code>{name}</code>?</h2>
+    {#if isFolderAccess}
+      <h2>Allow access outside the workspace?</h2>
+    {:else}
+      <h2>Run <code>{name}</code>?</h2>
+    {/if}
     <p class="description">{description}</p>
   </div>
-  <textarea class="json" bind:value={editedJson} spellcheck="false"></textarea>
-  {#if jsonError}<p class="error">{jsonError}</p>{/if}
+  {#if isFolderAccess}
+    {#if input.access === 'read'}
+      <label class="remember">
+        Remember this folder
+        <select bind:value={remember}>
+          <option value="once">Just this once</option>
+          <option value="session">For this session</option>
+          <option value="always">Always (listed in Settings, where you can remove it)</option>
+        </select>
+      </label>
+    {/if}
+  {:else}
+    <textarea class="json" bind:value={editedJson} spellcheck="false"></textarea>
+    {#if jsonError}<p class="error">{jsonError}</p>{/if}
+  {/if}
 
   {#each secretFields as field (field)}
     <label class="secret-field">
@@ -139,6 +164,7 @@
   {/each}
   {#if validationError}<p class="error">{validationError}</p>{/if}
 
+  {#if !isFolderAccess}
   <div class="confirm-row">
     <label class="auto-approve">
       <input
@@ -157,6 +183,7 @@
       Always auto-approve <code>{name}</code>
     </label>
   </div>
+  {/if}
 
   {#if showTalkAboutIt}
     <!-- TASKS.md #154: a fourth resolution for this one call, alongside Deny/Approve/Edit-then-Approve —
@@ -214,6 +241,15 @@
     background: var(--panel-hover);
     padding: 0.1rem 0.4rem;
     border-radius: 4px;
+  }
+  .remember {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+  }
+  .remember select {
+    flex: 1;
   }
   .description {
     margin: 0.2rem 0 0;

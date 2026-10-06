@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises'
 import type { Tool } from '../types'
-import { resolveSource } from './source'
+import { resolveSource, sourceExternalPaths } from './source'
 import { appendAtPath, queryPath, summarizeValue } from './structured-query'
 
 const MAX_RESULT_CHARS = 8_000
@@ -34,6 +34,7 @@ export const parseJsonTool: Tool = {
     }
   },
   mutates: (input) => input.action === 'append',
+  externalPaths: sourceExternalPaths,
   describe(input) {
     if (input.action === 'append') return `Append to "${String(input.filePath ?? '')}" at path "${String(input.path ?? '')}": ${JSON.stringify(input.item)}`
     return `parse_json ${String(input.action ?? 'summarize')} on "${String(input.filePath ?? input.url ?? '(inline)')}"`
@@ -60,7 +61,7 @@ export const parseJsonTool: Tool = {
     }
 
     if (action === 'append') {
-      if (!writeBackPath) throw new Error('append requires filePath (a url/text source has nothing to write back to).')
+      if (!writeBackPath) throw new Error('append requires a filePath inside the workspace (a url/text source, or a file outside the workspace, cannot be written back to).')
       appendAtPath(value, path, input.item)
       await writeFile(writeBackPath, JSON.stringify(value, null, 2), 'utf-8')
       return `Appended 1 item at "${path || '(root)'}".`

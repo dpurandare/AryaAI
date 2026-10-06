@@ -1,3 +1,4 @@
+import { resolveReadable } from '../../security/external-access'
 import ExcelJS from 'exceljs'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -39,8 +40,9 @@ export const xlsxReadTool: Tool = {
     required: ['path']
   },
   mutates: false,
+  externalPaths: (input) => [{ path: String(input.path ?? ''), access: 'read' }],
   async execute(input, ctx) {
-    const absPath = ctx.workspaceGuard.assertWithinWorkspace(String(input.path ?? ''))
+    const absPath = resolveReadable(ctx, String(input.path ?? ''))
     const workbook = new ExcelJS.Workbook()
     await workbook.xlsx.readFile(absPath)
 

@@ -1,3 +1,4 @@
+import { resolveReadable } from '../../security/external-access'
 import { readFile } from 'node:fs/promises'
 import { extname } from 'node:path'
 import type { Tool } from '../types'
@@ -21,13 +22,14 @@ export const officeReadDocumentTool: Tool = {
     required: ['path']
   },
   mutates: false,
+  externalPaths: (input) => [{ path: String(input.path ?? ''), access: 'read' }],
   async execute(input, ctx) {
     const relPath = String(input.path ?? '')
     const extension = extensionOf(relPath)
     if (extension !== 'docx' && extension !== 'pptx') {
       throw new Error(`office_read_document only supports .docx and .pptx (got "${relPath}").`)
     }
-    const absPath = ctx.workspaceGuard.assertWithinWorkspace(relPath)
+    const absPath = resolveReadable(ctx, relPath)
     const buffer = await readFile(absPath)
     if (buffer.byteLength > MAX_READ_BYTES) {
       throw new Error(`File is ${buffer.byteLength} bytes, over the ${MAX_READ_BYTES}-byte read limit.`)

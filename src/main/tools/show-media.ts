@@ -1,5 +1,6 @@
 import { readFile, stat } from 'node:fs/promises'
 import { extname } from 'node:path'
+import { resolveReadable } from '../security/external-access'
 import type { Tool } from './types'
 
 /**
@@ -59,10 +60,11 @@ export const showMediaTool: Tool = {
     required: ['path']
   },
   mutates: false,
+  externalPaths: (input) => [{ path: String(input.path ?? ''), access: 'read' }],
   async execute(input, ctx) {
     const relPath = String(input.path ?? '')
     if (!relPath.trim()) throw new Error('No path given.')
-    const path = ctx.workspaceGuard.assertWithinWorkspace(relPath)
+    const path = resolveReadable(ctx, relPath)
     const ext = extname(path).toLowerCase()
     const mimeType = IMAGE_MIME_TYPES[ext]
     if (!mimeType) {

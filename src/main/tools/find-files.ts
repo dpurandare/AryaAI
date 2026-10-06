@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
+import { isInsideWorkspace, resolveReadable } from '../security/external-access'
 import type { Tool } from './types'
 import { EXCLUDED_FOLDERS, workspaceRelativePath } from './workspace-layout'
 
@@ -128,7 +129,7 @@ async function walk(
 export const findFilesTool: Tool = {
   name: 'find_files',
   description:
-    'Recursively find files under a workspace path matching a glob pattern (e.g. "**/*.png", "code/*.py", ' +
+    'Recursively find files under a workspace path, or an absolute folder elsewhere (the user is asked first), matching a glob pattern (e.g. "**/*.png", "code/*.py", ' +
     '"**/report*"). One call covers what would otherwise take many list_directory calls at different depths. ' +
     'Respects .gitignore (basic patterns only) plus the usual noise directories (node_modules, .git, venv, ' +
     'dist, ...), which are never descended into. Matches files only, not directories.',
@@ -143,13 +144,17 @@ export const findFilesTool: Tool = {
     }
   },
   mutates: false,
+  externalPaths: (input) => [{ path: String(input.path ?? '.'), access: 'read' }],
   async execute(input, ctx) {
-    const searchPath = ctx.workspaceGuard.assertWithinWorkspace(String(input.path ?? '.'))
+    const searchPath = resolveReadable(ctx, String(input.path ?? '.'))
+    // A folder the user allowed outside the workspace: results are shown as absolute paths, and the workspace's own
+    // .gitignore does not apply there.
+    const outside = !isInsideWorkspace(ctx, String(input.path ?? '.'))
     const pattern = String(input.pattern ?? '**/*')
     const matcher = globToRegExp(pattern)
-    const ignorePatterns = await readGitignorePatterns(ctx.workspaceGuard.root)
+    const ignorePatterns = outside ? [] : await readGitignorePatterns(ctx.workspaceGuard.root)
 
-    const workspacePrefix = workspaceRelativePath(ctx.workspaceGuard.root, searchPath)
+    const workspacePrefix = outside ? searchPath.split(sep).join('/') : workspaceRelativePath(ctx.workspaceGuard.root, searchPath)
     const result: WalkResult = { files: [], scanned: 0, truncated: false }
     await walk(searchPath, '', workspacePrefix, ignorePatterns, result)
 

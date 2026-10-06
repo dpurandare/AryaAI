@@ -110,6 +110,6 @@ describe('parse_csv', () => {
   it('rejects append when the source is not a file', async () => {
     await expect(
       parseCsvTool.execute({ text: SAMPLE_CSV, action: 'append', row: { name: 'X' } }, ctx)
-    ).rejects.toThrow(/append requires filePath/)
+    ).rejects.toThrow(/append requires a filePath/)
   })
 })

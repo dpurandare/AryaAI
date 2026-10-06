@@ -452,6 +452,17 @@
   }
   loadWorkspaceRoot()
 
+  // --- Folders outside the workspace that may always be read ---
+  let externalFolders = $state<string[]>([])
+  async function loadExternalFolders(): Promise<void> {
+    externalFolders = await window.sachiv.listExternalFolders()
+  }
+  loadExternalFolders()
+  async function removeExternalFolder(folder: string): Promise<void> {
+    await window.sachiv.removeExternalFolder(folder)
+    await loadExternalFolders()
+  }
+
   async function saveWorkspaceRoot(): Promise<void> {
     if (!workspaceRootInput.trim() || workspaceRootInput === workspaceRoot) return
     savingWorkspace = true
@@ -1492,6 +1503,23 @@
         {savingWorkspace ? 'Saving...' : 'Save'}
       </button>
     </div>
+
+    <h3>Folders outside the workspace</h3>
+    <p class="status">
+      File tools can read a folder outside the workspace only after you allow it in a prompt — read only; Sachivji
+      never edits or deletes files there, and saving a new file there asks every time. Folders you chose
+      &ldquo;Always&rdquo; for are listed here; remove one to be asked again.
+    </p>
+    {#if externalFolders.length === 0}
+      <p class="status">None.</p>
+    {:else}
+      {#each externalFolders as folder (folder)}
+        <div class="tool-rule">
+          <span class="conn-name"><code>{folder}</code></span>
+          <button class="link-danger" onclick={() => removeExternalFolder(folder)}>Remove</button>
+        </div>
+      {/each}
+    {/if}
 
     <hr />
 

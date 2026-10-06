@@ -719,7 +719,8 @@
   })
 
   window.sachiv.onToolConfirmRequest((payload) => {
-    if (autoApproveTools || autoApproveRules[payload.name]) {
+    // Access to a folder outside the workspace is never auto-approved: not by the session blanket, not by a per-tool rule.
+    if (payload.name !== 'external_folder_access' && (autoApproveTools || autoApproveRules[payload.name])) {
       window.sachiv.respondToolConfirm(payload.toolUseId, true, payload.input)
       return
     }

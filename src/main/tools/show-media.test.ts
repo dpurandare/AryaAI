@@ -67,7 +67,7 @@ describe('show_media', () => {
   })
 
   it('rejects a path outside the workspace, same guard every other file tool uses', async () => {
-    await expect(showMediaTool.execute({ path: '../outside.png' }, ctx)).rejects.toThrow(/workspace boundary/i)
+    await expect(showMediaTool.execute({ path: '../outside.png' }, ctx)).rejects.toThrow(/outside the workspace/i)
   })
 
   it('rejects an empty path', async () => {

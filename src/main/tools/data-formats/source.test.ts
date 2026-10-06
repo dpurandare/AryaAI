@@ -73,4 +73,37 @@ describe('resolveSource', () => {
     await expect(resolveSource({ url: 'https://example.com/x' }, ctx)).rejects.toThrow(/404/)
     vi.unstubAllGlobals()
   })
+
+  describe('refusing what is not a page or a data file (found live: a PDF froze the app for ~100 seconds)', () => {
+    afterEach(() => vi.unstubAllGlobals())
+    const stub = (body: BodyInit, headers: Record<string, string>) => vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 200, headers })))
+
+    it('refuses a PDF by its Content-Type before reading it, with a message that says what to do', async () => {
+      stub('%PDF-1.7 ...', { 'content-type': 'application/pdf' })
+      await expect(resolveSource({ url: 'https://example.com/report.pdf' }, ctx)).rejects.toThrow(/is a PDF, not a web page or text data.*stall the app.*HTML version/)
+    })
+
+    it('refuses pictures, archives and office files by Content-Type, but not HTML, JSON, CSV, plain text or an unlabelled stream', async () => {
+      for (const type of ['image/png', 'video/mp4', 'application/zip', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/x-msdownload']) {
+        stub('xx', { 'content-type': type })
+        await expect(resolveSource({ url: 'https://example.com/f' }, ctx), type).rejects.toThrow(/cannot be read here/)
+      }
+      for (const type of ['text/html; charset=utf-8', 'application/json', 'text/csv', 'text/plain', 'application/octet-stream', 'application/xml']) {
+        stub('<p>ok</p>', { 'content-type': type })
+        await expect(resolveSource({ url: 'https://example.com/f' }, ctx), type).resolves.toMatchObject({ text: '<p>ok</p>' })
+      }
+    })
+
+    it('catches a PDF served with a wrong or missing Content-Type by its first bytes', async () => {
+      stub('%PDF-1.4\n%binary', { 'content-type': 'text/html' })
+      await expect(resolveSource({ url: 'https://example.com/disguised' }, ctx)).rejects.toThrow(/is a PDF/)
+    })
+
+    it('refuses a body over the size limit — by the declared length, and by counting when none is declared', async () => {
+      stub('x', { 'content-type': 'text/html', 'content-length': '9000000' })
+      await expect(resolveSource({ url: 'https://example.com/big' }, ctx)).rejects.toThrow(/over the 5000000-byte limit/)
+      stub('y'.repeat(5_100_000), { 'content-type': 'text/html' })
+      await expect(resolveSource({ url: 'https://example.com/streamed' }, ctx)).rejects.toThrow(/larger than the 5000000-byte limit/)
+    })
+  })
 })

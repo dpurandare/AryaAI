@@ -2,9 +2,12 @@ import type pptxgen from 'pptxgenjs'
 import type { SavedQueryDto } from '@shared/ipc-contract'
 import type { WorkspaceGuard } from '../security/workspace-guard'
 import type { McpServerStatusInfo } from '../mcp/manager'
+import type { ExternalAccess, ExternalAccessKind } from '../security/external-access'
 
 export interface ToolContext {
   workspaceGuard: WorkspaceGuard
+  /** Grants for reading folders outside the workspace and creating new files there (see security/external-access.ts). Absent in tests, where outside paths are simply refused. */
+  externalAccess?: ExternalAccess
   /** The session the current chat turn belongs to. No current tool reads this (search_history stopped excluding the active session — see its own doc comment), but it's real per-turn context a future tool may reasonably need. */
   currentSessionId: string
   /**
@@ -31,7 +34,7 @@ export interface ToolContext {
    * A plain `Map`, not a class, since nothing else needs to own behavior
    * around it. Optional/absent in tests that don't need deck tools.
    */
-  activeDecks?: Map<string, { pres: pptxgen; slides: pptxgen.Slide[] }>
+  activeDecks?: Map<string, { pres: pptxgen; slides: pptxgen.Slide[]; /** Indexes of slides that have been composed. */ composed?: Set<number> }>
   /**
    * Live state of the workspace's managed Python runtime (`runtime/workspace-runtime.ts`), read by `python_run` so it can say
    * "Python is turned off" / "still being set up" instead of failing obscurely. Optional/absent in tests, where the tool falls
@@ -46,8 +49,20 @@ export interface ToolContext {
  * depends on the actual SQL text per call) routes the call through the
  * human-in-loop confirmation flow in ipc/register.ts before `execute` runs.
  */
+/** A path a tool call will touch that may lie outside the workspace. */
+export interface ExternalPathRequest {
+  path: string
+  access: ExternalAccessKind
+}
+
 export interface Tool {
   name: string
+  /**
+   * Paths this call would read or create that may be outside the workspace. The orchestrator asks the user about each
+   * outside folder BEFORE running the tool (and before its own confirmation), then the tool resolves the path with
+   * `resolveReadable` / `resolveWritableNewOutside`. A tool that never touches outside paths omits this.
+   */
+  externalPaths?(input: Record<string, unknown>, ctx: ToolContext): ExternalPathRequest[]
   description: string
   inputSchema: Record<string, unknown>
   mutates: boolean | ((input: Record<string, unknown>) => boolean)

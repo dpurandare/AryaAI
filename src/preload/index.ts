@@ -144,6 +144,8 @@ const api = {
   rebuildSearchHistoryIndex: (): Promise<void> => ipcRenderer.invoke(IpcChannel.SearchHistoryRebuildIndex),
 
   listTools: (): Promise<ToolDescriptor[]> => ipcRenderer.invoke(IpcChannel.ToolsList),
+  listExternalFolders: (): Promise<string[]> => ipcRenderer.invoke(IpcChannel.ExternalFoldersList),
+  removeExternalFolder: (folder: string): Promise<void> => ipcRenderer.invoke(IpcChannel.ExternalFoldersRemove, folder),
   listToolsByRole: (): Promise<RoleToolsDto[]> => ipcRenderer.invoke(IpcChannel.ToolsListByRole),
 
   getContextWindow: (): Promise<ContextWindowInfo | null> => ipcRenderer.invoke(IpcChannel.ContextWindowGet),

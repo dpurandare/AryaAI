@@ -77,6 +77,8 @@ export const IpcChannel = {
   SecretStorageSwitchToFile: 'secret-storage:switch-to-file',
 
   ToolsList: 'tools:list',
+  ExternalFoldersList: 'external-folders:list',
+  ExternalFoldersRemove: 'external-folders:remove',
   ToolsListByRole: 'tools:list-by-role',
 
   ContextWindowGet: 'context-window:get',

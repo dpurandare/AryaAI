@@ -2,7 +2,7 @@ import { Readability } from '@mozilla/readability'
 import { JSDOM } from 'jsdom'
 import type { Tool } from '../types'
 import { checkUrlAllowed, recordKnownUrl } from './link-registry'
-import { resolveSource } from './source'
+import { resolveSource, sourceExternalPaths } from './source'
 
 const MAX_TEXT_CHARS = 10_000
 const MAX_LINKS = 30
@@ -167,6 +167,7 @@ export const parseHtmlTool: Tool = {
     }
   },
   mutates: false,
+  externalPaths: sourceExternalPaths,
   async execute(input, ctx) {
     const isRealFetch = typeof input.url === 'string' && input.url !== ''
     if (isRealFetch) {
