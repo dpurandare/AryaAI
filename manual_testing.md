@@ -134,10 +134,26 @@ not — Developer writes and runs in one step).
 | 5.3 | Ambiguous input: "Get the sales figures and write a report." (with more than one database connected, or none) | Either it asks **which database** and the plan **pauses** (step labelled "NEEDS INPUT — plan paused"), or it picks sensibly. It must not invent figures. |
 | 5.4 | Ask for something outside the role, pinned: set Agent to **Researcher** and ask "How many customers are in Northwind?" | It says it can't and **names Data Access** / tells you to switch the selector. |
 | 5.5 | After a multi-step run, open `.sachiv-handoff/` | Files are there, readable, the right size. (They are auto-deleted after 7 days.) |
-| 5.6 | *(new 9/27, needs a wiki-capable MCP server and a database both connected)* "What is the recommended maintenance interval for GJ01-WIND per the wiki, and how many operating hours has it logged in the database this year?" | Plans as compound with **two steps** — MCP Operator (wiki) and Data Access (database) — not one. This exact shape used to sometimes come back as a single step, or even `simple` (#142). |
+| 5.6 | *(new 9/27, rewritten 10/6; needs a wiki-capable MCP server and the `kagent_sample` database both connected)* "What does the wiki say a scheduled (planned) maintenance outage is and how is it treated when availability is calculated, and how many scheduled maintenance work orders did GJ01-WIND log in the database in 2024, with how many hours of downtime in total?" | Plans as compound with **two steps** — MCP Operator (wiki) and Data Access (database) — not one (#142). **Wiki step:** a *definition* from the wiki (e.g. the DNV availability definitions), or a plain "nothing relevant" — never an invented answer. **Database step:** **80** scheduled work orders (`WO-GJ01-2024-0001`…`0080`, one per turbine), **48 h each**, **3,840 h** of downtime in total (turbine-hours across the farm), all in **2024**. It must say the data is 2024. See the dataset facts below. |
 | 5.7 | *(new 9/27)* Ask a wiki-shaped question your connected server has nothing on (something clearly outside its domain) | The MCP Operator step ends plainly, no invented answer, and — since you didn't restrict sourcing — the assistant may try the open web instead and **must say so explicitly** in the final answer ("the wiki had nothing on this; this came from the web instead"), not present it as wiki-verified (#143/#144). |
 | 5.8 | *(new 9/27)* Repeat 5.7, but say up front "only use the wiki for this, don't search the web" | No web fallback attempted. The answer plainly reports the wiki had nothing and stops there (#144's opt-out — `detectsSourceRestriction`, a narrow regex on your exact wording: "only ... wiki", "don't/without ... web", "no web search"; a differently-worded restriction may not be caught yet). |
 
+
+**What `kagent_sample` actually holds (check this before writing a prompt that depends on it).** *The original 5.6 asked
+for the wiki's "recommended maintenance interval for GJ01-WIND" and "operating hours this year". It was written without
+looking at the data, so it could not test what it meant to: the wiki is a library of general standards and papers — it
+has nothing on a single asset's maintenance interval, so "no relevant information" was the expected, uninteresting
+answer — and the database covers **2024 only**, so "this year" (2026) matches no rows.* The facts:
+- **Wind farm `GJ01-WIND`** is a `farm_id`, not a turbine id. `turbine_performance` holds its **80 turbines (`T001`…`T080`)**
+  at 10-minute intervals for **all of 2024** (about 4.2 million rows). There is no "operating hours" column: hours are
+  derived (a 10-minute row with `active_power_kw > 0` counts as 1/6 h — about 628,775 turbine-hours for 2024).
+- **Maintenance records for wind** are the `availability_status` rows with `loss_category = 'Scheduled'` and a
+  `work_order_id`: 80 work orders, one per turbine, each 48 h (3,840 h total), starting between 2024-01-10 and 2024-12-10.
+  There is therefore **no recurring interval** to average: one event per turbine per year.
+- **Solar farm `GJ01-SOLAR`**: `solar_maintenance_event` has **3 events** (SM-2024-01…03) with deferral-test notes;
+  `generation_production` has daily actual/expected/curtailment for both farms, **2024-01-01 → 2024-12-31**.
+- A question about "the recommended interval" is a concept/standard question for the wiki; a question about "how many /
+  how long" for a named farm is a database question. Keep each half in its own lane, and ask about 2024, not "this year".
 ---
 
 ## 6. Routing to the right specialist — P1 (15 min)
