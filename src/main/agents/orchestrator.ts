@@ -1,3 +1,4 @@
+import { basename, dirname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
 import type { AgentRole } from '@shared/agents'
@@ -14,6 +15,8 @@ import {
 } from '../context/prepare-context'
 import { isRateLimitError, retryAfterMsFromError } from '../providers/rate-limit'
 import type { ModelProvider, ToolDefinition } from '../providers/types'
+import { EXTERNAL_ACCESS_TOOL_NAME, isInsideWorkspace } from '../security/external-access'
+import { pruneScratchDir } from '../tools/workspace-layout'
 import { SHOW_MEDIA_MARKER, type ShowMediaPayload } from '../tools/show-media'
 import type { Tool, ToolContext } from '../tools/types'
 import { buildRoleDigest, isRoleAvailable, type ConfigurationCounts } from './capabilities'
@@ -63,6 +66,19 @@ export interface Agent {
   isolated?: boolean
   /** The fresh round budget this role's own delegate calls get — every delegate call has always had its own pool, isolated or not (found live: a single turn-wide shared pool let one delegate's legitimate multi-step work starve the rest of the turn). Defaults to `MAX_TOTAL_ROUNDS` if omitted. */
   maxRounds?: number
+  /**
+   * Asked when this role's run is about to end with a final answer: return a message and the run is sent back to work
+   * (a visible "[Completion check by Sachivji]" note), or undefined to let it finish. For work a weaker model likes to
+   * cut short — a research pass that read no pages — where a prompt rule alone was not followed. At most
+   * `MAX_COMPLETION_GATE_NUDGES` times per run, after which the answer stands.
+   */
+  completionGate?(info: {
+    task: string
+    calls: ReadonlyMap<string, number>
+    unreadUrls: readonly string[]
+    /** Per tool: the total characters of all `content` inputs it was given, the longest single one, and how many distinct URLs that longest one holds. */
+    content: ReadonlyMap<string, { total: number; longest: number; longestUrls: number }>
+  }): string | undefined
 }
 
 export interface ConfirmDecision {
@@ -125,7 +141,7 @@ export type OrchestratorEvent =
  * remains the real backstop against a turn actually running too long; this
  * exists mainly to catch genuine runaway loops, not to ration ordinary work.
  */
-const MAX_TOTAL_ROUNDS = 20
+const MAX_TOTAL_ROUNDS = 30
 const DELEGATE_PREFIX = 'delegate_to_'
 
 /**
@@ -189,6 +205,17 @@ const TURN_DEADLINE_MS = 15 * 60 * 1000
  * orchestrator's own wait, and so the whole turn, is never blocked forever.
  */
 const TOOL_EXECUTE_TIMEOUT_MS = 5 * 60 * 1000
+
+/** How many times a role's completionGate may send one run back to work. */
+const MAX_COMPLETION_GATE_NUDGES = 6
+
+/**
+ * Rounds in a row in which every call was to the SAME tool and every one failed, after which a run stops instead of
+ * burning its whole round budget. Found live (the 3-slide roadmap deck): a model's pptx_compose_slide calls came out
+ * corrupted and it repeated the broken call 34 times over six minutes, until the user pressed Stop. A model that is
+ * correcting a call normally succeeds within a few tries; six identical-tool failures with nothing in between is a loop.
+ */
+const MAX_CONSECUTIVE_TOOL_FAILURES = 6
 
 /**
  * TASKS.md #91 — how many app-level rate-limit retries a single round gets
@@ -986,7 +1013,10 @@ export class Orchestrator {
     }
     // Old captured-data folders are only useful within (roughly) the turn that made them.
     const workspaceRoot = this.toolContext.workspaceGuard?.root
-    if (workspaceRoot) void pruneHandoffDirs(workspaceRoot, HANDOFF_RETENTION_MS)
+    if (workspaceRoot) {
+      void pruneHandoffDirs(workspaceRoot, HANDOFF_RETENTION_MS)
+      void pruneScratchDir(workspaceRoot, HANDOFF_RETENTION_MS)
+    }
 
     // A pinned role that does not resolve — a user-defined role since deleted or disabled, or a stale pin — falls back to Auto with a
     // visible notice instead of failing the turn (design 11.4). Roles are an open string set now, so this can genuinely happen.
@@ -1438,6 +1468,9 @@ export class Orchestrator {
     if (fromRole !== 'mcp-operator' || !this.agents.has('research') || state.handoff.incompleteFollowUps >= 1) {
       return false
     }
+    // A Researcher step that is already planned later will do the web work; adding another would research the same thing
+    // twice (found live: three passes over one request, the last one starting from zero).
+    if (steps.slice(afterIndex + 1).some((s) => s.role === 'research')) return false
     state.handoff.incompleteFollowUps++
     steps.splice(afterIndex + 1, 0, {
       role: 'research',
@@ -1616,7 +1649,8 @@ export class Orchestrator {
       "whose summary says it can actually do it — never route a step to a role its summary excludes, to a " +
       'role marked UNAVAILABLE, or to a role with no tools when the step needs a tool. Any part of the ' +
       'request that asks for a saved file/document/spreadsheet is its own step for the role that creates ' +
-      'that kind of file, after the step(s) that gather what goes into it. If a sub-part needs no tool ' +
+      'that kind of file, after the step(s) that gather what goes into it — except that the Researcher saves its own ' +
+      'findings to a text file as part of its research step, so never add a step just to save research to a text file. If a sub-part needs no tool ' +
       "at all (pure reasoning, or combining results already gathered), don't give it its own step — it " +
       'belongs in the final answer instead.\n' +
       'A role whose summary says it writes AND runs code handles both in ONE step — never split writing ' +
@@ -1857,6 +1891,17 @@ export class Orchestrator {
     let nudgeAfterEmptyRound = false
     // TASKS.md #172/#173: bounded recovery for a round truncated mid-tool-call — see MAX_TRUNCATED_TOOL_CALL_RETRIES.
     let truncatedToolCallRetries = 0
+    // See MAX_CONSECUTIVE_TOOL_FAILURES.
+    let failureStreak = 0
+    let lastFailedTool: string | undefined
+    // See Agent.completionGate: what this run has called so far, and what it was asked to do.
+    const toolCallCounts = new Map<string, number>()
+    // URLs this run's searches returned and the ones its parse_html calls opened, so a nudge can name pages still unread.
+    const searchUrls: string[] = []
+    const readUrls = new Set<string>()
+    const contentStats = new Map<string, { total: number; longest: number; longestUrls: number }>()
+    let gateNudges = 0
+    const gateTask = latestMessageText(conversation)
 
     while (state.roundsUsed < maxRounds && Date.now() < state.deadlineAt) {
       state.roundsUsed++
@@ -2208,6 +2253,19 @@ export class Orchestrator {
       }
 
       if (stopReason !== 'tool_use' || toolCalls.length === 0) {
+        const gate = agentRole ? this.agents.get(agentRole)?.completionGate : undefined
+        if (gate && stopReason !== 'max_tokens' && gateNudges < MAX_COMPLETION_GATE_NUDGES) {
+          const unreadUrls = searchUrls.filter((u) => !readUrls.has(u)).slice(0, 6)
+          const nudge = gate({ task: gateTask, calls: toolCallCounts, unreadUrls, content: contentStats })
+          if (nudge) {
+            gateNudges++
+            const note = `[Completion check by Sachivji] ${nudge}`
+            conversation.push({ role: 'user', content: [{ type: 'user_note', text: note }] })
+            yield { kind: 'stream', event: tagEvent({ type: 'user_note', text: note }, agentRole) }
+            yield { kind: 'message', role: 'user', content: [{ type: 'user_note', text: note }] }
+            continue
+          }
+        }
         return { text: assistantText, isError: stopReason === 'max_tokens' || !assistantText }
       }
 
@@ -2216,6 +2274,16 @@ export class Orchestrator {
         const input = inputByCallId.get(call.id) ?? {}
         const delegateRole = delegateRoleOverride.get(call.id) ?? roleFromDelegateName(call.name, this.agents)
 
+        toolCallCounts.set(call.name, (toolCallCounts.get(call.name) ?? 0) + 1)
+        if (typeof input.content === 'string') {
+          const entry = contentStats.get(call.name) ?? { total: 0, longest: 0, longestUrls: 0 }
+          entry.total += input.content.length
+          if (input.content.length >= entry.longest) {
+            entry.longest = input.content.length
+            entry.longestUrls = new Set(input.content.match(/https?:\/\/[^\s)>\]"']+/g) ?? []).size
+          }
+          contentStats.set(call.name, entry)
+        }
         let content: string
         let isError: boolean
         if (delegateRole) {
@@ -2227,6 +2295,10 @@ export class Orchestrator {
           if (toolByName.has(call.name)) this.options.logToolUse?.({ tool: call.name, agentRole: agentRole ?? 'router' })
           content = result.content
           isError = result.isError
+          if (call.name === 'web_search' && !isError) {
+            for (const u of content.match(/https?:\/\/[^\s)>\]]+/g) ?? []) if (!searchUrls.includes(u) && searchUrls.length < 40) searchUrls.push(u)
+          }
+          if (call.name === 'parse_html' && typeof input.url === 'string') readUrls.add(input.url)
           // TASKS.md #82 — a real `image` block, never sent back to the
           // model (see ContentBlock's own doc comment), alongside the
           // short tool_result text above that the model does see.
@@ -2242,6 +2314,28 @@ export class Orchestrator {
       }
       yield { kind: 'message', role: 'user', content: resultBlocks }
       conversation.push({ role: 'user', content: resultBlocks })
+
+      // Stop a run that keeps repeating one failing call (see MAX_CONSECUTIVE_TOOL_FAILURES).
+      const toolResults = resultBlocks.filter((b): b is Extract<ContentBlock, { type: 'tool_result' }> => b.type === 'tool_result')
+      const calledNames = new Set(toolCalls.map((c) => c.name))
+      const failedTool = calledNames.size === 1 ? [...calledNames][0] : undefined
+      if (failedTool && toolResults.length > 0 && toolResults.every((r) => r.isError)) {
+        failureStreak = failedTool === lastFailedTool ? failureStreak + 1 : 1
+        lastFailedTool = failedTool
+      } else {
+        failureStreak = 0
+        lastFailedTool = undefined
+      }
+      if (failureStreak >= MAX_CONSECUTIVE_TOOL_FAILURES) {
+        const lastError = toolResults[toolResults.length - 1].content.replace(/\s+/g, ' ').slice(0, 300)
+        const stopMessage = `Stopped: "${failedTool}" failed ${failureStreak} times in a row with nothing succeeding in between, so it was not retried further. Last error: ${lastError}`
+        if (isTopLevel) {
+          yield { kind: 'stream', event: tagEvent({ type: 'warning', message: stopMessage }, agentRole) }
+          yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message: stopMessage }] }
+          yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'end_turn' }, agentRole, isTopLevel) }
+        }
+        return { text: stopMessage, isError: true }
+      }
     }
 
     const outOfTime = Date.now() >= state.deadlineAt
@@ -2407,7 +2501,66 @@ export class Orchestrator {
     return undefined
   }
 
+  /**
+   * Asks the user, before a tool runs, about every folder outside the workspace its call would read or create a file
+   * in (`Tool.externalPaths`). Read access can be remembered (this session, or always); creating a new file is asked
+   * every time. Never auto-approved — the renderer skips its blanket and per-tool auto-approve for this request.
+   * Returns an error message for the model when access is refused, otherwise undefined; `releases` collects the
+   * call-scoped grants to drop once the call has finished.
+   */
+  private async askExternalAccess(
+    toolUseId: string,
+    tool: Tool,
+    input: Record<string, unknown>,
+    releases: Array<() => void>
+  ): Promise<string | undefined> {
+    const requests = tool.externalPaths?.(input, this.toolContext) ?? []
+    const ctx = this.toolContext
+    for (const [i, request] of requests.entries()) {
+      if (isInsideWorkspace(ctx, request.path)) continue
+      const abs = resolve(ctx.workspaceGuard.root, request.path)
+      const access = ctx.externalAccess
+      if (!access) return `"${request.path}" is outside the workspace, which this tool may not access here.`
+      if (access.isBlocked(abs)) return `"${request.path}" is a protected location (credentials, keys, system or Sachivji's own data) and cannot be accessed.`
+      if (request.access === 'read' && access.isReadAllowed(ctx.currentSessionId, abs)) continue
+      const folder = request.access === 'read' ? access.folderFor(abs) : dirname(abs)
+      const decision = await this.confirmOrAbort({
+        toolUseId: `${toolUseId}:ext${i}`,
+        name: EXTERNAL_ACCESS_TOOL_NAME,
+        input: { folder, access: request.access, path: abs, tool: tool.name },
+        description:
+          request.access === 'read'
+            ? `Allow Sachivji to read files in "${folder}"? (${tool.name} wants "${basename(abs)}") — read only; nothing there is edited or deleted.`
+            : `Allow Sachivji to save a NEW file "${abs}"? It will never overwrite or edit an existing file there.`
+      })
+      if (!decision.approved) return `[Rejected by user] The user did not allow access to "${folder}".`
+      const remember = decision.input?.remember
+      if (request.access === 'read' && (remember === 'session' || remember === 'always')) access.grant(ctx.currentSessionId, folder, remember)
+      releases.push(access.grantOnce(folder))
+    }
+    return undefined
+  }
+
   private async dispatchTool(
+    toolUseId: string,
+    name: string,
+    input: Record<string, unknown>,
+    toolByName: Map<string, Tool>
+  ): Promise<{ content: string; isError: boolean; image?: { path: string; mimeType: string; dataBase64: string } }> {
+    const tool = toolByName.get(name)
+    const releases: Array<() => void> = []
+    try {
+      if (tool?.externalPaths) {
+        const refused = await this.askExternalAccess(toolUseId, tool, input, releases)
+        if (refused) return { content: refused, isError: true }
+      }
+      return await this.dispatchToolChecked(toolUseId, name, input, toolByName)
+    } finally {
+      for (const release of releases) release()
+    }
+  }
+
+  private async dispatchToolChecked(
     toolUseId: string,
     name: string,
     input: Record<string, unknown>,

@@ -73,9 +73,9 @@ export const ROLE_MANIFEST = [
     id: 'research',
     label: 'Researcher',
     summary:
-      'Finds information on the web and reads web pages. Does not recall past conversations (History Analyst), call configured APIs (Data Access) or write files (Developer).',
+      'Researches the web deeply: reads many pages, keeps notes, finds stock photos, saves findings to a file. Does not recall past chats (History Analyst) or call configured APIs (Data Access).',
     description:
-      'Looks things up on the web: web search and fetching and reading web pages, synthesizing what it finds with sources. It does not write files, run code, recall your past conversations, or call your configured external APIs.',
+      'Looks things up on the web in depth: web search, reading many pages, taking notes as it goes and synthesizing what it finds with sources; finds and downloads stock photos; can save its own findings to a text file. It does not run code, recall your past conversations, or call your configured external APIs.',
     pickable: true,
     plannable: true,
     examples: [

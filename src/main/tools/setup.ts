@@ -9,7 +9,10 @@ import { apiCreateConnectionTool, dbCreateConnectionTool, mcpCreateConnectionToo
 import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from './deck'
 import { listEmailConnectionsTool, sendEmailTool } from './email'
 import { parseCsvTool, parseHtmlTool, parseJsonTool, parseXmlTool } from './data-formats'
+import { externalAccess } from '../security/external-access-store'
 import { downloadImageTool } from './download-image'
+import { findStockImagesTool } from './stock-images'
+import { readResearchNotesTool, saveResearchNoteTool } from './research-notes'
 import { showMediaTool } from './show-media'
 import {
   dbExecuteSqlTool,
@@ -60,7 +63,7 @@ export function defaultWorkspaceRoot(): string {
 export function createToolContext(): ToolContext {
   const root = getSetting(WORKSPACE_ROOT_SETTING_KEY) || defaultWorkspaceRoot()
   mkdirSync(root, { recursive: true })
-  return { workspaceGuard: new WorkspaceGuard(root), currentSessionId: '' }
+  return { workspaceGuard: new WorkspaceGuard(root), currentSessionId: '', externalAccess }
 }
 
 export function createDefaultRegistry(): ToolRegistry {
@@ -112,5 +115,8 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(sendEmailTool)
   registry.register(showMediaTool)
   registry.register(downloadImageTool)
+  registry.register(findStockImagesTool)
+  registry.register(saveResearchNoteTool)
+  registry.register(readResearchNotesTool)
   return registry
 }

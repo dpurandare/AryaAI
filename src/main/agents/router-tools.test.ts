@@ -8,7 +8,7 @@ vi.mock('electron', () => ({
 const { createDefaultRegistry } = await import('../tools/setup')
 const { createAgents } = await import('./roles')
 const { createDescribeCapabilitiesTool } = await import('./capabilities')
-const { ROUTER_CORE_TOOLS, selectRouterTools } = await import('./router-tools')
+const { ROUTER_CORE_TOOLS, fullRouterTools, selectRouterTools, withoutMcpTools } = await import('./router-tools')
 
 function setup() {
   const registry = createDefaultRegistry()
@@ -63,5 +63,29 @@ describe('selectRouterTools (slim router)', () => {
     const withMcp = [{ ...registry.get('read_file')!, name: 'mcp__wiki__x' }]
     const ag = createAgents({ list: () => withMcp, get: (n: string) => withMcp.find((t) => t.name === n) } as never)
     expect(ag.get('mcp-operator')?.tools.map((t) => t.name)).toEqual(['mcp__wiki__x'])
+  })
+})
+
+describe('withoutMcpTools (full router)', () => {
+  it('drops every connected server\'s tools so the router can only reach a wiki by delegating to the MCP Operator, and keeps everything else', () => {
+    const { registry } = setup()
+    const mcp = (name: string) => ({ name, description: name, inputSchema: { type: 'object' as const, properties: {} }, mutates: false, execute: async () => '' })
+    registry.register(mcp('mcp__llmwiki-docs__search'))
+    registry.register(mcp('mcp__context7__query_docs'))
+    const all = registry.list()
+    const kept = withoutMcpTools(all).map((t) => t.name)
+    expect(kept.some((n) => n.startsWith('mcp__'))).toBe(false)
+    expect(kept.length).toBe(all.length - 2)
+    expect(kept).toEqual(expect.arrayContaining(['db_execute_sql', 'shell_execute', 'web_search']))
+  })
+})
+
+describe('fullRouterTools', () => {
+  it('also hides the tools only a specialist uses (research notes), keeping the picture tools the deck flow needs', () => {
+    const { registry } = setup()
+    const names = fullRouterTools(registry.list()).map((t) => t.name)
+    expect(names).not.toContain('save_research_note')
+    expect(names).not.toContain('read_research_notes')
+    expect(names).toEqual(expect.arrayContaining(['find_stock_images', 'download_image', 'pptx_start_deck', 'web_search']))
   })
 })

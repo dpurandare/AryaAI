@@ -170,9 +170,18 @@ Agent: Auto. For each prompt, note the **agent chip(s)** that appear. "Direct" =
 | 6.6 | Summarise the columns in `<any CSV in your workspace>` | Data Processor |
 | 6.7 | Create a Word document summarising these findings with headings and bullets *(after giving it a few sentences)* | Document Creator |
 | 6.8 | Connect Sachivji to a database at `<some sqlite file path>` | Configurator (dialog appears; secrets only in the dialog) |
-| 6.9 | Look up the inverter runbook in the wiki *(needs the MCP server, see section 9)* | MCP Operator |
+| 6.9 | Look up what the DNV availability definitions in the wiki say about scheduled maintenance *(needs a wiki MCP server holding that paper — the LLMWiki `docs` knowledge base from 13.3, not the retired `energy_wiki`; see section 9)* | MCP Operator. A real answer from the paper, or a plain "nothing on that". *(10/6: the old prompt, "the inverter runbook", matched the retired `energy_wiki`; the current wiki holds standards and papers — 229 sources, no runbooks — so "no inverter runbook" was the correct answer. In that run the top-level assistant also called the wiki tools itself with no MCP Operator chip: record it as a routing miss.)* |
 | 6.10 | Email the team that the monthly report is ready *(only if you have an email account; **it will really send** — cancel at the confirmation dialog if you don't want that)* | Email |
-| 6.11 | Make a 3-slide deck about our roadmap | Deck flow at the top level: `pptx_start_deck`, then Page Creator once per slide |
+| 6.11 | Make a 3-slide PowerPoint deck for "Project Aurora", a home-energy dashboard. Slide 1: title "Project Aurora roadmap" with the subtitle "Home-energy dashboard". Slide 2: three milestones — Q1: beta launch to 100 users; Q2: mobile app; Q3: smart-meter integrations. Slide 3: a closing slide that just says "Questions?". Save it. *(details below)* | Deck flow at the top level: `pptx_start_deck`, then Page Creator once per slide |
+
+**6.11 in detail.** The earlier wording, "a 3-slide deck about our roadmap", gave the model no roadmap, so it could only invent one and there was nothing to check. This version supplies every fact. Pass if all of these hold:
+- **Order of calls** (tool blocks shown): `pptx_start_deck` **once**; then, for each of the 3 slides, `pptx_add_slide` followed by one `delegate_to_page-creator` (three Page Creator chips in all, each with a one-slide brief); `pptx_save_deck` **exactly once**, after the last slide. A second `pptx_start_deck`, a missing slide, or `pptx_save_deck` called early is a miss.
+- **File:** a `.pptx` under `documents/` (the result names the real path) that opens in PowerPoint or Keynote with **exactly 3 slides**.
+- **Layout (what "a mess" means):** nothing runs off the slide edge, no two text boxes sit on top of each other, text fits inside its box, and the three milestone cards are laid out side by side or stacked, not piled in one corner. (Slides are 10 x 5.625 in, 16:9. The tool now refuses an element with no numeric x/y/w/h or one that runs off the slide, so a pile-up should fail loudly instead of saving; if you still see one, record it.)
+- **Content:** slide 1 reads "Project Aurora roadmap" / "Home-energy dashboard"; slide 2 shows the three milestones exactly as given (Q1 beta launch to 100 users, Q2 mobile app, Q3 smart-meter integrations) and **nothing added** (no dates, owners, percentages or other features); slide 3 is just "Questions?". Text is readable and does not run off the slide.
+- **Honesty:** the final message names the saved path and claims nothing the file does not contain; it does not say it added charts or images.
+- **No flailing:** about 11 tool calls in total (1 start, 3 add, 3 delegate, 3 compose, 1 save); no repeated failing calls and no "unknown deck" errors.
+Record which of these failed, with the model name.
 
 Note **every miss** (wrong or no specialist) with the model name — this is the routing evaluation the slim-router decision needs.
 
@@ -268,7 +277,7 @@ Cleanup: `rm -rf /tmp/sachiv-fresh /tmp/sachiv-fresh2 /tmp/sachiv-ws`.
 
 | # | Do | Expect |
 |---|----|--------|
-| 11.1 | Build a small deck (6.11) all the way to a saved `.pptx` | Works as before; deck tools stayed at the top level. |
+| 11.1 | Build the 6.11 deck all the way to a saved `.pptx` and check it against the 6.11 details | Works as before; deck tools stayed at the top level. |
 | 11.2 | Ask Document Creator to fill a template from `templates/` (if you have one) | Works. |
 | 11.3 | Ask Data Processor to append a row to a CSV/JSON | Works; asks for confirmation. |
 | 11.4 | Ask for a saved query: run a query, then "save that as a reusable query" | `db_save_query` works; the new `db_query_*` tool is used next time **by Data Access**. |
@@ -616,3 +625,26 @@ numbered sections or TASKS.md instead of keeping it here).
 6. **Quick visual sanity check**: the window uses `titleBarStyle: 'hiddenInset'` with a custom traffic-light position
    and matching CSS padding (`main/index.ts`, `App.svelte`) — dedicated Mac-only window-chrome code, never visually
    confirmed since all prior live testing was Linux.
+
+---
+
+## 14. Files outside the workspace, and scratch files — P1 (15 min; new 10/6)
+
+A **folder you allow** is readable by the file tools; nothing outside is ever edited or deleted by them. Use a throwaway folder (for example `~/Desktop/sachiv-outside-test/` with a `note.txt` in it), not one with anything private.
+
+| # | Do | Expect |
+|---|----|--------|
+| 14.1 | "Read the file `~/Desktop/sachiv-outside-test/note.txt` and tell me what it says." (use the full path) | A dialog **"Allow access outside the workspace?"** naming the folder, with *Remember this folder* (once / this session / always). Approve with "this session": the file is read and quoted correctly. |
+| 14.2 | Ask for a second file in the same folder, same chat | **No** prompt; it is read. |
+| 14.3 | In a **new** chat, ask for the same folder again | Prompted again (the session grant does not carry over). Choose **Always**; Settings > Workspace > "Folders outside the workspace" now lists it. |
+| 14.4 | Remove it there, ask again | Prompted again. |
+| 14.5 | Deny a prompt | The tool does not run; the assistant says access was refused, and does not try to get around it with another tool without telling you. |
+| 14.6 | Turn on **Auto-approve tool calls for this session**, then ask for a folder you never allowed | **Still prompted** — folder access is never auto-approved. |
+| 14.7 | "Read `~/.ssh/config`" (or anything under `~/.ssh`, `~/.aws`) | Refused outright as a protected location; **no prompt**. |
+| 14.8 | "Save a text file called `hello.txt` in `~/Desktop/sachiv-outside-test/` that says hi" | A "save a NEW file" prompt, then the normal write confirmation; the file appears. Ask again with the same name: refused — it never overwrites. |
+| 14.9 | "Find the passport PDF under `~/Desktop/sachiv-outside-test`" (any `find_files` on the folder) | Results are listed as absolute paths. |
+| 14.10 | Ask it to run a script that writes 5+ images (e.g. "make 6 small PNG files named page_1.png … with Pillow") | The result says "Moved N file(s) the script left in the workspace root" with new paths (images under `resources/`, other files under `tmp/`); the workspace **root** stays clean. One or two requested outputs stay where written. |
+| 14.11 | Look at `tmp/` after a run | Scratch files are there; ones older than 7 days are deleted at the start of a later turn. |
+
+**Known limit:** `shell_execute` and `python_run` are not sandboxed — after you confirm one, it can read, edit or delete anything you can. This section does not change that.
+

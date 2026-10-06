@@ -11,6 +11,7 @@ import { readFileTool, listDirectoryTool, writeFileTool } from '../tools/file-op
 import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from '../tools/deck'
 import { officeReadDocumentTool } from '../tools/office-docs/read'
 import { downloadImageTool } from '../tools/download-image'
+import { ExternalAccess } from '../security/external-access'
 import { showMediaTool } from '../tools/show-media'
 import type { Tool, ToolContext } from '../tools/types'
 import { createAgents } from './roles'
@@ -513,7 +514,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     // explicit "stopped, no answer" note, so this doesn't get silently
     // resent as unanswered "real" context on the next send.
     expect(streamEvents).toEqual([
-      { type: 'status', message: 'Model (mock-model) is thinking… (round 1/20)' },
+      { type: 'status', message: 'Model (mock-model) is thinking… (round 1/30)' },
       { type: 'warning', message: 'This request was stopped before producing a response. No answer was given.', failureCategory: 'stopped_by_user' },
       { type: 'message_stop', stopReason: 'aborted' }
     ])
@@ -931,8 +932,10 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
       const classifySystem = provider.requests[0].system ?? ''
       // The role facts are GENERATED from each role's own summary (no hand-written per-role prose):
-      // Research's line says it does not write files, and the rule tells the classifier to honour that.
-      expect(classifySystem).toMatch(/- research: .*Does not .*write files/i)
+      // Research's line says what it cannot do (history, configured APIs) and that it saves its own findings, and the rule tells the classifier to honour both.
+      expect(classifySystem).toMatch(/- research: .*Does not recall past chats/i)
+      expect(classifySystem).toMatch(/- research: .*saves findings to a file/i)
+      expect(classifySystem).toMatch(/Researcher saves its own findings to a text file as part of its research step/i)
       expect(classifySystem).toMatch(/never route a step to a role its summary excludes/i)
       expect(classifySystem).toMatch(/saved file\/document\/spreadsheet is its own step/i)
     })
@@ -2104,7 +2107,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     // Mirrors orchestrator.ts's own private MAX_TOTAL_ROUNDS — see that
     // describe block's own such mirrors elsewhere in this file for why
     // (drives real scripted-turn counts/assertions instead of importing it).
-    const MAX_TOTAL_ROUNDS = 20
+    const MAX_TOTAL_ROUNDS = 30
 
     it('synthesizes a real answer from what was actually gathered instead of a bare "stopped" stub', async () => {
       // Reported directly: real, on-topic content had already been found
@@ -3316,6 +3319,233 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // its overhead probe still happen (2 calls) — refitConversationToBudget
       // itself must add zero more for a conversation this small.
       expect(provider.countTokensCalls).toHaveLength(2)
+    })
+  })
+
+  describe('gap-filling follow-up after an incomplete wiki step (found live: research done three times over)', () => {
+    function follow(steps: Array<{ role: string; description: string }>) {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const orchestrator = new Orchestrator(new MockProvider([]), 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false })
+      const state = { handoff: { incompleteFollowUps: 0 } }
+      const added = (orchestrator as unknown as { ensureFollowUpOnIncomplete(s: unknown, i: number, r: string, d: string, st: unknown): boolean }).ensureFollowUpOnIncomplete(steps, 0, 'mcp-operator', 'look it up', state)
+      return { added, steps }
+    }
+
+    it('adds a web follow-up after an incomplete wiki step when no Researcher step is planned', () => {
+      const { added, steps } = follow([{ role: 'mcp-operator', description: 'wiki' }])
+      expect(added).toBe(true)
+      expect(steps.map((s) => s.role)).toEqual(['mcp-operator', 'research'])
+    })
+
+    it('does not add a second Researcher step when one is already planned after it', () => {
+      const { added, steps } = follow([{ role: 'mcp-operator', description: 'wiki' }, { role: 'research', description: 'do the research' }])
+      expect(added).toBe(false)
+      expect(steps.map((s) => s.role)).toEqual(['mcp-operator', 'research'])
+    })
+  })
+
+  describe('completion check for detailed research (found live: three searches, no pages read, a 36 second "research")', () => {
+    const fake = (name: string): Tool => ({ name, description: name, inputSchema: { type: 'object', properties: {} }, mutates: false, execute: async () => 'page text' })
+    function build(turns: ScriptedTurn[]) {
+      const registry = buildRegistry()
+      for (const n of ['web_search', 'parse_html', 'download_image', 'find_stock_images', 'save_research_note', 'read_research_notes']) registry.register(fake(n))
+      const agents = createAgents(registry)
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false })
+      return { provider, orchestrator }
+    }
+    const ask = (text: string): Message[] => [{ role: 'user', content: [{ type: 'text', text }] }]
+    const notes = (events: OrchestratorEvent[]): string[] => events.filter((e) => e.kind === 'stream' && e.event.type === 'user_note').map((e) => (e as { event: { text: string } }).event.text)
+
+    it('sends a shallow answer to a detailed-research request back to work, up to 6 times, then lets it stand', async () => {
+      const { provider, orchestrator } = build(Array.from({ length: 10 }, () => ({ text: 'Here is my summary.', stopReason: 'end_turn' as const })))
+      const events = await collect(orchestrator, ask('Do detailed research on AI agents in enterprises'), 'research')
+      expect(provider.requests).toHaveLength(7) // the answer, then six nudged tries, then it stands
+      const sent = notes(events)
+      expect(sent).toHaveLength(6)
+      expect(sent[0]).toMatch(/^\[Completion check by Sachivji\] This request needs detailed research, and you have read only 0 web page\(s\) after 0 search\(es\)/)
+    })
+
+    it('names pages from its own searches that it has not opened yet, so the nudge says exactly what to read', async () => {
+      const search: Tool = { name: 'web_search', description: 'search', inputSchema: { type: 'object', properties: {} }, mutates: false, execute: async () => '- A report: https://example.com/a\n  text\n- Another: https://example.org/b\n  text' }
+      const registry = buildRegistry()
+      for (const n of ['parse_html', 'download_image', 'find_stock_images', 'save_research_note', 'read_research_notes']) registry.register(fake(n))
+      registry.register(search)
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ toolCalls: [{ id: 's1', name: 'web_search', input: { query: 'x' } }], stopReason: 'tool_use' }, ...Array.from({ length: 8 }, () => ({ text: 'Done.', stopReason: 'end_turn' as const }))])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false })
+      const events = await collect(orchestrator, ask('Do detailed research on AI agents'), 'research')
+      expect(notes(events)[0]).toContain('Open these now with parse_html, in this round, one call each: https://example.com/a https://example.org/b.')
+    })
+
+    it('lets it finish once enough pages were really read', async () => {
+      const call = (id: string, name: string): ScriptedTurn => ({ toolCalls: [{ id, name, input: {} }], stopReason: 'tool_use' })
+      const note = (id: string, chars: number): ScriptedTurn => ({ toolCalls: [{ id, name: 'save_research_note', input: { section: 'S', content: 'fact. '.repeat(Math.ceil(chars / 6)) } }], stopReason: 'tool_use' })
+      const turns: ScriptedTurn[] = [
+        ...['s1', 's2', 's3', 's4'].map((id) => call(id, 'web_search')),
+        ...['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'].map((id) => call(id, 'parse_html')),
+        note('n1', 11000),
+        { text: 'The full result.', stopReason: 'end_turn' }
+      ]
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, ask('Do detailed research on AI agents in enterprises'), 'research')
+      expect(notes(events)).toHaveLength(0)
+      expect(provider.requests).toHaveLength(14)
+    })
+
+    it('after the pages are read, sends back notes that are too thin, and a saved file that is too short or has too few source links', async () => {
+      const call = (id: string, name: string, input: Record<string, unknown> = {}): ScriptedTurn => ({ toolCalls: [{ id, name, input }], stopReason: 'tool_use' })
+      const read = [...['s1', 's2', 's3', 's4'].map((id) => call(id, 'web_search')), ...['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'].map((id) => call(id, 'parse_html'))]
+      const thin = build([...read, call('n1', 'save_research_note', { section: 'S', content: 'one short fact' }), ...Array.from({ length: 9 }, () => ({ text: 'Done.', stopReason: 'end_turn' as const }))])
+      const thinNotes = notes(await collect(thin.orchestrator, ask('Do detailed research on AI agents in enterprises'), 'research'))
+      expect(thinNotes[0]).toMatch(/Your notes hold only 14 characters from 8 pages/)
+
+      const urls = Array.from({ length: 9 }, (_, i) => `https://example.com/${i}`).join('\n')
+      const short = build([...read, call('n1', 'save_research_note', { section: 'S', content: 'fact. '.repeat(2000) }), call('w1', 'write_file', { path: 'r.txt', content: 'too short' }), ...Array.from({ length: 9 }, () => ({ text: 'Done.', stopReason: 'end_turn' as const }))])
+      const shortNotes = notes(await collect(short.orchestrator, ask('Do detailed research on AI agents in enterprises and save it in r.txt'), 'research'))
+      expect(shortNotes[0]).toMatch(/The result file is only 9 characters with 0 source link\(s\)/)
+
+      const good = build([...read, call('n1', 'save_research_note', { section: 'S', content: 'fact. '.repeat(2000) }), call('w1', 'write_file', { path: 'r.txt', content: `${'detail. '.repeat(1700)}\nSources:\n${urls}` }), { text: 'Saved.', stopReason: 'end_turn' }])
+      expect(notes(await collect(good.orchestrator, ask('Do detailed research on AI agents in enterprises and save it in r.txt'), 'research'))).toHaveLength(0)
+    })
+
+    it('leaves an ordinary lookup alone — the check only applies when the request asks for depth', async () => {
+      const { provider, orchestrator } = build([{ text: 'It is 21 degrees.', stopReason: 'end_turn' }])
+      const events = await collect(orchestrator, ask('What is the weather in Pune?'), 'research')
+      expect(provider.requests).toHaveLength(1)
+      expect(notes(events)).toHaveLength(0)
+    })
+  })
+
+  describe('a run stuck repeating one failing call (found live: 34 broken pptx_compose_slide calls)', () => {
+    const failing: Tool = {
+      name: 'always_fails',
+      description: 'always fails',
+      inputSchema: { type: 'object', properties: {} },
+      mutates: false,
+      execute: async () => {
+        throw new Error('Unknown element type "undefined"')
+      }
+    }
+    const succeeding: Tool = { name: 'sometimes_ok', description: 'ok', inputSchema: { type: 'object', properties: {} }, mutates: false, execute: async () => 'fine' }
+
+    function build(turns: ScriptedTurn[]) {
+      const registry = new ToolRegistry()
+      registry.register(failing)
+      registry.register(succeeding)
+      const agents = createAgents(registry)
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false })
+      return { provider, orchestrator }
+    }
+    const call = (id: string, name: string): ScriptedTurn => ({ toolCalls: [{ id, name, input: {} }], stopReason: 'tool_use' })
+
+    it('stops after 6 failed calls in a row to the same tool, tells the user why, and ends the turn cleanly', async () => {
+      const turns: ScriptedTurn[] = Array.from({ length: 10 }, (_, i) => call(`c${i}`, 'always_fails'))
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      expect(provider.requests).toHaveLength(6)
+      const warning = events.find((e) => e.kind === 'stream' && e.event.type === 'warning') as { event: { message: string } } | undefined
+      expect(warning?.event.message).toMatch(/^Stopped: "always_fails" failed 6 times in a row.*Unknown element type/)
+      expect(events.some((e) => e.kind === 'message' && e.content.some((c) => c.type === 'warning'))).toBe(true)
+      const last = events.filter((e) => e.kind === 'stream').map((e) => e.event).at(-1)
+      expect(last).toMatchObject({ type: 'message_stop', stopReason: 'end_turn' })
+    })
+
+    it('does not trip when a success breaks the streak, so a model that is genuinely correcting itself gets its tries', async () => {
+      const turns: ScriptedTurn[] = [
+        ...Array.from({ length: 4 }, (_, i) => call(`a${i}`, 'always_fails')),
+        call('ok', 'sometimes_ok'),
+        ...Array.from({ length: 4 }, (_, i) => call(`b${i}`, 'always_fails')),
+        { text: 'Gave up politely.', stopReason: 'end_turn' }
+      ]
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      expect(provider.requests).toHaveLength(10)
+      expect(events.some((e) => e.kind === 'stream' && e.event.type === 'warning')).toBe(false)
+    })
+  })
+
+  describe('outside-the-workspace access', () => {
+    let outside: string
+    let always: string[]
+    let access: ExternalAccess
+
+    beforeEach(async () => {
+      outside = await mkdtemp(join(tmpdir(), 'sachiv-outside-'))
+      await writeFile(join(outside, 'passport.txt'), 'expires 2027')
+      always = []
+      access = new ExternalAccess({ getAlways: () => always, setAlways: (l) => (always = l), home: join(tmpdir(), 'no-such-home') })
+      ctx = { ...ctx, externalAccess: access }
+    })
+    afterEach(async () => {
+      await rm(outside, { recursive: true, force: true })
+    })
+
+    function run(toolCalls: ScriptedTurn['toolCalls'], confirm: (r: ToolConfirmRequest) => Promise<ConfirmDecision>) {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ toolCalls, stopReason: 'tool_use' }, { text: 'ok', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), confirm, ctx, signal, { planningEnabled: false })
+      return collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+    }
+    const toolResult = (events: OrchestratorEvent[]): string => (events.filter((e) => e.kind === 'stream').map((e) => e.event).find((e) => e.type === 'tool_result') as { content: string }).content
+
+    it('asks before reading an outside folder, reads it once approved, and remembers an "always" choice so the next read does not ask', async () => {
+      const requests: ToolConfirmRequest[] = []
+      const confirm = async (r: ToolConfirmRequest): Promise<ConfirmDecision> => {
+        requests.push(r)
+        return { approved: true, input: { ...r.input, remember: 'always' } }
+      }
+      const events = await run([{ id: 'c1', name: 'read_file', input: { path: join(outside, 'passport.txt') } }], confirm)
+      expect(requests).toHaveLength(1)
+      expect(requests[0]).toMatchObject({ name: 'external_folder_access', input: { folder: outside, access: 'read', tool: 'read_file' } })
+      expect(toolResult(events)).toBe('expires 2027')
+      expect(always).toEqual([outside])
+
+      requests.length = 0
+      const second = await run([{ id: 'c2', name: 'read_file', input: { path: join(outside, 'passport.txt') } }], confirm)
+      expect(requests).toHaveLength(0)
+      expect(toolResult(second)).toBe('expires 2027')
+    })
+
+    it('"just once" allows only that call: the grant is dropped afterwards', async () => {
+      const confirm = async (r: ToolConfirmRequest): Promise<ConfirmDecision> => ({ approved: true, input: { ...r.input, remember: 'once' } })
+      await run([{ id: 'c1', name: 'read_file', input: { path: join(outside, 'passport.txt') } }], confirm)
+      expect(access.isReadAllowed('test-session', join(outside, 'passport.txt'))).toBe(false)
+      expect(always).toEqual([])
+    })
+
+    it('does not run the tool when the user refuses, and tells the model so', async () => {
+      const events = await run([{ id: 'c1', name: 'read_file', input: { path: join(outside, 'passport.txt') } }], async () => ({ approved: false }))
+      expect(toolResult(events)).toMatch(/^\[Rejected by user\] The user did not allow access/)
+    })
+
+    it('never asks about a protected location and never reads it', async () => {
+      const requests: ToolConfirmRequest[] = []
+      const events = await run([{ id: 'c1', name: 'read_file', input: { path: '/etc/hosts' } }], async (r) => (requests.push(r), { approved: true, input: r.input }))
+      expect(requests).toHaveLength(0)
+      expect(toolResult(events)).toMatch(/protected location/)
+    })
+
+    it('creating a NEW file outside asks every time and is never remembered; an existing file is never overwritten', async () => {
+      const requests: ToolConfirmRequest[] = []
+      const confirm = async (r: ToolConfirmRequest): Promise<ConfirmDecision> => {
+        requests.push(r)
+        return { approved: true, input: { ...r.input, remember: 'always' } } // "always" is ignored for writes
+      }
+      const target = join(outside, 'report.txt')
+      const first = await run([{ id: 'w1', name: 'write_file', input: { path: target, content: 'hello' } }], confirm)
+      expect(requests.map((r) => r.name)).toEqual(['external_folder_access', 'write_file']) // the folder prompt, then the normal tool confirmation
+      expect(requests[0].input).toMatchObject({ access: 'write-new' })
+      expect(toolResult(first)).toContain('the new file')
+      expect(await readFile(target, 'utf-8')).toBe('hello')
+      expect(always).toEqual([])
+
+      const again = await run([{ id: 'w2', name: 'write_file', input: { path: target, content: 'changed' } }], confirm)
+      expect(toolResult(again)).toMatch(/already exists.*never overwrites/)
+      expect(await readFile(target, 'utf-8')).toBe('hello')
     })
   })
 

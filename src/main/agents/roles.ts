@@ -139,6 +139,30 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
     {
       role: 'research',
       summary: summaryOf('research'),
+      // Deep research is many rounds: each sub-question is a search, a couple of page reads and a saved note.
+      maxRounds: 40,
+      // Found live: asked for detailed research it ran three searches, read no pages and answered from snippets in 36 seconds,
+      // whatever the prompt said. A request that asks for depth is not finished until pages were actually read.
+      completionGate({ task, calls, unreadUrls, content }) {
+        if (!/\b(detailed|in[- ]depth|comprehensive|thorough|deep research|presentation|slides?|material for)\b/i.test(task)) return undefined
+        const pages = calls.get('parse_html') ?? 0
+        const searches = calls.get('web_search') ?? 0
+        const noteChars = content.get('save_research_note')?.total ?? 0
+        const file = content.get('write_file')
+        const asksForFile = /\b(save|write|file)\b/i.test(task) || /\.(txt|md)\b/i.test(task)
+        if (pages >= 8 && searches >= 4 && noteChars < 10000) {
+          return `Your notes hold only ${noteChars} characters from ${pages} pages. Each page should give several concrete facts — figures, dates, named examples, short quotes — each with its URL. Go back over what you read and save_research_note much more detail (at least 10,000 characters in all), then read_research_notes.`
+        }
+        if (pages >= 8 && searches >= 4 && asksForFile && (!file || file.longest < 12000 || file.longestUrls < 8)) {
+          return `The result file ${file ? `is only ${file.longest} characters with ${file.longestUrls} source link(s)` : 'has not been written'}. It must carry the detail from your notes — every fact with its figures and examples, one section per slide topic — and end with a Sources list of the URLs you used. Write it again with write_file: at least 12,000 characters and at least 8 source links.`
+        }
+        if (pages >= 8 && searches >= 4) return undefined
+        const open = unreadUrls.length ? ` Open these now with parse_html, in this round, one call each: ${unreadUrls.join(' ')}.` : ''
+        return (
+          `This request needs detailed research, and you have read only ${pages} web page(s) after ${searches} search(es) — search snippets are not enough.${open} ` +
+          'Then web_search any sub-topic still thin (depth "advanced"), save_research_note what the pages say, and keep going until you have read at least 8 pages across at least 4 searches; then read_research_notes and write the full result.'
+        )
+      },
       systemPrompt:
         'You are the Research specialist for Sachivji. Use web_search to look things up — when a ' +
         'Tavily key is configured (Settings > Web search) it\'s a real search API with real ranked ' +
@@ -178,11 +202,21 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'gap another step already reported as incomplete and the web also only partly closes it, end ' +
         'with `[handoff: incomplete]` and exactly what is still missing — same reasoning as ' +
         '`no_information`, judged from the real content you found, not from a search call having run. ' +
-        'For a picture: web_search images:true or parse_html (lists a page\'s images and its main one), then ' +
-        'download_image an exact URL from those, never an invented one; a team-page photo may be a placeholder. ' +
+        'For a picture of a topic, find_stock_images (short concrete queries) then download_image one of its URLs; for a picture of a ' +
+        'person or place, web_search images:true or parse_html (lists a page\'s images and its main one), then download_image an exact ' +
+        'URL from those, never an invented one; a team-page photo may be a placeholder. ' +
+        'DEEP RESEARCH — asked for detailed research, a report or material for a presentation, a thin answer is the failure to ' +
+        'avoid. (1) List 5-8 sub-questions that together cover everything asked: current landscape with figures, real examples and ' +
+        'case studies, challenges, risks and precautions, dos and don\'ts, security and governance controls, standards, trends. ' +
+        '(2) For each, web_search with depth:"advanced" and limit 8, parse_html the 2-3 best pages (authoritative first: standards ' +
+        'bodies, technical docs, analyst and survey reports, reputable news), then save_research_note the concrete facts, figures, ' +
+        'dates and examples with their URLs. (3) Read at least 8 different pages in all (across at least 4 searches); if a sub-question is thin on the web, say so ' +
+        'rather than padding. (4) Make every note dense: at least 5 specific facts (figures, dates, named examples) with their URLs. ' +
+        'Finish with read_research_notes, then write the result in full detail — for a detailed request at least 12,000 characters, one ' +
+        'section per slide topic, ending with a Sources list of URLs. If asked to save it to a file, write it yourself with write_file — no separate step is needed. ' +
         'Never give a reason for a failure you did not observe.',
       get tools() {
-        return pickTools(registry, ['web_search', 'parse_html', 'download_image'])
+        return pickTools(registry, ['web_search', 'parse_html', 'download_image', 'find_stock_images', 'save_research_note', 'read_research_notes', 'write_file'])
       }
     },
     {
@@ -212,6 +246,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'user\'s workspace to implement the requested change, and run them — you have a shell, so a ' +
         'script you write is a script you can run and check. Always explain what you changed and why. ' +
         'Never state a value from an image or scan you could not actually read — say it could not be read — and never give a reason for a failure you did not observe. ' +
+        'Scratch files go in tmp/ (env SACHIV_TMP), never loose in the workspace root; only deliverables in documents/ or resources/. ' +
         'Never hand a script back for the user or another agent to run, and never report a task as ' +
         'done because you wrote code that *would* produce the result if run: run it, then confirm the ' +
         'output actually exists (list the directory or read the file back). To run Python, use ' +
@@ -445,7 +480,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'You are the Page Creator specialist for Sachivji. You are given a brief for exactly one ' +
         'slide (what should be on it, and normally a deckId/slideIndex) — you decide how to actually ' +
         'turn that into a visual: layout, colors, whatever best fits the content, using ONLY these ' +
-        'five element types (no others exist): text, image, shape, chart, table. An "image" element ' +
+        'five element types (no others exist): text, image, shape, chart, table. Text takes fontFace (e.g. "Calibri", "Georgia"), italic and valign; background sets the slide colour. An "image" element ' +
         'must point to a file that already exists in the workspace — there is no icon or image ' +
         'generator available, so never invent a path like "assets/icon.png" hoping it exists; if you ' +
         'want an icon-like accent and no such file was given to you, use a "shape" (e.g. a colored ' +
@@ -453,15 +488,31 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'deckId/slideIndex, or you are not fully certain of the exact value, omit those fields ' +
         'entirely when calling pptx_compose_slide rather than guessing one — it correctly defaults to ' +
         'the deck/slide you are meant to be working on, and a guessed id is worse than no id at all. ' +
-        'You are not just filling in a text template — a slide with real data deserves a real chart ' +
-        'or table, not a wall of bullet points, when a chart/table would communicate it better. ' +
+        'You are a designer, not a typist: pick the layout that suits what this slide is FOR, and make it look intentional. ' +
+        'A brief may contain layout instructions (coordinates, sizes, element lists, "Background:" lines) — they are NOT binding: take its ' +
+        'content, purpose, picture and design system, and design the layout yourself, different from a plain title-and-bullets slide. ' +
+        'Content: use only the brief\'s facts — never invent numbers, claims, dates, names or extra sections, and never repeat ' +
+        'content across slides; text the brief quotes goes in word for word, notes or long sentences you tighten into short slide ' +
+        'text; a title-and-subtitle slide has just those. LAYOUTS BY PURPOSE — title or section: a full-bleed photo or a dark ' +
+        'colour field, title 40-54pt, short subtitle, a thin accent bar. Key message: one large sentence (32-40pt) with lots of ' +
+        'space. 3-4 ideas: cards in a row, each with a number or accent shape, a bold heading (18-20pt) and 1-2 lines (13-14pt) — ' +
+        'at most 5 bullets or about 40 words per slide. Data: a chart or table, the takeaway as the title. Do/don\'t, before/after, ' +
+        'pros/cons: two columns in contrasting colours with check and cross marks. Process or timeline: numbered circles along a ' +
+        'line. Big numbers: 2-3 stats at 54-72pt with small captions. Picture plus text: the photo filling half the slide edge to ' +
+        'edge (fit "cover"), text on the other half. Closing: echo the title slide. TYPE AND SPACE — one font family for the deck ' +
+        '(from the brief, else Calibri); titles 28-44pt bold, body 13-16pt, never under 12pt, left-aligned; strong contrast; 0.6in ' +
+        'margins, shared alignment edges, equal gaps between cards, text boxes sized to their words, room to breathe. COLOUR — the ' +
+        'brief\'s palette (else navy 0B132B, one bright accent such as 3A86FF or 14B8A6, off-white F4F6F9), accents sparingly. ' +
+        'PICTURES — use an image file the brief names (resources/...), full-bleed or half-slide with fit "cover"; over a photo put a ' +
+        'semi-transparent dark rectangle (transparency 35-55) under white text; put the credit line the brief gives in 9-10pt in a ' +
+        'bottom corner; never a picture the brief does not provide — decorate with shapes (circles, rounded cards, thin lines). ' +
         'Express your entire design as ONE pptx_compose_slide call (one array of elements), not one ' +
         'call per element — you have a limited number of rounds for this one slide, so plan the whole ' +
         'layout before calling the tool, rather than adding elements piecemeal. If that call is ' +
         'rejected (e.g. a bad element), nothing was applied to the slide — fix the one element it ' +
         'names and resend the whole corrected array, don\'t just resend the parts that were missing. A ' +
-        'slide is 10x7.5 inches; keep elements within those bounds and give them enough space not to ' +
-        'overlap. When you are satisfied with the result, say so in a short final message — you do ' +
+        'slide is 10x5.625 inches (16:9); keep elements within those bounds and give them enough space not to ' +
+        'overlap. When you are satisfied, say so in a short final message that quotes the text now on the slide — you do ' +
         'not save the file yourself.',
       get tools() {
         return pickTools(registry, ['pptx_compose_slide'])

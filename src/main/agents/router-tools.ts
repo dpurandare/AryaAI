@@ -38,10 +38,29 @@ export const ROUTER_CORE_TOKEN_CAP = 1_200
  * Everything else a specialist owns is reached with its delegate tool — MCP tools included: since
  * design step 5 they belong to the MCP Operator alone, so a server with 144 tools adds nothing here.
  */
+/**
+ * Every tool except the connected MCP servers' (`mcp__<server>__<tool>`), which belong to the MCP Operator alone. Used
+ * by the full router too, not just the slim one: found live, a "look up X in the wiki" request had the top-level
+ * assistant call the wiki tools itself — no MCP Operator, none of its server-description and honest-no-result
+ * handling — and a manual-test routing row expecting the Operator missed. With no MCP tools in its list, the router can
+ * only reach a server by delegating.
+ */
+export function withoutMcpTools(all: readonly Tool[]): Tool[] {
+  return all.filter((t) => !t.name.startsWith('mcp__'))
+}
+
+/** Tools only a specialist uses; the router never calls them, and each costs tokens on every request it makes. */
+const SPECIALIST_ONLY_TOOLS: ReadonlySet<string> = new Set(['save_research_note', 'read_research_notes'])
+
+/** What the FULL router sees: no MCP tools (see withoutMcpTools) and no specialist-only tools. */
+export function fullRouterTools(all: readonly Tool[]): Tool[] {
+  return withoutMcpTools(all).filter((t) => !SPECIALIST_ONLY_TOOLS.has(t.name))
+}
+
 export function selectRouterTools(all: readonly Tool[], agents: ReadonlyMap<AgentRole, Agent>): Tool[] {
   // User-defined roles never count as a tool's owner: a role file naming `pptx_add_slide` must not make the slim router drop the deck flow.
   const owned = new Set([...agents.values()].filter((a) => !a.custom).flatMap((a) => a.tools.map((t) => t.name)))
   const core = new Set(ROUTER_CORE_TOOLS)
   // MCP tools are dropped by rule (not merely because the operator owns them right now): they must never reach the router's tool list.
-  return all.filter((t) => !t.name.startsWith('mcp__') && (core.has(t.name) || !owned.has(t.name)))
+  return withoutMcpTools(all).filter((t) => core.has(t.name) || !owned.has(t.name))
 }

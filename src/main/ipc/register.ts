@@ -32,6 +32,7 @@ import { isValidRoleId, roleLabel, type AgentRole } from '@shared/agents'
 import type { RuntimeState } from '@shared/runtime'
 import { createSession, listSessions, deleteSession, getSession, updateSessionTitle, titleFromMessage } from '../db/sessions'
 import { insertMessage, listMessages } from '../db/messages'
+import { externalAccess } from '../security/external-access-store'
 import { previousAnswerText } from '../agents/previous-answer'
 import { enqueueMessage, getEmbeddingConfig, getIndexState, rebuildIndex, runBackfill } from '../search-history/indexer'
 import { getSetting, setSetting } from '../db/settings'
@@ -87,7 +88,7 @@ import { buildRoster } from '../roles/roster'
 import { EXAMPLE_ROLE_FILE, EXAMPLE_ROLE_FILE_NAME, UserRoleLoader } from '../roles/user-roles'
 import { SYSTEM_PROMPT } from '../agents/system-prompt'
 import { createDescribeCapabilitiesTool } from '../agents/capabilities'
-import { selectRouterTools } from '../agents/router-tools'
+import { fullRouterTools, selectRouterTools } from '../agents/router-tools'
 import { logToolUse } from '../db/tool-usage-log'
 import {
   ACTIVE_PROVIDER_KEY,
@@ -476,6 +477,9 @@ export function registerIpcHandlers(): void {
     applySettingsImport(payload)
   )
 
+  ipcMain.handle(IpcChannel.ExternalFoldersList, (): string[] => externalAccess.listAlways())
+  ipcMain.handle(IpcChannel.ExternalFoldersRemove, (_event, folder: string): void => externalAccess.revokeAlways(folder))
+
   ipcMain.handle(IpcChannel.ToolsList, (): ToolDescriptor[] =>
     toolRegistry
       .list()
@@ -728,7 +732,7 @@ async function runChat(
   // on what's about to be sent, never on what's persisted/displayed.
   await refreshRoles() // user-defined roles are re-read every turn
   const slimRouter = getSetting(SLIM_ROUTER_SETTING_KEY) === 'true'
-  const routerTools = slimRouter ? selectRouterTools(toolRegistry.list(), agents) : toolRegistry.list()
+  const routerTools = slimRouter ? selectRouterTools(toolRegistry.list(), agents) : fullRouterTools(toolRegistry.list())
   const prepared = await prepareConversation(priorTurns, model, provider, {
     system: SYSTEM_PROMPT,
     // The top-level round's real tool list — matches what's actually about

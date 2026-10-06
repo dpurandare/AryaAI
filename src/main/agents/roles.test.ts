@@ -146,14 +146,15 @@ describe('createAgents', () => {
       'web_search', 'parse_html', 'search_history', 'read_file', 'list_directory', 'write_file', 'shell_execute',
       'db_list_connections', 'db_execute_sql', 'api_list_connections', 'api_call', 'api_create_connection',
       'db_create_connection', 'mcp_create_connection', 'parse_csv', 'parse_json', 'parse_xml', 'xlsx_read', 'xlsx_write',
-      'office_create_document', 'office_read_document', 'office_fill_template', 'office_extract_template'
+      'office_create_document', 'office_read_document', 'office_fill_template', 'office_extract_template',
+      'download_image', 'find_stock_images', 'save_research_note', 'read_research_notes'
     ]
     for (const n of all) registry.register(fakeTool(n))
     const agents = createAgents(registry)
     const toolsOf = (role: Parameters<typeof agents.get>[0]): string[] => agents.get(role)?.tools.map((t) => t.name) ?? []
 
-    it('Researcher: web only — no history, no APIs, no files', () => {
-      expect(toolsOf('research').sort()).toEqual(['parse_html', 'web_search'])
+    it('Researcher: web, stock photos, research notes and saving its own findings — no history, no APIs, no code', () => {
+      expect(toolsOf('research').sort()).toEqual(['download_image', 'find_stock_images', 'parse_html', 'read_research_notes', 'save_research_note', 'web_search', 'write_file'])
     })
     it('History Analyst: search_history only', () => {
       expect(toolsOf('history-analyst')).toEqual(['search_history'])
