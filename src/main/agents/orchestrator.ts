@@ -2449,8 +2449,8 @@ export class Orchestrator {
 
     try {
       const content = await this.executeWithTimeout(tool, input)
-      if (name === 'show_media') {
-        // TASKS.md #82 — show_media signals its real image payload via a
+      if (content.startsWith(`{"${SHOW_MEDIA_MARKER}"`)) {
+        // TASKS.md #82 — show_media (and download_image, which saves then shows) signal a real image payload via a
         // JSON marker (see tools/show-media.ts) rather than widening the
         // `Tool.execute(): Promise<string>` contract every other tool
         // implements, just for this one. Split here into a real `image`
@@ -2460,7 +2460,7 @@ export class Orchestrator {
           const parsed = JSON.parse(content) as Partial<ShowMediaPayload>
           if (parsed[SHOW_MEDIA_MARKER] && parsed.path && parsed.mimeType && parsed.dataBase64) {
             return {
-              content: `Displayed ${parsed.path} to the user.`,
+              content: `Displayed ${parsed.path} to the user.${parsed.note ? ` ${parsed.note}` : ''}`,
               isError: false,
               image: { path: parsed.path, mimeType: parsed.mimeType, dataBase64: parsed.dataBase64 }
             }

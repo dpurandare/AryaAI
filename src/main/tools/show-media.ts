@@ -42,6 +42,8 @@ export interface ShowMediaPayload {
   path: string
   mimeType: string
   dataBase64: string
+  /** Extra text for the MODEL only (the user sees just the image) — e.g. a reminder that it has not seen the picture. */
+  note?: string
 }
 
 export const showMediaTool: Tool = {
