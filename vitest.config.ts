@@ -11,6 +11,7 @@ export default defineConfig({
     }
   },
   test: {
-    environment: 'node'
+    environment: 'node',
+    setupFiles: ['test/support/no-docx-framing.ts']
   }
 })

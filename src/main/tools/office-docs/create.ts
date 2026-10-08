@@ -40,6 +40,29 @@ function extensionOf(path: string): string {
   return extname(path).slice(1).toLowerCase()
 }
 
+/**
+ * A report must have a head and a tail. Found live: a "Top 5 customers" request produced a Word file that was just
+ * a bare table — no title, no statement of what it is or where the data came from, no closing note. Prompts did not
+ * stop it, so the tool refuses until the sections carry an opening and a closing paragraph.
+ */
+export const documentFraming = { enforce: true }
+
+function documentFramingProblem(title: string | undefined, sections: DocxSection[]): string | null {
+  const hasProse = (s: DocxSection | undefined): boolean => !!s?.paragraphs?.some((p) => typeof p === 'string' && p.trim())
+  const isProseOnly = (s: DocxSection): boolean => !s.table && !s.bullets?.length && !s.numbers?.length
+  const missing: string[] = []
+  if (!title?.trim()) missing.push('a `title`')
+  if (!hasProse(sections[0])) {
+    missing.push('an opening section whose `paragraphs` say what the document is, its purpose, where the information comes from and what it contains')
+  }
+  const last = sections[sections.length - 1]
+  if (sections.length < 2 || !last || !hasProse(last) || !isProseOnly(last)) {
+    missing.push('a final prose-only section (paragraphs, no table or list) that summarises the findings or states the conclusion')
+  }
+  if (missing.length === 0) return null
+  return `The document has no head or tail. Add ${missing.join('; and ')}. Then call again.`
+}
+
 const NUMBERED_LIST_REFERENCE = 'office-create-document-numbered-list'
 
 /**
@@ -343,7 +366,9 @@ export const officeCreateDocumentTool: Tool = {
     'Create a new .docx or .pptx file from scratch inside the workspace — the format follows the path\'s extension. ' +
     'It is placed under documents/ regardless of the path given (unless a file already exists at that path, which it ' +
     'then overwrites); the result names the real path. It cannot open or edit an existing document — the one way back ' +
-    'into editing is office_fill_template with a user-authored template. For .docx give sections (each an optional ' +
+    'into editing is office_fill_template with a user-authored template. For .docx give a `title` and sections: the first section introduces the document (what it is, its purpose, the ' +
+    'source of the information, what it contains), the last is a prose-only conclusion or summary — a document that is ' +
+    'only a table or list is refused. Each section is (an optional ' +
     'heading plus paragraphs / bullets / numbers / table); **bold**, *italic* and `code` in any text render as real ' +
     'formatting. Use `table` (headers + rows) for tabular data and `bullets`/`numbers` for lists, never markdown ' +
     'pipes or typed "- "/"1. " markers. It cannot embed images or charts. For .pptx give slides (title, bullets, ' +
@@ -426,6 +451,10 @@ export const officeCreateDocumentTool: Tool = {
       if (input.fromPreviousAnswer === true) {
         body = ctx.previousAnswerText?.()
         if (!body) throw new Error('There is no previous answer in this conversation to put in the document — write the sections yourself.')
+      }
+      if (body === undefined && documentFraming.enforce) {
+        const problem = documentFramingProblem(title, sections)
+        if (problem) throw new Error(problem)
       }
       const buffer = await buildDocx(title, sections, body)
       await writeFile(absPath, buffer)

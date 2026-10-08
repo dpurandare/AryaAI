@@ -5,7 +5,7 @@ import JSZip from 'jszip'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WorkspaceGuard } from '../../security/workspace-guard'
 import type { ToolContext } from '../types'
-import { officeCreateDocumentTool } from './create'
+import { documentFraming, officeCreateDocumentTool } from './create'
 
 /** The real `document.xml` of a .docx just written to disk — for asserting on actual Word constructs, not just "a file exists". */
 async function readDocumentXml(path: string): Promise<string> {
@@ -30,6 +30,45 @@ describe('office_create_document', () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
+  })
+
+  describe('head and tail', () => {
+    beforeEach(() => {
+      documentFraming.enforce = true
+    })
+    afterEach(() => {
+      documentFraming.enforce = false
+    })
+
+    it('refuses a bare table with no title, opening or closing', async () => {
+      await expect(
+        officeCreateDocumentTool.execute({ path: 'bare.docx', sections: [{ table: { headers: ['A'], rows: [['1']] } }] }, ctx)
+      ).rejects.toThrow(/no head or tail.*title.*opening.*final prose-only/s)
+    })
+
+    it('accepts a title, an opening paragraph and a closing paragraph', async () => {
+      const result = await officeCreateDocumentTool.execute(
+        {
+          path: 'framed.docx',
+          title: 'Top customers',
+          sections: [
+            { heading: 'About this document', paragraphs: ['What it is and where the data comes from.'] },
+            { heading: 'Results', table: { headers: ['A'], rows: [['1']] } },
+            { heading: 'Conclusion', paragraphs: ['A is the leader.'] }
+          ]
+        },
+        ctx
+      )
+      expect(result).toBe('Created documents/framed.docx.')
+    })
+
+    it('does not apply to a document built from the previous answer', async () => {
+      const result = await officeCreateDocumentTool.execute(
+        { path: 'prev.docx', fromPreviousAnswer: true },
+        { ...ctx, previousAnswerText: () => '# Hi\n\nBody' }
+      )
+      expect(result).toBe('Created documents/prev.docx.')
+    })
   })
 
   it('always mutates and describes the target path', () => {
