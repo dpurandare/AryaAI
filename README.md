@@ -56,7 +56,7 @@ This resets every time `npm install` re-downloads Electron (including a clean `r
 
 Ollama loads a model with a small runtime context window by default — commonly 4096 tokens — regardless of that model's real architectural maximum, unless told otherwise. `gpt-oss:20b` advertises 131072 but is actually *loaded* at 4096 out of the box, confirmed live. This app reads the model's real, currently-loaded context straight from Ollama and budgets conversation history against that live number (`src/main/providers/ollama.ts`'s `loadedContextWindow`/`configuredContextWindow`, used by `resolveContextWindow`) rather than assuming the bigger advertised figure — so the small number you're seeing is Ollama's actual runtime setting, not a bug in the meter.
 
-Fix: create a custom model with a larger `num_ctx` baked in via a Modelfile, then use that custom model instead of the base one. Two working examples already live at the repo root:
+Fix: create a custom model with a larger `num_ctx` baked in via a Modelfile, then use that custom model instead of the base one. Two working examples already live in the `models/` folder:
 
 ```
 # ModelFile — gpt-oss:20b with a 128K context window
@@ -73,7 +73,7 @@ PARAMETER num_ctx 262144
 Build and select one:
 
 ```bash
-ollama create gpt-oss-custom -f ./ModelFile      # or: ollama create qwen3.8-custom -f ./ModelFile2
+ollama create gpt-oss-custom -f ./models/ModelFile      # or: ollama create qwen3.8-custom -f ./models/ModelFile2
 ```
 
 Then pick the new `gpt-oss-custom` (or `qwen3.8-custom`) entry as the model in Settings, same as any other Ollama model — nothing else in the app needs configuring. It'll show up in Ollama's model list (`ollama list`) as its own separate model, several GB of disk space per variant (it's a full copy, not a lightweight alias), and the context/cost meter will immediately reflect the real, larger `num_ctx` you set, whether the model is currently loaded or idled out of VRAM (Ollama's default when nothing's been sent in a while).

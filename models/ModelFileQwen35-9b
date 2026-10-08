@@ -8,5 +8,5 @@ PARAMETER num_ctx 262144
 # PARAMETER num_parallel 2
 
 # run this afterwords.
-# ollama create qwen3.5:9b-custom -f ./ModelFileQwen35-9b
+# ollama create qwen3.5:9b-custom -f ./models/ModelFileQwen35-9b
 

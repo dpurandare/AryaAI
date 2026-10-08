@@ -13,4 +13,4 @@ PARAMETER num_ctx 2048
 
 # run this afterwards — recreates the SAME name in place (Sachivji's default embedding
 # model is hardcoded to "nomic-embed-text", so no Settings change is needed after this):
-# ollama create nomic-embed-text -f ./ModelFileNomicEmbed
+# ollama create nomic-embed-text -f ./models/ModelFileNomicEmbed

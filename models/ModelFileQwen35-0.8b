@@ -1,5 +1,5 @@
-# Pull the base gpt-oss model
-FROM qwen3.5:9b-mlx
+# Pull the base model
+FROM qwen3.5:0.8b
 
 # Set the context size (e.g., 32768, 65536, or 131072 for full 128k, 262144 for 256K)
 PARAMETER num_ctx 262144
@@ -8,5 +8,5 @@ PARAMETER num_ctx 262144
 # PARAMETER num_parallel 2
 
 # run this afterwords.
-# ollama create qwen3.5:9b-mlx-custom -f ./ModelFileQwen35-9bMLX
+# ollama create qwen3.5:0.8b-custom -f ./models/ModelFileQwen35-0.8b
 
