@@ -14,6 +14,7 @@ import {
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, extname } from 'node:path'
 import pptxgen from 'pptxgenjs'
+import { parseHandoffTag } from '../../agents/handoff'
 import type { Tool } from '../types'
 import { resolveNewFilePath, workspaceRelativePath } from '../workspace-layout'
 
@@ -365,16 +366,13 @@ export const officeCreateDocumentTool: Tool = {
   description:
     'Create a new .docx or .pptx file from scratch inside the workspace — the format follows the path\'s extension. ' +
     'It is placed under documents/ regardless of the path given (unless a file already exists at that path, which it ' +
-    'then overwrites); the result names the real path. It cannot open or edit an existing document — the one way back ' +
-    'into editing is office_fill_template with a user-authored template. For .docx give a `title` and sections: the first section introduces the document (what it is, its purpose, the ' +
-    'source of the information, what it contains), the last is a prose-only conclusion or summary — a document that is ' +
-    'only a table or list is refused. Each section is (an optional ' +
-    'heading plus paragraphs / bullets / numbers / table); **bold**, *italic* and `code` in any text render as real ' +
-    'formatting. Use `table` (headers + rows) for tabular data and `bullets`/`numbers` for lists, never markdown ' +
-    'pipes or typed "- "/"1. " markers. It cannot embed images or charts. For .pptx give slides (title, bullets, ' +
-    'notes), but this path is deliberately plain — a flat bullet list per slide, no charts, tables, images or layout. ' +
-    'For a real presentation (more than a few slides, or any visual design) use pptx_start_deck + ' +
-    'delegate_to_page-creator per slide instead; keep this tool\'s .pptx path for a minimal text-only deck.',
+    'then overwrites); the result names the real path. It cannot open or edit an existing document (the way back into ' +
+    'editing is office_fill_template). For .docx give a `title` and sections: the first introduces the document (what it ' +
+    'is, its purpose, the source of the information), the last is a prose-only conclusion — a bare table or list is ' +
+    'refused. Each section is an optional heading plus paragraphs / bullets / numbers / table; **bold**, *italic* and ' +
+    '`code` render. Use `table` for tabular data and `bullets`/`numbers` for lists, never markdown pipes or typed ' +
+    'markers. No images or charts. For .pptx give slides (title, bullets, notes) — deliberately plain, a flat bullet ' +
+    'list per slide; for a real presentation use pptx_start_deck + delegate_to_page-creator per slide.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -440,6 +438,12 @@ export const officeCreateDocumentTool: Tool = {
           'step reference from it — the document is for the reader, who only needs the content — and call again.'
       )
     }
+    if (/\[handoff:/i.test(JSON.stringify([input.title, input.sections, input.slides]))) {
+      throw new Error(
+        'The document text contains a "[handoff: …]" routing tag. That is internal plumbing, not content — remove it, and any ' +
+          'sentence about being unable to do the task, and call again.'
+      )
+    }
     const absPath = resolveNewFilePath(ctx.workspaceGuard, relPath)
     await mkdir(dirname(absPath), { recursive: true })
     const title = typeof input.title === 'string' ? input.title : undefined
@@ -450,6 +454,7 @@ export const officeCreateDocumentTool: Tool = {
       let body: string | undefined
       if (input.fromPreviousAnswer === true) {
         body = ctx.previousAnswerText?.()
+        if (body) body = parseHandoffTag(body).text
         if (!body) throw new Error('There is no previous answer in this conversation to put in the document — write the sections yourself.')
       }
       if (body === undefined && documentFraming.enforce) {

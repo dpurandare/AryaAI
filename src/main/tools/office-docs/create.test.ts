@@ -62,6 +62,15 @@ describe('office_create_document', () => {
       expect(result).toBe('Created documents/framed.docx.')
     })
 
+    it('refuses a document whose text carries a [handoff: …] routing tag', async () => {
+      await expect(
+        officeCreateDocumentTool.execute(
+          { path: 'leak.docx', title: 'T', sections: [{ paragraphs: ['Intro. [handoff: out_of_scope -> document-creator]'] }, { paragraphs: ['End.'] }] },
+          ctx
+        )
+      ).rejects.toThrow(/handoff/)
+    })
+
     it('does not apply to a document built from the previous answer', async () => {
       const result = await officeCreateDocumentTool.execute(
         { path: 'prev.docx', fromPreviousAnswer: true },

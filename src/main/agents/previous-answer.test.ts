@@ -24,4 +24,15 @@ describe('previousAnswerText', () => {
     expect(previousAnswerText([user('make a doc')])).toBeUndefined()
     expect(previousAnswerText([])).toBeUndefined()
   })
+
+  it('does not take a plan step result for the request: a step\'s own draft reply is not "the previous answer"', () => {
+    const messages = [
+      user('find the top 5 customers and write them into a Word document'),
+      assistant({ type: 'text', text: "Table… I'm unable to create a Word document. [handoff: out_of_scope -> document-creator]" }),
+      user('[Plan step 1 — Data Access]: query.\n\nResult:\nTable'),
+      assistant({ type: 'text', text: 'The Word document has been created.' }),
+      user('[Plan step 2 — Text Document Creator]: write it.\n\nResult:\nok')
+    ]
+    expect(previousAnswerText(messages)).toBeUndefined()
+  })
 })
