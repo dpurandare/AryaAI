@@ -9,7 +9,7 @@
 # use it only for this one build via a scoped PATH override.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODULE_DIR="$REPO_ROOT/node_modules/better-sqlite3"
 ELECTRON_VERSION="$(node -p "require('$REPO_ROOT/node_modules/electron/package.json').version")"
 TOOLCHAIN_BIN="$(mktemp -d)"
