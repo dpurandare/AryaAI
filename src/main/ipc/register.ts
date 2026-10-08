@@ -37,6 +37,8 @@ import { previousAnswerText } from '../agents/previous-answer'
 import { enqueueMessage, getEmbeddingConfig, getIndexState, rebuildIndex, runBackfill } from '../search-history/indexer'
 import { getSetting, setSetting } from '../db/settings'
 import { addUsage, getUsage } from '../db/usage'
+import type { StreamEvent } from '../../shared/protocol'
+import { isFinalStop } from './final-stop'
 import { logClassifyGateSample } from '../db/classify-gate-log'
 import { setApiKey, getApiKey, getApiKeyPreview, envFilePath, getSecretStorageMode, switchToFileStorage } from '../security/keychain'
 import { WorkspaceGuard } from '../security/workspace-guard'
@@ -843,10 +845,13 @@ async function runChat(
     }
   )
 
+  // The turn's final stop is held until the run ends: the renderer stops listening at it, and a round's usage event comes after it.
+  let heldFinalStop: StreamEvent | undefined
   try {
     for await (const orchestratorEvent of orchestrator.run(conversation, forcedRole)) {
       if (orchestratorEvent.kind === 'stream') {
-        emit(sender, { streamId, sessionId, event: orchestratorEvent.event })
+        if (isFinalStop(orchestratorEvent.event)) heldFinalStop = orchestratorEvent.event
+        else emit(sender, { streamId, sessionId, event: orchestratorEvent.event })
         if (orchestratorEvent.event.type === 'usage') {
           addUsage(sessionId, orchestratorEvent.event.inputTokens, orchestratorEvent.event.outputTokens)
         }
@@ -860,6 +865,7 @@ async function runChat(
         enqueueMessage(record.id, sessionId, record.content)
       }
     }
+    if (heldFinalStop) emit(sender, { streamId, sessionId, event: heldFinalStop })
   } finally {
     // `activeDecks` is fresh per turn (see its own construction above) and
     // never persisted — a deck composed here but not explicitly saved via
