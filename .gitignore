@@ -12,3 +12,6 @@ release
 *.sqlite
 *.sqlite3
 *.tsbuildinfo
+
+# Scratch files the agent writes while working
+tmp/
