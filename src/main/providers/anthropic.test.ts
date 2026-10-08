@@ -33,6 +33,46 @@ async function collect(events: AsyncIterable<StreamEvent>): Promise<StreamEvent[
   return out
 }
 
+describe('AnthropicProvider temperature rejection', () => {
+  beforeEach(() => mockStream.mockReset())
+
+  const rejected = () => ({
+    [Symbol.asyncIterator]: async function* () {
+      throw Object.assign(new Error('400 `temperature` is deprecated for this model.'), { status: 400 })
+    }
+  })
+  const ok = fakeStream([
+    { type: 'message_start', message: { usage: { input_tokens: 1 } } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hi' } },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } }
+  ])
+
+  it('retries once without temperature when the model rejects it, and remembers that for the model', async () => {
+    mockStream.mockReturnValueOnce(rejected()).mockReturnValue(ok)
+    const provider = new AnthropicProvider('key')
+    const request = { model: 'claude-haiku-5-5', messages: [], maxTokens: 10, temperature: 0 }
+
+    const events = await collect(provider.stream(request))
+    expect(events.some((e) => e.type === 'text_delta' && e.text === 'hi')).toBe(true)
+    expect(mockStream.mock.calls[0][0]).toHaveProperty('temperature', 0)
+    expect(mockStream.mock.calls[1][0]).not.toHaveProperty('temperature')
+
+    await collect(provider.stream(request))
+    expect(mockStream).toHaveBeenCalledTimes(3)
+    expect(mockStream.mock.calls[2][0]).not.toHaveProperty('temperature')
+  })
+
+  it('does not swallow other 400s', async () => {
+    mockStream.mockReturnValue({
+      [Symbol.asyncIterator]: async function* () {
+        throw Object.assign(new Error('400 prompt is too long'), { status: 400 })
+      }
+    })
+    await expect(collect(new AnthropicProvider('key').stream({ model: 'm', messages: [], maxTokens: 10, temperature: 0 }))).rejects.toThrow(/too long/)
+    expect(mockStream).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('AnthropicProvider', () => {
   beforeEach(() => {
     mockStream.mockReset()

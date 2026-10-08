@@ -35,7 +35,7 @@ function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
  * `promptCaching: false` (Settings > Prompt caching, TASKS #121/#137) sends the plain request with no `cache_control` anywhere and the system prompt as a
  * string — the escape hatch if the API ever rejects the markers, since caching has only been verified against a mocked SDK.
  */
-export function buildAnthropicParams(request: CompletionRequest, options: { promptCaching?: boolean } = {}): Anthropic.MessageStreamParams {
+export function buildAnthropicParams(request: CompletionRequest, options: { promptCaching?: boolean; omitTemperature?: boolean } = {}): Anthropic.MessageStreamParams {
   const caching = options.promptCaching !== false
   const cache = { type: 'ephemeral' } as const
   const messages = toAnthropicMessages(request.messages)
@@ -68,7 +68,7 @@ export function buildAnthropicParams(request: CompletionRequest, options: { prom
     max_tokens: request.maxTokens,
     messages,
     tools,
-    ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+    ...(request.temperature !== undefined && !options.omitTemperature ? { temperature: request.temperature } : {}),
     ...(forced ? { tool_choice: { type: 'tool' as const, name: forced.name } } : {})
   }
 }
@@ -98,8 +98,29 @@ export class AnthropicProvider implements ModelProvider {
     return result.input_tokens
   }
 
+  /** Models whose API rejected `temperature` ("deprecated for this model", found live on claude-haiku-5-5): sent without it from then on. */
+  private noTemperature = new Set<string>()
+
   async *stream(request: CompletionRequest): AsyncIterable<StreamEvent> {
-    const stream = this.client.messages.stream(buildAnthropicParams(request, { promptCaching: this.promptCaching }), { signal: request.signal })
+    let started = false
+    try {
+      for await (const event of this.streamOnce(request, this.noTemperature.has(request.model))) {
+        started = true
+        yield event
+      }
+    } catch (err) {
+      const rejected = /temperature/i.test(err instanceof Error ? err.message : String(err)) && (err as { status?: number }).status === 400
+      if (started || !rejected || request.temperature === undefined || this.noTemperature.has(request.model)) throw err
+      this.noTemperature.add(request.model)
+      yield* this.streamOnce(request, true)
+    }
+  }
+
+  private async *streamOnce(request: CompletionRequest, omitTemperature: boolean): AsyncIterable<StreamEvent> {
+    const stream = this.client.messages.stream(
+      buildAnthropicParams(request, { promptCaching: this.promptCaching, omitTemperature }),
+      { signal: request.signal }
+    )
 
     const activeToolUse = new Map<number, { id: string; name: string }>()
     // Blocks of the forced structured-output tool: their JSON is surfaced as text, and the closing `tool_use` stop as an ordinary end_turn.
