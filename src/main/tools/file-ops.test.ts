@@ -97,6 +97,18 @@ describe('file-ops tools', () => {
       expect(await readFile(join(root, 'code', 'already-there.py'), 'utf-8')).toBe('x')
     })
 
+    it('tells the model the real path when a new code file is filed under code/', async () => {
+      const result = await writeFileTool.execute({ path: 'run.sh', content: 'echo hi' }, ctx)
+      expect(result).toContain('Wrote 7 characters to code/run.sh.')
+      expect(result).toContain('use "code/run.sh" (not "run.sh")')
+    })
+
+    it('keeps a script written under tmp/ at tmp/, so the run step finds it', async () => {
+      const result = await writeFileTool.execute({ path: 'tmp/date_script.sh', content: 'date' }, ctx)
+      expect(result).toBe('Wrote 4 characters to tmp/date_script.sh.')
+      expect(await readFile(join(root, 'tmp', 'date_script.sh'), 'utf-8')).toBe('date')
+    })
+
     it('an unclassified extension stays at the given (root-relative) path, unaffected', async () => {
       const result = await writeFileTool.execute({ path: 'note.txt', content: 'hello' }, ctx)
       expect(result).toBe('Wrote 5 characters to note.txt.')

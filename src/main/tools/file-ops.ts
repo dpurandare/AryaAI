@@ -130,6 +130,11 @@ export const writeFileTool: Tool = {
     const path = resolveNewFilePath(ctx.workspaceGuard, String(input.path ?? ''))
     await mkdir(dirname(path), { recursive: true })
     await writeFile(path, content, 'utf-8')
-    return `Wrote ${content.length} characters to ${workspaceRelativePath(ctx.workspaceGuard.root, path)}.`
+    const saved = workspaceRelativePath(ctx.workspaceGuard.root, path)
+    const asked = String(input.path ?? '').replace(/\\/g, '/').replace(/^\.\//, '')
+    // A new file of a known type is filed under code/, documents/ or resources/. Say so in words a model acts on: a bare
+    // "Wrote … to code/x.sh" was ignored and the next step ran the path it had asked for.
+    const moved = asked && saved !== asked ? ` New files of this type are filed under ${saved.split('/')[0]}/ — use "${saved}" (not "${asked}") for every later step, such as running or reading it.` : ''
+    return `Wrote ${content.length} characters to ${saved}.${moved}`
   }
 }

@@ -89,7 +89,10 @@ export function resolveNewFilePath(workspaceGuard: WorkspaceGuard, relPath: stri
   if (!folder) return straightAbsPath
 
   const workspaceRelative = relative(workspaceGuard.root, straightAbsPath)
-  if (isAlreadyUnderAManagedFolder(workspaceRelative) || isUnderAnExcludedFolder(workspaceRelative)) {
+  // `tmp/` is where scripts and the agents are told to keep scratch files (SCRATCH_DIR), so a path there is an explicit choice.
+  // Found live (8.2): `tmp/date_script.sh` was silently moved to `code/tmp/date_script.sh`, the run step looked in `tmp/`, and a
+  // small model rewrote the same file in a loop.
+  if (isAlreadyUnderAManagedFolder(workspaceRelative) || isUnderAnExcludedFolder(workspaceRelative) || isUnderFolder(workspaceRelative, SCRATCH_DIR)) {
     return straightAbsPath
   }
 

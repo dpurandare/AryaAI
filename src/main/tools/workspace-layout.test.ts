@@ -72,6 +72,11 @@ describe('resolveNewFilePath', () => {
   it('respects the workspace boundary', () => {
     expect(() => resolveNewFilePath(guard, '../escape.py')).toThrow(/workspace boundary/)
   })
+
+  it('leaves a new file under tmp/ where it was asked for', () => {
+    const absPath = resolveNewFilePath(guard, 'tmp/date_script.sh')
+    expect(workspaceRelativePath(root, absPath)).toBe('tmp/date_script.sh')
+  })
 })
 
 describe('workspaceRelativePath', () => {
