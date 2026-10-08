@@ -20,6 +20,7 @@ import { pruneScratchDir } from '../tools/workspace-layout'
 import { SHOW_MEDIA_MARKER, type ShowMediaPayload } from '../tools/show-media'
 import type { Tool, ToolContext } from '../tools/types'
 import { buildRoleDigest, isRoleAvailable, type ConfigurationCounts } from './capabilities'
+import { isUserDataTopic, userDataTerms } from './domain-topic'
 import {
   diffSnapshots,
   formatDelegateResult,
@@ -690,6 +691,8 @@ interface Plan {
    * practice from a wiki/MCP server (or the web)?" — enforced in code (`ensureDomainKnowledgeStep`) rather
    * than left to the model's own `steps` choice reliably matching its own prose rule above. */
   needsDomainKnowledge: boolean
+  /** What to look up, as a short phrase naming a rule, standard, definition, convention or process — never the user's own data. Empty when `needsDomainKnowledge` is false; a true flag with no topic inserts no step (see `shouldInsertDomainKnowledgeStep`). */
+  domainKnowledgeTopic: string
   /** Captured for the same reason as `needsDomainKnowledge`, but not yet enforced — no demonstrated case
    * of a data-needing plan omitting a data step the way #173 omitted a domain-knowledge one; adding
    * enforcement here without a real incident to ground it would be speculative. */
@@ -762,9 +765,21 @@ export function buildPlanSchema(roleIds: readonly string[]): Record<string, unkn
       needsDomainKnowledge: {
         type: 'boolean',
         description:
-          'Does answering need rules, definitions, or standard practice (from a connected wiki/MCP server, ' +
-          'or the web) to interpret the data correctly — e.g. judging whether something is an anomaly, a ' +
-          'violation, or matches a named technical concept? True even without the user naming a document.'
+          'True only when a correct answer depends on KNOWLEDGE that is not in the request or the data: a rule, ' +
+          'standard, definition, convention, benchmark, coding standard or internal process used to interpret ' +
+          'or judge something — e.g. is this an anomaly, a violation, or what does a named technical term mean. ' +
+          'True even when the user does not name a document. FALSE when the request only retrieves, summarises, ' +
+          'charts, reports on or writes up the user\'s own data (listing top customers, building a chart or a ' +
+          'Word document), or only asks how to use a tool or file format. The user\'s own data is never ' +
+          'knowledge to look up.'
+      },
+      domainKnowledgeTopic: {
+        type: 'string',
+        description:
+          'When needsDomainKnowledge is true: the specific rule, standard, definition or process to look up, ' +
+          'as a short phrase (for example "CERC convention for calculating PLF"). Never the name of a ' +
+          "database, table, customer or file, and never the user's task itself. Empty string when " +
+          'needsDomainKnowledge is false.'
       },
       needsUserData: {
         type: 'boolean',
@@ -783,7 +798,7 @@ export function buildPlanSchema(roleIds: readonly string[]): Record<string, unkn
         }
       }
     },
-    required: ['complexity', 'needsDomainKnowledge', 'needsUserData', 'steps'],
+    required: ['complexity', 'needsDomainKnowledge', 'domainKnowledgeTopic', 'needsUserData', 'steps'],
     additionalProperties: false
   }
 }
@@ -840,6 +855,7 @@ export function parsePlan(text: string, validRoles: ReadonlySet<string>): { plan
         // broken/partial classifier response must still fail open to "no domain step inserted," never
         // to "no plan at all" (same reasoning as every other field here).
         needsDomainKnowledge: parsed.needsDomainKnowledge === true,
+        domainKnowledgeTopic: typeof parsed.domainKnowledgeTopic === 'string' ? parsed.domainKnowledgeTopic.trim() : '',
         needsUserData: parsed.needsUserData === true,
         steps: truncated ? steps.slice(0, MAX_PLAN_STEPS) : steps
       },
@@ -906,6 +922,8 @@ export class Orchestrator {
        * "email it to X" to a role with no account to send from. Absent (tests) = assume every role's requirements are met.
        */
       getConfiguration?: () => ConfigurationCounts
+      /** Names of the user's own data sources (databases, APIs). A domain-knowledge topic that mentions one is not knowledge to look up in a wiki — see domain-topic.ts. */
+      getUserDataNames?: () => string[]
       /**
        * Called for every real tool call (`agentRole` undefined = the router itself). Local usage counts keep the slim router's hot
        * core honest (design 3.1). Optional/no-op by default — this file stays DB-free (see this class's own doc comment).
@@ -1426,7 +1444,15 @@ export class Orchestrator {
   private shouldInsertDomainKnowledgeStep(plan: Plan): boolean {
     const mcpAgent = this.agents.get('mcp-operator')
     const alreadyPlanned = plan.steps.some((s) => s.role === 'mcp-operator')
-    return plan.needsDomainKnowledge && !alreadyPlanned && !!mcpAgent && isRoleAvailable(mcpAgent, this.options.getConfiguration?.())
+    // A true flag without a concrete topic is the model saying "probably" — found live (manual test 8.2): a plain
+    // "make a Word document with charts of the top customers in the database" request got a wiki step, and the
+    // operator then searched the wiki for the user's own database. No topic, no step.
+    return (
+      plan.needsDomainKnowledge &&
+      plan.domainKnowledgeTopic.length >= 3 &&
+      !isUserDataTopic(plan.domainKnowledgeTopic, userDataTerms(this.options.getUserDataNames?.() ?? [])) &&
+      !alreadyPlanned && !!mcpAgent && isRoleAvailable(mcpAgent, this.options.getConfiguration?.())
+    )
   }
 
   private ensureDomainKnowledgeStep(plan: Plan, conversation: Message[]): PlanStep[] {
@@ -1435,8 +1461,12 @@ export class Orchestrator {
     const inserted: PlanStep = {
       role: 'mcp-operator',
       description:
-        "Look up domain knowledge (rules, definitions, standard practice) relevant to the user's request, " +
-        `via the connected wiki/MCP server(s), for a later step to use. Original request: ${request}`
+        `Look up in the connected wiki/MCP server(s): ${plan.domainKnowledgeTopic}. ` +
+        'Search only for knowledge — a rule, definition, standard, convention, process, coding standard or benchmark. ' +
+        "Do not search for the user's own data (databases, tables, customers, orders, records, files or past chats): " +
+        'that is another step\'s job and is not stored in these servers. If nothing about this topic is found, end with ' +
+        '[handoff: no_information]. ' +
+        `For context only, not for search terms: ${request}`
     }
     return [inserted, ...plan.steps]
   }

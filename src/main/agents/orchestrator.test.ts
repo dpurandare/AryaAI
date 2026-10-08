@@ -1383,7 +1383,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const provider = new MockProvider([
         {
           text:
-            '{"complexity": "compound", "needsDomainKnowledge": true, "needsUserData": true, "steps": [' +
+            '{"complexity": "compound", "needsDomainKnowledge": true, "domainKnowledgeTopic": "anomaly threshold rule for sensor readings", "needsUserData": true, "steps": [' +
             '{"role": "data", "description": "query the sensor readings"}]}',
           stopReason: 'end_turn'
         },
@@ -1408,6 +1408,77 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(provider.requests[1].system ?? '').toMatch(/MCP Operator specialist/)
     })
 
+    it('inserts the domain-knowledge step with the concrete topic and a ban on searching for the user\'s own data', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "needsDomainKnowledge": true, "domainKnowledgeTopic": "CERC convention for calculating PLF", "needsUserData": true, "steps": [' +
+            '{"role": "data", "description": "query the plant load factor"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'PLF uses 8,766 hours.', stopReason: 'end_turn' },
+        { text: 'PLF is 71%.', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 1, apis: 0, email: 0, mcp: 1 }) }
+      )
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'work out the plant load factor from our plant database readings and check it against the CERC convention for calculating PLF' }] }])
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const step = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps[0] : undefined
+      expect(step?.role).toBe('mcp-operator')
+      expect(step?.description).toContain('CERC convention for calculating PLF')
+      expect(step?.description).toMatch(/Do not search for the user's own data/)
+    })
+
+    it('inserts no domain-knowledge step when the flag is true but no concrete topic was given (found live, test 8.2: wiki searched for the user\'s database)', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "needsDomainKnowledge": true, "domainKnowledgeTopic": "", "needsUserData": true, "steps": [' +
+            '{"role": "data", "description": "top 10 customers per year"}, {"role": "coding", "description": "chart them into a Word file"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'rows', stopReason: 'end_turn' },
+        { text: 'doc made', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 1, apis: 0, email: 0, mcp: 1 }) }
+      )
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'create a word document with bar charts of the top 10 customers every year from Northwind' }] }])
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const steps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : []
+      expect(steps.map((x) => x.role)).toEqual(['data', 'coding'])
+    })
+
+    it('inserts no domain-knowledge step when the topic names a data source (found live, test 8.2 run 2: topic "Northwind database schema")', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "needsDomainKnowledge": true, "domainKnowledgeTopic": "Northwind sales history", "needsUserData": true, "steps": [' +
+            '{"role": "data", "description": "top 10 customers per year"}, {"role": "coding", "description": "chart them into a Word file"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'rows', stopReason: 'end_turn' },
+        { text: 'doc made', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 1, apis: 0, email: 0, mcp: 1 }), getUserDataNames: () => ['NorthwindSQLServer'] }
+      )
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'create a word document with bar charts of the top 10 customers every year from Northwind' }] }])
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const steps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : []
+      expect(steps.map((x) => x.role)).toEqual(['data', 'coding'])
+    })
+
     it('does not insert a domain-knowledge step when no MCP server is connected, even if needsDomainKnowledge is true', async () => {
       // The no-server case is substituteUnavailableMcpOperator's job, not this one's — inserting a step
       // that can't run would just waste a round on "no connected server fits."
@@ -1415,7 +1486,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const provider = new MockProvider([
         {
           text:
-            '{"complexity": "compound", "needsDomainKnowledge": true, "needsUserData": true, "steps": [' +
+            '{"complexity": "compound", "needsDomainKnowledge": true, "domainKnowledgeTopic": "anomaly threshold rule for sensor readings", "needsUserData": true, "steps": [' +
             '{"role": "data", "description": "query the sensor readings"}]}',
           stopReason: 'end_turn'
         },
@@ -1442,7 +1513,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const provider = new MockProvider([
         {
           text:
-            '{"complexity": "compound", "needsDomainKnowledge": true, "needsUserData": true, "steps": [' +
+            '{"complexity": "compound", "needsDomainKnowledge": true, "domainKnowledgeTopic": "anomaly threshold rule for sensor readings", "needsUserData": true, "steps": [' +
             '{"role": "mcp-operator", "description": "look up the anomaly rule"}, ' +
             '{"role": "data", "description": "query the sensor readings"}]}',
           stopReason: 'end_turn'

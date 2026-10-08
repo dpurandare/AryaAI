@@ -158,7 +158,9 @@ const CEILINGS = {
   // real domain knowledge found, instead of retrying or reading further — 390 -> 514. Deliberate.
   // TASKS.md #178: MCP Operator can now report `[handoff: incomplete]` (found something, not enough)
   // distinct from `no_information` (found nothing) — 520 -> 567. Deliberate.
-  'role:mcp-operator': 640,
+  // Manual test 8.2 (2026-10-08): MCP Operator searched the wiki for the user's own database. Added the "servers hold knowledge, never the user's data" rule
+  // and trimmed the long "found live" retelling next to it — measured ~678, 640 -> 700. Deliberate: it is the rule that stops that.
+  'role:mcp-operator': 700,
   'role:page-creator': 1400,
   'role:email': 630
 } as const

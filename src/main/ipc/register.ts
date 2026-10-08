@@ -836,6 +836,11 @@ async function runChat(
         email: listEmailConnections().length,
         mcp: new Set(toolRegistry.list().flatMap((t) => (t.mcp ? [t.mcp.server] : []))).size
       }),
+      // The user's own data sources: a domain-knowledge step must never be about one of them (agents/domain-topic.ts).
+      getUserDataNames: () => [
+        ...listConnections().flatMap((c) => [c.name, c.database ?? '']),
+        ...listApiConnections().map((c) => c.name)
+      ].filter(Boolean),
       // TASKS.md #158 — drains and clears whatever ChatSteer queued for this stream since the last check.
       drainSteeringComments: () => {
         const list = pendingSteeringComments.get(streamId) ?? []
