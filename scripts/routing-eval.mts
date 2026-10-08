@@ -1,5 +1,5 @@
 /**
- * Slim-router release gates 1 and 2 (design-discussion.md section 10, step 4) — the two that need a real model.
+ * Slim-router release gates 1 and 2 (docs/design-discussion.md section 10, step 4) — the two that need a real model.
  *
  *   routing evaluation (gate 2):  the manifest's examples / non-examples replayed against a provider with the
  *                                 router's real prompt and tool list. Non-deterministic: run it per model, a few times.

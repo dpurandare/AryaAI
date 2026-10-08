@@ -3,7 +3,7 @@
  * output (a JSON schema)? Sends the app's real planning prompt for a fixed set of requests, in both modes, and counts per mode: replies that are
  * strictly valid JSON, replies `parsePlan` accepts (the loose parser: fence/prose tolerated, roles and shape checked), and the classification
  * matching what is expected (simple vs compound). The last is only a sanity check on eight requests whose answer is not in doubt.
- * A case with `expectRoles` (design-discussion.md §13.2(a), TASKS #142) also checks the plan's step roles match that exact set —
+ * A case with `expectRoles` (docs/design-discussion.md §13.2(a), TASKS #142) also checks the plan's step roles match that exact set —
  * `complexity: "compound"` alone doesn't catch the PLF question's #139 failure mode, where it was compound but the wiki step went
  * missing or the roles varied between reps.
  *

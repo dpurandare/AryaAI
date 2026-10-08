@@ -37,7 +37,7 @@ deb:
   # Setting `depends` REPLACES electron-builder's defaults, so those are repeated here
   # (electron-builder 26.15.3's documented deb defaults) with Python added: Sachivji's
   # workspace runtime needs `python3` and the separately-packaged `python3-venv`
-  # (design-discussion.md 4.3). dmg / AppImage / NSIS cannot declare this — see README.
+  # (docs/design-discussion.md 4.3). dmg / AppImage / NSIS cannot declare this — see README.
   depends:
     - libgtk-3-0
     - libnotify4

@@ -2,7 +2,7 @@
 
 Your local-first, multi-agent AI companion.
 
-Built with Electron + TypeScript + Svelte. See `thouthts.md` for the full spec and `TASKS.md` for what's built vs. pending.
+Built with Electron + TypeScript + Svelte. See `docs/thouthts.md` for the full spec and `TASKS.md` for what's built vs. pending.
 
 This file is kept up to date at every stage so it always reflects what actually runs today — check the "Current state" section below before assuming a feature exists.
 
@@ -134,7 +134,7 @@ npm run dist:linux  # package a Linux installer
 
 ## Versioning
 
-Sachivji follows [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`). While the major version is `0`, any release may include breaking changes. From `1.0.0` onward: `MAJOR` is reserved for breaking changes to stored data, config, or IPC contracts; `MINOR` for backward-compatible features; `PATCH` for fixes. See `CHANGELOG.md` for release notes.
+Sachivji follows [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`). While the major version is `0`, any release may include breaking changes. From `1.0.0` onward: `MAJOR` is reserved for breaking changes to stored data, config, or IPC contracts; `MINOR` for backward-compatible features; `PATCH` for fixes. See `docs/CHANGELOG.md` for release notes.
 
 ## Where things live
 

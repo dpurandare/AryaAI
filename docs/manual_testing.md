@@ -45,7 +45,7 @@ Rough time: P1 ≈ 60–75 min, P2 ≈ 30 min, P3 ≈ 30 min.
      Linux-only), it's almost certainly an Electron ABI mismatch: try `npx electron-rebuild`, or
      `npm rebuild better-sqlite3 --runtime=electron --target=<electron version> --abi=<abi>`.
    - Note which model/provider you test with (cloud vs. local Ollama) — if local, the `nomic-embed-text` `num_ctx` mismatch
-     fixed today (`ModelFileNomicEmbed`) was specific to this Linux box's Ollama install; a Mac Ollama install has its own
+     fixed today (`models/ModelFileNomicEmbed`) was specific to this Linux box's Ollama install; a Mac Ollama install has its own
      separate model copy and may or may not need the same fix — check `ollama show --parameters nomic-embed-text` there if
      local embedding search crashes.
    - A handful of P1 prompts plus one tool-using round is enough for a first sanity pass — the goal is "does it run at all

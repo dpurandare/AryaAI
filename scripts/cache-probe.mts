@@ -1,5 +1,5 @@
 /**
- * Slim-router / caching release gate 3 (design-discussion.md section 10): what does prompt size and a byte-stable prefix
+ * Slim-router / caching release gate 3 (docs/design-discussion.md section 10): what does prompt size and a byte-stable prefix
  * actually do on a real provider? Sends the SAME router request (the app's real system prompt + tool list) several times and
  * prints, per call: time to first token, total time, input tokens, and how many of them were served from the provider's cache.
  *

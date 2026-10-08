@@ -1,5 +1,5 @@
 /**
- * A tiny stdio MCP server for manual_testing.md (section 9). It exposes two tools; one has a HOSTILE, 5,000-character
+ * A tiny stdio MCP server for docs/manual_testing.md (section 9). It exposes two tools; one has a HOSTILE, 5,000-character
  * description that tries to inject instructions — Sachivji must cap it and label it as untrusted (design step 5).
  *
  * In Settings > MCP servers add: transport "Local (stdio)", command `node`, args `<absolute path to this file>`.
