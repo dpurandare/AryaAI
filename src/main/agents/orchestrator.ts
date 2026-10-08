@@ -727,6 +727,15 @@ const EMPTY_RESPONSE_NUDGE =
   'Your previous reply was empty. Continue with the task: use the tool results above and either call the next tool you need or give your answer in plain text.'
 
 /**
+ * Variant for an empty round that still had reasoning. Found live (gemma4 on Ollama, "regenerate the Word document"): the model
+ * wrote "I will call office_create_document again" inside its hidden reasoning, then emitted neither text nor a tool call — twice,
+ * through the generic nudge above. Say plainly that reasoning is not an action.
+ */
+const EMPTY_AFTER_REASONING_NUDGE =
+  'Your previous reply contained only reasoning, which is not shown and does not perform anything: no tool was actually called and no answer was written. ' +
+  'Do now what you decided — emit the real tool call (not a description of it), or write your answer in plain text.'
+
+/**
  * TASKS.md #172/#173: found live — a round hit the per-round output-token limit mid-tool-call (gpt-4o-mini
  * writing a Python script, right after being told to read captured data from its handoff file), leaving a
  * garbage/empty tool call (`python_run` with no `code` at all) that would otherwise just end the whole step
@@ -1919,6 +1928,7 @@ export class Orchestrator {
     // result): re-ask up to MAX_EMPTY_RESPONSE_RETRIES times with a one-off nudge instead of ending the turn with nothing done.
     let emptyRetries = 0
     let nudgeAfterEmptyRound = false
+    let emptyRoundHadThinking = false
     // TASKS.md #172/#173: bounded recovery for a round truncated mid-tool-call — see MAX_TRUNCATED_TOOL_CALL_RETRIES.
     let truncatedToolCallRetries = 0
     // See MAX_CONSECUTIVE_TOOL_FAILURES.
@@ -1984,7 +1994,7 @@ export class Orchestrator {
         )
       )
       if (nudgeAfterEmptyRound) {
-        messagesToSend = [...messagesToSend, { role: 'user', content: [{ type: 'text', text: EMPTY_RESPONSE_NUDGE }] }]
+        messagesToSend = [...messagesToSend, { role: 'user', content: [{ type: 'text', text: emptyRoundHadThinking ? EMPTY_AFTER_REASONING_NUDGE : EMPTY_RESPONSE_NUDGE }] }]
         nudgeAfterEmptyRound = false
       }
       let emptyRoundToRetry = false
@@ -2154,6 +2164,7 @@ export class Orchestrator {
       if (emptyRoundToRetry) {
         emptyRetries++
         nudgeAfterEmptyRound = true
+        emptyRoundHadThinking = assistantThinking.trim() !== ''
         yield {
           kind: 'stream',
           event: tagEvent(

@@ -1946,6 +1946,23 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(events.some((e) => e.kind === 'message' && JSON.stringify(e.content).includes('previous reply was empty'))).toBe(false)
     })
 
+    it('an empty round that held only reasoning is retried with a nudge saying reasoning is not an action (real case: gemma4 "I will call office_create_document again" and nothing else)', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { thinking: 'I will call the tool again.', text: '', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: false
+      })
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'again' }] }])
+
+      expect(JSON.stringify(provider.requests[1].messages.at(-1))).toContain('only reasoning')
+      expect(events.some((e) => e.kind === 'stream' && e.event.type === 'warning')).toBe(false)
+    })
+
     it('a delegate whose own round hits the output-token limit surfaces isError on its tool_result, not a silent success', async () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
