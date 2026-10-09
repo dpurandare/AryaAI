@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { access } from 'node:fs/promises'
+import PptxGenJS from 'pptxgenjs'
 import type pptxgen from 'pptxgenjs'
 import type { ToolContext } from '../types'
 import { readImageSize } from './image-size'
@@ -149,9 +150,22 @@ function addImageElement(slide: pptxgen.Slide, el: SlideElementInput, ctx: ToolC
   }
 }
 
+/** Names a model reaches for that are not PowerPoint shape names. An unknown name is written into the file as it is, and PowerPoint then asks to repair the deck (found live: "oval"). */
+const SHAPE_ALIASES: Record<string, string> = { oval: 'ellipse', circle: 'ellipse', rectangle: 'rect', square: 'rect', 'rounded-rectangle': 'roundRect', roundedrect: 'roundRect', rounded_rect: 'roundRect', rounded: 'roundRect' }
+const SHAPE_NAMES: ReadonlySet<string> = new Set(Object.keys(new PptxGenJS().ShapeType))
+
+/** The PowerPoint name for what the model wrote, or an error that lists the usual ones. */
+export function shapeName(raw: string): string {
+  const name = SHAPE_ALIASES[raw.toLowerCase()] ?? raw
+  if (!SHAPE_NAMES.has(name)) {
+    throw new Error(`"${raw}" is not a shape name. Use one of: rect, roundRect, ellipse (also circles), line, triangle, rightArrow, chevron, hexagon, star5.`)
+  }
+  return name
+}
+
 function addShapeElement(slide: pptxgen.Slide, el: SlideElementInput): void {
-  if (!el.shape) throw new Error('A "shape" element needs a "shape" name (e.g. "rect", "roundRect", "oval", "line").')
-  slide.addShape(el.shape as pptxgen.SHAPE_NAME, {
+  if (!el.shape) throw new Error('A "shape" element needs a "shape" name (e.g. "rect", "roundRect", "ellipse", "line").')
+  slide.addShape(shapeName(el.shape) as pptxgen.SHAPE_NAME, {
     x: el.x,
     y: el.y,
     w: el.w,
@@ -225,7 +239,8 @@ export async function validateElement(el: SlideElementInput, ctx: ToolContext): 
       return
     }
     case 'shape':
-      if (!el.shape) throw new Error('A "shape" element needs a "shape" name (e.g. "rect", "roundRect", "oval", "line").')
+      if (!el.shape) throw new Error('A "shape" element needs a "shape" name (e.g. "rect", "roundRect", "ellipse", "line").')
+      shapeName(el.shape)
       return
     case 'chart':
       if (!el.chartType) throw new Error('A "chart" element needs a "chartType" (e.g. "bar", "line", "pie").')

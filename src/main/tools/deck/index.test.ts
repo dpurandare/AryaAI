@@ -1,6 +1,7 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import JSZip from 'jszip'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WorkspaceGuard } from '../../security/workspace-guard'
 import { officeReadDocumentTool } from '../office-docs/read'
@@ -279,6 +280,31 @@ describe('deck tools (#78)', () => {
         ctx
       )
       expect(out).toContain('Text on the slide: "Project Aurora roadmap" | "Home-energy dashboard".')
+    })
+  })
+
+  describe('shape names (found live: "oval" is not a PowerPoint shape, and PowerPoint asked to repair the deck)', () => {
+    async function savedSlide(shape: string): Promise<string> {
+      const started = await pptxStartDeckTool.execute({ slides: 1 }, ctx)
+      const deckId = /"([^"]+)"/.exec(started)?.[1]
+      await pptxComposeSlideTool.execute({ deckId, elements: [{ type: 'shape', shape, x: 1, y: 1, w: 1, h: 1, fill: '156082' }] }, ctx)
+      await pptxSaveDeckTool.execute({ deckId, path: 'documents/shape.pptx' }, ctx)
+      const zip = await JSZip.loadAsync(await readFile(join(root, 'documents/shape.pptx')))
+      return zip.file('ppt/slides/slide1.xml')!.async('string')
+    }
+
+    it('writes "ellipse" for oval and circle, and keeps real names as they are', async () => {
+      expect(await savedSlide('oval')).toContain('prst="ellipse"')
+      expect(await savedSlide('Circle')).toContain('prst="ellipse"')
+      expect(await savedSlide('roundRect')).toContain('prst="roundRect"')
+    })
+
+    it('refuses a name that is no shape, and says what to use, rather than writing it into the file', async () => {
+      const started = await pptxStartDeckTool.execute({ slides: 1 }, ctx)
+      const deckId = /"([^"]+)"/.exec(started)?.[1]
+      await expect(
+        pptxComposeSlideTool.execute({ deckId, elements: [{ type: 'shape', shape: 'blob', x: 1, y: 1, w: 1, h: 1 }] }, ctx)
+      ).rejects.toThrow(/"blob" is not a shape name.*ellipse/)
     })
   })
 

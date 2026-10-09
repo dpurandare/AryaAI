@@ -99,7 +99,7 @@ export const pptxComposeSlideTool: Tool = {
     'defaults to the most recently added slide of the only deck in progress, which is correct for the ' +
     'normal one-slide-per-call flow. background? (hex, no #) sets the slide colour. text: {type:"text", text, x,y,w,h, fontSize?, bold?, italic?, fontFace?, color? (hex, ' +
     'no #), align? ("left"/"center"/"right"), valign? ("top"/"middle"/"bottom"), bullet?}. image: {type:"image", path (workspace-relative), ' +
-    'x,y,w,h}. shape: {type:"shape", shape (e.g. "rect","roundRect","oval","line"), x,y,w,h, fill? (hex), ' +
+    'x,y,w,h}. shape: {type:"shape", shape (e.g. "rect","roundRect","ellipse","line"), x,y,w,h, fill? (hex), ' +
     'line? (hex)}. chart: {type:"chart", chartType ("bar"/"line"/"pie"/"doughnut"/"area"/"radar"), ' +
     'categories (string[]), series ([{name, values: number[]}]), x,y,w,h}. table: {type:"table", rows ' +
     '(string[][]), x,y,w,h}. Express the whole slide as one call, not one element per call.',
