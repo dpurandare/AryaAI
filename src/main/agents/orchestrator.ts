@@ -1084,8 +1084,16 @@ export class Orchestrator {
       const agent = this.agents.get(pinned) as Agent
       const background = setAsideOtherSpecialistsReplies(conversation, pinned, (r) => this.labelOf(r)).background
       const systemPrompt = agent.systemPrompt + this.buildForcedModeNotice(pinned) + background
-      yield* this.runLoop(systemPrompt, agent.tools, conversation, state, pinned, [], true)
-      return
+      const before = conversation.length
+      const outcome = yield* this.runLoop(systemPrompt, agent.tools, conversation, state, pinned, [], true)
+      // A pinned specialist that says the request is not its job hands it back to the orchestrator, which delegates it (the user
+      // pinned an agent to talk to it, not to be told to change the selector). Only when it did no work first: a request it
+      // already acted on stays with it. Its short "not mine" reply stays in the transcript; the orchestrator answers below it.
+      const handedBack = parseHandoffTag(outcome.text).status === 'out_of_scope'
+      const didWork = conversation.slice(before).some((m) => m.content.some((b) => b.type === 'tool_use'))
+      if (!handedBack || didWork || outcome.isError) return
+      conversation.length = before
+      yield { kind: 'stream', event: { type: 'status', message: `${this.labelOf(pinned)} can't handle this — passing it to the orchestrator…` } }
     }
 
     // Phase 1 of TASKS.md #95: a cheap deterministic pre-check ahead of the
@@ -1822,7 +1830,7 @@ export class Orchestrator {
   private buildForcedModeNotice(currentRole: AgentRole): string {
     const others = [...this.agents.values()]
       .filter((a) => a.role !== currentRole)
-      .map((a) => `- ${this.labelOf(a.role)}: ${a.summary}`)
+      .map((a) => `- ${this.labelOf(a.role)} (${a.role}): ${a.summary}`)
       .join('\n')
     return (
       '\n\n---\n' +
@@ -1830,9 +1838,9 @@ export class Orchestrator {
       'composer\'s "Agent:" selector, bottom-left, is set away from "Auto") — you cannot hand off to ' +
       'another specialist yourself right now, even when one clearly fits the request better, and you ' +
       "have no delegate tools available. If the user's request needs a capability outside your own " +
-      "tools, don't say you have no other agents or no way to do it at all — name which specialist " +
-      'would actually handle it from this list, and tell the user to switch the "Agent:" selector to ' +
-      `"Auto" (so the orchestrator can delegate automatically) or directly to that specialist:\n${others}`
+      'tools, do not attempt it and do not ask the user to change the selector: say in one short sentence that it is not ' +
+      'your job and end with the handoff tag naming the specialist from this list that fits (`[handoff: out_of_scope -> <role-id>]`). ' +
+      `The app then passes the request to the orchestrator, which delegates it:\n${others}`
     )
   }
 

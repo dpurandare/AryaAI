@@ -516,6 +516,37 @@ describe('Orchestrator (integration, mocked provider)', () => {
     expect(events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'text_delta' ? [e.event.text] : [])).join('')).toBe('Hello from Auto.')
   })
 
+  it('a pinned specialist that says the request is not its job hands it back to the orchestrator, which answers it (13.4.4)', async () => {
+    const registry = buildRegistry()
+    const provider = new MockProvider([
+      { text: 'Axios questions are not my job, I only handle email. [handoff: out_of_scope -> coding]', stopReason: 'end_turn' },
+      { text: 'Set axios.defaults.timeout.', stopReason: 'end_turn' }
+    ])
+    const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+    const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'How do I set a default timeout in axios?' }] }], 'email')
+    const statuses = events.filter((e) => e.kind === 'stream' && e.event.type === 'status').map((e) => (e as { event: { message: string } }).event.message)
+    expect(statuses.some((m) => /can't handle this — passing it to the orchestrator/.test(m))).toBe(true)
+    expect(provider.requests).toHaveLength(2)
+    // the second request is the orchestrator's: no pinned-specialist notice, and the user's question is the last message, with no leftover "not my job" reply
+    expect(provider.requests[1].system ?? '').not.toContain('pinned to the')
+    const last = provider.requests[1].messages.at(-1)
+    expect(last?.role).toBe('user')
+    expect(JSON.stringify(provider.requests[1].messages)).not.toContain('not my job')
+    const text = events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'text_delta' ? [e.event.text] : [])).join('')
+    expect(text).toContain('Set axios.defaults.timeout.')
+  })
+
+  it('a pinned specialist that already did work before saying so keeps the request', async () => {
+    const registry = buildRegistry()
+    const provider = new MockProvider([
+      { toolCalls: [{ id: 'c1', name: 'list_directory', input: { path: '.' } }] },
+      { text: 'Listed it; the rest is not my job. [handoff: out_of_scope -> coding]', stopReason: 'end_turn' }
+    ])
+    const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+    await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'list files then fix the bug' }] }], 'coding')
+    expect(provider.requests).toHaveLength(2)
+  })
+
   it('a pinned specialist sees earlier replies from other specialists only as background in its instructions, not as its own turns (found live in 11.6)', async () => {
     const registry = buildRegistry()
     const provider = new MockProvider([{ text: 'Hello from research.', stopReason: 'end_turn' }])

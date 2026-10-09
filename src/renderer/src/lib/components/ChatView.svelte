@@ -2,6 +2,7 @@
   import { tick } from 'svelte'
   import ModelPicker from './ModelPicker.svelte'
   import ContextMeter from './ContextMeter.svelte'
+  import { stripHandoffTag } from '../handoff-tag'
   import MarkdownText from './MarkdownText.svelte'
   import ToolConfirmDialog from './ToolConfirmDialog.svelte'
   import { AGENT_ROLES, roleLabel, type AgentRole } from '@shared/agents'
@@ -616,7 +617,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
                 </button>
               {/if}
             {:else}
-              <MarkdownText text={segment.text ?? ''} />
+              <MarkdownText text={stripHandoffTag(segment.text ?? '')} />
               {#if message.createdAt && segment.text?.startsWith('Error:')}
                 <div class="segment-timestamp error">{formatTimestamp(message.createdAt)}</div>
               {/if}
