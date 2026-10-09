@@ -124,16 +124,19 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 // Outside-workspace access: the file tools' descriptions now say an absolute path elsewhere is possible (the user is
 // asked first), which several roles carry — routerCore 850 -> ~890, role:coding/data-processor/document-creator up
 // by ~50 each. Deliberate.
+// 2026-10-09 (manual test 9.3, Anthropic haiku): after a direct delegation the router restated the specialist's reply, which the user had
+// already seen, so the answer appeared twice. One sentence in buildOrchestratorSystemPrompt says not to — routerPrompt 1650 -> 1690
+// (1672 measured), slimRouterBare 3950 -> 4000. Deliberate: this is the fix, not drift.
 const CEILINGS = {
   // TASKS.md #178: the final-synthesis prompt now requires explicit disclosure when a plan step ended
   // PARTIAL INFORMATION, not just NEEDS INPUT/OUT OF SCOPE/FAILED — 1230 -> 1278. Deliberate, not drift.
-  routerPrompt: 1650,
+  routerPrompt: 1690,
   // TASKS.md #172 (continued again): db_execute_sql's description reworded to describe the large-result
   // file-export behavior (writes to a file instead of "gets truncated") — 9970 -> 9983. Deliberate, not drift.
   routerToolSchemas: 11000,
   routerBare: 12650,
   slimRouterToolSchemas: 2300,
-  slimRouterBare: 3950,
+  slimRouterBare: 4000,
   routerCore: 930,
   // TASKS.md #179: the planning prompt's compound-step rule now explicitly says not to plan an MCP
   // Operator step AND a Research/web step for one domain-knowledge question up front (found live — a

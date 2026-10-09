@@ -61,6 +61,40 @@ describe('Orchestrator (integration, mocked provider)', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  async function runDelegation(routerReply: string) {
+    const registry = buildRegistry()
+    const agents = createAgents(registry)
+    const provider = new MockProvider([
+      { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'count the customers' } }] },
+      { text: 'There are **91 customers** in the Northwind database.', stopReason: 'end_turn' },
+      { text: routerReply, stopReason: 'end_turn' }
+    ])
+    const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+    const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'How many customers?' }] }])
+    const stream = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+    const routerTexts = stream.filter((e) => e.type === 'text_delta' && !(e as { agentRole?: string }).agentRole).map((e) => (e as { text: string }).text)
+    const finalStops = stream.filter((e) => e.type === 'message_stop' && !(e as { agentRole?: string }).agentRole && (e as { stopReason: string }).stopReason !== 'tool_use')
+    const persistedRouterText = events.some(
+      (e) => e.kind === 'message' && e.role === 'assistant' && JSON.stringify(e.content).includes(routerReply)
+    )
+    return { routerTexts, finalStops, persistedRouterText }
+  }
+
+  it('drops the router\'s own reply when it only restates what the delegate already showed (manual test 9.5: the answer appeared twice)', async () => {
+    const { routerTexts, finalStops, persistedRouterText } = await runDelegation('There are 91 customers in the Northwind database.')
+    expect(routerTexts).toEqual([])
+    expect(persistedRouterText).toBe(false)
+    expect(finalStops).toHaveLength(1)
+  })
+
+  it('keeps the router\'s reply when it adds something to the delegate\'s answer', async () => {
+    const reply = 'There are 91 customers. Most are in Germany, France and the USA, so regional campaigns would reach the bulk of them.'
+    const { routerTexts, finalStops, persistedRouterText } = await runDelegation(reply)
+    expect(routerTexts.join('')).toBe(reply)
+    expect(persistedRouterText).toBe(true)
+    expect(finalStops).toHaveLength(1)
+  })
+
   it('delegates to the Coding specialist, which writes a real file through real confirmation', async () => {
     const registry = buildRegistry()
     const agents = createAgents(registry)

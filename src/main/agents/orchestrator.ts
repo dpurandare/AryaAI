@@ -1,6 +1,7 @@
 import { basename, dirname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
+import { isRestatement, lastDelegateReplies } from './restatement'
 import type { AgentRole } from '@shared/agents'
 import { PLANNABLE_ROLES, roleLabel, type RoleMeta } from '@shared/agents'
 import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
@@ -1740,7 +1741,7 @@ export class Orchestrator {
     return (
       `${this.defaultSystemPrompt}\n\n` +
       "You can also delegate a step to a specialist by calling its delegate tool when the task clearly fits " +
-      "one — each tool's description says what that specialist does and does not do. Anything that needs code " +
+      "one — each tool's description says what that specialist does and does not do. A delegate's reply is shown to the user as written: do not restate it, add at most one short line. Anything that needs code " +
       'written AND run, or files created or changed, should usually go to the Developer rather than being ' +
       'handled directly. For simple or general requests, just answer directly (or use your own tools) ' +
       "without delegating. The workspace is shared across every session, so a file you find there (e.g. " +
@@ -1998,6 +1999,11 @@ export class Orchestrator {
         nudgeAfterEmptyRound = false
       }
       let emptyRoundToRetry = false
+      // See restatement.ts: the round right after a direct delegation holds its stream events (kept in order) until it is known whether it
+      // only repeats what the user was just shown.
+      const shownReplies = isTopLevel ? lastDelegateReplies(conversation) : []
+      const held: StreamEvent[] = []
+      let suppressRestatement = false
       const roundTimer = this.startRoundTimer(state.deadlineAt, state.consecutiveRoundTimeouts)
       try {
         for await (const event of this.provider.stream({
@@ -2045,9 +2051,21 @@ export class Orchestrator {
           }
           const outEvent =
             event.type === 'message_stop' ? tagMessageStop(event, agentRole, isTopLevel) : tagEvent(event, agentRole)
+          if (shownReplies.length > 0) {
+            held.push(outEvent)
+            continue
+          }
           yield { kind: 'stream', event: outEvent }
         }
+        if (held.length > 0) {
+          suppressRestatement = toolCalls.length === 0 && isRestatement(assistantText, shownReplies)
+          // A restated answer is dropped; the stop still goes out so the turn ends normally.
+          for (const e of held) if (!suppressRestatement || e.type !== 'text_delta') yield { kind: 'stream', event: e }
+          held.length = 0
+        }
       } catch (err) {
+        for (const e of held) yield { kind: 'stream', event: e }
+        held.length = 0
         // TASKS.md #91 — checked before anything else in this block: a
         // provider-confirmed rate limit (429) is a genuine thrown error
         // (roundTimer.signal.aborted is normally false for it — the
@@ -2179,7 +2197,7 @@ export class Orchestrator {
       // TASKS.md #147: pushed before the text block — reasoning precedes the final answer, both
       // conceptually and in how it should render.
       if (assistantThinking) assistantBlocks.push({ type: 'thinking', text: assistantThinking, agentRole })
-      if (assistantText) assistantBlocks.push({ type: 'text', text: assistantText, agentRole })
+      if (assistantText && !suppressRestatement) assistantBlocks.push({ type: 'text', text: assistantText, agentRole })
       if (stopReason === 'max_tokens') {
         // Found live against gpt-oss (empty response) before this existed —
         // don't silently treat a truncated round as a normal, complete one.
