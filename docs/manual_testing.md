@@ -217,13 +217,13 @@ command, redacted from the output). Each run is ONE sample of a non-deterministi
 difference of a few cases.
 ```bash
 # Anthropic has no key configured in Sachivji yet — add one in Settings first, or use the env-var form (ANTHROPIC_API_KEY=... npx vite-node ...).
-E="./node_modules/electron/dist/electron --no-sandbox scripts/with-app-key.cjs"
-R="npx vite-node --config vitest.config.ts scripts/routing-eval.mts --"
-$E openai   -- $R openai <model> --rounds=3            # slim router (default core)
-$E openai   -- $R openai <model> --rounds=3 --full     # full-registry router, for comparison
-$E mistral  -- $R mistral codestral-latest --rounds=3 --pace-ms=600      # NOT mistral-medium-3.5: that model has a request quota of 0 on the account tested
-$E groq     -- $R groq openai/gpt-oss-120b --rounds=3 --pace-ms=1000 --tpm=7000   # slim only: the full router exceeds Groq's 8K tokens/min. 200K tokens/day: about 60 calls
-$E openai   -- $R openai <model> --rounds=3 --core=describe_capabilities,shell_execute,write_file,web_search   # core without read_file / list_directory
+E() { "$(node -p "require('electron')")" --no-sandbox scripts/with-app-key.cjs "$@"; }
+R=(npx vite-node --config vitest.config.ts scripts/routing-eval.mts --)
+E openai   -- "${R[@]}" openai <model> --rounds=3            # slim router (default core)
+E openai   -- "${R[@]}" openai <model> --rounds=3 --full     # full-registry router, for comparison
+E mistral  -- "${R[@]}" mistral codestral-latest --rounds=3 --pace-ms=600      # NOT mistral-medium-3.5: that model has a request quota of 0 on the account tested
+E groq     -- "${R[@]}" groq openai/gpt-oss-120b --rounds=3 --pace-ms=1000 --tpm=7000   # slim only: the full router exceeds Groq's 8K tokens/min. 200K tokens/day: about 60 calls
+E openai   -- "${R[@]}" openai <model> --rounds=3 --core=describe_capabilities,shell_execute,write_file,web_search   # core without read_file / list_directory
 ```
 Results so far are in `design-discussion.md` Appendix E (Google, OpenAI, Mistral, Groq). Free tiers: the script waits out rate limits itself (`--pace-ms`, `--tpm`); it stops with a partial result and a `--from=N` resume point when a daily quota or a size limit ends the run.
 Paste the "Replay probe" and "Misses" parts of the output into the report. Add `--limit=12` to keep it short.
@@ -252,24 +252,28 @@ Uses `scripts/manual-test-mcp-server.mjs`, a tiny server with a **hostile** 5,00
 
 ## 10. Onboarding gate and Python setup on a fresh profile — P2 (15 min)
 
-This uses a **throwaway profile**, so your real data is untouched (note it still uses your real Documents folder for the
-default workspace — set a different workspace in step 10.4 if you care).
+This uses a **throwaway profile and a throwaway default workspace**, so your real data is untouched. Both matter: a fresh
+`--user-data-dir` alone still lands in the real `~/Documents/Sachivji Workspace`, and a workspace that already has a `venv/` is
+adopted as-is — the app then skips Python detection and setup entirely and shows that venv's version as **Ready** (this is why
+10.2, 10.3 and 10.5 appeared to "always find" Python). `SACHIV_WORKSPACE_DIR` makes the empty folder the default workspace.
 
 ```bash
 npm run build
-./node_modules/electron/dist/electron . --user-data-dir=/tmp/sachiv-fresh --no-sandbox
+# $(node -p "require('electron')") is the Electron binary on any OS (on a Mac it lives inside an app bundle, so there is no dist/electron file)
+rm -rf /tmp/sachiv-fresh /tmp/sachiv-ws0
+SACHIV_WORKSPACE_DIR=/tmp/sachiv-ws0 "$(node -p "require('electron')")" . --user-data-dir=/tmp/sachiv-fresh --no-sandbox
 ```
 
 | # | Do | Expect |
 |---|----|--------|
 | 10.1 | First launch | Secret-storage screen; choose **OS Keychain**. |
-| 10.2 | Next | **Python step**: "Creating…" (Continue disabled) → **Ready** → Continue enabled. |
-| 10.3 | Quit during the Python step and relaunch | Goes straight back to the Python step (does not re-ask about secrets). |
+| 10.2 | Next | **Python step**: "Creating…" (Continue disabled) → **Ready** → Continue enabled. `/tmp/sachiv-ws0/venv` now exists. |
+| 10.3 | Quit during the Python step (same command as above, so the same profile and workspace) and relaunch | Goes straight back to the Python step (does not re-ask about secrets). |
 | 10.4 | Settings > Workspace: set `/tmp/sachiv-ws`, Save | Runtime switches to Setting up… → Ready; `/tmp/sachiv-ws` gets `code/ documents/ resources/ venv/`. |
-| 10.5 | Relaunch **with no Python on PATH**: `env PATH=/nonexistent ./node_modules/electron/dist/electron . --user-data-dir=/tmp/sachiv-fresh2 --no-sandbox`, then set a *new, empty* workspace | "Python 3.10 or newer was not found" with **Retry** and **Continue without Python** only (no plain Continue). |
+| 10.5 | Relaunch **with no Python on PATH** and a new empty workspace: `rm -rf /tmp/sachiv-fresh2 /tmp/sachiv-ws2; env PATH=/nonexistent SACHIV_WORKSPACE_DIR=/tmp/sachiv-ws2 "$(node -p "require('electron')")" . --user-data-dir=/tmp/sachiv-fresh2 --no-sandbox` (the command substitution runs before `env`, so it still finds Electron) | "Python 3.10 or newer was not found" with **Retry** and **Continue without Python** only (no plain Continue). |
 | 10.6 | Choose **Continue without Python**, then Settings > Python runtime | Shows **Turned off**, with **Turn Python on**. |
 
-Cleanup: `rm -rf /tmp/sachiv-fresh /tmp/sachiv-fresh2 /tmp/sachiv-ws`.
+Cleanup: `rm -rf /tmp/sachiv-fresh /tmp/sachiv-fresh2 /tmp/sachiv-ws /tmp/sachiv-ws0 /tmp/sachiv-ws2`.
 
 ---
 
@@ -301,7 +305,7 @@ prompt caching. The trims can only be judged by whether a real model still uses 
 | 11b.3 | "Create a 2-slide .pptx with just titles and bullets" | Works (plain deck). For "a 10-slide presentation with charts" it must use the deck flow instead. |
 | 11b.4 | Template extraction on a `.docx` of yours: "Turn `<file>.docx` into a template" | It runs `detect`, **asks you to confirm the field list** before `apply`, and can be refined. |
 | 11b.5 | **Anthropic only:** run any multi-round task (e.g. 4.x) and watch the context meter | Numbers keep growing sensibly with the conversation. They must **not** collapse to a tiny value after round 2 (that would mean cached tokens aren't being counted). Cost shown is an *upper bound* for Anthropic now. |
-| 11b.6 | **Anthropic / OpenAI:** `$E openai -- npx vite-node --config vitest.config.ts scripts/cache-probe.mts -- openai <model> --full` (same helper as section 8; for Anthropic use an env var until a key is configured) | Call 1: `cached 0`; calls 2–3: a large cached share and a lower first-token time. If `cached` stays 0, tell me the provider and model. |
+| 11b.6 | **Anthropic / OpenAI:** `E openai -- npx vite-node --config vitest.config.ts scripts/cache-probe.mts -- openai <model> --full` (same helper as section 8; for Anthropic use an env var until a key is configured) | Call 1: `cached 0`; calls 2–3: a large cached share and a lower first-token time. If `cached` stays 0, tell me the provider and model. |
 | 11b.7 | **Anthropic:** Settings > Prompt caching, untick "Use prompt caching", send a message, then tick it again and send another | Both messages work. With it off, 11b.6's cache-read numbers stay at 0; with it on they grow from the second round. If chat with caching **on** ever errors mentioning `cache_control`, that is the bug this switch exists for — report it. |
 | 11b.8 | Tool block display (#109): ask for something that runs a long one-line command (e.g. a `shell_execute` `echo` of 300 characters) and a multi-line one (a Python snippet with 3+ lines); click each tool block open | Collapsed: one compact line. Expanded: the **full command wrapped over several lines** (multi-line ones keep their real line breaks, several arguments show as `name: value`); a very long body shows a preview with Show more / Show less. |
 | 11b.9 | Settings navigation *(updated for #150 — the account row is now a menu, not a direct Settings toggle)*: (a) click the account row (bottom-left) once, then click **Settings** in the menu that appears; click the account row again and click **Close settings** | (a) A small menu opens (Settings / Export Settings… / Import Settings…) instead of Settings itself; **Settings** opens Settings and the arrow turns over; the second round shows **Close settings** in the menu and closes it. |
