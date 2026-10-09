@@ -802,7 +802,8 @@ export function buildPlanSchema(roleIds: readonly string[]): Record<string, unkn
           'or judge something — e.g. is this an anomaly, a violation, or what does a named technical term mean. ' +
           'True even when the user does not name a document. FALSE when the request only retrieves, summarises, ' +
           'charts, reports on or writes up the user\'s own data (listing top customers, building a chart or a ' +
-          'Word document), or only asks how to use a tool or file format. The user\'s own data is never ' +
+          'Word document), or only asks how to use a tool or file format — unless a connected knowledge server (named in the ' +
+          'instructions) covers that tool or library, then it is knowledge to look up. The user\'s own data is never ' +
           'knowledge to look up.'
       },
       domainKnowledgeTopic: {
@@ -956,7 +957,8 @@ export class Orchestrator {
       getConfiguration?: () => ConfigurationCounts
       /** Names of the user's own data sources (databases, APIs). A domain-knowledge topic that mentions one is not knowledge to look up in a wiki — see domain-topic.ts. */
       getUserDataNames?: () => string[]
-
+      /** Connected MCP servers with the description the user gave each. The classifier is told what they cover, so a how-to question for a library one of them documents counts as needing knowledge from it. */
+      getKnowledgeServers?: () => { name: string; description?: string }[]
       /**
        * Called for every real tool call (`agentRole` undefined = the router itself). Local usage counts keep the slim router's hot
        * core honest (design 3.1). Optional/no-op by default — this file stays DB-free (see this class's own doc comment).
@@ -1095,7 +1097,7 @@ export class Orchestrator {
     // and its result can be logged against the gate's own verdict — see
     // classifyAndPlan's own logging call below.
     const gateVerdict: ClassifyGateVerdict = this.options.planningEnabled
-      ? evaluateClassifyGate(latestMessageText(conversation))
+      ? evaluateClassifyGate(latestMessageText(conversation), { knowledgeServers: (this.options.getKnowledgeServers?.() ?? []).length > 0 })
       : 'run'
     const shouldClassify = this.options.planningEnabled && (gateVerdict !== 'skip' || shouldSampleForCalibration())
     const plan = shouldClassify ? yield* this.classifyAndPlan(conversation, state, gateVerdict) : undefined
@@ -1415,7 +1417,14 @@ export class Orchestrator {
     // this turn. Only reached once the call actually completed (the
     // timeout/abort path above returns before this), so this never logs a
     // probe that never got a real answer.
-
+    // Console only (no transcript noise): what the classifier decided about domain knowledge, since "answered from memory when a
+    // knowledge server should have been asked" cannot be told apart afterwards from the stored session.
+    if (plan) {
+      console.error(
+        `orchestrator: classified ${plan.complexity}; needsDomainKnowledge=${plan.needsDomainKnowledge} topic=${JSON.stringify(plan.domainKnowledgeTopic)} ` +
+          `insertLookup=${this.shouldInsertDomainKnowledgeStep(plan)} servers=${(this.options.getKnowledgeServers?.() ?? []).map((x) => x.name).join(',') || 'none'}`
+      )
+    }
     this.options.logClassifyGateSample?.({
       gateVerdict,
       classifierComplexity: plan?.complexity ?? 'unknown',
@@ -1497,7 +1506,7 @@ export class Orchestrator {
       role: 'mcp-operator',
       description:
         `Look up in the connected wiki/MCP server(s): ${plan.domainKnowledgeTopic}. ` +
-        'Search only for knowledge — a rule, definition, standard, convention, process, coding standard or benchmark. ' +
+        'Search only for knowledge — a rule, definition, standard, convention, process, coding standard, benchmark, or the documentation of a library or API. ' +
         "Do not search for the user's own data (databases, tables, customers, orders, records, files or past chats): " +
         'that is another step\'s job and is not stored in these servers. If nothing about this topic is found, end with ' +
         '[handoff: no_information]. ' +
@@ -1699,9 +1708,18 @@ export class Orchestrator {
     // page-creator is deliberately not one) are listed. What remains below are
     // procedural rules, none of which name a specific role's tools.
     const specialists = buildRoleDigest(this.agents, this.plannableRoleIds(), this.options.getConfiguration?.())
-
+    const servers = this.options.getKnowledgeServers?.() ?? []
+    const serverNote =
+      servers.length === 0
+        ? ''
+        : 'Connected knowledge servers (the MCP Operator uses them):\n' +
+          servers.map((s) => `- ${s.name}${s.description ? `: ${s.description}` : ''}`).join('\n') +
+          '\nA question about how to use a specific library, framework, API or product that one of these covers needs knowledge from it, ' +
+          'even a plain "how do I ..." question: set needsDomainKnowledge to true and name the library and the feature as the ' +
+          'topic. Its documentation there is current; memory of it may be out of date. Writing ordinary code, or using a ' +
+          'language\'s own built-in features, does not need it.\n'
     return (
-
+      serverNote +
       "Before anything else, classify the user's latest request and, only if it genuinely needs more " +
       'than one distinct sub-task, build a short ordered plan for it. You have no tools available for ' +
       'this — do not attempt to call one. Respond with ONLY a single JSON object, no markdown fence, ' +

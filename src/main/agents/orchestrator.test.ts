@@ -1589,6 +1589,35 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(provider.requests[1].system ?? '').toMatch(/MCP Operator specialist/)
     })
 
+    it('a short library how-to is classified, told what the connected server covers, and looked up there instead of answered from memory (found live in 13.4.3)', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text: '{"complexity": "simple", "needsDomainKnowledge": true, "domainKnowledgeTopic": "axios default request timeout", "needsUserData": false, "steps": []}',
+          stopReason: 'end_turn'
+        },
+        { text: 'axios.defaults.timeout = 5000 (from the docs).', stopReason: 'end_turn' },
+        { text: 'Set axios.defaults.timeout.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        {
+          planningEnabled: true,
+          getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp: 1 }),
+          getKnowledgeServers: () => [{ name: 'Context7', description: 'Up-to-date library/API docs for coding' }]
+        }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'How do I set a default request timeout in axios?' }] }])
+
+      // 48 characters, one clause: without the server it would have skipped the classifier. It was asked, and was told what Context7 covers.
+      expect(provider.requests[0].system ?? '').toContain('- Context7: Up-to-date library/API docs for coding')
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const steps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : undefined
+      expect(steps?.[0].role).toBe('mcp-operator')
+      expect(steps?.[0].description).toContain('axios default request timeout')
+    })
+
     it('inserts the domain-knowledge step with the concrete topic and a ban on searching for the user\'s own data', async () => {
       const registry = buildRegistry()
       const provider = new MockProvider([

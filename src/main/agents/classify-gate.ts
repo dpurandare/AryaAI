@@ -20,9 +20,13 @@ const MAX_SKIP_LENGTH = 50
 /** Any of these, or a literal semicolon/newline, is treated as a plausible compound-request signal — matches the same connector words `buildClassifySystemPrompt` (orchestrator.ts) already asks the classifier itself to watch for. */
 const COMPOUND_SIGNAL = /\b(and|then|also|after)\b|[;\n]/i
 
-export function evaluateClassifyGate(latestMessageText: string): ClassifyGateVerdict {
+/** With a knowledge server connected, a short question is not safe to skip: "How do I set a default timeout in axios?" is 48 characters and needs the library-docs server. */
+const MAX_SKIP_LENGTH_WITH_SERVERS = 25
+
+export function evaluateClassifyGate(latestMessageText: string, options: { knowledgeServers?: boolean } = {}): ClassifyGateVerdict {
   const text = latestMessageText.trim()
   if (text.length === 0 || text.length > MAX_SKIP_LENGTH) return 'run'
+  if (options.knowledgeServers && (text.length > MAX_SKIP_LENGTH_WITH_SERVERS || text.includes('?'))) return 'run'
   if (COMPOUND_SIGNAL.test(text)) return 'run'
   // More than one sentence-ending mark suggests multiple distinct asks
   // bundled into one message even without an explicit connector word (e.g.

@@ -836,6 +836,12 @@ async function runChat(
         email: listEmailConnections().length,
         mcp: new Set(toolRegistry.list().flatMap((t) => (t.mcp ? [t.mcp.server] : []))).size
       }),
+      // What each connected MCP server covers, in the user's own words (Settings > MCP servers > description).
+      getKnowledgeServers: () => {
+        const byServer = new Map<string, string | undefined>()
+        for (const t of toolRegistry.list()) if (t.mcp && !byServer.has(t.mcp.server)) byServer.set(t.mcp.server, t.mcp.serverDescription)
+        return [...byServer].map(([name, description]) => ({ name, description }))
+      },
       // The user's own data sources: a domain-knowledge step must never be about one of them (agents/domain-topic.ts).
       getUserDataNames: () => [
         ...listConnections().flatMap((c) => [c.name, c.database ?? '']),
