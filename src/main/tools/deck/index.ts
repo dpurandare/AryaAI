@@ -5,6 +5,7 @@ import pptxgen from 'pptxgenjs'
 import type { Tool, ToolContext } from '../types'
 import { resolveNewFilePath, workspaceRelativePath } from '../workspace-layout'
 import { applyElement, normalizeElement, validateElement, withRealLineBreaks } from './elements'
+import { fixDeckPackage } from './package-fix'
 
 type DeckState = NonNullable<ToolContext['activeDecks']> extends Map<string, infer D> ? D : never
 
@@ -173,6 +174,7 @@ export const pptxSaveDeckTool: Tool = {
     const absPath = resolveNewFilePath(ctx.workspaceGuard, relPath)
     await mkdir(dirname(absPath), { recursive: true })
     await deck.pres.writeFile({ fileName: absPath })
+    await fixDeckPackage(absPath)
     requireDecks(ctx).delete(deck.id)
     const savedRelPath = workspaceRelativePath(ctx.workspaceGuard.root, absPath)
     return `Saved ${savedRelPath} (${deck.slides.length} slide(s)).`

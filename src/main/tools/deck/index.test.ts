@@ -283,6 +283,30 @@ describe('deck tools (#78)', () => {
     })
   })
 
+  describe('a saved deck opens in PowerPoint without the repair prompt (found live: 11.1)', () => {
+    it('puts the notes list before the slide list, gives the notes master its own theme, lists only parts that exist, and has no folder entries', async () => {
+      const started = await pptxStartDeckTool.execute({ slides: 2 }, ctx)
+      const deckId = /"([^"]+)"/.exec(started)?.[1]
+      await pptxComposeSlideTool.execute({ deckId, elements: [{ type: 'text', text: 'Hello', x: 1, y: 1, w: 4, h: 1 }] }, ctx)
+      await pptxSaveDeckTool.execute({ deckId, path: 'documents/deck.pptx' }, ctx)
+
+      const zip = await JSZip.loadAsync(await readFile(join(root, 'documents/deck.pptx')))
+      const files = Object.keys(zip.files)
+      expect(files.filter((n) => zip.files[n].dir)).toEqual([])
+      const types = await zip.file('[Content_Types].xml')!.async('string')
+      for (const [, part] of types.matchAll(/<Override\s+PartName="\/([^"]+)"/g)) expect(files, part).toContain(part)
+      const notesRels = await zip.file('ppt/notesMasters/_rels/notesMaster1.xml.rels')!.async('string')
+      expect(notesRels).toContain('../theme/theme2.xml')
+      expect(files).toContain('ppt/theme/theme2.xml')
+      expect(types).toContain('/ppt/theme/theme2.xml')
+      const pres = await zip.file('ppt/presentation.xml')!.async('string')
+      expect(pres.indexOf('<p:notesMasterIdLst')).toBeGreaterThan(pres.indexOf('</p:sldMasterIdLst>'))
+      expect(pres.indexOf('<p:notesMasterIdLst')).toBeLessThan(pres.indexOf('<p:sldIdLst'))
+      // still readable after the rewrite
+      expect(await officeReadDocumentTool.execute({ path: 'documents/deck.pptx' }, ctx)).toContain('Hello')
+    })
+  })
+
   describe('shape names (found live: "oval" is not a PowerPoint shape, and PowerPoint asked to repair the deck)', () => {
     async function savedSlide(shape: string): Promise<string> {
       const started = await pptxStartDeckTool.execute({ slides: 1 }, ctx)
