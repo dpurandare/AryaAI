@@ -63,9 +63,14 @@ function resolveInterpreter(ctx: ToolContext): { python: string } | { error: str
   return { python: path.join(bin, process.platform === 'win32' ? 'python.exe' : 'python') }
 }
 
-/** python-pptx (or similar) used to CREATE a .pptx: imports the library and saves a .pptx. Reading a presentation with it is fine. */
+/**
+ * python-pptx used to START a new presentation (`Presentation()` with no file) and save it as .pptx. Opening an existing deck - to read
+ * it, or to make a modified copy such as a template - is fine: the deck tools cannot keep another file's masters and layouts.
+ */
 export function createsPresentation(source: string): boolean {
-  return /\b(?:from|import)\s+pptx\b/.test(source) && /\.save\s*\(/.test(source) && /\.pptx\b/i.test(source)
+  if (!/\b(?:from|import)\s+pptx\b/.test(source) || !/\.save\s*\(/.test(source) || !/\.pptx\b/i.test(source)) return false
+  const opensFile = /\bPresentation\s*\(\s*[^\s)]/.test(source)
+  return /\bPresentation\s*\(\s*\)/.test(source) && !opensFile
 }
 
 export const PRESENTATION_BY_SCRIPT_MESSAGE =

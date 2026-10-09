@@ -215,6 +215,9 @@ describe('python_run', () => {
       expect(createsPresentation(create)).toBe(true)
       expect(createsPresentation('import pptx\np = pptx.Presentation()\np.save(path + ".pptx")')).toBe(true)
       expect(createsPresentation('from pptx import Presentation\nfor s in Presentation("a.pptx").slides: print(s)')).toBe(false)
+      // Opening an existing deck and saving a changed copy (a template made from a finished deck) is allowed.
+      const fromExisting = 'from pptx import Presentation\nprs = Presentation(src)\nprs.save("documents/template.pptx")'
+      expect(createsPresentation(fromExisting)).toBe(false)
       expect(createsPresentation('import docx\ndoc.save("documents/report.docx")')).toBe(false)
       expect(createsPresentation('print("a deck.pptx is a file")')).toBe(false)
     })
