@@ -48,9 +48,13 @@ export const WORKSPACE_ROOT_SETTING_KEY = 'workspaceRoot'
 /** Settings key for the classify-and-plan pre-pass toggle (see agents/orchestrator.ts's `classifyAndPlan`). Missing/unset reads as enabled — default on. */
 export const PLANNING_ENABLED_SETTING_KEY = 'planningEnabled'
 
-/** Fallback when the user hasn't configured a workspace root yet — a dedicated folder under Documents. */
+/**
+ * Fallback when the user hasn't configured a workspace root yet — a dedicated folder under Documents.
+ * `SACHIV_WORKSPACE_DIR` overrides it, for manual tests: a throwaway `--user-data-dir` profile otherwise still lands in the real
+ * Documents workspace, whose existing `venv/` is adopted as-is, so the first-run Python setup (manual_testing.md section 10) never runs.
+ */
 export function defaultWorkspaceRoot(): string {
-  return join(app.getPath('documents'), 'Sachivji Workspace')
+  return process.env.SACHIV_WORKSPACE_DIR || join(app.getPath('documents'), 'Sachivji Workspace')
 }
 
 /**

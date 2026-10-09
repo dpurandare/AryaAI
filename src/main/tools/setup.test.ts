@@ -43,6 +43,18 @@ describe('createToolContext', () => {
     expect(existsSync(ctx.workspaceGuard.root)).toBe(true)
   })
 
+  it('SACHIV_WORKSPACE_DIR replaces the Documents default (manual-test hook), but a configured workspace still wins', async () => {
+    const override = join(documentsDir, 'override-ws')
+    process.env.SACHIV_WORKSPACE_DIR = override
+    try {
+      expect(defaultWorkspaceRoot()).toBe(override)
+      expect(createToolContext().workspaceGuard.root).toBe(override)
+    } finally {
+      delete process.env.SACHIV_WORKSPACE_DIR
+    }
+    expect(defaultWorkspaceRoot()).toBe(join(documentsDir, 'Sachivji Workspace'))
+  })
+
   it('uses the persisted workspace root when one is configured', async () => {
     const custom = await mkdtemp(join(tmpdir(), 'sachiv-custom-workspace-'))
     setSetting(WORKSPACE_ROOT_SETTING_KEY, custom)
