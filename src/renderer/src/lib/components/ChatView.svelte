@@ -26,6 +26,8 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     agentRole?: AgentRole
     /** Holds the plain message for 'text', 'warning', 'user_note' and 'thinking' kinds. */
     text?: string
+    /** A 'user_note' that Sachivji wrote (a completion check), not the user. */
+    fromApp?: boolean
     toolCall?: ToolCallDisplay
   }
 
@@ -627,7 +629,11 @@ import { formatToolInputForDisplay } from '../tool-input-display'
           {:else if segment.kind === 'user_note'}
             <!-- TASKS.md #158: a mid-run steering comment — visually distinct from both the assistant's own
                  text and a warning, since it's the user's own words injected partway through. -->
-            <div class="user-note">💬 <strong>Note added mid-run:</strong> {segment.text}</div>
+            {#if segment.fromApp}
+              <div class="user-note app-note">🔍 {segment.text}</div>
+            {:else}
+              <div class="user-note">💬 <strong>Note added mid-run:</strong> {segment.text}</div>
+            {/if}
           {/if}
         {/each}
         {#if message.pending}
@@ -1040,6 +1046,12 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     color: var(--accent);
     font-size: 0.82rem;
     background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  /* A check Sachivji sent a specialist, not something the user said: muted, like the tool calls. */
+  .user-note.app-note {
+    border-color: var(--border);
+    color: var(--text-muted);
+    background: transparent;
   }
   /* TASKS.md #147: same collapsible-block shape as .tool-call, styled distinctly (muted/italic) so the
      model's own reasoning reads as a different kind of thing from an executed tool call or its own answer. */

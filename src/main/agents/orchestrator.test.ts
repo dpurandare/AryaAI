@@ -3616,6 +3616,11 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const sent = notes(events)
       expect(sent).toHaveLength(6)
       expect(sent[0]).toMatch(/^\[Completion check by Sachivji\] This request needs detailed research, and you have read only 0 web page\(s\) after 0 search\(es\)/)
+      // marked as the app's own, so the chat does not show it as a note the user added
+      const streamed = events.filter((e) => e.kind === 'stream' && e.event.type === 'user_note').map((e) => (e as { event: { source?: string } }).event.source)
+      expect(streamed.every((source) => source === 'app')).toBe(true)
+      const saved = events.filter((e) => e.kind === 'message' && e.content.some((b) => b.type === 'user_note'))
+      expect(saved.length).toBeGreaterThan(0)
     })
 
     it('names pages from its own searches that it has not opened yet, so the nudge says exactly what to read', async () => {

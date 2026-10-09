@@ -31,6 +31,35 @@ interface DocxSection {
   table?: DocxTable
 }
 
+const SECTION_KEYS: Record<string, keyof DocxSection> = {
+  heading: 'heading', title: 'heading', header: 'heading',
+  paragraphs: 'paragraphs', paragraph: 'paragraphs', text: 'paragraphs', body: 'paragraphs',
+  bullets: 'bullets', bullet: 'bullets', list: 'bullets', items: 'bullets',
+  numbers: 'numbers', numbered: 'numbers', steps: 'numbers',
+  table: 'table'
+}
+
+/**
+ * A weak model's section keys come out damaged: found live, a Word file had a heading on its first section only because
+ * every later one was written as `"- heading"` (a Markdown list marker pasted into the key), which was silently ignored -
+ * the document came out as one long run of text. Read the obvious variants, and refuse a key that means nothing instead
+ * of dropping it with its content.
+ */
+export function normalizeSections(raw: unknown[]): DocxSection[] {
+  return raw.map((entry, index) => {
+    const out: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries((entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>)) {
+      const canonical = SECTION_KEYS[key.replace(/^[\s\-*#"'`]+|[\s:"'`]+$/g, '').toLowerCase()]
+      if (!canonical) {
+        throw new Error(`Section ${index + 1} has a field "${key}" that is not one of: heading, paragraphs, bullets, numbers, table. Fix it and call again - nothing was written.`)
+      }
+      const asList = canonical === 'paragraphs' || canonical === 'bullets' || canonical === 'numbers'
+      out[canonical] = asList && typeof value === 'string' ? [value] : value
+    }
+    return out as DocxSection
+  })
+}
+
 interface PptxSlide {
   title?: string
   bullets?: string[]
@@ -450,7 +479,7 @@ export const officeCreateDocumentTool: Tool = {
     if (input.fromPreviousAnswer === true && extension !== 'docx') throw new Error('fromPreviousAnswer works for .docx only.')
 
     if (extension === 'docx') {
-      const sections = Array.isArray(input.sections) ? (input.sections as DocxSection[]) : []
+      const sections = Array.isArray(input.sections) ? normalizeSections(input.sections) : []
       let body: string | undefined
       if (input.fromPreviousAnswer === true) {
         body = ctx.previousAnswerText?.()

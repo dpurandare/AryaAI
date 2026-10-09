@@ -41,6 +41,8 @@
     agentRole?: AgentRole
     /** Holds the plain message for 'text', 'warning', 'user_note' and 'thinking' kinds. */
     text?: string
+    /** A 'user_note' that Sachivji wrote (a completion check), not the user. */
+    fromApp?: boolean
     toolCall?: ToolCallDisplay
   }
 
@@ -255,7 +257,7 @@
         for (const b of m.content) {
           if (b.type === 'user_note') {
             const prev = result[result.length - 1]
-            prev?.segments.push({ id: crypto.randomUUID(), kind: 'user_note', text: b.text })
+            prev?.segments.push({ id: crypto.randomUUID(), kind: 'user_note', text: b.text, fromApp: b.source === 'app' })
             continue
           }
           if (b.type !== 'tool_result' && b.type !== 'image') continue
@@ -480,7 +482,7 @@
       } else if (event.type === 'user_note') {
         // TASKS.md #158: a mid-run steering comment, streamed alongside the matching persisted message —
         // appended inline to the ongoing assistant message, same placement `warning` already uses.
-        msg.segments.push({ id: crypto.randomUUID(), kind: 'user_note', text: event.text })
+        msg.segments.push({ id: crypto.randomUUID(), kind: 'user_note', text: event.text, fromApp: event.source === 'app' })
       } else if (event.type === 'plan') {
         msg.plan = { steps: event.steps, stepStatus: event.steps.map(() => 'pending') }
       } else if (event.type === 'plan_step_start') {

@@ -32,6 +32,33 @@ describe('office_create_document', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  describe('damaged section keys (found live: "- heading" dropped every heading but the first)', () => {
+    it('reads "- heading" and similar as heading, and a single string as a one-item list', async () => {
+      await officeCreateDocumentTool.execute(
+        {
+          path: 'documents/keys.docx',
+          title: 'Report',
+          sections: [
+            { heading: 'First', paragraphs: ['Intro.'] },
+            { '- heading': 'Second', bullets: 'one point' },
+            { '"Heading":': 'Third', Paragraphs: ['Closing.'] }
+          ]
+        },
+        ctx
+      )
+      const xml = await readDocumentXml(join(root, 'documents/keys.docx'))
+      expect(xml.match(/w:val="Heading1"/g)).toHaveLength(3)
+      expect(extractTextRuns(xml)).toEqual(expect.arrayContaining(['First', 'Second', 'Third', 'one point']))
+    })
+
+    it('refuses a field that means nothing, rather than dropping it with its content', async () => {
+      await expect(
+        officeCreateDocumentTool.execute({ path: 'documents/bad.docx', title: 'R', sections: [{ heading: 'A', paragraphs: ['x'] }, { chapter: 'B', content: 'y' }] }, ctx)
+      ).rejects.toThrow(/Section 2 has a field "chapter".*heading, paragraphs, bullets, numbers, table/)
+      await expect(stat(join(root, 'documents/bad.docx'))).rejects.toThrow()
+    })
+  })
+
   describe('head and tail', () => {
     beforeEach(() => {
       documentFraming.enforce = true

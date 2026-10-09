@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ToolRegistry } from '../tools/registry'
 import type { Tool } from '../tools/types'
 import { ROLE_MANIFEST } from '@shared/agents'
-import { createAgents } from './roles'
+import { createAgents, scratchNotes } from './roles'
 
 function fakeTool(name: string): Tool {
   return { name, description: 'test', inputSchema: { type: 'object', properties: {} }, mutates: false, execute: async () => '' }
@@ -266,5 +266,23 @@ describe('createAgents', () => {
     expect(agents.get('coding')?.tools.map((t) => t.name)).toContain('show_media')
     expect(agents.get('research')?.tools.map((t) => t.name)).not.toContain('show_media')
     expect(agents.get('data')?.tools.map((t) => t.name)).not.toContain('show_media')
+  })
+})
+
+describe('scratchNotes (the Researcher writes its result under tmp/, not in the workspace root)', () => {
+  it('files a bare .md or .txt name under tmp/ and leaves any path that names a folder alone', async () => {
+    const seen: unknown[] = []
+    const write: Tool = { ...fakeTool('write_file'), execute: async (input) => (seen.push(input.path), 'ok') }
+    const wrapped = scratchNotes(write)
+    for (const path of ['result.md', './notes.TXT', 'documents/result.md', 'tmp/result.md', 'data.csv']) await wrapped.execute({ path, content: 'x' }, {} as never)
+    expect(seen).toEqual(['tmp/result.md', 'tmp/notes.TXT', 'documents/result.md', 'tmp/result.md', 'data.csv'])
+  })
+
+  it('is what the Researcher actually gets as write_file', () => {
+    const registry = new ToolRegistry()
+    for (const name of ['web_search', 'write_file']) registry.register(fakeTool(name))
+    const research = createAgents(registry).get('research')!
+    expect(research.tools.find((t) => t.name === 'write_file')).toBeDefined()
+    expect(research.tools.find((t) => t.name === 'write_file')).not.toBe(registry.get('write_file'))
   })
 })

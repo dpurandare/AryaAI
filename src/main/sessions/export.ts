@@ -56,7 +56,7 @@ function blockToMarkdown(block: ContentBlock, mode: ToolDisplayMode): string | n
     return `> 🖼️ Displayed image: ${block.path}`
   }
   if (block.type === 'user_note') {
-    return `> 💬 **Mid-run note:** ${block.text}`
+    return block.source === 'app' ? `> 🔍 ${block.text}` : `> 💬 **Mid-run note:** ${block.text}`
   }
   if (block.type === 'thinking') {
     // 'hidden'/'partial': same as the live view's collapsed thinking block — a marker that reasoning

@@ -2373,9 +2373,9 @@ export class Orchestrator {
           if (nudge) {
             gateNudges++
             const note = `[Completion check by Sachivji] ${nudge}`
-            conversation.push({ role: 'user', content: [{ type: 'user_note', text: note }] })
-            yield { kind: 'stream', event: tagEvent({ type: 'user_note', text: note }, agentRole) }
-            yield { kind: 'message', role: 'user', content: [{ type: 'user_note', text: note }] }
+            conversation.push({ role: 'user', content: [{ type: 'user_note', text: note, source: 'app' }] })
+            yield { kind: 'stream', event: tagEvent({ type: 'user_note', text: note, source: 'app' }, agentRole) }
+            yield { kind: 'message', role: 'user', content: [{ type: 'user_note', text: note, source: 'app' }] }
             continue
           }
         }

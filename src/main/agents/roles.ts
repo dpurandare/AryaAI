@@ -15,6 +15,21 @@ function pickTools(registry: ToolRegistry, names: string[]): Tool[] {
 }
 
 /**
+ * The Researcher's result and notes feed the next step (found live: a 13,000-character .md left in the workspace root). A bare
+ * .md / .txt file name is written under tmp/, where scratch belongs; a path with a folder in it is the caller's choice.
+ */
+export function scratchNotes(tool: Tool): Tool {
+  return {
+    ...tool,
+    async execute(input, ctx, signal) {
+      const path = typeof input.path === 'string' ? input.path.replace(/^\.\//, '') : ''
+      const bareNotes = /^[^/\\]+\.(md|txt)$/i.test(path)
+      return tool.execute(bareNotes ? { ...input, path: `tmp/${path}` } : input, ctx, signal)
+    }
+  }
+}
+
+/**
  * Every currently-registered MCP-server tool (see `mcp/client.ts`'s `mcp__<server>__<tool>` naming). Read
  * fresh on every access — MCP servers connect and disconnect after startup.
  *
@@ -216,7 +231,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'section per slide topic, ending with a Sources list of URLs. If asked to save it to a file, write it yourself with write_file — no separate step is needed. ' +
         'Never give a reason for a failure you did not observe.',
       get tools() {
-        return pickTools(registry, ['web_search', 'parse_html', 'download_image', 'find_stock_images', 'save_research_note', 'read_research_notes', 'write_file'])
+        return pickTools(registry, ['web_search', 'parse_html', 'download_image', 'find_stock_images', 'save_research_note', 'read_research_notes', 'write_file']).map((t) => (t.name === 'write_file' ? scratchNotes(t) : t))
       }
     },
     {
