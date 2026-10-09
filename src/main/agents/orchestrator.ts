@@ -1,6 +1,7 @@
 import { basename, dirname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
+import { KNOWLEDGE_FIRST_REFUSAL, mcpAttemptedThisTurn, wantsWebExplicitly } from './knowledge-first'
 import { emptyDelegateCalls, isRestatement, lastDelegateReplies } from './restatement'
 import type { AgentRole } from '@shared/agents'
 import { PLANNABLE_ROLES, roleLabel, type RoleMeta } from '@shared/agents'
@@ -652,6 +653,8 @@ interface RunState {
   consecutiveRateLimitRetries: number
   /** Turn-wide handoff bookkeeping, shared by reference with every nested delegate's state (see `HandoffState`). */
   handoff: HandoffState
+  /** Top-level only: how many times an open-web lookup was held back in favour of the connected knowledge servers this turn (see knowledge-first.ts). */
+  knowledgeFirstRefusals?: number
 }
 
 /**
@@ -2371,7 +2374,21 @@ export class Orchestrator {
         }
         let content: string
         let isError: boolean
-        if (delegateRole) {
+        const mcpAgent = this.agents.get('mcp-operator')
+        if (
+          isTopLevel &&
+          (call.name === 'web_search' || delegateRole === 'research') &&
+          (state.knowledgeFirstRefusals ?? 0) < 1 &&
+          mcpAgent &&
+          this.options.getConfiguration !== undefined &&
+          isRoleAvailable(mcpAgent, this.options.getConfiguration()) &&
+          !wantsWebExplicitly(gateTask) &&
+          !mcpAttemptedThisTurn(conversation)
+        ) {
+          state.knowledgeFirstRefusals = (state.knowledgeFirstRefusals ?? 0) + 1
+          content = KNOWLEDGE_FIRST_REFUSAL
+          isError = true
+        } else if (delegateRole) {
           const outcome = yield* this.dispatchDelegate(delegateRole, input, conversationBeforeThisRound, state)
           content = outcome.content
           isError = outcome.isError

@@ -138,6 +138,49 @@ describe('Orchestrator (integration, mocked provider)', () => {
     })
   })
 
+  describe('knowledge servers before the open web', () => {
+    const webSearch = (q: string) => ({ toolCalls: [{ id: 'w1', name: 'web_search', input: { query: q } }] })
+
+    async function run(request: string, mcp: number, turns: ScriptedTurn[]) {
+      const registry = buildRegistry()
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: false,
+        getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp })
+      })
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: request }] }])
+      const results = events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'tool_result' ? [e.event] : []))
+      return { events, results, provider }
+    }
+
+    it('holds back the first open-web lookup for a knowledge question when a knowledge server is connected (real case: IEC 61400-26 went straight to the web)', async () => {
+      const { results } = await run('What does the IEC 61400-26 loss category taxonomy look like?', 1, [
+        webSearch('IEC 61400-26 loss category taxonomy'),
+        { text: 'Let me check the wiki first.', stopReason: 'end_turn' }
+      ])
+      expect(results[0]).toMatchObject({ isError: true })
+      expect(results[0].content).toMatch(/delegate_to_mcp_operator/)
+    })
+
+    it('lets the same search run when the model repeats it (not a knowledge question after all)', async () => {
+      const { results } = await run('What does the IEC 61400-26 loss category taxonomy look like?', 1, [
+        webSearch('a'),
+        webSearch('a'),
+        { text: 'Found it.', stopReason: 'end_turn' }
+      ])
+      expect(results[0].isError).toBe(true)
+      expect(results[0].content).toMatch(/Not run yet/)
+      expect(results[1].content).not.toMatch(/Not run yet/)
+    })
+
+    it('does not hold back a search the user asked for, or when no knowledge server is connected', async () => {
+      const asked = await run('Search the web for the latest IEC 61400-26 news', 1, [webSearch('x'), { text: 'ok', stopReason: 'end_turn' }])
+      expect(asked.results[0].content).not.toMatch(/Not run yet/)
+      const none = await run('What does the IEC 61400-26 loss category taxonomy look like?', 0, [webSearch('x'), { text: 'ok', stopReason: 'end_turn' }])
+      expect(none.results[0].content).not.toMatch(/Not run yet/)
+    })
+  })
+
   it('delegates to the Coding specialist, which writes a real file through real confirmation', async () => {
     const registry = buildRegistry()
     const agents = createAgents(registry)
