@@ -64,6 +64,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     onChangeModel,
     onNeedKey,
     sessionUsage,
+    contextTokens,
     contextWindow,
     toolDisplayMode,
     onCycleToolDisplayMode,
@@ -102,6 +103,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     onChangeModel: (model: string) => void
     onNeedKey: () => void
     sessionUsage: { inputTokens: number; outputTokens: number }
+    contextTokens: number | null
     contextWindow: { tokens: number; isEstimate: boolean } | null
     /** Global tool-output display state — 'hidden' | 'partial' | 'shown' (Cmd/Ctrl+O cycles it, owned by App.svelte so the hotkey works regardless of what has focus) — see the .tool-call rendering below. An `image` block is never affected by this, any state — see TASKS.md #181. */
     toolDisplayMode: 'hidden' | 'partial' | 'shown'
@@ -763,6 +765,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
             {model}
             inputTokens={sessionUsage.inputTokens}
             outputTokens={sessionUsage.outputTokens}
+            {contextTokens}
             {contextWindow}
           />
         {/if}

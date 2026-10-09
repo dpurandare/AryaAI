@@ -2227,7 +2227,8 @@ export class Orchestrator {
       if (roundUsage) {
         state.inputTokens += roundUsage.inputTokens
         state.outputTokens += roundUsage.outputTokens
-        yield { kind: 'stream', event: { type: 'usage', ...roundUsage } }
+        const contextTokens = isTopLevel ? roundUsage.inputTokens + roundUsage.outputTokens : undefined
+        yield { kind: 'stream', event: { type: 'usage', ...roundUsage, ...(contextTokens === undefined ? {} : { contextTokens }) } }
       }
 
       if (emptyRoundToRetry) {

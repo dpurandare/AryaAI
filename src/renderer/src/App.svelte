@@ -93,6 +93,8 @@
     sending: boolean
     currentStreamId: string
     sessionUsage: { inputTokens: number; outputTokens: number }
+    /** The latest top-level request's size (a `usage` event's contextTokens); null until one runs in this app run - not stored, so a reloaded session shows a dash. */
+    contextTokens: number | null
     pendingConfirm: ToolConfirmRequestPayload | null
     /** A round/time budget was hit and the orchestrator is waiting to hear whether to keep going — see orchestrator.ts's askToContinue. Mutually exclusive with pendingConfirm in practice (only one can be in flight at a time per stream), kept as its own field rather than folded into one union so ChatView's prop list stays a plain, obvious `X | null` for each. */
     pendingLimit: LimitReachedRequestPayload | null
@@ -106,6 +108,7 @@
       sending: false,
       currentStreamId: '',
       sessionUsage: { inputTokens: 0, outputTokens: 0 },
+      contextTokens: null,
       pendingConfirm: null,
       pendingLimit: null,
       loaded: false
@@ -438,6 +441,7 @@
           inputTokens: runtime.sessionUsage.inputTokens + event.inputTokens,
           outputTokens: runtime.sessionUsage.outputTokens + event.outputTokens
         }
+        if (event.contextTokens !== undefined) runtime.contextTokens = event.contextTokens
       } else if (event.type === 'context_window') {
         contextWindow = { tokens: event.tokens, isEstimate: event.isEstimate }
       } else if (event.type === 'warning') {
@@ -892,6 +896,7 @@
         onChangeModel={changeModel}
         onNeedKey={() => (showSettings = true)}
         sessionUsage={activeRuntime.sessionUsage}
+        contextTokens={activeRuntime.contextTokens}
         {contextWindow}
         {toolDisplayMode}
         onCycleToolDisplayMode={cycleToolDisplayMode}

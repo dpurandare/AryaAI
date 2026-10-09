@@ -117,7 +117,8 @@ export type StreamEvent =
       agentRole?: AgentRole
     }
   /** `cacheReadTokens` (Anthropic prompt caching): the part of `inputTokens` served from the cache; present only when non-zero. */
-  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number }
+  /** `contextTokens` (top-level rounds only): what that request held - its input plus its reply, which the next one must carry. The meter shows the latest as the context in use; the per-round counts are summed for the session total. */
+  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; contextTokens?: number }
   /**
    * Emitted once per user turn (not per round), right after context prep
    * resolves the model's real context window for this turn — see

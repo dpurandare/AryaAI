@@ -594,10 +594,11 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
     // Exactly one usage event per round (3 rounds), not 2 per round even
     // though the mock yielded each round's usage twice.
+    // Only the router's own rounds say how big the context is (input + reply); the delegate's round, in its own smaller context, does not.
     expect(usageEvents).toEqual([
-      { type: 'usage', inputTokens: 100, outputTokens: 10 },
+      { type: 'usage', inputTokens: 100, outputTokens: 10, contextTokens: 110 },
       { type: 'usage', inputTokens: 50, outputTokens: 5 },
-      { type: 'usage', inputTokens: 20, outputTokens: 8 }
+      { type: 'usage', inputTokens: 20, outputTokens: 8, contextTokens: 28 }
     ])
     const total = usageEvents.reduce(
       (acc, e) => ({ input: acc.input + e.inputTokens, output: acc.output + e.outputTokens }),
