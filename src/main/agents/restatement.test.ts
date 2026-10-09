@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Message } from '@shared/protocol'
-import { isRestatement, lastDelegateReplies } from './restatement'
+import { emptyDelegateCalls, isRestatement, lastDelegateReplies } from './restatement'
 
 describe('isRestatement', () => {
   it('treats the same answer as a restatement, ignoring markdown and punctuation', () => {
@@ -41,5 +41,21 @@ describe('lastDelegateReplies', () => {
     expect(lastDelegateReplies([call('delegate_to_data'), result('boom', true)])).toEqual([])
     expect(lastDelegateReplies([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])).toEqual([])
     expect(lastDelegateReplies([])).toEqual([])
+  })
+})
+
+describe('emptyDelegateCalls', () => {
+  const call = (name: string): Message => ({ role: 'assistant', content: [{ type: 'tool_use', id: 'c1', name, input: {} }] })
+  const result = (content: string, isError: boolean): Message => ({ role: 'user', content: [{ type: 'tool_result', toolUseId: 'c1', content, isError }] })
+
+  it('names a delegate whose whole result is the empty placeholder', () => {
+    expect(emptyDelegateCalls([call('delegate_to_data'), result('(no response)', true)])).toEqual(['delegate_to_data'])
+  })
+
+  it('ignores a delegate that produced something, or a failure that is not emptiness', () => {
+    expect(emptyDelegateCalls([call('delegate_to_data'), result('(no response)\n\nFiles created or changed: a.txt', true)])).toEqual([])
+    expect(emptyDelegateCalls([call('delegate_to_data'), result('connection refused', true)])).toEqual([])
+    expect(emptyDelegateCalls([call('delegate_to_data'), result('91', false)])).toEqual([])
+    expect(emptyDelegateCalls([call('read_file'), result('(no response)', true)])).toEqual([])
   })
 })

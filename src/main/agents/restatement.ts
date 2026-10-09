@@ -52,3 +52,23 @@ export function lastDelegateReplies(conversation: readonly Message[]): string[] 
   }
   return replies.length === results.length ? replies : []
 }
+
+/**
+ * Delegate calls that just came back with nothing at all — a failed result whose whole content is the "(no response)" placeholder
+ * (a specialist that produced files or data before going quiet is not empty). Returns each call's delegate tool name.
+ */
+export function emptyDelegateCalls(conversation: readonly Message[]): string[] {
+  const last = conversation.at(-1)
+  const before = conversation.at(-2)
+  if (!last || last.role !== 'user' || !before || before.role !== 'assistant') return []
+  const names = new Map<string, string>()
+  for (const b of before.content) if (b.type === 'tool_use' && b.name.startsWith('delegate_to_')) names.set(b.id, b.name)
+  const empty: string[] = []
+  for (const b of last.content) {
+    if (b.type === 'tool_result' && b.isError && typeof b.content === 'string' && b.content.trim() === '(no response)') {
+      const name = names.get(b.toolUseId)
+      if (name) empty.push(name)
+    }
+  }
+  return empty
+}

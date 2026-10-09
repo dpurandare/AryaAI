@@ -95,6 +95,49 @@ describe('Orchestrator (integration, mocked provider)', () => {
     expect(finalStops).toHaveLength(1)
   })
 
+  describe('a delegate that returns nothing', () => {
+    const delegate = { toolCalls: [{ id: 'd', name: 'delegate_to_coding', input: { task: 'count the customers' } }] }
+    const delegateAgain = { toolCalls: [{ id: 'd2', name: 'delegate_to_coding', input: { task: 'count the customers, answer in one line' } }] }
+    // One empty reply plus the two empty-reply retries the round loop makes before giving up.
+    const silent = [1, 2, 3].map(() => ({ text: '', stopReason: 'end_turn' as const }))
+
+    async function run(turns: ScriptedTurn[]) {
+      const registry = buildRegistry()
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'How many customers?' }] }])
+      const lastMessage = (i: number) => JSON.stringify(provider.requests[i].messages.at(-1))
+      return { events, provider, lastMessage }
+    }
+
+    it('tells the router to say so and retry once, and the retry can succeed', async () => {
+      const { events, provider, lastMessage } = await run([
+        delegate,
+        ...silent,
+        delegateAgain,
+        { text: 'There are 91 customers.', stopReason: 'end_turn' },
+        { text: 'The first attempt returned nothing; the retry found it.', stopReason: 'end_turn' }
+      ])
+      expect(lastMessage(4)).toContain('ended without any output')
+      expect(lastMessage(4)).toContain('trying again')
+      expect(provider.requests).toHaveLength(7)
+      expect(events.some((e) => e.kind === 'message' && JSON.stringify(e.content).includes('ended without any output'))).toBe(false)
+    })
+
+    it('does not retry a second time: the router is told to report it plainly', async () => {
+      const { lastMessage, provider } = await run([delegate, ...silent, delegateAgain, ...silent, { text: 'It produced nothing twice.', stopReason: 'end_turn' }])
+      expect(lastMessage(8)).toContain('returned nothing again')
+      expect(lastMessage(8)).toContain('Do not call it again')
+      expect(provider.requests).toHaveLength(9)
+    })
+
+    it('shows a fixed message when the router then stays silent too, instead of a blank turn', async () => {
+      const { events } = await run([delegate, ...silent, ...silent])
+      const warnings = events.filter((e) => e.kind === 'stream' && e.event.type === 'warning')
+      expect((warnings.at(-1) as { event: { message: string } }).event.message).toMatch(/coding specialist returned no output/i)
+    })
+  })
+
   it('delegates to the Coding specialist, which writes a real file through real confirmation', async () => {
     const registry = buildRegistry()
     const agents = createAgents(registry)

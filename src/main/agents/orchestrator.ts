@@ -1,7 +1,7 @@
 import { basename, dirname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
-import { isRestatement, lastDelegateReplies } from './restatement'
+import { emptyDelegateCalls, isRestatement, lastDelegateReplies } from './restatement'
 import type { AgentRole } from '@shared/agents'
 import { PLANNABLE_ROLES, roleLabel, type RoleMeta } from '@shared/agents'
 import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
@@ -722,6 +722,18 @@ const HANDOFF_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
  */
 /** How many times one round loop re-asks after the model returns nothing at all (no text, no tool call) before reporting it. */
 const MAX_EMPTY_RESPONSE_RETRIES = 2
+
+/** How many times, per turn, the router is told to re-run a delegate that came back with nothing. */
+const MAX_EMPTY_DELEGATE_RETRIES = 1
+
+/** Added (never stored) to the round after a delegate returned nothing: say so, then try once more. */
+function emptyDelegateNudge(toolNames: readonly string[], canRetry: boolean): string {
+  const who = toolNames.map((n) => n.replace(/^delegate_to_/, '').replace(/[-_]/g, ' ')).join(', ')
+  return canRetry
+    ? `[Notice from Sachivji] The ${who} specialist ended without any output. Tell the user in one short line that it returned nothing and that you are trying again, ` +
+        `then call ${toolNames[0]} once more with a more specific task. Do not answer from your own knowledge in its place.`
+    : `[Notice from Sachivji] The ${who} specialist returned nothing again. Tell the user plainly that it produced no output and what they could try instead. Do not call it again.`
+}
 
 /** Added (for that one retry only, never stored) after an empty round, so the model resumes instead of stopping again. */
 const EMPTY_RESPONSE_NUDGE =
@@ -1930,6 +1942,8 @@ export class Orchestrator {
     let emptyRetries = 0
     let nudgeAfterEmptyRound = false
     let emptyRoundHadThinking = false
+    let emptyDelegateRetries = 0
+    let lastEmptyDelegateMessage: Message | undefined
     // TASKS.md #172/#173: bounded recovery for a round truncated mid-tool-call — see MAX_TRUNCATED_TOOL_CALL_RETRIES.
     let truncatedToolCallRetries = 0
     // See MAX_CONSECUTIVE_TOOL_FAILURES.
@@ -1994,6 +2008,16 @@ export class Orchestrator {
           state
         )
       )
+      const emptyDelegates = isTopLevel ? emptyDelegateCalls(conversation) : []
+      if (emptyDelegates.length > 0) {
+        // A silent-router retry re-enters this round with the same last message: that is still one failure, not a second.
+        if (conversation.at(-1) !== lastEmptyDelegateMessage) {
+          lastEmptyDelegateMessage = conversation.at(-1)
+          emptyDelegateRetries++
+        }
+        const canRetry = emptyDelegateRetries <= MAX_EMPTY_DELEGATE_RETRIES
+        messagesToSend = [...messagesToSend, { role: 'user', content: [{ type: 'text', text: emptyDelegateNudge(emptyDelegates, canRetry) }] }]
+      }
       if (nudgeAfterEmptyRound) {
         messagesToSend = [...messagesToSend, { role: 'user', content: [{ type: 'text', text: emptyRoundHadThinking ? EMPTY_AFTER_REASONING_NUDGE : EMPTY_RESPONSE_NUDGE }] }]
         nudgeAfterEmptyRound = false
@@ -2229,8 +2253,10 @@ export class Orchestrator {
         // silence: no persisted message, no visible error, nothing —
         // indistinguishable from the app having done nothing at all.
         const message =
-          'The model produced no visible output for this response (no text, no tool call) — a known quirk ' +
-          'with local reasoning models on longer or more complex requests. Try asking again.'
+          emptyDelegates.length > 0
+            ? `The ${emptyDelegates.map((n) => n.replace(/^delegate_to_/, '').replace(/[-_]/g, ' ')).join(', ')} specialist returned no output, and the assistant did not follow up. Try asking again.`
+            : 'The model produced no visible output for this response (no text, no tool call) — a known quirk ' +
+              'with local reasoning models on longer or more complex requests. Try asking again.'
         // Always a whole-turn failure when it's the top level (this branch
         // always returns immediately below, same reasoning as max_tokens
         // above) — TASKS.md #102.
