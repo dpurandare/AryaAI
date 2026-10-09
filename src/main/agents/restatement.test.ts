@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Message } from '@shared/protocol'
-import { emptyDelegateCalls, isRestatement, lastDelegateReplies } from './restatement'
+import { emptyDelegateCalls, isInternalWorkFile, isRestatement, lastDelegateReplies, planStepReplies, stripInternalPaths } from './restatement'
 
 describe('isRestatement', () => {
   it('treats the same answer as a restatement, ignoring markdown and punctuation', () => {
@@ -57,5 +57,34 @@ describe('emptyDelegateCalls', () => {
     expect(emptyDelegateCalls([call('delegate_to_data'), result('connection refused', true)])).toEqual([])
     expect(emptyDelegateCalls([call('delegate_to_data'), result('91', false)])).toEqual([])
     expect(emptyDelegateCalls([call('read_file'), result('(no response)', true)])).toEqual([])
+  })
+})
+
+describe('planStepReplies', () => {
+  const text = (t: string): Message => ({ role: 'user', content: [{ type: 'text', text: t }] })
+  const step = (n: number, body: string) => text(`[Plan step ${n} — Researcher]: do it.\n\nResult:\n${body}`)
+
+  it('collects this turn\'s step replies in order and stops at the user\'s own request', () => {
+    const messages: Message[] = [text('earlier request'), step(1, 'old step'), text('find X and Y'), step(1, 'first reply'), step(2, 'second reply')]
+    expect(planStepReplies(messages)).toEqual(['first reply', 'second reply'])
+  })
+
+  it('is empty when no plan step ran', () => {
+    expect(planStepReplies([text('hi')])).toEqual([])
+    expect(planStepReplies([])).toEqual([])
+  })
+})
+
+describe('internal scratch files', () => {
+  it('recognises research notes and handoff data, but not a real deliverable', () => {
+    expect(isInternalWorkFile('tmp/research-notes-afed3d4f.md')).toBe(true)
+    expect(isInternalWorkFile('.sachiv-handoff/abc/01-db.json')).toBe(true)
+    expect(isInternalWorkFile('documents/report.docx')).toBe(false)
+    expect(isInternalWorkFile('tmp/script.py')).toBe(false)
+  })
+
+  it('strips only the sentences that name one', () => {
+    expect(stripInternalPaths('Real finding. Research notes are saved at tmp/research-notes-afed3d4f.md. Another point.')).toBe('Real finding. Another point.')
+    expect(stripInternalPaths('The report is documents/report.docx.')).toBe('The report is documents/report.docx.')
   })
 })

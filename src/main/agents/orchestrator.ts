@@ -2,7 +2,7 @@ import { basename, dirname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
 import { KNOWLEDGE_FIRST_REFUSAL, mcpAttemptedThisTurn, wantsWebExplicitly } from './knowledge-first'
-import { emptyDelegateCalls, isRestatement, lastDelegateReplies } from './restatement'
+import { emptyDelegateCalls, isInternalWorkFile, isRestatement, lastDelegateReplies, planStepReplies, stripInternalPaths } from './restatement'
 import type { AgentRole } from '@shared/agents'
 import { PLANNABLE_ROLES, roleLabel, type RoleMeta } from '@shared/agents'
 import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
@@ -725,6 +725,12 @@ const HANDOFF_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
  */
 /** How many times one round loop re-asks after the model returns nothing at all (no text, no tool call) before reporting it. */
 const MAX_EMPTY_RESPONSE_RETRIES = 2
+
+/** Added (never stored) to every top-level round of a plan's closing write-up: the user has read each step already. */
+const PLAN_FINAL_NUDGE =
+  "[Notice from Sachivji] The user has already read every step's reply above, in full. Write only what those replies do not already say: where sources " +
+  'conflict, what is still unconfirmed or failed, and what to do next. Do not restate findings, lists or tables, and do not mention the names of notes or working files. ' +
+  'If there is nothing to add, answer in one short line.'
 
 /** How many times, per turn, the router is told to re-run a delegate that came back with nothing. */
 const MAX_EMPTY_DELEGATE_RETRIES = 1
@@ -2002,6 +2008,7 @@ export class Orchestrator {
 
       // normalizeUserNotesForWire applied last, right before the wire — a user_note reads as ordinary text to
       // the model; every earlier step in this pipeline only needs to know about tool_result/tool_use shapes.
+      const planReplies = isTopLevel ? planStepReplies(conversation) : []
       let messagesToSend = normalizeUserNotesForWire(
         await this.refitConversationToBudget(
           capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
@@ -2011,6 +2018,9 @@ export class Orchestrator {
           state
         )
       )
+      if (planReplies.length > 0) {
+        messagesToSend = [...messagesToSend, { role: 'user', content: [{ type: 'text', text: PLAN_FINAL_NUDGE }] }]
+      }
       const emptyDelegates = isTopLevel ? emptyDelegateCalls(conversation) : []
       if (emptyDelegates.length > 0) {
         // A silent-router retry re-enters this round with the same last message: that is still one failure, not a second.
@@ -2028,7 +2038,7 @@ export class Orchestrator {
       let emptyRoundToRetry = false
       // See restatement.ts: the round right after a direct delegation holds its stream events (kept in order) until it is known whether it
       // only repeats what the user was just shown.
-      const shownReplies = isTopLevel ? lastDelegateReplies(conversation) : []
+      const shownReplies = isTopLevel ? [...lastDelegateReplies(conversation), ...planReplies] : []
       const held: StreamEvent[] = []
       let suppressRestatement = false
       const roundTimer = this.startRoundTimer(state.deadlineAt, state.consecutiveRoundTimeouts)
@@ -2086,8 +2096,22 @@ export class Orchestrator {
         }
         if (held.length > 0) {
           suppressRestatement = toolCalls.length === 0 && isRestatement(assistantText, shownReplies)
+          // Scratch-file names are not for the reader: rewrite the held text without them (one delta in place of the many).
+          const cleaned = suppressRestatement ? assistantText : stripInternalPaths(assistantText)
+          const rewrite = cleaned !== assistantText
+          if (rewrite) assistantText = cleaned
+          let rewritten = false
           // A restated answer is dropped; the stop still goes out so the turn ends normally.
-          for (const e of held) if (!suppressRestatement || e.type !== 'text_delta') yield { kind: 'stream', event: e }
+          for (const e of held) {
+            if (e.type === 'text_delta' && (suppressRestatement || rewrite)) {
+              if (rewrite && !rewritten) {
+                rewritten = true
+                yield { kind: 'stream', event: { ...e, text: cleaned } }
+              }
+              continue
+            }
+            yield { kind: 'stream', event: e }
+          }
           held.length = 0
         }
       } catch (err) {
@@ -2897,7 +2921,7 @@ export class Orchestrator {
 
       const tag = parseHandoffTag(loopResult.text || '')
       const diff = before && root ? diffSnapshots(before, await snapshotWorkspace(root)) : undefined
-      const artifacts = diff ? [...diff.created, ...diff.modified] : []
+      const artifacts = diff ? [...diff.created, ...diff.modified].filter((p) => !isInternalWorkFile(p)) : []
       // status: code decides failure; the model only ever chooses the two judgment cases, and only on a clean end.
       const rawStatus = loopResult.isError ? 'failed' : (tag.status ?? 'done')
       // Found live: Data Access queried successfully, wrote a complete, correct answer from real data —

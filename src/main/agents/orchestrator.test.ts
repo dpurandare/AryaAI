@@ -796,6 +796,48 @@ describe('Orchestrator (integration, mocked provider)', () => {
     })
   })
 
+  describe('the write-up after a plan does not repeat the steps (real case: IEC 61400-26, three quarters re-presented)', () => {
+    const classify = {
+      text: '{"complexity": "compound", "steps": [{"role": "research", "description": "x"}, {"role": "data", "description": "y"}]}',
+      stopReason: 'end_turn' as const
+    }
+    const stepOne = 'The standard defines availability states for turbines including operative, non-operative, standby and environmental categories.'
+
+    async function run(finalText: string) {
+      vi.spyOn(Math, 'random').mockReturnValue(0.99)
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        classify,
+        { text: stepOne, stopReason: 'end_turn' },
+        { text: 'The figures cover the last quarter only.', stopReason: 'end_turn' },
+        { text: finalText, stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: true
+      })
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }])
+      const routerText = events
+        .filter((e) => e.kind === 'stream' && e.event.type === 'text_delta' && !(e.event as { agentRole?: string }).agentRole)
+        .map((e) => (e as { event: { text: string } }).event.text)
+        .join('')
+      return { events, provider, routerText }
+    }
+
+    it('tells the router the user has read the steps, and drops a write-up that only repeats them', async () => {
+      const { provider, routerText } = await run('The standard defines availability states for turbines including operative, non-operative, standby and environmental categories.')
+      expect(JSON.stringify(provider.requests.at(-1)!.messages.at(-1))).toContain('already read every step')
+      expect(routerText).toBe('')
+    })
+
+    it('keeps a write-up that adds something, minus any sentence naming a scratch file', async () => {
+      const { routerText, events } = await run(
+        'The sources disagree on where standby sits, so treat the hierarchy as indicative. Research notes are saved at tmp/research-notes-ab12cd34.md.'
+      )
+      expect(routerText).toBe('The sources disagree on where standby sits, so treat the hierarchy as indicative.')
+      expect(JSON.stringify(events.filter((e) => e.kind === 'message'))).not.toContain('research-notes')
+    })
+  })
+
   describe('prompt-cache stability (design step 7)', () => {
     // Prefix caching (Anthropic cache_control; automatic on OpenAI-compatible providers) only pays if the system prompt and the tool list
     // are BYTE-identical from one round to the next. Anything that varied per round — a timestamp, a counter, an unordered Map — would

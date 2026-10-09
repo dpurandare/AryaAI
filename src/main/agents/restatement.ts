@@ -72,3 +72,43 @@ export function emptyDelegateCalls(conversation: readonly Message[]): string[] {
   }
   return empty
 }
+
+const PLAN_NOTE = /^\[Plan step \d+ [^\]]*\][\s\S]*?\n\nResult:\n([\s\S]*)$/
+
+/**
+ * The replies of this turn's finished plan steps — all already shown to the user as each step finished. The final round of a plan
+ * is the router writing up after them, and found live (IEC 61400-26 question, claude-haiku-5-5) it re-presented about three
+ * quarters of what the two steps had just said.
+ */
+export function planStepReplies(conversation: readonly Message[]): string[] {
+  const replies: string[] = []
+  for (let i = conversation.length - 1; i >= 0; i--) {
+    const m = conversation[i]
+    if (m.role !== 'user') continue
+    for (const b of m.content) {
+      if (b.type !== 'text') continue
+      const match = PLAN_NOTE.exec(b.text)
+      if (!match) return replies.reverse()
+      replies.push(match[1])
+    }
+  }
+  return replies.reverse()
+}
+
+/** Scratch files the app keeps for its own use. They are not deliverables and are not for the reader. */
+const INTERNAL_PATH = /\.sachiv-handoff|(^|[\s`'"(/])tmp\/research-notes-[\w-]+\.md/
+
+export function isInternalWorkFile(path: string): boolean {
+  return INTERNAL_PATH.test(path)
+}
+
+/** Removes every sentence that names an internal scratch file (found live: "Research notes are saved at tmp/research-notes-….md"). */
+export function stripInternalPaths(text: string): string {
+  if (!INTERNAL_PATH.test(text)) return text
+  return text
+    .split('\n')
+    .map((line) => (INTERNAL_PATH.test(line) ? line.split(/(?<=[.!?])\s+/).filter((sentence) => !INTERNAL_PATH.test(sentence)).join(' ') : line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
