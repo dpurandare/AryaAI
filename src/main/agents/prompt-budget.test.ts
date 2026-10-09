@@ -154,7 +154,9 @@ const CEILINGS = {
   // compared a turbine's real data against... its own real data again (never recognized a real
   // `theoretical_power_kw` reference column already in the schema), plotted as a meaningless zigzag
   // (unsorted real data drawn as a line). role:coding 2760 -> 2801, role:data 2640 -> 2737. Deliberate.
-  'role:coding': 3050,
+  // 2026-10-09 (14.x, 100x100 images with 70%-height numbers): the Developer caught a font error, fell back to ImageFont.load_default() (which ignores the size)
+  // and reported success three times; one sentence names a font that exists and bans the silent fallback — 3008 -> 3079. Deliberate: it is the fix.
+  'role:coding': 3120,
   'role:data': 2860,
   'role:data-processor': 2230,
   'role:document-creator': 2440,

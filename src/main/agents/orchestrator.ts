@@ -802,7 +802,7 @@ export function buildPlanSchema(roleIds: readonly string[]): Record<string, unkn
           'or judge something — e.g. is this an anomaly, a violation, or what does a named technical term mean. ' +
           'True even when the user does not name a document. FALSE when the request only retrieves, summarises, ' +
           'charts, reports on or writes up the user\'s own data (listing top customers, building a chart or a ' +
-          'Word document), or asks about Sachivji itself or this machine (its workspace, folders, settings, the OS), or only asks how to use a tool or file format — unless a connected knowledge server (named in the ' +
+          'Word document), or asks about Sachivji itself or this machine (its workspace, folders, settings, the OS), or asks to check, debug, fix or run code or files the user already has, or only asks how to use a tool or file format — unless a connected knowledge server (named in the ' +
           'instructions) covers that tool or library, then it is knowledge to look up. The user\'s own data is never ' +
           'knowledge to look up.'
       },
@@ -1725,7 +1725,8 @@ export class Orchestrator {
           '\nA question about how to use a specific library, framework, API or product that one of these covers needs knowledge from it, ' +
           'even a plain "how do I ..." question: set needsDomainKnowledge to true and name the library and the feature as the ' +
           'topic. Its documentation there is current; memory of it may be out of date. Writing ordinary code, or using a ' +
-          'language\'s own built-in features, does not need it.\n'
+          'language\'s own built-in features, does not need it, and neither does a request to check, debug, fix, run or change code or ' +
+          'files the user already has (that is work for the Developer, not a lookup).\n'
     return (
       serverNote +
       "Before anything else, classify the user's latest request and, only if it genuinely needs more " +

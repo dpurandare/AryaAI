@@ -270,7 +270,9 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'python_run: pass the source as `code` (multi-line is fine — nothing to quote) or the path of ' +
         'a .py file as `script`. It uses the workspace\'s virtual environment (matplotlib, numpy, ' +
         'pillow, python-docx and openpyxl are normally installed), needs no shell, and lists the files ' +
-        'the run really created — check that list against what you expected. matplotlib is the default ' +
+        'the run really created — check that list against what you expected. Text on an image (Pillow): use a font file that exists, e.g. ' +
+        'DejaVuSans-Bold.ttf in matplotlib.get_data_path()/fonts/ttf, never catch a font error and fall back to ImageFont.load_default() ' +
+        '(it ignores the size), and measure the drawn text (textbbox) against any size asked for. matplotlib is the default ' +
         'charting/diagram library for any request needing a real chart from data, unless a different ' +
         'library is asked for by name. Comparing two series on one chart: sort each by its own x-axis ' +
         'value before drawing it as a line — real/noisy data left in timestamp order and plotted as a ' +
