@@ -6,6 +6,7 @@ import {
   applySlidingWindow,
   collapseFailedTurns,
   collapseUnavailableToolCalls,
+  setAsideOtherSpecialistsReplies,
   migrateLegacyDelegateNames,
   normalizeUserNotesForWire,
   prepareConversation,
@@ -760,5 +761,49 @@ describe('collapseUnavailableToolCalls (slim router: no provider is shown a call
     const out = collapseUnavailableToolCalls(messages, available)
     expect(out[0].content[0]).toMatchObject({ type: 'text', agentRole: 'coding' })
     expect(messages[0].content[0]).toMatchObject({ type: 'tool_use', name: 'xlsx_write' })
+  })
+})
+
+describe('setAsideOtherSpecialistsReplies (found live in 11.6: a pinned specialist answered as another one)', () => {
+  const label = (role: string): string => ({ planning: 'Planner', research: 'Researcher' })[role] ?? role
+  const history: Message[] = [
+    { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'Hi, I am Sachivji.' }] },
+    { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'Hi, I plan.', agentRole: 'planning' }] },
+    { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'Hi, I research.', agentRole: 'research' }] },
+    { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
+  ]
+
+  it("takes other specialists' and Auto's earlier text out of the conversation and hands it back as background, keeping the current role's own", () => {
+    const { messages, background } = setAsideOtherSpecialistsReplies(history, 'research', label)
+    const texts = messages.map((m) => (m.content[0] as { text: string }).text)
+    expect(texts).toEqual(['Hello', 'Hello', 'Hello', 'Hi, I research.', 'Hello'])
+    expect(background).toContain('- Sachivji (Auto): Hi, I am Sachivji.')
+    expect(background).toContain('- Planner: Hi, I plan.')
+    expect(background).not.toContain('Hi, I research.')
+    expect(background).toContain('you are the Researcher specialist')
+  })
+
+  it('does the same for Auto: replies written by pinned specialists become background, the router\'s own (untagged) replies stay', () => {
+    const { messages, background } = setAsideOtherSpecialistsReplies(history, undefined, label)
+    expect(messages.map((m) => (m.content[0] as { text: string }).text)).toEqual(['Hello', 'Hi, I am Sachivji.', 'Hello', 'Hello', 'Hello'])
+    expect(background).toContain('- Planner: Hi, I plan.')
+    expect(background).toContain('- Researcher: Hi, I research.')
+    expect(background).not.toContain('Hi, I am Sachivji.')
+    expect(background).toContain('you are Sachivji, the orchestrator')
+  })
+
+  it('leaves tool calls, the current turn and the stored conversation alone, and gives no background when nothing was set aside', () => {
+    const turn: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'go' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'working' }, { type: 'tool_use', id: 'c1', name: 'x', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'c1', content: 'ok' }] }
+    ]
+    const out = setAsideOtherSpecialistsReplies(turn, 'research', label)
+    expect(out.messages).toEqual(turn)
+    expect(out.background).toBe('')
+    expect((history[3].content[0] as { text: string }).text).toBe('Hi, I plan.')
   })
 })

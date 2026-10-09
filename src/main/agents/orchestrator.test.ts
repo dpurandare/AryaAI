@@ -516,6 +516,24 @@ describe('Orchestrator (integration, mocked provider)', () => {
     expect(events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'text_delta' ? [e.event.text] : [])).join('')).toBe('Hello from Auto.')
   })
 
+  it('a pinned specialist sees earlier replies from other specialists only as background in its instructions, not as its own turns (found live in 11.6)', async () => {
+    const registry = buildRegistry()
+    const provider = new MockProvider([{ text: 'Hello from research.', stopReason: 'end_turn' }])
+    const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+    await collect(
+      orchestrator,
+      [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'Hello! I am the Planning Specialist.', agentRole: 'planning' }] },
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
+      ],
+      'research'
+    )
+    expect(JSON.stringify(provider.requests[0].messages)).not.toContain('I am the Planning Specialist')
+    expect(provider.requests[0].system).toContain('- Planner: Hello! I am the Planning Specialist.')
+    expect(provider.requests[0].system).toContain('never answer in their role')
+  })
+
   it('forcedRole runs that specialist directly with no routing/delegate call', async () => {
     const registry = buildRegistry()
     const agents = createAgents(registry)

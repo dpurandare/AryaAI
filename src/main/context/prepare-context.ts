@@ -117,6 +117,54 @@ export function normalizeUserNotesForWire(messages: Message[]): Message[] {
   }))
 }
 
+const BACKGROUND_REPLIES = 6
+const BACKGROUND_REPLY_CHARS = 1200
+
+/**
+ * A specialist pinned in a conversation that others already answered in copies them (and so does Auto, `currentRole` undefined, after pinned turns): found live (11.6), Research, Developer, Data
+ * Access, Data Processor and History each greeted the user as another specialist because the earlier replies said so. Marking those
+ * replies in place did not hold (a small model repeated the marker). So before the current turn, text another specialist (or Auto)
+ * wrote is taken out of the conversation and returned as `background` for the system prompt, where there is no assistant turn to
+ * imitate. Tool calls and results stay, so no pair is broken; the user's own messages stay. Wire-only, like the other transforms here.
+ */
+export function setAsideOtherSpecialistsReplies(
+  messages: Message[],
+  currentRole: string | undefined,
+  labelOf: (role: string) => string,
+  autoLabel = 'Sachivji (Auto)'
+): { messages: Message[]; background: string } {
+  let turnStart = messages.length
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user' && !isPureToolResult(messages[i])) {
+      turnStart = i
+      break
+    }
+  }
+  const setAside: string[] = []
+  const kept: Message[] = []
+  messages.forEach((m, index) => {
+    if (index >= turnStart || m.role !== 'assistant') {
+      kept.push(m)
+      return
+    }
+    const content = m.content.filter((b) => {
+      if (b.type !== 'text' || (currentRole ? b.agentRole === currentRole : !b.agentRole)) return true
+      if (b.text.trim()) setAside.push(`- ${b.agentRole ? labelOf(b.agentRole) : autoLabel}: ${b.text.trim().slice(0, BACKGROUND_REPLY_CHARS)}`)
+      return false
+    })
+    if (content.length > 0) kept.push({ ...m, content })
+  })
+  const background =
+    setAside.length === 0
+      ? ''
+      : '\n\n---\nEarlier in this conversation other specialists answered the user. This is background only: those replies are not yours, ' +
+        (currentRole
+          ? `and you are the ${labelOf(currentRole)} specialist, so never answer in their role.\n`
+          : 'and you are Sachivji, the orchestrator that routes work to them, so never answer in their role.\n') +
+        setAside.slice(-BACKGROUND_REPLIES).join('\n')
+  return { messages: kept, background }
+}
+
 /** Groups messages into complete turns (one real user message through the next), never splitting a tool_use/tool_result pair — the API rejects a dangling one. Exported for reuse by orchestrator.ts's `capRepeatedToolResults` (#149), which needs the same turn boundary to genuinely scope its cap to "the current turn" as its own doc comment always claimed but never enforced — this is the one canonical definition of a turn boundary in this codebase; a second, inconsistent one must not be invented elsewhere. */
 export function splitIntoTurns(messages: Message[]): Message[][] {
   const turns: Message[][] = []

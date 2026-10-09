@@ -10,6 +10,7 @@ import { evaluateClassifyGate, shouldSampleForCalibration, type ClassifyGateVerd
 import {
   CONTEXT_BUDGET_FRACTION,
   LISTING_TOOL_NAMES,
+  setAsideOtherSpecialistsReplies,
   normalizeUserNotesForWire,
   overheadTokens,
   resolveContextWindow,
@@ -955,6 +956,7 @@ export class Orchestrator {
       getConfiguration?: () => ConfigurationCounts
       /** Names of the user's own data sources (databases, APIs). A domain-knowledge topic that mentions one is not knowledge to look up in a wiki — see domain-topic.ts. */
       getUserDataNames?: () => string[]
+
       /**
        * Called for every real tool call (`agentRole` undefined = the router itself). Local usage counts keep the slim router's hot
        * core honest (design 3.1). Optional/no-op by default — this file stays DB-free (see this class's own doc comment).
@@ -1078,7 +1080,8 @@ export class Orchestrator {
     }
     if (pinned) {
       const agent = this.agents.get(pinned) as Agent
-      const systemPrompt = agent.systemPrompt + this.buildForcedModeNotice(pinned)
+      const background = setAsideOtherSpecialistsReplies(conversation, pinned, (r) => this.labelOf(r)).background
+      const systemPrompt = agent.systemPrompt + this.buildForcedModeNotice(pinned) + background
       yield* this.runLoop(systemPrompt, agent.tools, conversation, state, pinned, [], true)
       return
     }
@@ -1126,7 +1129,7 @@ export class Orchestrator {
     // would never fire for the common case of a model planning just one (non-mcp-operator) step.
     if (!plan || (plan.steps.length <= 1 && !this.shouldInsertDomainKnowledgeStep(plan))) {
       yield* this.runLoop(
-        this.buildOrchestratorSystemPrompt(),
+        this.buildOrchestratorSystemPrompt() + setAsideOtherSpecialistsReplies(conversation, undefined, (r) => this.labelOf(r)).background,
         this.defaultTools,
         conversation,
         state,
@@ -1412,6 +1415,7 @@ export class Orchestrator {
     // this turn. Only reached once the call actually completed (the
     // timeout/abort path above returns before this), so this never logs a
     // probe that never got a real answer.
+
     this.options.logClassifyGateSample?.({
       gateVerdict,
       classifierComplexity: plan?.complexity ?? 'unknown',
@@ -1658,7 +1662,7 @@ export class Orchestrator {
     }
 
     yield* this.runLoop(
-      this.buildOrchestratorSystemPrompt(),
+      this.buildOrchestratorSystemPrompt() + setAsideOtherSpecialistsReplies(conversation, undefined, (r) => this.labelOf(r)).background,
       this.defaultTools,
       conversation,
       state,
@@ -1695,7 +1699,9 @@ export class Orchestrator {
     // page-creator is deliberately not one) are listed. What remains below are
     // procedural rules, none of which name a specific role's tools.
     const specialists = buildRoleDigest(this.agents, this.plannableRoleIds(), this.options.getConfiguration?.())
+
     return (
+
       "Before anything else, classify the user's latest request and, only if it genuinely needs more " +
       'than one distinct sub-task, build a short ordered plan for it. You have no tools available for ' +
       'this — do not attempt to call one. Respond with ONLY a single JSON object, no markdown fence, ' +
@@ -2018,6 +2024,7 @@ export class Orchestrator {
           state
         )
       )
+      if (isTopLevel) messagesToSend = setAsideOtherSpecialistsReplies(messagesToSend, agentRole, (r) => this.labelOf(r)).messages
       if (planReplies.length > 0) {
         messagesToSend = [...messagesToSend, { role: 'user', content: [{ type: 'text', text: PLAN_FINAL_NUDGE }] }]
       }
