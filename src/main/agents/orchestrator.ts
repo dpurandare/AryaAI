@@ -802,7 +802,7 @@ export function buildPlanSchema(roleIds: readonly string[]): Record<string, unkn
           'or judge something — e.g. is this an anomaly, a violation, or what does a named technical term mean. ' +
           'True even when the user does not name a document. FALSE when the request only retrieves, summarises, ' +
           'charts, reports on or writes up the user\'s own data (listing top customers, building a chart or a ' +
-          'Word document), or only asks how to use a tool or file format — unless a connected knowledge server (named in the ' +
+          'Word document), or asks about Sachivji itself or this machine (its workspace, folders, settings, the OS), or only asks how to use a tool or file format — unless a connected knowledge server (named in the ' +
           'instructions) covers that tool or library, then it is knowledge to look up. The user\'s own data is never ' +
           'knowledge to look up.'
       },

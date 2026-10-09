@@ -124,20 +124,22 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 // Outside-workspace access: the file tools' descriptions now say an absolute path elsewhere is possible (the user is
 // asked first), which several roles carry — routerCore 850 -> ~890, role:coding/data-processor/document-creator up
 // by ~50 each. Deliberate.
+// 2026-10-09 (14.x, workspace location searched for in the MCP wiki): get_environment gives every specialist and the router the workspace path, OS, folders and
+// date instead of a guess or a lookup. It costs its schema (~35 tokens) plus a one-line note per role: every router and role number rose by 40-90. Deliberate.
 // 2026-10-09 (manual test 9.3, Anthropic haiku): after a direct delegation the router restated the specialist's reply, which the user had
 // already seen, so the answer appeared twice. One sentence in buildOrchestratorSystemPrompt says not to — routerPrompt 1650 -> 1690
 // (1672 measured), slimRouterBare 3950 -> 4000. Deliberate: this is the fix, not drift.
 const CEILINGS = {
   // TASKS.md #178: the final-synthesis prompt now requires explicit disclosure when a plan step ended
   // PARTIAL INFORMATION, not just NEEDS INPUT/OUT OF SCOPE/FAILED — 1230 -> 1278. Deliberate, not drift.
-  routerPrompt: 1690,
+  routerPrompt: 1730,
   // TASKS.md #172 (continued again): db_execute_sql's description reworded to describe the large-result
   // file-export behavior (writes to a file instead of "gets truncated") — 9970 -> 9983. Deliberate, not drift.
-  routerToolSchemas: 11000,
-  routerBare: 12650,
-  slimRouterToolSchemas: 2300,
-  slimRouterBare: 4000,
-  routerCore: 930,
+  routerToolSchemas: 11190,
+  routerBare: 12920,
+  slimRouterToolSchemas: 2390,
+  slimRouterBare: 4120,
+  routerCore: 990,
   // TASKS.md #179: the planning prompt's compound-step rule now explicitly says not to plan an MCP
   // Operator step AND a Research/web step for one domain-knowledge question up front (found live — a
   // pure definitional question got both, and web ran right after the wiki already gave a complete
@@ -146,26 +148,26 @@ const CEILINGS = {
   'role:planning': 65,
   // TASKS.md #178: Research can now also report `[handoff: incomplete]` when filling an MCP gap only
   // partly closes it — 1340 -> 1345. Deliberate.
-  'role:research': 2620,
-  'role:history-analyst': 520,
+  'role:research': 2740,
+  'role:history-analyst': 610,
   // TASKS.md #176/#177: found live retesting #172/#173/#175's fixes end-to-end — the resulting chart
   // compared a turbine's real data against... its own real data again (never recognized a real
   // `theoretical_power_kw` reference column already in the schema), plotted as a meaningless zigzag
   // (unsorted real data drawn as a line). role:coding 2760 -> 2801, role:data 2640 -> 2737. Deliberate.
-  'role:coding': 2930,
-  'role:data': 2740,
-  'role:data-processor': 2120,
-  'role:document-creator': 2360,
-  'role:configurator': 1330,
+  'role:coding': 3050,
+  'role:data': 2860,
+  'role:data-processor': 2230,
+  'role:document-creator': 2440,
+  'role:configurator': 1430,
   // TASKS.md #176: a weak/irrelevant search snippet (a table fragment, a citation) got reported as
   // real domain knowledge found, instead of retrying or reading further — 390 -> 514. Deliberate.
   // TASKS.md #178: MCP Operator can now report `[handoff: incomplete]` (found something, not enough)
   // distinct from `no_information` (found nothing) — 520 -> 567. Deliberate.
   // Manual test 8.2 (2026-10-08): MCP Operator searched the wiki for the user's own database. Added the "servers hold knowledge, never the user's data" rule
   // and trimmed the long "found live" retelling next to it — measured ~678, 640 -> 700. Deliberate: it is the rule that stops that.
-  'role:mcp-operator': 700,
+  'role:mcp-operator': 770,
   'role:page-creator': 1400,
-  'role:email': 630
+  'role:email': 700
 } as const
 
 function measure(): Record<keyof typeof CEILINGS, number> {
@@ -280,6 +282,7 @@ describe('per-tool schema budget', () => {
     // (file-export behavior for a large result; read handoff files via real file I/O) — 8900 -> 8942
     // measured. Deliberate growth, not drift.
     const total = registry.list().reduce((n, t) => n + tokensFor(t), 0)
-    expect(total).toBeLessThanOrEqual(9950)
+    // 2026-10-09: get_environment added (~27 tokens) - 9950 -> 9990. Deliberate.
+    expect(total).toBeLessThanOrEqual(9990)
   })
 })

@@ -59,6 +59,9 @@ export const SYSTEM_PROMPT =
   'message yourself first. When asked what you can do, what tools or agents you have, or whether you can do ' +
   'something (run code, send email, query a database, ...), call describe_capabilities and answer from its ' +
   "output — never from memory, and never say you lack a capability without checking it first. " +
+  // Found live: asked to make files, the assistant wrote them into the folder of the last file it had read, and then, told to use the
+  // workspace, searched the MCP wiki for where the workspace is.
+  'Files you create go in the workspace (relative paths); for its path, the OS, folders or the date call get_environment, never guess or search for them. ' +
   // Found live: "which MCP servers are configured?" was answered "none" from a search_history hit on an
   // earlier session, minutes after Context7 had been connected.
   'What is configured or connected (MCP servers, databases, APIs, email) changes whenever the user adds or ' +

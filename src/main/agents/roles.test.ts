@@ -286,3 +286,18 @@ describe('scratchNotes (the Researcher writes its result under tmp/, not in the 
     expect(research.tools.find((t) => t.name === 'write_file')).not.toBe(registry.get('write_file'))
   })
 })
+
+describe('get_environment reaches every working specialist (14.x: an agent searched the MCP wiki for the workspace location)', () => {
+  it('is carried by each specialist except Planning (no tools) and Page Creator (one-slide brief), and lands in their instructions', () => {
+    const registry = new ToolRegistry()
+    registry.register(fakeTool('get_environment'))
+    registry.register(fakeTool('web_search'))
+    const agents = createAgents(registry)
+    for (const [role, agent] of agents) {
+      const has = agent.tools.some((t) => t.name === 'get_environment')
+      const expected = role !== 'planning' && role !== 'page-creator'
+      expect(has, role).toBe(expected)
+      expect(agent.systemPrompt.includes('get_environment'), role).toBe(expected)
+    }
+  })
+})

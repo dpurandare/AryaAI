@@ -10,6 +10,8 @@ function summaryOf(id: AgentRole): string {
   return ROLE_MANIFEST.find((r) => r.id === id)!.summary
 }
 
+const ENVIRONMENT_NOTE = ' Workspace path, OS, folders, date: call get_environment, never guess or search for them. Create files in the workspace.'
+
 function pickTools(registry: ToolRegistry, names: string[]): Tool[] {
   return names.map((name) => registry.get(name)).filter((tool): tool is Tool => tool !== undefined)
 }
@@ -473,7 +475,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
       // while the app runs. Server-authored text (tool descriptions) is length-capped and labelled untrusted where it
       // enters the tool schemas (mcp/client.ts); the only server text repeated here is the tool NAMES.
       get systemPrompt() {
-        return mcpOperatorPrompt(mcpTools(registry)) + COMPLETENESS_NOTE + HANDOFF_TAG_INSTRUCTION
+        return mcpOperatorPrompt(mcpTools(registry)) + COMPLETENESS_NOTE + HANDOFF_TAG_INSTRUCTION + ENVIRONMENT_NOTE
       },
       get tools() {
         return [...pickTools(registry, ['mcp_list_connections']), ...mcpTools(registry)]
@@ -576,6 +578,14 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
     // The MCP Operator's prompt is a live getter and already includes both notes.
     if (agent.role !== 'planning' && agent.role !== 'page-creator' && agent.role !== 'mcp-operator') {
       agent.systemPrompt += COMPLETENESS_NOTE + HANDOFF_TAG_INSTRUCTION
+    }
+    // Every working specialist can ask for the workspace path, OS, folders and date instead of guessing or searching for them.
+    if (agent.role !== 'planning' && agent.role !== 'page-creator') {
+      const own = Object.getOwnPropertyDescriptor(agent, 'tools')
+      const environment = registry.get('get_environment')
+      if (own?.get && environment) Object.defineProperty(agent, 'tools', { get: () => [...(own.get as () => Tool[]).call(agent), environment], configurable: true, enumerable: true })
+      // The MCP Operator's prompt is a live getter that carries the note itself.
+      if (agent.role !== 'mcp-operator') agent.systemPrompt += ENVIRONMENT_NOTE
     }
   }
 

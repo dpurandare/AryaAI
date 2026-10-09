@@ -6,6 +6,7 @@ import { WorkspaceGuard } from '../security/workspace-guard'
 import { apiCallTool, apiCheckStatusTool, apiIntrospectTool, apiListConnectionsTool } from './api'
 import { awsCliTool, azureCliTool, gcloudCliTool } from './cloud-cli'
 import { apiCreateConnectionTool, dbCreateConnectionTool, mcpCreateConnectionTool, mcpListConnectionsTool } from './config-gen'
+import { createEnvironmentTool } from './environment'
 import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from './deck'
 import { listEmailConnectionsTool, sendEmailTool } from './email'
 import { parseCsvTool, parseHtmlTool, parseJsonTool, parseXmlTool } from './data-formats'
@@ -76,6 +77,7 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(listDirectoryTool)
   registry.register(findFilesTool)
   registry.register(writeFileTool)
+  registry.register(createEnvironmentTool({ appVersion: () => { try { return app.getVersion() } catch { return undefined } } }))
   registry.register(shellExecuteTool)
   registry.register(pythonRunTool)
   registry.register(awsCliTool)
