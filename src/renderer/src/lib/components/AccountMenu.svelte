@@ -5,8 +5,9 @@
     userName,
     showSettings,
     onOpenSettings,
-    onOpenAbout
-  }: { userName: string; showSettings: boolean; onOpenSettings: () => void; onOpenAbout: () => void } = $props()
+    onOpenAbout,
+    onImported
+  }: { userName: string; showSettings: boolean; onOpenSettings: () => void; onOpenAbout: () => void; onImported: () => void } = $props()
 
   let wrap = $state<HTMLDivElement | undefined>(undefined)
   let open = $state(false)
@@ -59,10 +60,15 @@
     if (!importPreview) return
     applying = true
     try {
-      const { imported, skipped, needsSecret } = await window.sachiv.applySettingsImport(importPreview.payload)
+      // `importPreview` is $state, so its payload is a reactive Proxy, which cannot cross the IPC boundary (structured clone refuses it):
+      // hand over a plain snapshot. Found 2026-10-10 (manual test 12.5): the dialog listed an item as Import, then nothing was imported.
+      const { imported, skipped, needsSecret } = await window.sachiv.applySettingsImport($state.snapshot(importPreview.payload))
+      if (imported > 0) onImported() // lets the app and the open Settings screen re-read what the import changed
       statusMessage =
         `Imported ${imported} item${imported === 1 ? '' : 's'}${skipped ? `, skipped ${skipped} already-configured` : ''}.` +
         (needsSecret ? ` ${needsSecret} need${needsSecret === 1 ? 's' : ''} a key or password entered in Settings before ${needsSecret === 1 ? 'it works' : 'they work'}.` : '')
+    } catch (err) {
+      statusMessage = `Import failed: ${err instanceof Error ? err.message : String(err)}`
     } finally {
       applying = false
       importPreview = null
@@ -118,7 +124,7 @@
       <h2>Import Settings</h2>
       <p class="hint">
         No API keys, tokens or passwords are ever included — entries that need one say so. An item already
-        configured here is skipped, never overwritten. Theme and zoom apply after a restart.
+        configured here is skipped, never overwritten. Zoom applies after a restart.
       </p>
       <ul class="preview-list">
         {#each importPreview.items as item, i (i)}

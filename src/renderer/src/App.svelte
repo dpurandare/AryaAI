@@ -16,7 +16,7 @@
   } from '@shared/ipc-contract'
   import type { AgentRole } from '@shared/agents'
   import type { RoleRosterEntryDto } from '@shared/ipc-contract'
-  import { getThemeMode, setThemeMode, type ThemeMode } from './lib/theme'
+  import { getThemeMode, reloadThemeMode, setThemeMode, type ThemeMode } from './lib/theme'
 
   interface ToolCallDisplay {
     id: string
@@ -157,6 +157,33 @@
   // initTheme() already resolved (main.ts awaits it before mount), so this
   // reflects the real persisted/resolved mode from the very first render.
   let themeMode = $state<ThemeMode>(getThemeMode())
+
+  /** Bumped after a settings import so the Settings screen is rebuilt and re-reads every list (connections, servers, roles, …). */
+  let settingsVersion = $state(0)
+
+  /** An import changes settings in the main process behind the renderer's back: re-read what App keeps in memory and rebuild the Settings screen. Zoom is applied by the main process and still needs a restart. */
+  async function refreshAfterSettingsImport(): Promise<void> {
+    const stored = async (key: string): Promise<string | undefined> => (await window.sachiv.getSetting(key)) ?? undefined
+    const rules = await stored('autoApproveToolRules')
+    if (rules) {
+      try {
+        autoApproveRules = JSON.parse(rules) as Record<string, boolean>
+      } catch {
+        // malformed stored value: keep what is there
+      }
+    }
+    const planning = await stored('planningEnabled')
+    if (planning !== undefined) planningEnabled = planning !== 'false'
+    const answering = await stored('showAnsweringModel')
+    if (answering !== undefined) showAnsweringModel = answering === 'true'
+    const timestamps = await stored('showTimestamps')
+    if (timestamps !== undefined) showTimestamps = timestamps === 'true'
+    const display = await stored('toolDisplayMode')
+    if (display === 'hidden' || display === 'partial' || display === 'shown') toolDisplayMode = display
+    themeMode = await reloadThemeMode()
+    await initProvider()
+    settingsVersion++
+  }
 
   function changeThemeMode(mode: ThemeMode): void {
     themeMode = mode
@@ -846,7 +873,13 @@
       onDelete={removeSession}
       onExport={exportSession}
     />
-    <AccountMenu {userName} {showSettings} onOpenSettings={toggleSettings} onOpenAbout={() => (showAbout = true)} />
+    <AccountMenu
+      {userName}
+      {showSettings}
+      onOpenSettings={toggleSettings}
+      onOpenAbout={() => (showAbout = true)}
+      onImported={() => void refreshAfterSettingsImport()}
+    />
   </aside>
   {#if !sidebarCollapsed}
     <div
@@ -859,6 +892,7 @@
   {/if}
   <section>
     {#if showSettings}
+     {#key settingsVersion}
       <SettingsPanel
         bind:this={settingsPanel}
         leaveRequested={leaveRequest !== null}
@@ -881,6 +915,7 @@
         onChangeShowAnsweringModel={changeShowAnsweringModel}
         onChangeShowTimestamps={changeShowTimestamps}
       />
+     {/key}
     {:else}
       <ChatView
         {roleRoster}
