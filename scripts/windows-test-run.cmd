@@ -65,6 +65,7 @@ if defined NEED_INSTALL (
   )
   echo Installing dependencies ...
   call npm ci
+  if errorlevel 1 call :electron_fallback
   if errorlevel 1 goto :fail
 )
 if not exist node_modules\electron\path.txt (
@@ -85,3 +86,29 @@ echo.
 echo Stopped because of the error above.
 pause
 exit /b 1
+
+rem npm's own download of Electron's binary can fail here ("fetch failed") even though curl reaches GitHub.
+rem Download the zip with curl instead, unpack it where Electron's installer would, then finish npm's postinstall.
+:electron_fallback
+if not exist node_modules\electron\package.json (
+  echo npm ci failed before Electron was installed - read the error above.
+  exit /b 1
+)
+for /f "usebackq" %%v in (`node -p "require('./node_modules/electron/package.json').version"`) do set "EV=%%v"
+set "EZIP=%TEMP%\electron-v%EV%-win32-x64.zip"
+echo.
+echo npm could not download Electron. Downloading v%EV% with curl instead ...
+curl.exe -L --fail --retry 3 -o "%EZIP%" "https://github.com/electron/electron/releases/download/v%EV%/electron-v%EV%-win32-x64.zip"
+if errorlevel 1 (
+  echo The curl download failed too - the network blocks the download.
+  exit /b 1
+)
+powershell -NoProfile -Command "Expand-Archive -LiteralPath '%EZIP%' -DestinationPath 'node_modules\electron\dist' -Force; [IO.File]::WriteAllText('node_modules\electron\path.txt','electron.exe')"
+if errorlevel 1 (
+  echo Could not unpack the Electron zip.
+  exit /b 1
+)
+del "%EZIP%" >nul 2>&1
+echo Electron v%EV% installed from the curl download. Finishing the install ...
+call npm run postinstall
+exit /b %errorlevel%
