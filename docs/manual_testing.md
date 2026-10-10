@@ -356,44 +356,72 @@ automated test). That's what this section is for.
 | 11d.7 | "Write a program that does X" (say **program**, not **script**), no language named | Defaults to **Python**, distinct from 11d.6 — the assistant should not treat "script" and "program" as interchangeable. |
 | 11d.8 | Settings > **Tools by role** (next to Roles) > expand a role you use often | Shows every tool that role actually has, full descriptions, correctly labeled `mutates: never/sometimes/always` — cross-check a couple of entries against what the role's system prompt claims it can do. |
 | 11d.9 | ⚠ native dialog. Account menu > **Export Settings…** | A real native Save dialog opens, defaulting into your workspace root with filename `sachivji-settings-export.json`. Save it, then open the file. **It should now contain** (format version 2): the active provider and models, MCP servers, data connections **with their saved queries**, **External API** connections, **email accounts**, the **preferences** you have set (theme, temperature, zoom, planning, timestamps, tool display, …), your **auto-approve rules** and your **role files**. Confirm it has **no API keys, MCP tokens, DB passwords or email passwords** anywhere in it (the connections show only name, address and shape). Layout values (sidebar width, composer height) are deliberately left out. |
-| 11d.10 | ⚠ native dialog. Add a test MCP server or DB connection with a throwaway name, Account menu > **Import Settings…**, pick the file from 11d.9 | A real native Open dialog appears; after picking the file, a preview panel lists every entry as **Import** or **Already configured — skip** (your throwaway one, and anything matching what's already in Settings, should read skip) — confirm before importing that nothing you didn't expect is about to be added, then Import and check Settings for the new entries. Entries now come in more kinds (External API, Email account, Preference, Auto-approve, Role); check that each connection that needs a key says so (a note under its name), that an auto-approve rule says it will run without asking, and that the result message says how many need a key or password entered. An imported preference only applies if that setting wasn't already set; theme and zoom show after a restart. |
+| 11d.10 | ⚠ native dialog. Add a test MCP server or DB connection with a throwaway name, Account menu > **Import Settings…**, pick the file from 11d.9 | A real native Open dialog appears; after picking the file, a preview panel lists every entry as **Import** or **Already configured — skip** (your throwaway one, and anything matching what's already in Settings, should read skip) — confirm before importing that nothing you didn't expect is about to be added, then Import and check Settings for the new entries. Entries now come in more kinds (External API, Email account, Preference, Auto-approve, Role); check that each connection that needs a key says so (a note under its name), that an auto-approve rule says it will run without asking, and that the result message says how many need a key or password entered. An imported preference only applies if that setting wasn't already set; zoom shows after a restart; theme, planning, timestamps and auto-approve apply at once, and an open Settings screen refreshes itself. |
 | 11d.11 | *(Optional, needs a real API you can reach)* Settings > External APIs > add a no-key connection (e.g. Open-Meteo, `https://api.open-meteo.com`, auth **None**), ask a question that needs it | The assistant calls `api_call` and answers from the **real response**, not an estimate — check the tool result body. |
 
 Cleanup: remove any test MCP server/DB connection/exported file created above.
 
 ---
 
-## 12. Things I could not verify — please look out for these
+## 12. Things I could not verify — status after the 2026-10-09/10 manual pass
 
-- **Real cloud models.** Everything above was mocked except one partial local-model run (Ollama qwen 27B, 21 of 39 routing cases).
-  Expect surprises in routing; that is the point.
-- **Tag emission:** whether models add `[handoff: needs_input]` / `[handoff: out_of_scope -> role]` correctly. If you ever see
-  the literal text `[handoff: …]` in a reply, that's worth reporting.
-- **Windows and macOS.** Only Linux was exercised (the Windows branches are unit-tested only).
-- **Very large workspaces:** artifact detection stops scanning at 20,000 files (it then says it could not determine files).
-- **Prompt caching on Anthropic** was unit-tested against a mocked SDK only (breakpoints, accounting) — never against the real API.
-- **`.deb` packaging** (`python3`, `python3-venv` dependencies) was never built.
-- **Providers other than Ollama** for history replay with tools the request doesn't carry (only matters with the slim router).
-- MCP Operator tool schemas are **not** lazily loaded (all of a server's tools are in the operator's context); a 144-tool
-  server will make that one role heavy, though no other role.
-- **The wiki/MCP fallback chain (#142–#146, added 9/27):** naming "domain knowledge + data" as its own compound pattern,
-  the `[handoff: no_information]` tag, the wiki→web fallback with mandatory disclosure, its "only use the wiki" opt-out,
-  and the no-MCP-connected substitution (both a plan step and a direct `delegate_to_mcp-operator` tool call) — all
-  unit/mock-tested and measured once against local Ollama (`gpt-oss-custom`, see design-discussion.md §13 / TASKS #142),
-  never yet exercised in a real running session. Sections 5.6–5.8 and 9.11 above are new for this.
-- **The #147–#170 batch (added 9/29, section 11d above is new for this):** real reasoning/thinking display, mid-run steering,
-  "Talk about it", default-tooling prompt guidance, and settings import/export were all live-verified against exactly one
-  local model (Ollama `qwen3.5:9b-custom`) — none against a real cloud model. The native Export/Import Settings file dialogs
-  (11d.9/11d.10) were never clicked through by a human at all — only their underlying IPC calls were exercised directly.
-- **Section 13 (new):** adding a SQL Server connection, an LLMWiki MCP server, an existing SQLite file, and Context7
-  through the ordinary Settings UI on a normal (non-throwaway) fresh install — none of the actual **app-side** behavior
-  (13.1.2-4, 13.2.2-5, 13.3.4-8, 13.4) has been exercised before, by anyone, in this app; only the container/MCP-server
-  *setup* steps outside the app were checked. **13.2's recipe was fully verified live** (2026-10-01, this machine): the
-  upstream repo's documented steps are genuinely broken on a current image pull (two confirmed bugs, written up in 13.2
-  itself) and the replacement recipe there was confirmed end-to-end (13 tables, 91 real customers, a connection scoped
-  to the `Northwind` database succeeding) — but still never through Sachivji's own Settings UI. **13.3's LLMWiki
-  commands are transcribed from that project's README, not run here** — expect its exact flags to need adjusting on the
-  day the way 13.2's did.
+Evidence comes from the session database and the results reported during sections 8-14. **The slim router was on for sections 8-14**, so
+every "covered" line below describes the slim router unless it says otherwise; the full (default) router still needs the rerun listed at the end.
+
+### Verified (or covered in real use)
+
+- **Real cloud models.** Real sessions ran on Gemini 3.5 Flash-Lite, Claude Haiku 5.5, GPT-4o-mini and GPT-5.4, plus local gpt-oss, qwen3.5 and
+  gemma4. *Not recorded:* the formal 43-case routing evaluation (`scripts/routing-eval.mts`) on a cloud model.
+- **Tag emission.** `[handoff: out_of_scope -> role]`, `needs_input`, `incomplete` and `no_information` were all emitted by real models (Haiku,
+  qwen); the chat hides the trailing tag. If the literal text `[handoff: …]` ever shows in a reply, report it.
+- **macOS.** Everything in this pass ran on macOS (arm64).
+- **Prompt caching on Anthropic.** Real API, `claude-haiku-5-5`, full router: 20,382 input tokens, calls 2 and 3 read 100% from the cache (11b.6);
+  the context meter keeps counting cached tokens (11b.5). Run on macOS with `SACHIV_USER_DATA` set (see section 8's helper).
+- **Wiki/MCP fallback chain (#142-#146).** Exercised in real sessions (sections 9 and 13.4; `no_information` and `incomplete` handoffs seen on qwen
+  and Haiku).
+- **#147-#170 batch.** Reasoning display passes on gpt-oss (and is absent on Anthropic as designed, 11d.2); "Talk about it" passes (11d.4); the
+  Export Settings dialog was clicked through by a human (11d.9).
+- **Section 13.** Finished, including the app-side steps and the LLMWiki setup.
+- **Import Settings (11d.10 / 12.5).** Delete-and-import round trip works in the app: the skip path, then the imported entry reappears and an open Settings screen refreshes itself (this found and fixed a stale-screen bug, 2026-10-10).
+- **External API with a key in the URL.** NewsAPI.ai works with "Send the key as a query parameter" (11d.11).
+
+### Still open
+
+1. **Windows.** The Windows branches are unit-tested only. Deferred until section 12 is complete, then the main item (TASKS #202; see the notes below).
+2. **Very large workspaces.** Artifact detection stops scanning at 20,000 files (it then says it could not determine files).
+3. **`.deb` packaging** (`python3`, `python3-venv` dependencies) was never built. Deferred: not part of the Windows sponsor release; the Linux work resumes after the Windows work is done (decided 2026-10-10).
+4. **11b.7** (Anthropic prompt-caching switch off/on) was skipped; revisit.
+5. ~~11d.10 (Import Settings)~~ Done 2026-10-10; see "Verified" above. (Number kept so the other items keep theirs.)
+6. ~~History replay with tools the request does not carry~~ Verified 2026-10-10 on **Anthropic** (Haiku 5.5: all three turns fine) and **Google** (Gemini 3.5 Flash-Lite: no provider error, answers correct; on turn 2 the router resolved "that table" from history correctly, and the Data Access delegate then listed connections once before querying: its own discovery step, not a replay problem; turn 3 answered from history with no tool call). **OpenAI not tried.** Number kept so the other items keep theirs.
+   which turns ran slim on which provider.
+7. **Reasoning display on a cloud model** (stand-alone check). **Do:** choose **Google (Gemini)** as the provider, in a new session send: *"A train leaves A at 9:00 going 60 km/h. A second train leaves B, 300 km away, at 10:00 going 90 km/h toward A. At what time do they meet, and how far from A? Think it through before answering."* **Expect:** a collapsible **🧠 Thinking** block above the answer (collapsed by default except the most recent one; click to expand and collapse), and the correct answer, **11:36, 156 km from A**. **Note:** the exact Gemini model name; a small model may not return its thinking, so if there is no block, try a larger Gemini model before calling it a fail. **Report:** model, block shown yes/no, answer correct yes/no.
+8. ~~Formal routing evaluation on a cloud model~~ **Skipped by the user's decision, 2026-10-10**: Anthropic already ran well in real use and the 11b tests. Note: `design-discussion.md` Appendix E holds eval results for Google, OpenAI, Mistral and Groq only, none for Anthropic; the real evaluation stays TASKS #120. Number kept so the other items keep theirs.
+9. ~~Template extraction (11b.4)~~ **Tracked as TASKS #198** (research and redesign); nothing more to test here until that is done. Number kept so the other items keep theirs.
+10. ~~User-defined roles (11c)~~ **Tracked as TASKS #200** (expand roles and their use, later version). Concept proven: 11c.1-3 and 11c.8 pass; 11c.4 is expected (Auto does not pick a role that only wraps router tools). 11c.5-7 (broken `tools:` line, built-in id clash, over-broad wording warnings) were not run; optional later checks. Number kept so the other items keep theirs.
+    reported. See TASKS #200.
+11. ~~MCP Operator tool schemas are not lazily loaded~~ A design fact, not a test; **tracked as TASKS #205** (design revisit, not for this release). Number kept so the numbering stays stable.
+    one role heavy, though no other role. A design fact, not a test.
+
+### Notes for the sponsor release (Windows 11 AMD64) — recorded 2026-10-10, to be decided later
+
+The sponsor is not a developer: installing and first run must work without manual configuration. Starting points, from the repo as it is:
+`electron-builder.yml` already has an NSIS target for Windows, `.github/workflows/release.yml` builds on `windows-latest` (x64) for `v*` tags,
+`electron-updater` is wired in, and `scripts/install-prerequisites.ps1` installs Python via winget.
+
+- **Python:** today the app expects Python 3.10-3.13 on the PC; without it scripts, charts and Word/Excel generation by script do not work.
+  Options: bundle a runtime in the installer / fetch it at install or first launch / ship without Python and say so.
+- **Signing:** the installer is unsigned, so SmartScreen shows "Windows protected your PC". Options: a signing certificate, Azure Trusted
+  Signing, or a one-page "More info > Run anyway" instruction.
+- **First run:** he needs one AI provider key (or Ollama). Options: a first-run screen, and/or a pre-filled settings file (the format-2
+  export carries provider, model, preferences; never keys).
+- **Testing:** needs a real or cloud x64 Windows machine, or the CI runner; an Apple Silicon Parallels VM runs Windows ARM, not AMD64. Native
+  modules (SQLite, sqlite-vec), shell/path handling and the managed Python runtime need a real run on Windows.
+- The `.deb` is not part of this release.
+
+### Rerun with the slim router OFF (the default)
+
+13.4.3 (knowledge lookup), 6.4 and 6.7 (delegation), 11.6 (role-pinning), "top 5 customers -> Word" on Claude, the 5-number-images request,
+13.4.4 (pinned specialist hand-back).
 
 ---
 
