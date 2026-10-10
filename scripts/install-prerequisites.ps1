@@ -154,7 +154,15 @@ function Test-PythonAcceptable($info) {
 }
 
 function Find-GoodPython {
-  foreach ($c in @(@('py', '-3.13'), @('py', '-3.12'), @('py', '-3.11'), @('py', '-3.10'), @('python'), @('python3'))) {
+  $list = @(@('py', '-3.13'), @('py', '-3.12'), @('py', '-3.11'), @('py', '-3.10'), @('python'), @('python3'))
+  # A fresh install is not on this process's PATH: also look in the usual install folders.
+  foreach ($minor in @(13, 12, 11, 10)) {
+    foreach ($root in @("$env:LOCALAPPDATA\Programs\Python", $env:ProgramFiles)) {
+      $exe = Join-Path $root "Python3$minor\python.exe"
+      if (Test-Path $exe) { $list += ,@($exe) }
+    }
+  }
+  foreach ($c in $list) {
     $cargs = @()
     if ($c.Count -gt 1) { $cargs = @($c[1]) }
     $info = Get-PythonInfo $c[0] $cargs
@@ -174,6 +182,20 @@ function Ensure-Python {
     }
     $arch = ''
     if ($IsArmHost) { $arch = 'x64' }
+    # winget treats the ARM64 and x64 builds as one package and will not add the x64 one beside an installed ARM64 one.
+    if ($IsArmHost) {
+      & winget list --id $PYTHON_INSTALL_ID -e 2>$null | Out-Null
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host 'Python 3.12 is installed but is not the x64 build the app needs - replacing it.' -ForegroundColor Yellow
+        Write-Host '  A workspace venv made from the old Python must be repaired afterwards (Settings > Runtime > Repair).' -ForegroundColor Yellow
+        if (Confirm-Action '  Uninstall the existing Python 3.12 now?') {
+          & winget uninstall --id $PYTHON_INSTALL_ID -e --silent | Out-Host
+        } else {
+          Add-Result 'Python 3.10-3.13' 'skipped - an ARM64 Python is installed. Uninstall it (Apps & features), then re-run' 'warn'
+          return
+        }
+      }
+    }
     $ok, $code = Install-WingetPackage 'Python 3.12' $PYTHON_INSTALL_ID $arch
     if (-not $ok) { Add-Result 'Python 3.10-3.13' "FAILED (winget exit $code)" 'fail'; return }
     $good = Find-GoodPython
@@ -304,6 +326,26 @@ function Get-NodeVersion {
   return $null
 }
 
+# nvm-windows sets NVM_HOME / NVM_SYMLINK and edits PATH, but a process that was already running does not see that.
+# Find nvm.exe directly, wherever it landed, and give this process the variables it needs - no new terminal required.
+function Find-Nvm {
+  Update-SessionEnv
+  $candidates = @()
+  if ($env:NVM_HOME) { $candidates += (Join-Path $env:NVM_HOME 'nvm.exe') }
+  $candidates += @("$env:ProgramFiles\nvm\nvm.exe", "$env:LOCALAPPDATA\nvm\nvm.exe", "$env:APPDATA\nvm\nvm.exe", "${env:ProgramFiles(x86)}\nvm\nvm.exe", "$env:ProgramData\nvm\nvm.exe")
+  foreach ($c in $candidates) {
+    if ($c -and (Test-Path $c)) {
+      $home_ = Split-Path $c
+      if (-not $env:NVM_HOME) { $env:NVM_HOME = $home_ }
+      if (-not $env:NVM_SYMLINK) { $env:NVM_SYMLINK = "$env:ProgramFiles\nodejs" }
+      if ($env:Path -notlike "*$home_*") { $env:Path = "$home_;$env:Path" }
+      if ($env:Path -notlike "*$($env:NVM_SYMLINK)*") { $env:Path = "$($env:NVM_SYMLINK);$env:Path" }
+      return $c
+    }
+  }
+  return $null
+}
+
 function Resolve-Node24 {
   try {
     $idx = Invoke-RestMethod -Uri 'https://nodejs.org/dist/index.json' -TimeoutSec 15
@@ -336,7 +378,8 @@ function Ensure-Node {
   if ($cur -and $env:NVM_SYMLINK -and $curPath.StartsWith($env:NVM_SYMLINK, [StringComparison]::OrdinalIgnoreCase)) { $managed = $true }
   if ($cur -and $env:NVM_HOME -and $curPath.StartsWith($env:NVM_HOME, [StringComparison]::OrdinalIgnoreCase)) { $managed = $true }
 
-  if (-not (Test-Command 'nvm')) {
+  $nvmExe = Find-Nvm
+  if (-not $nvmExe) {
     # A standalone Node (MSI/winget) owns the folder nvm-windows wants for its symlink: remove it first.
     if ($cur -and -not $managed) {
       Write-Host "Existing standalone Node at $curPath must be removed before nvm-windows can manage Node." -ForegroundColor Yellow
@@ -362,8 +405,9 @@ function Ensure-Node {
     }
     $ok, $code = Install-WingetPackage 'nvm-windows' 'CoreyButler.NVMforWindows'
     if (-not $ok) { Add-Result 'nvm-windows' "FAILED (winget exit $code)" 'fail'; return }
-    if (-not (Test-Command 'nvm')) {
-      Add-Result 'nvm-windows' 'installed - open a NEW terminal and re-run with -Node' 'warn'
+    $nvmExe = Find-Nvm
+    if (-not $nvmExe) {
+      Add-Result 'nvm-windows' 'installed but nvm.exe was not found - re-run this script (it will find it)' 'warn'
       return
     }
     Add-Result 'nvm-windows' 'installed'
@@ -376,9 +420,10 @@ function Ensure-Node {
   # ARM64 PCs: ask for the x64 build, like Python, so npx-launched MCP servers find prebuilt native modules.
   $nvmArch = @()
   if ($IsArmHost) { $nvmArch = @('64') }
-  & nvm install $target @nvmArch
-  & nvm use $target @nvmArch
+  & $nvmExe install $target @nvmArch | Out-Host
+  & $nvmExe use $target @nvmArch | Out-Host
   Update-SessionEnv
+  $nvmExe = Find-Nvm
   $now = Get-NodeVersion
   if ($now -and $now.Major -ge $NODE_MAJOR) {
     Add-Result "Node.js $NODE_MAJOR+" "installed $($now.Version) and set as default via nvm"
@@ -386,6 +431,9 @@ function Ensure-Node {
     $seen = 'none'
     if ($now) { $seen = $now.Version }
     Add-Result "Node.js $NODE_MAJOR+" "nvm ran but node reports $seen - run in an ADMIN terminal: nvm install $target $($nvmArch -join ' '); nvm use $target $($nvmArch -join ' ')" 'fail'
+  }
+  if ($now -and $IsArmHost -and $now.Arch -and $now.Arch -ne 'x64') {
+    Add-Result 'Node architecture' "node reports $($now.Arch), not x64 - run in an ADMIN terminal: nvm install $target 64; nvm use $target 64" 'fail'
   }
   if (-not (Test-Command 'npm') -and -not ($env:NVM_SYMLINK -and (Test-Path (Join-Path $env:NVM_SYMLINK 'npm.cmd')))) {
     Add-Result 'npm' 'not found next to node' 'warn'
