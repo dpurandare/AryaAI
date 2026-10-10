@@ -49,10 +49,27 @@ set "npm_config_target_arch=x64"
 
 if /i "%~1"=="fresh" if exist node_modules rmdir /s /q node_modules
 
-if not exist node_modules (
+rem An install that stopped halfway leaves node_modules behind without Electron's binary (path.txt): do it again.
+set "NEED_INSTALL="
+if not exist node_modules set "NEED_INSTALL=1"
+if not exist node_modules\electron\path.txt set "NEED_INSTALL=1"
+if defined NEED_INSTALL (
+  if exist node_modules rmdir /s /q node_modules
+  echo Checking that GitHub is reachable ^(Electron's binary is downloaded from there^) ...
+  curl.exe -sS -I -m 20 -o NUL https://github.com
+  if errorlevel 1 (
+    echo.
+    echo Cannot reach github.com from this machine. Fix the network first ^(DNS, proxy, VPN or the VM's network mode^),
+    echo see "If something fails" in docs\Window_test_deploy.md, then run this script again.
+    goto :fail
+  )
   echo Installing dependencies ...
   call npm ci
   if errorlevel 1 goto :fail
+)
+if not exist node_modules\electron\path.txt (
+  echo Electron's binary was not downloaded. Check the network ^(see docs\Window_test_deploy.md^) and run this script again.
+  goto :fail
 )
 
 echo Building ...
