@@ -294,7 +294,11 @@ function Get-NodeVersion {
   foreach ($exe in $candidates) {
     try {
       $v = & $exe --version 2>$null | Select-Object -First 1
-      if ($v -match '^v(\d+)\.(\d+)\.(\d+)') { return @{ Major = [int]$Matches[1]; Version = $v; Exe = $exe } }
+      if ($v -match '^v(\d+)\.(\d+)\.(\d+)') {
+        $arch = ''
+        try { $arch = [string](& $exe -p 'process.arch' 2>$null | Select-Object -First 1) } catch { }
+        return @{ Major = [int]$Matches[1]; Version = $v; Exe = $exe; Arch = $arch }
+      }
     } catch { }
   }
   return $null
@@ -311,11 +315,14 @@ function Resolve-Node24 {
 
 function Ensure-Node {
   $cur = Get-NodeVersion
-  if ($cur -and $cur.Major -ge $NODE_MAJOR) {
-    Add-Result "Node.js $NODE_MAJOR+" "already installed $($cur.Version)"
+  # On an ARM64 PC the app needs the x64 Node (sqlite-vec and numpy have no Windows ARM64 build; an ARM64 Node makes npm fetch an ARM64 Electron).
+  $wrongArch = ($cur -and $IsArmHost -and $cur.Arch -and $cur.Arch -ne 'x64')
+  if ($cur -and $cur.Major -ge $NODE_MAJOR -and -not $wrongArch) {
+    Add-Result "Node.js $NODE_MAJOR+" "already installed $($cur.Version) ($($cur.Arch))"
     return
   }
-  if ($cur) { Write-Host "Found Node $($cur.Version) - older than the $NODE_MAJOR you want." -ForegroundColor Yellow }
+  if ($wrongArch) { Write-Host "Found Node $($cur.Version) built for $($cur.Arch) - an x64 Node is needed on this PC." -ForegroundColor Yellow }
+  elseif ($cur) { Write-Host "Found Node $($cur.Version) - older than the $NODE_MAJOR you want." -ForegroundColor Yellow }
 
   # Leave other version managers alone.
   $curPath = ''
