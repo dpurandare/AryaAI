@@ -1,10 +1,11 @@
 @echo off
 rem Step 2 of docs/Window_test_deploy.md: install what is missing, then build and start Sachivji.
-rem It runs windows-test-prepare.cmd first (Python x64, Node 24 x64, Ollama, the embedding model;
-rem every step checks what is there and skips it, so re-running is quick), then npm, build, start.
+rem First it installs the prerequisites (Python x64, Node 24 x64, Ollama, and the embedding model made from
+rem models\ModelFileNomicEmbed; every step checks what is there and skips it, so re-running is quick),
+rem then runs npm, the build and the app.
 rem Usage:  windows-test-run.cmd           install what is missing, build and start
 rem         windows-test-run.cmd update    git pull the branch and reinstall the npm packages first
-rem         windows-test-run.cmd fresh     reinstall the npm packages without a git pull
+rem         windows-test-run.cmd fresh     delete node_modules, out and the Electron download cache and reinstall (no git pull)
 rem         windows-test-run.cmd quick     skip the prerequisite check (everything is known to be installed)
 setlocal
 cd /d "%~dp0.."
@@ -21,15 +22,13 @@ rem A fresh install changes PATH for new windows only: re-read it so this window
 for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%p"
 
 if /i not "%~1"=="quick" (
-  call "%~dp0windows-test-prepare.cmd" quiet
+  call :prereqs
   if errorlevel 1 goto :fail
-  rem The installers changed PATH: read it again.
-  for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%p"
 )
 
 where node >nul 2>&1
 if errorlevel 1 (
-  echo Node.js was not found. windows-test-prepare.cmd should have installed it - read its summary above.
+  echo Node.js was not found. The prerequisite step should have installed it - read its summary above.
   goto :fail
 )
 for /f %%v in ('node --version') do echo Node %%v
@@ -47,7 +46,11 @@ rem Make Electron and native modules download for x64 whatever the PC reports.
 set "npm_config_arch=x64"
 set "npm_config_target_arch=x64"
 
-if /i "%~1"=="fresh" if exist node_modules rmdir /s /q node_modules
+if /i "%~1"=="fresh" (
+  if exist node_modules rmdir /s /q node_modules
+  if exist out rmdir /s /q out
+  if exist "%LOCALAPPDATA%\electron\Cache" rmdir /s /q "%LOCALAPPDATA%\electron\Cache"
+)
 
 rem An install that stopped halfway leaves node_modules behind without Electron's binary (path.txt): do it again.
 set "NEED_INSTALL="
@@ -112,3 +115,26 @@ del "%EZIP%" >nul 2>&1
 echo Electron v%EV% installed from the curl download. Finishing the install ...
 call npm run postinstall
 exit /b %errorlevel%
+
+rem Python x64, Node 24 x64 (nvm-windows), Ollama with nomic-embed-text: install-prerequisites.ps1 checks each and installs what
+rem is missing (Node asks for administrator rights). Then the embedding model is recreated from the repo's Modelfile.
+:prereqs
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install-prerequisites.ps1" -Ollama -Node -Yes
+if errorlevel 1 (
+  echo.
+  echo install-prerequisites reported a problem - read the summary above, fix it, run this again.
+  exit /b 1
+)
+rem The installers changed PATH: read it again.
+for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%p"
+set "OLLAMA=ollama"
+where ollama >nul 2>&1
+if errorlevel 1 set "OLLAMA=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
+echo.
+echo Creating the embedding model from models\ModelFileNomicEmbed ...
+"%OLLAMA%" create nomic-embed-text -f models\ModelFileNomicEmbed
+if errorlevel 1 (
+  echo ollama create failed. Is Ollama running? Start it from the Start menu and run this again.
+  exit /b 1
+)
+exit /b 0

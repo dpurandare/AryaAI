@@ -74,11 +74,9 @@ echo ==============================================================
 echo  Cloned to %TARGET%
 echo.
 echo  Next steps:
-echo   1. Open a NEW terminal ^(so the new tools are on PATH^).
+echo   1. Open a NEW terminal.
 echo   2. cd /d "%TARGET%"
-echo   3. scripts\windows-test-prepare.cmd   ^(Python, Node, Ollama, embedding model^)
-echo   4. Open another NEW terminal, cd to the same folder, then
-echo      scripts\windows-test-run.cmd       ^(build and start the app^)
+echo   3. scripts\windows-test-run.cmd   ^(installs what is missing, builds and starts the app^)
 echo  Details: docs\Window_test_deploy.md
 echo ==============================================================
 pause
