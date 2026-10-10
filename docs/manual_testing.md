@@ -217,6 +217,7 @@ command, redacted from the output). Each run is ONE sample of a non-deterministi
 difference of a few cases.
 ```bash
 # Anthropic has no key configured in Sachivji yet — add one in Settings first, or use the env-var form (ANTHROPIC_API_KEY=... npx vite-node ...).
+export SACHIV_USER_DATA="$HOME/Library/Application Support/Sachivji"   # macOS; the helper's default is the Linux path ~/.config/Sachivji
 E() { "$(node -p "require('electron')")" --no-sandbox scripts/with-app-key.cjs "$@"; }
 R=(npx vite-node --config vitest.config.ts scripts/routing-eval.mts --)
 E openai   -- "${R[@]}" openai <model> --rounds=3            # slim router (default core)
