@@ -46,7 +46,7 @@
   // --- Provider API keys (shows every provider's status at once, not just the currently selected chat one) ---
   let providerKeyDrafts = $state<Record<string, string>>({})
   let providerKeyPreviews = $state<Record<string, string | null>>({})
-  type KeyCheckStatus = 'saving' | 'checking' | 'valid' | 'invalid'
+  type KeyCheckStatus = 'saving' | 'checking' | 'valid' | 'invalid' | 'save-error'
   let providerKeyStatus = $state<Record<string, KeyCheckStatus | undefined>>({})
   let providerKeyError = $state<Record<string, string>>({})
 
@@ -73,7 +73,7 @@
       providerKeyPreviews[providerId] = await window.sachiv.getApiKeyPreview(providerId)
       onApiKeyChanged(providerId)
     } catch (err) {
-      providerKeyStatus[providerId] = undefined
+      providerKeyStatus[providerId] = 'save-error'
       providerKeyError[providerId] = err instanceof Error ? err.message : String(err)
       return
     }
@@ -1007,7 +1007,7 @@
             {/if}
           </p>
           {#if provider.requiresApiKey && providerKeyStatus[provider.id]}
-            <p class="status key-check" class:key-ok={providerKeyStatus[provider.id] === 'valid'} class:key-bad={providerKeyStatus[provider.id] === 'invalid'}>
+            <p class="status key-check" class:key-ok={providerKeyStatus[provider.id] === 'valid'} class:key-bad={providerKeyStatus[provider.id] === 'invalid' || providerKeyStatus[provider.id] === 'save-error'}>
               {#if providerKeyStatus[provider.id] === 'saving'}
                 Saving…
               {:else if providerKeyStatus[provider.id] === 'checking'}
@@ -1016,6 +1016,8 @@
                 ✓ Key verified — {provider.displayName} accepted it.
               {:else if providerKeyStatus[provider.id] === 'invalid'}
                 ✗ Key rejected{providerKeyError[provider.id] ? `: ${providerKeyError[provider.id]}` : ''}
+              {:else if providerKeyStatus[provider.id] === 'save-error'}
+                ✗ Could not save the key{providerKeyError[provider.id] ? `: ${providerKeyError[provider.id]}` : ''}
               {/if}
             </p>
           {/if}
