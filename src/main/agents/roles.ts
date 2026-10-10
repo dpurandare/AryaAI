@@ -423,11 +423,10 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'office_fill_template fills a user-authored template (in the workspace\'s templates/ folder) ' +
         'containing {placeholder}/{#loop} markers without losing its original styling — call it with ' +
         'action "inspect" first if you don\'t already know what placeholders it needs. To turn an ' +
-        'EXISTING document into a new template (rather than working from one the user already ' +
-        'authored), use office_extract_template: action "detect" mechanically flags variable-looking ' +
-        'content (dates, amounts, emails, phone numbers, percentages, URLs) but not ' +
-        'names/addresses/other free text — use your own reading of the document to propose those too, ' +
-        'then confirm the FULL list with the user before calling action "apply" to actually write ' +
+        'EXISTING document into a new template, use office_extract_template: action "detect" flags dates, amounts, ' +
+        'emails, phones, URLs; a template holds none of the source\'s own content, so go section by section and make ' +
+        'every name, employer, school, date, summary, description and bullet a placeholder, keeping only headings, ' +
+        'labels and standard wording. Show the user the FULL list, and what stays fixed, before action "apply" writes ' +
         'templates/<name>. Treat this as iterative: apply, show the user the result, adjust the ' +
         'replacement list from their feedback, and apply again — each call regenerates fresh from the ' +
         'original document, so nothing is lost by refining it more than once. When asked to put earlier ' +
