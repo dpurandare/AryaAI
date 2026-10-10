@@ -41,9 +41,14 @@ function buildUrl(baseUrl: string, path: string, query?: Record<string, unknown>
   return url.toString()
 }
 
+/** An apiKey connection configured to send its key as a URL query parameter instead of a header. */
+function keyGoesInQuery(conn: ResolvedApiConnection): boolean {
+  return conn.authType === 'apiKey' && conn.apiKeyIn === 'query' && Boolean(conn.secret)
+}
+
 export function applyAuth(conn: ResolvedApiConnection, headers: Record<string, string>): void {
   if (conn.authType === 'apiKey' && conn.secret) {
-    headers[conn.apiKeyHeader || 'X-API-Key'] = conn.secret
+    if (!keyGoesInQuery(conn)) headers[conn.apiKeyHeader || 'X-API-Key'] = conn.secret
   } else if (conn.authType === 'bearer' && conn.secret) {
     headers.Authorization = `Bearer ${conn.secret}`
   } else if (conn.authType === 'basic' && conn.secret) {
@@ -70,7 +75,9 @@ export async function performRequest(
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetch(buildUrl(conn.baseUrl, input.path, input.query), {
+    // The key is added last, so a query value the model passes under the same name can never replace it.
+    const query = keyGoesInQuery(conn) ? { ...input.query, [conn.apiKeyHeader || 'apiKey']: conn.secret } : input.query
+    const response = await fetch(buildUrl(conn.baseUrl, input.path, query), {
       method: input.method,
       headers,
       body,

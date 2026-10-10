@@ -39,6 +39,27 @@ describe('api_call', () => {
     expect(mutates({ method: 'delete' })).toBe(true)
   })
 
+  it('sends an apiKey as a URL query parameter, not a header, when the connection says so - and the model cannot override it', async () => {
+    const conn = saveApiConnection({
+      name: 'QueryKeyed',
+      baseUrl: 'https://eventregistry.org/api/v1',
+      authType: 'apiKey',
+      apiKeyHeader: 'apiKey',
+      apiKeyIn: 'query',
+      secret: 'shh'
+    })
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+
+    await apiCallTool.execute({ connection: conn.name, path: 'article/getArticles', query: { keyword: 'Tesla', apiKey: 'model-guess' } }, {} as never)
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    const parsed = new URL(String(url))
+    expect(parsed.origin + parsed.pathname).toBe('https://eventregistry.org/api/v1/article/getArticles')
+    expect(parsed.searchParams.get('keyword')).toBe('Tesla')
+    expect(parsed.searchParams.getAll('apiKey')).toEqual(['shh'])
+    expect((init?.headers as Record<string, string>).apiKey).toBeUndefined()
+  })
+
   it('returns a friendly message for an unknown connection instead of throwing', async () => {
     const result = await apiCallTool.execute({ connection: 'nope', path: '/x' }, {} as never)
     expect(result).toMatch(/No API connection named "nope"/)

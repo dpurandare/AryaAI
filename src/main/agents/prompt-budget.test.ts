@@ -285,6 +285,7 @@ describe('per-tool schema budget', () => {
     // measured. Deliberate growth, not drift.
     const total = registry.list().reduce((n, t) => n + tokensFor(t), 0)
     // 2026-10-09: get_environment added (~27 tokens) - 9950 -> 9990. Deliberate.
-    expect(total).toBeLessThanOrEqual(9990)
+    // 2026-10-10: api_create_connection gained `apiKeyIn` (NewsAPI.ai only reads its key from the URL query; the Configurator had no way to say so) - 9990 -> 10000. Deliberate.
+    expect(total).toBeLessThanOrEqual(10000)
   })
 })

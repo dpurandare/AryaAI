@@ -384,6 +384,7 @@ export interface SaveSavedQueryInput {
 }
 
 export type ApiAuthType = 'none' | 'apiKey' | 'bearer' | 'basic'
+export type ApiKeyPlacement = 'header' | 'query'
 
 /**
  * A cheap, endpoint-count-only hint of what a connection's API exposes —
@@ -409,8 +410,10 @@ export interface ApiConnectionDto {
   name: string
   baseUrl: string
   authType: ApiAuthType
-  /** apiKey auth only — the header name the key is sent in, e.g. "X-API-Key". */
+  /** apiKey auth only — the header name (or, when `apiKeyIn` is "query", the query-parameter name) the key is sent in, e.g. "X-API-Key" or "apiKey". */
   apiKeyHeader?: string
+  /** apiKey auth only — where the key goes: a request header (default) or a URL query parameter (some APIs, e.g. NewsAPI.ai, only read it from there). */
+  apiKeyIn?: ApiKeyPlacement
   /** basic auth only. */
   username?: string
   hasSecret: boolean
@@ -426,6 +429,7 @@ export interface SaveApiConnectionInput {
   baseUrl: string
   authType: ApiAuthType
   apiKeyHeader?: string
+  apiKeyIn?: ApiKeyPlacement
   username?: string
   secret?: string
   specUrl?: string

@@ -289,6 +289,7 @@
   let apiBaseUrl = $state('')
   let apiAuthType = $state<ApiAuthType>('none')
   let apiKeyHeader = $state('X-API-Key')
+  let apiKeyIn = $state<'header' | 'query'>('header')
   let apiUsername = $state('')
   let apiSecret = $state('')
   let apiSpecUrl = $state('')
@@ -306,6 +307,7 @@
     apiBaseUrl = ''
     apiAuthType = 'none'
     apiKeyHeader = 'X-API-Key'
+    apiKeyIn = 'header'
     apiUsername = ''
     apiSecret = ''
     apiSpecUrl = ''
@@ -321,6 +323,7 @@
     apiBaseUrl = conn.baseUrl
     apiAuthType = conn.authType
     apiKeyHeader = conn.apiKeyHeader ?? 'X-API-Key'
+    apiKeyIn = conn.apiKeyIn ?? 'header'
     apiUsername = conn.username ?? ''
     apiSecret = ''
     apiSpecUrl = conn.specUrl ?? ''
@@ -336,6 +339,7 @@
         baseUrl: apiBaseUrl.trim(),
         authType: apiAuthType,
         apiKeyHeader: apiAuthType === 'apiKey' ? apiKeyHeader.trim() : undefined,
+        apiKeyIn: apiAuthType === 'apiKey' ? apiKeyIn : undefined,
         username: apiAuthType === 'basic' ? apiUsername.trim() : undefined,
         secret: apiAuthType !== 'none' && apiSecret ? apiSecret : undefined,
         specUrl: apiSpecUrl.trim() || undefined
@@ -1343,12 +1347,16 @@
               <input placeholder="Base URL, e.g. https://api.example.com/v1" bind:value={apiBaseUrl} />
               <select bind:value={apiAuthType}>
                 <option value="none">No auth</option>
-                <option value="apiKey">API key header</option>
+                <option value="apiKey">API key</option>
                 <option value="bearer">Bearer token</option>
                 <option value="basic">Basic auth</option>
               </select>
               {#if apiAuthType === 'apiKey'}
-                <input placeholder="Header name, e.g. X-API-Key" bind:value={apiKeyHeader} />
+                <select bind:value={apiKeyIn} aria-label="Where the API key is sent">
+                  <option value="header">Send the key in a header</option>
+                  <option value="query">Send the key as a query parameter</option>
+                </select>
+                <input placeholder={apiKeyIn === 'query' ? 'Parameter name, e.g. apiKey' : 'Header name, e.g. X-API-Key'} bind:value={apiKeyHeader} />
                 <input placeholder="New API key (leave blank to keep unchanged)" type="password" bind:value={apiSecret} />
               {:else if apiAuthType === 'bearer'}
                 <input placeholder="New bearer token (leave blank to keep unchanged)" type="password" bind:value={apiSecret} />
@@ -1388,12 +1396,16 @@
         <input placeholder="Base URL, e.g. https://api.example.com/v1" bind:value={apiBaseUrl} />
         <select bind:value={apiAuthType}>
           <option value="none">No auth</option>
-          <option value="apiKey">API key header</option>
+          <option value="apiKey">API key</option>
           <option value="bearer">Bearer token</option>
           <option value="basic">Basic auth</option>
         </select>
         {#if apiAuthType === 'apiKey'}
-          <input placeholder="Header name, e.g. X-API-Key" bind:value={apiKeyHeader} />
+          <select bind:value={apiKeyIn} aria-label="Where the API key is sent">
+            <option value="header">Send the key in a header</option>
+            <option value="query">Send the key as a query parameter</option>
+          </select>
+          <input placeholder={apiKeyIn === 'query' ? 'Parameter name, e.g. apiKey' : 'Header name, e.g. X-API-Key'} bind:value={apiKeyHeader} />
           <input placeholder="API key" type="password" bind:value={apiSecret} />
         {:else if apiAuthType === 'bearer'}
           <input placeholder="Bearer token" type="password" bind:value={apiSecret} />
