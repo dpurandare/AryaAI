@@ -53,5 +53,5 @@ It prints the Node version and architecture, runs `npm ci` the first time, runs 
 | `git` or `node` not found right after installing | The terminal was opened before the install. Open a new one. |
 | `gh auth login` cannot open a browser | Run `gh auth login --with-token` with a personal access token that can read the repo. |
 | `npm ci` fails building `better-sqlite3` | It normally downloads a prebuilt binary. If it compiles instead, install the Visual Studio Build Tools (C++ workload) and run again. Tell me the output. |
-| Electron or the app window does not open on ARM64 | Check `node -p "process.arch"` prints `x64`. An ARM64 Node would fetch the wrong native modules. |
+| `Unsupported platform for sqlite-vec, on a win32-arm64 machine` | Electron was installed for ARM64 because Node was ARM64. Run `nvm install 24 64` and `nvm use 24 64` in an admin terminal, open a new terminal, then `scripts\windows-test-run.cmd fresh` (removes `node_modules` and reinstalls for x64). The run script now refuses to continue when `node -p "process.arch"` is not `x64`. |
 | `ollama create` fails | Start Ollama from the Start menu and run `windows-test-prepare.cmd` again. |
