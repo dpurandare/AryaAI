@@ -1,9 +1,12 @@
 @echo off
 rem Step 1 of docs/Window_test_deploy.md. Run this FIRST on the Windows test machine.
-rem It installs Git and the GitHub CLI, signs in to GitHub (the repo is private) and clones
-rem the design_change branch. It does not need the repo, so copy this one file to the machine.
+rem It installs Git and clones the design_change branch of the (public) repo. It does not need the
+rem repo, so it can be downloaded on its own:
+rem   curl.exe -L -O https://raw.githubusercontent.com/dpurandare/AryaAI/design_change/scripts/windows-test-bootstrap.cmd
 rem Usage:  open a terminal in the folder where the clone should go, then run
 rem         windows-test-bootstrap.cmd [target-folder]     (default: .\AryaAI in the current folder)
+rem If the repo is ever made private again, the clone is refused and the script falls back to
+rem installing the GitHub CLI and signing in.
 setlocal
 set "TARGET=%CD%\AryaAI"
 if not "%~1"=="" set "TARGET=%~1"
@@ -16,35 +19,18 @@ if errorlevel 1 (
   goto :fail
 )
 
-echo Step 1: checking Git and the GitHub CLI
+echo Step 1: checking Git
 call :ensure git Git.Git
-if errorlevel 1 goto :fail
-call :ensure gh GitHub.cli
 if errorlevel 1 goto :fail
 
 rem A fresh install is not on this window's PATH yet.
-set "PATH=%ProgramFiles%\Git\cmd;%ProgramFiles%\GitHub CLI;%PATH%"
+set "PATH=%ProgramFiles%\Git\cmd;%PATH%"
 
-rem Prove both are usable now, and show the versions.
 git --version
 if errorlevel 1 (
   echo Git is still not available after the install. Close this window, open a new one and run this again.
   goto :fail
 )
-gh --version | findstr /b "gh version"
-if errorlevel 1 (
-  echo The GitHub CLI is still not available after the install. Close this window, open a new one and run this again.
-  goto :fail
-)
-
-gh auth status >nul 2>&1
-if errorlevel 1 (
-  echo.
-  echo Signing in to GitHub: choose "Login with a web browser" and enter the code it shows.
-  gh auth login --hostname github.com --git-protocol https --web
-  if errorlevel 1 goto :fail
-)
-gh auth setup-git
 
 if exist "%TARGET%\.git" (
   echo.
@@ -53,6 +39,7 @@ if exist "%TARGET%\.git" (
   echo.
   echo Cloning into %TARGET% ...
   git clone "%REPO%" "%TARGET%"
+  if errorlevel 1 call :signin_and_clone
   if errorlevel 1 goto :fail
 )
 
@@ -95,6 +82,22 @@ if errorlevel 1 (
   exit /b 1
 )
 exit /b 0
+
+:signin_and_clone
+echo.
+echo The clone was refused. If the repository is private, sign in to GitHub and try again.
+call :ensure gh GitHub.cli
+if errorlevel 1 exit /b 1
+set "PATH=%ProgramFiles%\GitHub CLI;%PATH%"
+gh auth status >nul 2>&1
+if errorlevel 1 (
+  echo Choose "Login with a web browser" and enter the code it shows.
+  gh auth login --hostname github.com --git-protocol https --web
+  if errorlevel 1 exit /b 1
+)
+gh auth setup-git
+git clone "%REPO%" "%TARGET%"
+exit /b %errorlevel%
 
 :fail
 echo.

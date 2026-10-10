@@ -8,16 +8,24 @@ Works on Windows 11 x64 or ARM64. On ARM64 (for example a VMware VM on an Apple 
 
 - Windows 11 with internet access and about 6 GB free disk.
 - **winget** (it ships with Windows 11; if `winget` is not found, install "App Installer" from the Microsoft Store).
-- A GitHub account that can read `dpurandare/AryaAI` (the repo is private).
-- Copy **`scripts/windows-test-bootstrap.cmd`** to the machine (shared folder, email, or paste the text into a new file).
+- The repository is public, so no GitHub account is needed.
 
 ## 1. Install Git and clone the branch
 
-Open a terminal in the folder where the clone should go (for example `%USERPROFILE%\Lab`) and run `windows-test-bootstrap.cmd` from there. It:
+Open a terminal in the folder where the clone should go (for example `mkdir %USERPROFILE%\Lab`, then `cd %USERPROFILE%\Lab`) and download the bootstrap script:
 
-- installs Git and the GitHub CLI if they are missing,
-- runs `gh auth login` (choose **Login with a web browser**, then enter the code in the browser),
-- clones `design_change` into an `AryaAI` folder inside the folder you run it from (or pulls it if it is already there), then prints the next steps. Pass another folder as the first argument to change that.
+```
+curl.exe -L -O https://raw.githubusercontent.com/dpurandare/AryaAI/design_change/scripts/windows-test-bootstrap.cmd
+windows-test-bootstrap.cmd
+```
+
+It:
+
+- installs Git with winget if it is missing, and checks that it works,
+- clones `design_change` into an `AryaAI` folder inside the current folder (or updates it if it is already there) and switches to the latest `design_change`,
+- prints the next steps. Pass another folder as the first argument to change the target.
+
+If GitHub ever refuses the clone (the repo made private again), the script installs the GitHub CLI and asks you to sign in with the browser, then clones.
 
 ## 2. Install what is missing, build and start
 
