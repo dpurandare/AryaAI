@@ -172,18 +172,15 @@ export interface SessionExportResult {
 }
 
 /**
- * TASKS.md #150 — the curated, admin-provisionable subset of settings: chat
- * provider/model selection, MCP servers, database connections. Deliberately
- * excludes External API connections, email accounts, and every personal UI
- * preference (theme, `toolDetailsExpanded`, etc.) — the goal is org-level
- * connection provisioning, not overriding a user's own choices. **Never
- * carries a live secret** — no API key, no MCP bearer token, no DB
- * password — only connection *shape* (same "shape without the secret"
- * precedent #155's edit-by-id already established); an imported connection
- * needs its credentials filled in separately by whoever uses it.
+ * TASKS.md #150, widened 2026-10-10 (format version 2) after manual test 11d.9 found the first export too narrow: everything
+ * that is not a secret — chat provider/model selection, MCP servers, database connections (with their saved queries), External API
+ * connections, email accounts, auto-approve rules, preferences (theme, zoom, temperature, …) and user-defined role files.
+ * **Never carries a live secret** — no API key, no MCP bearer token, no DB or email password — only connection *shape* (same
+ * "shape without the secret" precedent #155's edit-by-id already established); an imported connection needs its credentials
+ * filled in separately by whoever uses it. Version-1 files (providers, MCP servers and database connections only) still import.
  */
 export interface SettingsExportPayload {
-  formatVersion: 1
+  formatVersion: 1 | 2
   exportedAt: string
   providers: {
     activeProviderId?: string
@@ -206,14 +203,42 @@ export interface SettingsExportPayload {
     port?: number
     database?: string
     username?: string
+    /** Format 2: the connection's saved queries (no ids; `mutates` is recomputed on import). */
+    savedQueries?: Array<{ name: string; description: string; sql: string; params: SavedQueryParam[] }>
   }>
+  /** Format 2 and later — everything below is optional so a version-1 file is still valid. */
+  apiConnections?: Array<{
+    name: string
+    baseUrl: string
+    authType: ApiAuthType
+    apiKeyHeader?: string
+    apiKeyIn?: ApiKeyPlacement
+    username?: string
+    specUrl?: string
+  }>
+  emailConnections?: Array<{
+    name: string
+    emailAddress: string
+    provider: EmailProvider
+    host?: string
+    port?: number
+    secure?: boolean
+  }>
+  /** Allowed settings keys (see settings/import-export.ts PREFERENCE_KEYS) -> the stored string, only for keys actually set. */
+  preferences?: Record<string, string>
+  /** Tool name -> true, the "always auto-approve this tool" rules. Importing these widens what runs without asking. */
+  autoApproveToolRules?: Record<string, boolean>
+  /** User-defined role files (`.md`, not starting with `_`) from the roles folder. */
+  roleFiles?: Array<{ fileName: string; content: string }>
 }
 
 /** One entry in an import preview — `willImport: false` means a same-name/same-key entry already exists locally and this one will be skipped, not overwritten. */
 export interface SettingsImportPreviewItem {
-  category: 'provider' | 'mcpServer' | 'dataConnection'
+  category: 'provider' | 'mcpServer' | 'dataConnection' | 'apiConnection' | 'emailConnection' | 'preference' | 'autoApprove' | 'role'
   label: string
   willImport: boolean
+  /** Shown beside the entry: what the user must still do or know ("needs its password entered in Settings", "runs without asking"). */
+  note?: string
 }
 
 export type SettingsExportResult = { cancelled: true } | { cancelled: false; path: string } | { error: string }
@@ -226,6 +251,8 @@ export type SettingsImportPreviewResult =
 export interface SettingsImportApplyResult {
   imported: number
   skipped: number
+  /** Imported entries whose key/password was not in the file and must be entered in Settings before they work. */
+  needsSecret: number
 }
 
 /** Pushed from main to renderer once a session's title is auto-generated from its first message — see db/sessions.ts's titleFromMessage. */

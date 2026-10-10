@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -29,7 +29,9 @@ vi.mock('node:fs/promises', () => ({ writeFile: mockWriteFile, readFile: mockRea
 const { setDbPath } = await import('../db')
 const { getSetting, setSetting } = await import('../db/settings')
 const { saveServerConfig } = await import('../mcp/config')
-const { saveConnection } = await import('../data/connections')
+const { saveConnection, saveSavedQuery, listConnections } = await import('../data/connections')
+const { saveApiConnection, listApiConnections } = await import('../data/api-connections')
+const { saveEmailConnection, listEmailConnections } = await import('../data/email-connections')
 const { buildSettingsExport, exportSettings, previewSettingsImport, applySettingsImport, ACTIVE_PROVIDER_KEY, modelSettingKey } =
   await import('./import-export')
 const fakeRegistry = { list: () => [{ id: 'openai' } as never, { id: 'ollama' } as never] }
@@ -57,14 +59,14 @@ describe('settings import/export (#150)', () => {
       saveConnection({ name: 'Northwind', engine: 'postgres', host: 'localhost', port: 5432, database: 'northwind', username: 'sa', password: 'super-secret' })
 
       const payload = buildSettingsExport(fakeRegistry)
-      expect(payload.formatVersion).toBe(1)
+      expect(payload.formatVersion).toBe(2)
       expect(payload.providers.activeProviderId).toBe('ollama')
       expect(payload.providers.models).toEqual({ ollama: 'qwen3.5:9b-custom' })
       expect(payload.mcpServers).toEqual([
         { name: 'Context7', transport: 'stdio', command: 'npx', args: ['-y', '@upstash/context7-mcp'], url: undefined, description: undefined }
       ])
       expect(payload.dataConnections).toEqual([
-        { name: 'Northwind', engine: 'postgres', filePath: undefined, host: 'localhost', port: 5432, database: 'northwind', username: 'sa' }
+        { name: 'Northwind', engine: 'postgres', filePath: undefined, host: 'localhost', port: 5432, database: 'northwind', username: 'sa', savedQueries: [] }
       ])
       // The password given to saveConnection above must never surface anywhere in the export.
       expect(JSON.stringify(payload)).not.toContain('super-secret')
@@ -79,7 +81,7 @@ describe('settings import/export (#150)', () => {
       expect(mockWriteFile).toHaveBeenCalledTimes(1)
       const [path, content] = mockWriteFile.mock.calls[0]
       expect(path).toBe('/tmp/export.json')
-      expect(JSON.parse(content as string).formatVersion).toBe(1)
+      expect(JSON.parse(content as string).formatVersion).toBe(2)
     })
 
     it('returns cancelled without writing anything when the user dismisses the dialog', async () => {
@@ -156,10 +158,184 @@ describe('settings import/export (#150)', () => {
 
       // activeProviderId (unset before) + openai model (unset before) + energy_wiki + Northwind = 4 imported.
       // ollama model (already set) + Context7 (already exists) = 2 skipped.
-      expect(result).toEqual({ imported: 4, skipped: 2 })
+      expect(result).toEqual({ imported: 4, skipped: 2, needsSecret: 1 }) // Northwind (postgres) still needs its password
       expect(getSetting(ACTIVE_PROVIDER_KEY)).toBe('ollama')
       expect(getSetting(modelSettingKey('ollama'))).toBe('already-here') // unchanged, not overwritten
       expect(getSetting(modelSettingKey('openai'))).toBe('gpt-4o-mini')
     })
+  })
+})
+
+describe('settings import/export, format 2 (everything that is not a secret)', () => {
+  let rolesDir: string
+  beforeEach(() => {
+    setDbPath(':memory:')
+    userDataDir = mkdtempSync(join(tmpdir(), 'sachiv-settings-io2-'))
+    rolesDir = join(userDataDir, 'roles')
+    mockShowOpenDialog.mockReset()
+    mockReadFile.mockReset()
+  })
+  afterEach(() => {
+    rmSync(userDataDir, { recursive: true, force: true })
+  })
+
+  function seedEverything(): void {
+    const conn = saveConnection({ name: 'Northwind', engine: 'mssql', host: 'localhost', port: 1433, database: 'Northwind', username: 'sa', password: 'db-secret-1' })
+    saveSavedQuery({ connectionId: conn.id, name: 'top_customers', description: 'Top customers', sql: 'SELECT TOP 5 * FROM Customers', params: [] })
+    saveApiConnection({ name: 'Weather', baseUrl: 'https://api.open-meteo.com/', authType: 'none' })
+    saveApiConnection({ name: 'Billing', baseUrl: 'https://billing.example.com', authType: 'apiKey', apiKeyHeader: 'apiKey', apiKeyIn: 'query', secret: 'api-secret-2' })
+    saveEmailConnection({ name: 'Work', emailAddress: 'me@example.com', provider: 'gmail', appPassword: 'mail-secret-3' })
+    setSetting('themeMode', 'dark')
+    setSetting('temperature', '0.1')
+    setSetting('zoomLevel', '1')
+    setSetting('slimRouter', 'false')
+    setSetting('sidebarWidth', '344') // layout: never exported
+    setSetting('autoApproveToolRules', JSON.stringify({ download_image: true, shell_execute: false }))
+    mkdirSync(rolesDir, { recursive: true })
+    writeFileSync(join(rolesDir, 'reporter.md'), '---\nid: reporter\n---\nYou report.')
+    writeFileSync(join(rolesDir, '_example-role.md'), 'never exported')
+  }
+
+  it('exports connections with their saved queries, API and email accounts, preferences, auto-approve rules and role files - and no secret', () => {
+    seedEverything()
+    const payload = buildSettingsExport(fakeRegistry, rolesDir)
+
+    expect(payload.dataConnections[0].savedQueries).toEqual([{ name: 'top_customers', description: 'Top customers', sql: 'SELECT TOP 5 * FROM Customers', params: [] }])
+    expect(payload.apiConnections?.map((a) => [a.name, a.baseUrl, a.authType, a.apiKeyHeader, a.apiKeyIn])).toEqual([
+      ['Weather', 'https://api.open-meteo.com', 'none', undefined, undefined],
+      ['Billing', 'https://billing.example.com', 'apiKey', 'apiKey', 'query']
+    ])
+    expect(payload.emailConnections).toEqual([{ name: 'Work', emailAddress: 'me@example.com', provider: 'gmail', host: undefined, port: undefined, secure: undefined }])
+    expect(payload.preferences).toEqual({ themeMode: 'dark', temperature: '0.1', zoomLevel: '1', slimRouter: 'false' })
+    expect(payload.autoApproveToolRules).toEqual({ download_image: true })
+    expect(payload.roleFiles?.map((r) => r.fileName)).toEqual(['reporter.md'])
+
+    const text = JSON.stringify(payload)
+    for (const secret of ['db-secret-1', 'api-secret-2', 'mail-secret-3']) expect(text).not.toContain(secret)
+    expect(text).not.toContain('sidebarWidth')
+  })
+
+  it('leaves a stored preference out of the export when its value is not one that setting can hold', () => {
+    setSetting('themeMode', 'purple')
+    setSetting('temperature', '7')
+    setSetting('showTimestamps', 'true')
+    expect(buildSettingsExport(fakeRegistry).preferences).toEqual({ showTimestamps: 'true' })
+  })
+
+  it('round-trips: an export from a full profile imports into an empty one, and notes what still needs a key', async () => {
+    seedEverything()
+    const payload = buildSettingsExport(fakeRegistry, rolesDir)
+
+    setDbPath(':memory:') // a fresh profile
+    const emptyRoles = join(userDataDir, 'roles-new')
+    mockShowOpenDialog.mockResolvedValue({ canceled: false, filePaths: ['/tmp/x.json'] })
+    mockReadFile.mockResolvedValue(JSON.stringify(payload))
+    const preview = await previewSettingsImport(null, emptyRoles)
+    if ('error' in preview || preview.cancelled) throw new Error('expected a preview')
+    expect(preview.items.every((i) => i.willImport)).toBe(true)
+    const note = (label: string): string | undefined => preview.items.find((i) => i.label.startsWith(label))?.note
+    expect(note('Northwind')).toContain('password')
+    expect(note('Northwind')).toContain('1 saved query')
+    expect(note('Billing')).toContain('key')
+    expect(note('Weather')).toBeUndefined()
+    expect(note('Work')).toContain('app password')
+    expect(note('download_image')).toContain('without asking')
+
+    const result = applySettingsImport(payload, emptyRoles)
+    expect(result.skipped).toBe(0)
+    expect(result.needsSecret).toBe(3) // Northwind, Billing, Work
+    expect(listConnections()[0].savedQueries.map((q) => q.name)).toEqual(['top_customers'])
+    expect(listApiConnections().map((a) => a.name).sort()).toEqual(['Billing', 'Weather'])
+    expect(listApiConnections().every((a) => !a.hasSecret)).toBe(true)
+    expect(listApiConnections().find((a) => a.name === 'Billing')?.apiKeyIn).toBe('query') // where the key goes survives the round trip
+    expect(listEmailConnections()[0].hasSecret).toBe(false)
+    expect(getSetting('themeMode')).toBe('dark')
+    expect(JSON.parse(getSetting('autoApproveToolRules') ?? '{}')).toEqual({ download_image: true })
+    expect(readFileSync(join(emptyRoles, 'reporter.md'), 'utf-8')).toContain('You report.')
+  })
+
+  it('never overwrites: an existing preference, auto-approve rule, API connection or role file is skipped', () => {
+    setSetting('themeMode', 'light')
+    setSetting('autoApproveToolRules', JSON.stringify({ download_image: true }))
+    saveApiConnection({ name: 'Weather', baseUrl: 'https://mine.example.com', authType: 'none' })
+    mkdirSync(rolesDir, { recursive: true })
+    writeFileSync(join(rolesDir, 'reporter.md'), 'mine')
+
+    const result = applySettingsImport(
+      {
+        formatVersion: 2,
+        exportedAt: 'x',
+        providers: { models: {} },
+        mcpServers: [],
+        dataConnections: [],
+        apiConnections: [{ name: 'Weather', baseUrl: 'https://theirs.example.com', authType: 'none' }],
+        preferences: { themeMode: 'dark', zoomLevel: '2' },
+        autoApproveToolRules: { download_image: true, read_file: true },
+        roleFiles: [{ fileName: 'reporter.md', content: 'theirs' }]
+      },
+      rolesDir
+    )
+    expect(result).toEqual({ imported: 2, skipped: 4, needsSecret: 0 }) // zoomLevel and the read_file rule are new
+    expect(getSetting('themeMode')).toBe('light')
+    expect(getSetting('zoomLevel')).toBe('2')
+    expect(JSON.parse(getSetting('autoApproveToolRules') ?? '{}')).toEqual({ download_image: true, read_file: true })
+    expect(listApiConnections()[0].baseUrl).toBe('https://mine.example.com')
+    expect(readFileSync(join(rolesDir, 'reporter.md'), 'utf-8')).toBe('mine')
+  })
+
+  it('ignores an imported preference that is not a known key or not a valid value', () => {
+    const result = applySettingsImport(
+      {
+        formatVersion: 2,
+        exportedAt: 'x',
+        providers: { models: {} },
+        mcpServers: [],
+        dataConnections: [],
+        preferences: { themeMode: 'purple', activeProviderId: 'evil', sidebarWidth: '1', temperature: '0.5' }
+      },
+      rolesDir
+    )
+    expect(result.imported).toBe(1)
+    expect(getSetting('temperature')).toBe('0.5')
+    expect(getSetting('themeMode')).toBeUndefined()
+    expect(getSetting('sidebarWidth')).toBeUndefined()
+  })
+
+  it('writes a role file only inside the roles folder, whatever directory the file name carries', () => {
+    applySettingsImport(
+      {
+        formatVersion: 2,
+        exportedAt: 'x',
+        providers: { models: {} },
+        mcpServers: [],
+        dataConnections: [],
+        roleFiles: [
+          { fileName: '../../escape.md', content: 'x' },
+          { fileName: 'notes.txt', content: 'not a role' },
+          { fileName: '_hidden.md', content: 'never loads' }
+        ]
+      },
+      rolesDir
+    )
+    expect(existsSync(join(rolesDir, 'escape.md'))).toBe(true) // directory part dropped
+    expect(existsSync(join(userDataDir, 'escape.md'))).toBe(false)
+    expect(existsSync(join(rolesDir, 'notes.txt'))).toBe(false)
+    expect(existsSync(join(rolesDir, '_hidden.md'))).toBe(false)
+  })
+
+  it('still imports a version-1 file (providers, MCP servers and connections only)', async () => {
+    mockShowOpenDialog.mockResolvedValue({ canceled: false, filePaths: ['/tmp/v1.json'] })
+    mockReadFile.mockResolvedValue(
+      JSON.stringify({
+        formatVersion: 1,
+        exportedAt: 'x',
+        providers: { activeProviderId: 'ollama', models: {} },
+        mcpServers: [{ name: 'wiki', transport: 'http', url: 'https://example.com/mcp' }],
+        dataConnections: []
+      })
+    )
+    const preview = await previewSettingsImport(null, rolesDir)
+    if ('error' in preview || preview.cancelled) throw new Error('expected a preview')
+    expect(preview.items.map((i) => i.label)).toEqual(['Active provider: ollama', 'wiki'])
   })
 })

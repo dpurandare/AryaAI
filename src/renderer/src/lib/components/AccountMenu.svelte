@@ -59,15 +59,26 @@
     if (!importPreview) return
     applying = true
     try {
-      const { imported, skipped } = await window.sachiv.applySettingsImport(importPreview.payload)
-      statusMessage = `Imported ${imported} item${imported === 1 ? '' : 's'}${skipped ? `, skipped ${skipped} already-configured` : ''}.`
+      const { imported, skipped, needsSecret } = await window.sachiv.applySettingsImport(importPreview.payload)
+      statusMessage =
+        `Imported ${imported} item${imported === 1 ? '' : 's'}${skipped ? `, skipped ${skipped} already-configured` : ''}.` +
+        (needsSecret ? ` ${needsSecret} need${needsSecret === 1 ? 's' : ''} a key or password entered in Settings before ${needsSecret === 1 ? 'it works' : 'they work'}.` : '')
     } finally {
       applying = false
       importPreview = null
     }
   }
 
-  const CATEGORY_LABEL: Record<string, string> = { provider: 'Provider', mcpServer: 'MCP server', dataConnection: 'Data connection' }
+  const CATEGORY_LABEL: Record<string, string> = {
+    provider: 'Provider',
+    mcpServer: 'MCP server',
+    dataConnection: 'Data connection',
+    apiConnection: 'External API',
+    emailConnection: 'Email account',
+    preference: 'Preference',
+    autoApprove: 'Auto-approve',
+    role: 'Role'
+  }
 </script>
 
 <svelte:window onclick={closeMenu} />
@@ -106,14 +117,14 @@
     <div class="import-panel" role="dialog" aria-label="Import settings preview">
       <h2>Import Settings</h2>
       <p class="hint">
-        Connection shape only — no API keys, tokens, or database passwords are ever included. An item already
-        configured locally is skipped, never overwritten.
+        No API keys, tokens or passwords are ever included — entries that need one say so. An item already
+        configured here is skipped, never overwritten. Theme and zoom apply after a restart.
       </p>
       <ul class="preview-list">
         {#each importPreview.items as item, i (i)}
           <li class:skip={!item.willImport}>
             <span class="cat">{CATEGORY_LABEL[item.category]}</span>
-            <span class="label">{item.label}</span>
+            <span class="label">{item.label}{#if item.note}<small class="note">{item.note}</small>{/if}</span>
             <span class="verdict">{item.willImport ? 'Import' : 'Already configured — skip'}</span>
           </li>
         {/each}
@@ -280,6 +291,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .preview-list .note {
+    display: block;
+    white-space: normal;
+    font-size: 0.7rem;
+    color: var(--text-muted);
   }
   .preview-list .verdict {
     flex-shrink: 0;

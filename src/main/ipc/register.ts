@@ -470,13 +470,13 @@ export function registerIpcHandlers(): void {
   // re-asks) the same willImport decisions and actually writes them — see import-export.ts's own doc
   // comment on why that re-derivation is safe.
   ipcMain.handle(IpcChannel.SettingsExport, (event): Promise<SettingsExportResult> =>
-    exportSettings(providerRegistry, currentWorkspaceRoot(), BrowserWindow.fromWebContents(event.sender))
+    exportSettings(providerRegistry, currentWorkspaceRoot(), BrowserWindow.fromWebContents(event.sender), userRolesFolder())
   )
   ipcMain.handle(IpcChannel.SettingsImportPreview, (event): Promise<SettingsImportPreviewResult> =>
-    previewSettingsImport(BrowserWindow.fromWebContents(event.sender))
+    previewSettingsImport(BrowserWindow.fromWebContents(event.sender), userRolesFolder())
   )
   ipcMain.handle(IpcChannel.SettingsImportApply, (_event, payload: SettingsExportPayload): SettingsImportApplyResult =>
-    applySettingsImport(payload)
+    applySettingsImport(payload, userRolesFolder())
   )
 
   ipcMain.handle(IpcChannel.ExternalFoldersList, (): string[] => externalAccess.listAlways())
