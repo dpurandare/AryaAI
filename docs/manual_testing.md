@@ -423,6 +423,11 @@ The sponsor is not a developer: installing and first run must work without manua
 13.4.3 (knowledge lookup), 6.4 and 6.7 (delegation), 11.6 (role-pinning), "top 5 customers -> Word" on Claude, the 5-number-images request,
 13.4.4 (pinned specialist hand-back).
 
+**Done 2026-10-10, all passed on the full router:** 13.4.3, 6.4, 6.7, 11.6, "top 5 customers -> Word" (Claude), the 5-number-images request, 13.4.4.
+13.4.4 note: on Gemini 3.5 Flash-Lite the pinned Email agent ignored the hand-back rule and answered the axios question from memory (no
+Context7 call, no caveat). On Claude Haiku it replied "outside my email role" and ended `[handoff: out_of_scope -> coding]`; the top-level
+assistant then answered from memory. The raw handoff tag is visible in the chat (TASKS #206).
+
 ---
 
 ## 13. Setting up real data sources and MCP servers from scratch — P1 (45–60 min, needs Docker/Node/Python)
