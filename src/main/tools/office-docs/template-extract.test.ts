@@ -303,15 +303,15 @@ describe('office_extract_template', () => {
     it('replaces a name Word split over several runs, keeping the first run\'s formatting', async () => {
       await writeSplitDocx(
         'split.docx',
-        '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Sar</w:t></w:r><w:r><w:t xml:space="preserve">ang Puran</w:t></w:r><w:r><w:t>dare &amp; Co</w:t></w:r></w:p>' +
-          '<w:p><w:r><w:t>Contact Sarang Purandare today. Sarang Purandare.</w:t></w:r></w:p>'
+        '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Jon</w:t></w:r><w:r><w:t xml:space="preserve">athan Whit</w:t></w:r><w:r><w:t>aker &amp; Co</w:t></w:r></w:p>' +
+          '<w:p><w:r><w:t>Contact Jonathan Whitaker today. Jonathan Whitaker.</w:t></w:r></w:p>'
       )
       const result = await officeExtractTemplateTool.execute(
         {
           sourcePath: 'documents/split.docx',
           action: 'apply',
           templateName: 'split.docx',
-          replacements: [{ text: 'Sarang Purandare', placeholder: 'fullName' }]
+          replacements: [{ text: 'Jonathan Whitaker', placeholder: 'fullName' }]
         },
         ctx
       )
@@ -321,7 +321,7 @@ describe('office_extract_template', () => {
       expect(xml).toContain('<w:rPr><w:b/></w:rPr><w:t>{fullName}</w:t>')
       expect(xml).toContain('<w:t> &amp; Co</w:t>')
       expect(xml).toContain('Contact {fullName} today. {fullName}.')
-      expect(xml).not.toContain('Purandare')
+      expect(xml).not.toContain('Whitaker')
     })
 
     it('honours "occurrence" in document order and does not match across paragraphs', async () => {
