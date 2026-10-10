@@ -734,7 +734,7 @@ def generate_turbine_tables(conn, timestamps, farm_wind_base, curtailment_sched,
             df_tp = df_tp[~df_tp["timestamp"].isin(gap_set)].reset_index(drop=True)
 
         df_tp.to_sql("turbine_performance", conn, if_exists="append", index=False,
-                     method="multi", chunksize=5000)
+                     chunksize=5000)
 
         iec_cat  = [STATUS_MAP[c][0]             for c in status]
         is_avail = [1 if STATUS_MAP[c][1] else 0 for c in status]
@@ -776,7 +776,7 @@ def generate_turbine_tables(conn, timestamps, farm_wind_base, curtailment_sched,
             })
 
         df_as.to_sql("availability_status", conn, if_exists="append", index=False,
-                     method="multi", chunksize=5000)
+                     chunksize=5000)
 
         dates_arr = np.array([t.strftime("%Y-%m-%d") for t in timestamps])
         if tid != TIMESTAMP_GAP_TURBINE:
@@ -826,7 +826,7 @@ def generate_wind_resource(conn, timestamps, farm_wind_base):
         "temperature_c": np.round(mm_temp, 1), "pressure_hpa": np.round(mm_prs, 1),
     })
     df_mm.to_sql("wind_resource", conn, if_exists="append", index=False,
-                 method="multi", chunksize=5000)
+                 chunksize=5000)
 
     for tnum in range(1, 11):
         tid  = f"T{tnum:03d}"
@@ -840,7 +840,7 @@ def generate_wind_resource(conn, timestamps, farm_wind_base):
             "temperature_c": np.round(mm_temp, 1), "pressure_hpa": np.round(mm_prs, 1),
         })
         df_t.to_sql("wind_resource", conn, if_exists="append", index=False,
-                    method="multi", chunksize=5000)
+                    chunksize=5000)
 
     print("done.")
 
@@ -926,7 +926,7 @@ def generate_generation_production(conn, daily_wind, solar_daily,
 
     df = pd.DataFrame(rows)
     df.to_sql("generation_production", conn, if_exists="append", index=False,
-              method="multi", chunksize=1000)
+              chunksize=1000)
     print("done.")
 
 
