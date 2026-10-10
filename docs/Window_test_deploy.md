@@ -1,6 +1,6 @@
 # Windows test deployment (build from source)
 
-How to get the `design_change` branch running on a Windows 11 test machine without the installer. Two scripts do the work, on top of the existing `scripts\install-prerequisites.ps1`. The scripts have **not yet been run on Windows**; expect to fix small things on the first pass.
+How to get the `design_change` branch running on a Windows 11 test machine without the installer. Two scripts do the work (plus a cleanup script for when a run goes wrong), on top of the existing `scripts\install-prerequisites.ps1`. The scripts have **not yet been run on Windows**; expect to fix small things on the first pass.
 
 Works on Windows 11 x64 or ARM64. On ARM64 (for example a VMware VM on an Apple Silicon Mac) the scripts install the **x64** Python and Node on purpose. The app's pinned numpy and the `sqlite-vec` native module have no Windows ARM64 build, so the whole stack runs under Windows' x64 emulation. That is a good smoke test but not proof for a real AMD64 PC.
 
@@ -35,7 +35,7 @@ It does everything else, and each step checks first and skips what is already th
 
 Read the prerequisite summary. Yellow is a warning, red is a failure. Running it again is safe.
 
-Options: `update` does `git pull` and then `fresh`; `fresh` deletes `node_modules`, `out` and the Electron download cache and reinstalls (no `git pull`); `quick` skips the prerequisite check.
+Options: `update` does `git pull` and then `fresh`; `fresh` deletes `node_modules`, `out` and the Electron download cache and reinstalls (no `git pull`); `quick` skips the prerequisite check. `scripts\windows-test-cleanup.cmd` is for when a run goes wrong: it only deletes `node_modules`, `out`, `release` and the Electron download cache, and installs or uninstalls nothing. Settings, sessions and the `Sachivji Workspace` folder are left alone.
 
 ## After it starts
 
@@ -53,5 +53,5 @@ Options: `update` does `git pull` and then `fresh`; `fresh` deletes `node_module
 | `gh auth login` cannot open a browser | Run `gh auth login --with-token` with a personal access token that can read the repo. |
 | `npm ci` fails building `better-sqlite3` | It normally downloads a prebuilt binary. If it compiles instead, install the Visual Studio Build Tools (C++ workload) and run again. Tell me the output. |
 | `TypeError: fetch failed` while downloading Electron | The VM cannot reach `github.com` (DNS, proxy, VPN, TLS interception or the VM's network mode). Test with `curl -I https://github.com`. The run script now checks this first and stops with a message. If only npm's download fails while curl works, the run script now downloads the Electron zip with `curl` itself and unpacks it (no checksum check; fine for a test machine). Otherwise fix the network and run `windows-test-run.cmd` again: it notices the half-finished install and redoes it. |
-| `Unsupported platform for sqlite-vec, on a win32-arm64 machine` | Electron was installed for ARM64 because Node was ARM64. Run `scripts\windows-test-run.cmd fresh`: the prerequisite step replaces an ARM64 Node by the x64 one. The run script refuses to continue when `node -p "process.arch"` is not `x64`. |
+| `Unsupported platform for sqlite-vec, on a win32-arm64 machine` | Electron was installed for ARM64 because Node was ARM64. Run `scripts\windows-test-cleanup.cmd`, then `scripts\windows-test-run.cmd`: the prerequisite step replaces an ARM64 Node by the x64 one. The run script refuses to continue when `node -p "process.arch"` is not `x64`. |
 | `ollama create` fails | Start Ollama from the Start menu and run `windows-test-run.cmd` again. |
