@@ -16,7 +16,6 @@
 import { createHash } from 'node:crypto'
 import { createWriteStream, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { mkdir, readdir, rename, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
@@ -68,7 +67,11 @@ async function fetchInterpreter() {
     return
   }
   await rm(PYTHON_DIR, { recursive: true, force: true })
-  const tmp = mkdtempSync(path.join(tmpdir(), 'pbs-'))
+  // Extracted under resources/ (not the OS tmpdir) so the final rename() below stays on
+  // one filesystem/drive — CI runners (e.g. GitHub's Windows images) put the OS tmpdir on
+  // a different drive than the checkout, and cross-device rename fails with EXDEV.
+  await mkdir(path.join(ROOT, 'resources'), { recursive: true })
+  const tmp = mkdtempSync(path.join(ROOT, 'resources', '.pbs-'))
   const archive = path.join(tmp, PBS_ASSET)
   try {
     log(`downloading ${PBS_ASSET}…`)
