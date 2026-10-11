@@ -31,7 +31,13 @@ interface Harness {
  */
 function harness(
   handler: (command: string, args: string[], h: Harness) => RunResult | undefined,
-  opts: { platform?: NodeJS.Platform; free?: number | undefined; existing?: string[] } = {}
+  opts: {
+    platform?: NodeJS.Platform
+    free?: number | undefined
+    existing?: string[]
+    bundledPython?: string
+    bundledWheelhouse?: string
+  } = {}
 ): Harness {
   const files = new Map<string, string>()
   const dirs = new Set<string>(opts.existing ?? [])
@@ -40,6 +46,8 @@ function harness(
   const h: Harness = { files, dirs, calls, removed } as Harness
   h.deps = {
     platform: opts.platform ?? 'linux',
+    bundledPython: () => opts.bundledPython,
+    bundledWheelhouse: () => opts.bundledWheelhouse,
     exists: (p) => dirs.has(p) || files.has(p),
     mkdirp: async (p) => {
       dirs.add(p)
@@ -122,6 +130,24 @@ describe('detectPython', () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.reason).toMatch(/did not respond/)
   })
+
+  it('prefers a bundled interpreter over every system candidate (Windows sponsor build, TASKS #202)', async () => {
+    const BUNDLED = 'C:\\Program Files\\Sachivji\\resources\\python-win-x64\\python.exe'
+    const h = harness((c) => (c === BUNDLED ? ok('3.12.15\n') : ok('3.12.1\n')), {
+      platform: 'win32',
+      bundledPython: BUNDLED
+    })
+    const r = await detectPython(h.deps)
+    expect(r).toEqual({ ok: true, python: { command: BUNDLED, args: [], version: '3.12.15' } })
+    // Never falls through to `py`/`python`/`python3` when the bundled interpreter already works.
+    expect(h.calls).toHaveLength(1)
+  })
+
+  it('falls back to the system probe when no bundled interpreter is reported', async () => {
+    const h = harness(() => ok('3.12.1\n'), { platform: 'win32', bundledPython: undefined })
+    const r = await detectPython(h.deps)
+    expect(r).toMatchObject({ ok: true, python: { command: 'py' } })
+  })
 })
 
 describe('WorkspaceRuntime.ensureWorkspace', () => {
@@ -150,6 +176,37 @@ describe('WorkspaceRuntime.ensureWorkspace', () => {
       'ready/installed'
     ])
     expect(JSON.parse(h.files.get(`${VENV}/.sachiv-runtime.json`)!).packagesInstalled).toBe(true)
+  })
+
+  it('installs the base packages from the bundled wheelhouse, offline, when one is reported (TASKS #202)', async () => {
+    const WHEELHOUSE = 'C:\\Program Files\\Sachivji\\resources\\python-win-x64-wheels'
+    const h = harness(
+      (_c, a) => {
+        if (a.includes('-c')) return ok('3.12.15\n')
+        if (a.includes('pip')) return ok()
+        return undefined
+      },
+      { platform: 'win32', bundledWheelhouse: WHEELHOUSE }
+    )
+    const final = await new WorkspaceRuntime(h.deps).ensureWorkspace(ROOT)
+
+    expect(final).toMatchObject({ status: 'ready', packages: 'installed' })
+    const pip = h.calls.find((c) => c.args.includes('pip'))
+    expect(pip?.args).toEqual(expect.arrayContaining(['--no-index', '--find-links', WHEELHOUSE, ...BASE_PACKAGES]))
+  })
+
+  it('blames the base-package install failure on the bundled packages, not the network, when offline', async () => {
+    const h = harness(
+      (_c, a) => {
+        if (a.includes('-c')) return ok('3.12.15\n')
+        if (a.includes('pip')) return fail('simulated pip failure')
+        return undefined
+      },
+      { platform: 'win32', bundledWheelhouse: 'C:\\wheels' }
+    )
+    const final = await new WorkspaceRuntime(h.deps).ensureWorkspace(ROOT)
+    expect(final.message).toMatch(/bundled base packages failed/)
+    expect(final.message).not.toMatch(/network/)
   })
 
   it('reports missing-python without touching the venv, but still creates the folders', async () => {

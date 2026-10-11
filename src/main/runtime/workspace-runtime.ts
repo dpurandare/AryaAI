@@ -62,6 +62,18 @@ export interface RuntimeDeps {
   writeText(p: string, content: string): Promise<void>
   /** Free bytes on the volume holding `p`, or `undefined` when unknown (the check is then skipped). */
   freeBytes(p: string): Promise<number | undefined>
+  /**
+   * Absolute path to a bundled interpreter's executable, when the packaged app ships one for
+   * this platform (the Windows sponsor build, TASKS #202 — `scripts/fetch-bundled-python-win.mjs`
+   * + `electron-builder.yml`'s `win.extraResources`). `undefined` in dev, in CI, and on any
+   * platform/build that ships none — detection then falls back to the system Python probe below.
+   */
+  bundledPython?(): string | undefined
+  /**
+   * Absolute path to a local wheel cache for the bundled interpreter's pinned packages, so
+   * installing them needs no network. `undefined` when there is no bundled interpreter.
+   */
+  bundledWheelhouse?(): string | undefined
 }
 
 export function defaultRuntimeDeps(): RuntimeDeps {
@@ -104,8 +116,28 @@ export function defaultRuntimeDeps(): RuntimeDeps {
       } catch {
         return undefined
       }
+    },
+    bundledPython: () => {
+      const p = bundledResourcePath('python-win-x64', 'python.exe')
+      return p && existsSync(p) ? p : undefined
+    },
+    bundledWheelhouse: () => {
+      const p = bundledResourcePath('python-win-x64-wheels')
+      return p && existsSync(p) ? p : undefined
     }
   }
+}
+
+/**
+ * Path under the packaged app's `resources/` (Electron sets `process.resourcesPath`;
+ * unset outside Electron, e.g. under Vitest/plain Node — returns `undefined` there, which
+ * is correct: no bundled interpreter exists in dev). Windows-only for now (TASKS #202 scopes
+ * the sponsor build to AMD64 — see the ARM64 note in TASKS #202).
+ */
+function bundledResourcePath(...segments: string[]): string | undefined {
+  if (process.platform !== 'win32') return undefined
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+  return resourcesPath ? path.join(resourcesPath, ...segments) : undefined
 }
 
 // --- Detection ---------------------------------------------------------------
@@ -151,9 +183,11 @@ function parseVersion(text: string): { major: number; minor: number; full: strin
  * pass there. Every probe is time-limited (macOS's CLT shim can hang on an
  * installer dialog).
  */
-export async function detectPython(deps: Pick<RuntimeDeps, 'run' | 'platform'>): Promise<PythonDetection> {
+export async function detectPython(deps: Pick<RuntimeDeps, 'run' | 'platform' | 'bundledPython'>): Promise<PythonDetection> {
   let best: string | undefined
-  for (const c of candidates(deps.platform)) {
+  const bundled = deps.bundledPython?.()
+  const list = bundled ? [{ command: bundled, args: [] }, ...candidates(deps.platform)] : candidates(deps.platform)
+  for (const c of list) {
     const r = await deps.run(c.command, [...c.args, '-c', PROBE_CODE], { timeoutMs: PROBE_TIMEOUT_MS })
     if (r.timedOut) {
       best ??= `\`${c.command}\` did not respond within ${PROBE_TIMEOUT_MS / 1000}s.`
@@ -365,6 +399,7 @@ export class WorkspaceRuntime {
 
   private async installPackages(root: string, pythonVersion: string): Promise<RuntimeState> {
     const { deps } = this
+    const wheelhouse = deps.bundledWheelhouse?.()
     this.set(root, {
       status: 'ready',
       packages: 'installing',
@@ -373,7 +408,17 @@ export class WorkspaceRuntime {
     })
     const r = await deps.run(
       venvPythonPath(root, deps.platform),
-      ['-m', 'pip', 'install', '--disable-pip-version-check', '--no-input', ...BASE_PACKAGES],
+      [
+        '-m',
+        'pip',
+        'install',
+        '--disable-pip-version-check',
+        '--no-input',
+        // The bundled Windows interpreter ships its own pinned wheels (TASKS #202), so installing
+        // from them needs no network and can't drift onto a newer, untested package version.
+        ...(wheelhouse ? ['--no-index', '--find-links', wheelhouse] : []),
+        ...BASE_PACKAGES
+      ],
       { timeoutMs: PIP_TIMEOUT_MS }
     )
     if (r.code === 0) {
@@ -384,7 +429,9 @@ export class WorkspaceRuntime {
       status: 'ready',
       packages: 'failed',
       pythonVersion,
-      message: `The Python environment was created, but installing the base packages failed (${tail(r.timedOut ? 'timed out' : r.stderr) || 'unknown error'}). Check your network connection and choose Retry.`
+      message: wheelhouse
+        ? `The Python environment was created, but installing the bundled base packages failed (${tail(r.timedOut ? 'timed out' : r.stderr) || 'unknown error'}). Choose Retry.`
+        : `The Python environment was created, but installing the base packages failed (${tail(r.timedOut ? 'timed out' : r.stderr) || 'unknown error'}). Check your network connection and choose Retry.`
     })
   }
 }

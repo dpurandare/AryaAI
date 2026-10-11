@@ -27,6 +27,15 @@ mac:
 win:
   target:
     - nsis
+  # Sponsor build (TASKS #202): a self-contained Python so the installer needs no system
+  # Python at all. Fetched by `npm run fetch:bundled-python:win` (scripts/fetch-bundled-python-win.mjs)
+  # into resources/ (gitignored) before packaging; `workspace-runtime.ts`'s `defaultRuntimeDeps()`
+  # looks for it under `process.resourcesPath` at runtime.
+  extraResources:
+    - from: resources/python-win-x64
+      to: python-win-x64
+    - from: resources/python-win-x64-wheels
+      to: python-win-x64-wheels
 linux:
   target:
     - AppImage
