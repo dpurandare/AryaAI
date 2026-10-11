@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { McpServerConfig } from './config'
 
@@ -26,7 +27,7 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
   StreamableHTTPClientTransport: FakeStreamableHttpTransport
 }))
 
-const { connectMcpServer, MCP_TOOL_DESCRIPTION_MAX } = await import('./client')
+const { connectMcpServer, resolveStdioEnv, MCP_TOOL_DESCRIPTION_MAX } = await import('./client')
 
 const stdioConfig: McpServerConfig = {
   id: 's1',
@@ -62,6 +63,27 @@ describe('connectMcpServer', () => {
     expect(FakeStdioTransport).toHaveBeenCalledWith(
       expect.objectContaining({ env: { PATH: '/usr/bin', FOO: 'bar' } })
     )
+  })
+
+  it('prepends the bundled Node dir to PATH when one is given (TASKS #202)', async () => {
+    mockListTools.mockResolvedValue({ tools: [] })
+    await connectMcpServer(stdioConfig, undefined, '/resources/node-win-x64')
+    expect(FakeStdioTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ env: { PATH: `/resources/node-win-x64${path.delimiter}/usr/bin` } })
+    )
+  })
+
+  it('still merges a custom env onto the default when a bundled Node dir is given', async () => {
+    mockListTools.mockResolvedValue({ tools: [] })
+    await connectMcpServer({ ...stdioConfig, env: { FOO: 'bar' } }, undefined, '/resources/node-win-x64')
+    expect(FakeStdioTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ env: { PATH: `/resources/node-win-x64${path.delimiter}/usr/bin`, FOO: 'bar' } })
+    )
+  })
+
+  it('resolveStdioEnv leaves env untouched (pre-existing behavior) when no bundled Node dir exists', () => {
+    expect(resolveStdioEnv(undefined, undefined)).toBeUndefined()
+    expect(resolveStdioEnv({ FOO: 'bar' }, undefined)).toEqual({ PATH: '/usr/bin', FOO: 'bar' })
   })
 
   it('builds a StreamableHTTPClientTransport with a bearer header when a token is given', async () => {

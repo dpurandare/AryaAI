@@ -41,6 +41,11 @@ win:
       to: python-win-x64-wheels
     - from: resources/ollama-win-x64
       to: ollama-win-x64
+    # A self-contained Node so `npx`-launched MCP servers (e.g. Context7, manual-test 13.4) work
+    # with no system Node install — found live on the sponsor VM (`npx` not on PATH at all).
+    # Fetched by `npm run fetch:bundled-node:win` (scripts/fetch-bundled-node-win.mjs).
+    - from: resources/node-win-x64
+      to: node-win-x64
     # The pulled nomic-embed-text's published context size (8192) exceeds its real trained
     # context (2048) and crashes llama-server on an embed call — see the file itself. Bundled
     # so `ollama-runtime.ts` can re-create the model in place with the fix, no network needed

@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import path from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client'
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -5,15 +7,41 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import type { Tool, ToolContext } from '../tools/types'
 import type { McpServerConfig } from './config'
 
-function buildTransport(config: McpServerConfig, token: string | undefined): Transport {
+/**
+ * Prepends the bundled Windows Node runtime's directory (TASKS #202) to PATH so `cross-spawn`
+ * (what `StdioClientTransport` uses internally, confirmed by reading its source — it resolves a
+ * bare command via `which.sync(command, { path: env.PATH })`, not `process.env` directly, so an
+ * explicit `env.PATH` here really is what gets searched) resolves a bare `npx`/`npm`/`node`
+ * command to it. A genuinely clean Windows machine — the sponsor scenario this bundle targets —
+ * has no system Node at all, and most real MCP servers (e.g. Context7, manual-test 13.4) launch
+ * via `npx`; found live testing #202 on the sponsor VM. `bundledNodeDir` is `undefined` on every
+ * build/platform but this one, so this is a no-op everywhere else — the exact pre-existing
+ * "merge onto the SDK's own default env" behavior is unchanged there.
+ */
+export function resolveStdioEnv(
+  configEnv: Record<string, string> | undefined,
+  bundledNodeDir: string | undefined
+): Record<string, string> | undefined {
+  if (!bundledNodeDir) return configEnv ? { ...getDefaultEnvironment(), ...configEnv } : undefined
+  const base = { ...getDefaultEnvironment(), ...configEnv }
+  return { ...base, PATH: `${bundledNodeDir}${path.delimiter}${base.PATH ?? ''}` }
+}
+
+/** Windows-only (same gate as the bundled Python/Ollama resource paths); `undefined` in dev/Vitest/mac/linux. */
+function defaultBundledNodeDir(): string | undefined {
+  if (process.platform !== 'win32') return undefined
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+  if (!resourcesPath) return undefined
+  const dir = path.join(resourcesPath, 'node-win-x64')
+  return existsSync(path.join(dir, 'npx.cmd')) ? dir : undefined
+}
+
+function buildTransport(config: McpServerConfig, token: string | undefined, bundledNodeDir: string | undefined): Transport {
   if (config.transport === 'stdio') {
     return new StdioClientTransport({
       command: config.command ?? '',
       args: config.args,
-      // Merge onto the SDK's own filtered-safe default env rather than
-      // replacing it — otherwise one custom var would drop PATH etc. and
-      // break resolving `command` at all.
-      env: config.env ? { ...getDefaultEnvironment(), ...config.env } : undefined
+      env: resolveStdioEnv(config.env, bundledNodeDir)
     })
   }
   return new StreamableHTTPClientTransport(new URL(config.url ?? ''), {
@@ -84,10 +112,11 @@ function wrapMcpTool(
 
 export async function connectMcpServer(
   config: McpServerConfig,
-  token: string | undefined
+  token: string | undefined,
+  bundledNodeDir: string | undefined = defaultBundledNodeDir()
 ): Promise<{ client: Client; tools: Tool[] }> {
   const client = new Client({ name: 'sachiv', version: '0.2.2' })
-  const transport = buildTransport(config, token)
+  const transport = buildTransport(config, token, bundledNodeDir)
   await client.connect(transport)
 
   const { tools: mcpTools } = await client.listTools()
