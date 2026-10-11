@@ -64,11 +64,12 @@ import { McpManager } from '../mcp/manager'
 import { openDriver } from '../tools/db/driver-factory'
 import { buildSchemaSummary } from '../tools/db/schema-summary'
 import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
-import { createDefaultProviderRegistry, probeEmbeddingDimension } from '../providers/setup'
+import { createDefaultProviderRegistry, probeEmbeddingDimension, setBundledOllamaBaseUrl } from '../providers/setup'
 import { createDefaultWebSearchProviderRegistry } from '../tools/web-search-providers'
 import type { Message, ModelProvider, ProviderOptions } from '../providers/types'
 import { exportSession } from '../sessions/export'
 import { WorkspaceRuntime } from '../runtime/workspace-runtime'
+import { OllamaRuntime } from '../runtime/ollama-runtime'
 import {
   createDefaultRegistry,
   createToolContext,
@@ -181,6 +182,7 @@ export const SHOW_ANSWERING_MODEL_SETTING_KEY = 'showAnsweringModel'
 export const PYTHON_RUNTIME_DISABLED_SETTING_KEY = 'pythonRuntimeDisabled'
 
 const workspaceRuntime = new WorkspaceRuntime()
+const ollamaRuntime = new OllamaRuntime()
 
 function ensureRuntimeFor(root: string, opts: { repair?: boolean } = {}): Promise<RuntimeState> {
   return workspaceRuntime.ensureWorkspace(root, {
@@ -255,6 +257,17 @@ export function registerIpcHandlers(): void {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IpcChannel.RuntimeStateChanged, state)
   })
   void ensureRuntimeFor(toolContext.workspaceGuard.root)
+
+  // Bundled Ollama (TASKS #202) — a strict no-op on every build except the Windows sponsor
+  // one (OllamaRuntime.ensure() resolves 'unavailable' immediately otherwise). Starting the
+  // server and pulling the embedding model can take a while on first run; the renderer
+  // follows progress via OllamaStateChanged, same pattern as the Python runtime above.
+  ollamaRuntime.onChange((state) => {
+    setBundledOllamaBaseUrl(state.baseUrl)
+    for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IpcChannel.OllamaStateChanged, state)
+  })
+  void ollamaRuntime.ensure()
+  app.on('before-quit', () => ollamaRuntime.stop())
 
   // Fire-and-forget: connecting can involve spawning a process or a network
   // round trip, and shouldn't block app startup. toolRegistry.list() is
@@ -455,6 +468,9 @@ export function registerIpcHandlers(): void {
     setSetting(PYTHON_RUNTIME_DISABLED_SETTING_KEY, enabled ? 'false' : 'true')
     return ensureRuntimeFor(currentWorkspaceRoot())
   })
+
+  ipcMain.handle(IpcChannel.OllamaGetState, () => ollamaRuntime.getState() ?? null)
+  ipcMain.handle(IpcChannel.OllamaEnsure, () => ollamaRuntime.ensure())
 
   ipcMain.handle(
     IpcChannel.SecretStorageGetInfo,

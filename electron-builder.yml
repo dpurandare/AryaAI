@@ -31,11 +31,22 @@ win:
   # Python at all. Fetched by `npm run fetch:bundled-python:win` (scripts/fetch-bundled-python-win.mjs)
   # into resources/ (gitignored) before packaging; `workspace-runtime.ts`'s `defaultRuntimeDeps()`
   # looks for it under `process.resourcesPath` at runtime.
+  # CPU-only Ollama (no CUDA/Vulkan), fetched by `npm run fetch:bundled-ollama:win`
+  # (scripts/fetch-bundled-ollama-win.mjs) — the embedding model itself isn't bundled, it's
+  # pulled over the network on first run, so this is just the ~66MB runtime.
   extraResources:
     - from: resources/python-win-x64
       to: python-win-x64
     - from: resources/python-win-x64-wheels
       to: python-win-x64-wheels
+    - from: resources/ollama-win-x64
+      to: ollama-win-x64
+    # The pulled nomic-embed-text's published context size (8192) exceeds its real trained
+    # context (2048) and crashes llama-server on an embed call — see the file itself. Bundled
+    # so `ollama-runtime.ts` can re-create the model in place with the fix, no network needed
+    # for this part.
+    - from: models/ModelFileNomicEmbed
+      to: ModelFileNomicEmbed
 # Sponsor build (TASKS #202): electron-builder's NSIS default is "oneClick" — a bare
 # progress bar that closes with no Finish page, no visible confirmation, and no shortcut
 # of its own. Fine for a developer who knows to search the Start Menu; confusing for a

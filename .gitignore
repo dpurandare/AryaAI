@@ -16,6 +16,8 @@ release
 # Scratch files the agent writes while working
 tmp/
 
-# Fetched by scripts/fetch-bundled-python-win.mjs for the Windows sponsor build (TASKS #202) — binary assets, not source
+# Fetched by scripts/fetch-bundled-python-win.mjs / fetch-bundled-ollama-win.mjs for the Windows
+# sponsor build (TASKS #202) — binary assets, not source
 resources/python-win-x64/
 resources/python-win-x64-wheels/
+resources/ollama-win-x64/

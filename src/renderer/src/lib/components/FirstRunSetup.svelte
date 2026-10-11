@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { RuntimeState } from '@shared/runtime'
+  import type { OllamaRuntimeState, RuntimeState } from '@shared/runtime'
 
   let {
     envFilePath,
@@ -18,7 +18,7 @@
   } = $props()
 
   // svelte-ignore state_referenced_locally
-  let step = $state<'secrets' | 'python'>(initialStep)
+  let step = $state<'secrets' | 'python' | 'ollama'>(initialStep)
   let switching = $state(false)
   let showFileConfirm = $state(false)
 
@@ -63,7 +63,43 @@
     busy = true
     try {
       await window.sachiv.setRuntimeEnabled(false)
-      await onFinish()
+      await afterPython()
+    } finally {
+      busy = false
+    }
+  }
+
+  // --- Ollama step: the Windows sponsor build's bundled, CPU-only server (TASKS #202).
+  // `status === 'unavailable'` on every other build/platform, including a win32 build without
+  // the bundled resource — this step is then skipped entirely, straight to finish(), so nothing
+  // changes for anyone outside that one specific build. Tracked from mount (not step-gated) so
+  // by the time the Python step's Continue is clicked, the current status is already known —
+  // no extra round trip, no flash of a step that's about to be skipped.
+  let ollama = $state<OllamaRuntimeState | null>(null)
+
+  window.sachiv.getOllamaRuntimeState().then((s) => {
+    if (s) ollama = s
+  })
+  $effect(() => window.sachiv.onOllamaRuntimeStateChanged((s) => (ollama = s)))
+
+  const ollamaReady = $derived(ollama?.status === 'ready')
+  const ollamaFailed = $derived(ollama?.status === 'failed')
+  const ollamaPullPercent = $derived(
+    ollama?.modelPullProgress ? Math.round((100 * ollama.modelPullProgress.completed) / ollama.modelPullProgress.total) : undefined
+  )
+
+  async function afterPython(): Promise<void> {
+    if (!ollama || ollama.status === 'unavailable') {
+      await finish()
+      return
+    }
+    step = 'ollama'
+  }
+
+  async function retryOllama(): Promise<void> {
+    busy = true
+    try {
+      ollama = await window.sachiv.ensureOllamaRuntime()
     } finally {
       busy = false
     }
@@ -121,7 +157,7 @@
           </div>
         </div>
       {/if}
-    {:else}
+    {:else if step === 'python'}
       <p>
         Sachivji runs agent-written scripts — charts, Word and Excel files — in a Python environment
         that it sets up inside your workspace. This needs Python 3.10 or newer installed on this
@@ -145,7 +181,7 @@
             <button disabled={busy} onclick={retry}>Retry</button>
             <button disabled={busy} onclick={continueWithoutPython}>Continue without Python</button>
           {:else}
-            <button class="primary" disabled={!canContinue || busy} onclick={finish}>
+            <button class="primary" disabled={!canContinue || busy} onclick={afterPython}>
               {canContinue ? 'Continue' : 'Setting up…'}
             </button>
           {/if}
@@ -156,6 +192,43 @@
           Install Python from python.org (on Debian/Ubuntu: <code>sudo apt install python3 python3-venv</code>),
           then choose Retry. Without Python, chat, database and Office tools still work; you can turn it on
           later in Settings &gt; Runtime.
+        </p>
+      {/if}
+    {:else}
+      <p>
+        Setting up local search history: a bundled, CPU-only Ollama server for the embedding model it uses.
+        This needs to download the <code>nomic-embed-text</code> model (about 274MB) once, over the network.
+      </p>
+
+      <div class="option">
+        <h2>
+          Local embeddings
+          {#if ollamaReady}<span class="badge">Ready</span>{/if}
+        </h2>
+        {#if ollama}
+          <p class:error={ollamaFailed}>
+            {ollama.message}
+            {#if ollama.status === 'pulling-model' && ollamaPullPercent !== undefined}({ollamaPullPercent}%){/if}
+          </p>
+        {:else}
+          <p>Checking…</p>
+        {/if}
+        <div class="actions">
+          {#if ollamaFailed}
+            <button disabled={busy} onclick={retryOllama}>Retry</button>
+            <button disabled={busy} onclick={finish}>Continue anyway</button>
+          {:else}
+            <button class="primary" disabled={!ollamaReady || busy} onclick={finish}>
+              {ollamaReady ? 'Continue' : 'Setting up…'}
+            </button>
+          {/if}
+        </div>
+      </div>
+      {#if ollamaFailed}
+        <p>
+          Local search-history embeddings won't be available. Chat and every other feature still work; you
+          can pick a cloud embedding provider instead in Settings &gt; Search History Embedding, or choose
+          Retry above.
         </p>
       {/if}
     {/if}

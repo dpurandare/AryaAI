@@ -34,3 +34,33 @@ export interface RuntimeState {
   /** Workspace root this state describes. */
   root: string
 }
+
+/**
+ * State of the bundled, CPU-only Ollama runtime shipped with the Windows sponsor build
+ * (TASKS #202) — ships only on win32 builds that bundled it; `'unavailable'` on every other
+ * build (dev, mac, linux, or a win32 build without the resource), so this is a strict no-op
+ * everywhere else and the user's own "bring your own Ollama" setup is never touched.
+ */
+export type OllamaRuntimeStatus =
+  /** Not a win32 build with the bundled resource present — nothing to do here. */
+  | 'unavailable'
+  /** Spawning `ollama.exe serve` and waiting for its health check. */
+  | 'starting'
+  /** Server is healthy; pulling the embedding model over the network (not bundled — see TASKS #202). */
+  | 'pulling-model'
+  /** Server healthy and the embedding model present — ready for `embed()` calls. */
+  | 'ready'
+  /** Spawn, health check, or the model pull failed. Retry applies. */
+  | 'failed'
+
+export interface OllamaRuntimeState {
+  status: OllamaRuntimeStatus
+  /** Human-readable, shown in Settings and onboarding. Always set. */
+  message: string
+  /** `http://127.0.0.1:<port>` once the server is confirmed healthy — the port the bundled
+   * server actually bound (not always the default 11434: picked to avoid colliding with an
+   * Ollama the sponsor already runs for their own purposes). */
+  baseUrl?: string
+  /** Set while status is `'pulling-model'`; omitted once the pull finishes either way. */
+  modelPullProgress?: { completed: number; total: number }
+}

@@ -23,7 +23,8 @@
     "test": "vitest run",
     "dist:mac": "npm run build && electron-builder --mac --publish never",
     "fetch:bundled-python:win": "node scripts/fetch-bundled-python-win.mjs",
-    "predist:win": "npm run fetch:bundled-python:win",
+    "fetch:bundled-ollama:win": "node scripts/fetch-bundled-ollama-win.mjs",
+    "predist:win": "npm run fetch:bundled-python:win && npm run fetch:bundled-ollama:win",
     "dist:win": "npm run build && electron-builder --win --publish never",
     "dist:linux": "npm run build && electron-builder --linux --publish never",
     "icons:generate": "node scripts/generate-icons.mjs"

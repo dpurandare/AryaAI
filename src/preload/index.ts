@@ -35,7 +35,7 @@ import {
   type SettingsImportPreviewResult,
   type SettingsImportApplyResult
 } from '@shared/ipc-contract'
-import type { RuntimeState } from '@shared/runtime'
+import type { OllamaRuntimeState, RuntimeState } from '@shared/runtime'
 import type { AgentRole } from '@shared/agents'
 
 const api = {
@@ -137,6 +137,14 @@ const api = {
     const listener = (_event: IpcRendererEvent, state: RuntimeState): void => callback(state)
     ipcRenderer.on(IpcChannel.RuntimeStateChanged, listener)
     return () => ipcRenderer.removeListener(IpcChannel.RuntimeStateChanged, listener)
+  },
+
+  getOllamaRuntimeState: (): Promise<OllamaRuntimeState | null> => ipcRenderer.invoke(IpcChannel.OllamaGetState),
+  ensureOllamaRuntime: (): Promise<OllamaRuntimeState> => ipcRenderer.invoke(IpcChannel.OllamaEnsure),
+  onOllamaRuntimeStateChanged: (callback: (state: OllamaRuntimeState) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, state: OllamaRuntimeState): void => callback(state)
+    ipcRenderer.on(IpcChannel.OllamaStateChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannel.OllamaStateChanged, listener)
   },
 
   getSearchHistoryStatus: (): Promise<SearchHistoryStatusDto> =>

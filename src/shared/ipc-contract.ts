@@ -73,6 +73,13 @@ export const IpcChannel = {
   /** Pushed from main whenever the runtime state changes. */
   RuntimeStateChanged: 'runtime:state-changed',
 
+  /** The bundled, CPU-only Ollama runtime for the Windows sponsor build (TASKS #202) — `undefined`/`'unavailable'` on every other build. */
+  OllamaGetState: 'ollama:get-state',
+  /** Starts (or re-starts, after a failure) the bundled server + embedding-model pull. A no-op, resolving 'unavailable', when nothing is bundled. */
+  OllamaEnsure: 'ollama:ensure',
+  /** Pushed from main whenever the bundled Ollama runtime's state changes. */
+  OllamaStateChanged: 'ollama:state-changed',
+
   SecretStorageGetInfo: 'secret-storage:get-info',
   SecretStorageSwitchToFile: 'secret-storage:switch-to-file',
 

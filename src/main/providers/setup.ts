@@ -7,6 +7,24 @@ import { OpenAIProvider } from './openai'
 import { ProviderRegistry } from './registry'
 import type { EmbeddingProvider } from './types'
 
+/**
+ * Set once the bundled Windows-sponsor-build Ollama server (TASKS #202) is confirmed healthy,
+ * so every 'ollama' provider instance below — both the registry's and `getEmbeddingProvider`'s
+ * own, separate construction of one — points at its actual port instead of assuming the
+ * default `localhost:11434`. `undefined` (the initial value) on every other build/platform,
+ * where nothing bundled exists and the old default is exactly right. Not used for
+ * 'ollama-cloud', which always targets ollama.com regardless.
+ */
+let bundledOllamaBaseUrl: string | undefined
+
+export function setBundledOllamaBaseUrl(baseUrl: string | undefined): void {
+  bundledOllamaBaseUrl = baseUrl
+}
+
+function ollamaChatBaseUrl(): string | undefined {
+  return bundledOllamaBaseUrl ? `${bundledOllamaBaseUrl}/v1` : undefined
+}
+
 export function createDefaultProviderRegistry(): ProviderRegistry {
   const registry = new ProviderRegistry()
   registry.register({
@@ -35,7 +53,10 @@ export function createDefaultProviderRegistry(): ProviderRegistry {
     displayName: 'Ollama (local)',
     requiresApiKey: false,
     supportsEmbeddings: true,
-    create: () => new OllamaProvider()
+    create: () => {
+      const baseUrl = ollamaChatBaseUrl()
+      return baseUrl ? new OllamaProvider(baseUrl) : new OllamaProvider()
+    }
   })
   registry.register({
     id: 'ollama-cloud',
@@ -77,8 +98,10 @@ export function getEmbeddingProvider(providerId: string, apiKey?: string): Embed
       return new OpenAIProvider(apiKey!)
     case 'google':
       return new GoogleProvider(apiKey!)
-    case 'ollama':
-      return new OllamaProvider()
+    case 'ollama': {
+      const baseUrl = ollamaChatBaseUrl()
+      return baseUrl ? new OllamaProvider(baseUrl) : new OllamaProvider()
+    }
     case 'ollama-cloud':
       return new OllamaProvider('https://ollama.com/v1', apiKey!, 'ollama-cloud', 'Ollama Cloud')
     case 'mistral':

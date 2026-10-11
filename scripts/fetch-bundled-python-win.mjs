@@ -13,14 +13,13 @@
  *
  * Usage: node scripts/fetch-bundled-python-win.mjs [--force]
  */
-import { createHash } from 'node:crypto'
-import { createWriteStream, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { mkdir, readdir, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
-import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { download, sha256OfFile } from './fetch-utils.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -46,19 +45,6 @@ const force = process.argv.includes('--force')
 
 function log(msg) {
   console.log(`[fetch-bundled-python-win] ${msg}`)
-}
-
-async function download(url, destFile) {
-  const res = await fetch(url, { redirect: 'follow' })
-  if (!res.ok) throw new Error(`GET ${url} -> HTTP ${res.status}`)
-  await pipeline(res.body, createWriteStream(destFile))
-}
-
-async function sha256OfFile(file) {
-  const { createReadStream } = await import('node:fs')
-  const hash = createHash('sha256')
-  await pipeline(createReadStream(file), hash)
-  return hash.digest('hex')
 }
 
 async function fetchInterpreter() {
