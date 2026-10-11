@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { RoleRosterDto, RoleToolsDto, ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor, WebSearchProviderDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
-  import type { RuntimeState } from '@shared/runtime'
+  import type { OllamaRuntimeState, RuntimeState } from '@shared/runtime'
 
   let {
     autoApproveRules,
@@ -507,6 +507,40 @@
     failed: 'Needs attention',
     disabled: 'Turned off'
   }
+
+  // --- Bundled Ollama runtime (Windows sponsor build, TASKS #202) — `status === 'unavailable'`
+  // on every other build/platform, including a win32 build without the bundled resource; the
+  // section below is hidden entirely in that case, same as it never existing. Shown here (not
+  // only during onboarding) so status/progress/retry stays visible after onboarding has already
+  // completed on an earlier launch — e.g. after an in-place upgrade adds this feature.
+  let ollamaRuntime = $state<OllamaRuntimeState | null>(null)
+  let ollamaBusy = $state(false)
+
+  window.sachiv.getOllamaRuntimeState().then((s) => (ollamaRuntime = s))
+  $effect(() => window.sachiv.onOllamaRuntimeStateChanged((s) => (ollamaRuntime = s)))
+
+  async function retryOllamaRuntime(): Promise<void> {
+    ollamaBusy = true
+    try {
+      ollamaRuntime = await window.sachiv.ensureOllamaRuntime()
+    } finally {
+      ollamaBusy = false
+    }
+  }
+
+  const ollamaStatusLabel: Record<OllamaRuntimeState['status'], string> = {
+    unavailable: 'Not available',
+    starting: 'Starting…',
+    'pulling-model': 'Downloading…',
+    ready: 'Ready',
+    failed: 'Needs attention'
+  }
+
+  const ollamaPullPercent = $derived(
+    ollamaRuntime?.modelPullProgress
+      ? Math.round((100 * ollamaRuntime.modelPullProgress.completed) / ollamaRuntime.modelPullProgress.total)
+      : undefined
+  )
 
   // --- Roles (design-discussion.md section 11) ---
   let roleRoster = $state<RoleRosterDto | null>(null)
@@ -1582,6 +1616,27 @@
       {/if}
     {:else}
       <p class="status">Checking…</p>
+    {/if}
+
+    {#if ollamaRuntime && ollamaRuntime.status !== 'unavailable'}
+      <hr />
+
+      <h2>Local embeddings (bundled Ollama)</h2>
+      <p class="status">
+        A CPU-only Ollama server bundled with this install, used for local search-history embeddings with no
+        separate Ollama setup. Downloads the <code>nomic-embed-text</code> model (about 274MB) once, over the
+        network.
+      </p>
+      <p class="status" class:error={ollamaRuntime.status === 'failed'}>
+        <strong>{ollamaStatusLabel[ollamaRuntime.status]}</strong>
+        — {ollamaRuntime.message}
+        {#if ollamaRuntime.status === 'pulling-model' && ollamaPullPercent !== undefined}({ollamaPullPercent}%){/if}
+      </p>
+      {#if ollamaRuntime.status === 'failed'}
+        <div class="actions">
+          <button disabled={ollamaBusy} onclick={retryOllamaRuntime}>Retry</button>
+        </div>
+      {/if}
     {/if}
 
     <hr />
