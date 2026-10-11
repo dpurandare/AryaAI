@@ -36,6 +36,19 @@ win:
       to: python-win-x64
     - from: resources/python-win-x64-wheels
       to: python-win-x64-wheels
+# Sponsor build (TASKS #202): electron-builder's NSIS default is "oneClick" — a bare
+# progress bar that closes with no Finish page, no visible confirmation, and no shortcut
+# of its own. Fine for a developer who knows to search the Start Menu; confusing for a
+# non-technical sponsor who needs to see the install actually finished and how to launch
+# it. The standard wizard below shows a Finish page with an explicit "Run now" checkbox
+# and creates both shortcuts.
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  runAfterFinish: true
 linux:
   target:
     - AppImage
