@@ -9,10 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // security/keychain.ts — same hazard documented in mcp/config.test.ts.
 let documentsDir: string
 let userDataDir: string
+let homeDir: string
 
 vi.mock('electron', () => ({
   app: {
-    getPath: (name: string) => (name === 'documents' ? documentsDir : userDataDir)
+    getPath: (name: string) => (name === 'documents' ? documentsDir : name === 'home' ? homeDir : userDataDir)
   },
   safeStorage: {
     isEncryptionAvailable: () => true,
@@ -30,17 +31,30 @@ describe('createToolContext', () => {
     setDbPath(':memory:')
     documentsDir = await mkdtemp(join(tmpdir(), 'sachiv-setup-docs-'))
     userDataDir = await mkdtemp(join(tmpdir(), 'sachiv-setup-userdata-'))
+    homeDir = await mkdtemp(join(tmpdir(), 'sachiv-setup-home-'))
   })
 
   afterEach(async () => {
     await rm(documentsDir, { recursive: true, force: true })
     await rm(userDataDir, { recursive: true, force: true })
+    await rm(homeDir, { recursive: true, force: true })
   })
 
   it('defaults to a "Sachivji Workspace" folder under Documents when unconfigured', () => {
     const ctx = createToolContext()
     expect(ctx.workspaceGuard.root).toBe(defaultWorkspaceRoot())
     expect(existsSync(ctx.workspaceGuard.root)).toBe(true)
+  })
+
+  it('on Windows, builds the Documents default from app.getPath("home") instead of app.getPath("documents") (avoids OneDrive Known Folder Move redirection — TASKS #202)', () => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      expect(defaultWorkspaceRoot()).toBe(join(homeDir, 'Documents', 'Sachivji Workspace'))
+      expect(defaultWorkspaceRoot()).not.toBe(join(documentsDir, 'Sachivji Workspace'))
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+    }
   })
 
   it('SACHIV_WORKSPACE_DIR replaces the Documents default (manual-test hook), but a configured workspace still wins', async () => {
