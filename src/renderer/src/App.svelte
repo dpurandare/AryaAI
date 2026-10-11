@@ -722,6 +722,10 @@
   async function finishOnboarding(): Promise<void> {
     await window.sachiv.setSetting(ONBOARDING_SETTING_KEY, 'true')
     showFirstRunSetup = false
+    // The startup effect skips initProvider()/loadSessions() while onboarding is showing
+    // (see its own comment) — run them now that onboarding is actually done, or `providers`
+    // and `sessions` stay at their empty initial state until the next full app restart.
+    await Promise.all([initProvider(), loadSessions()])
   }
 
   async function chooseFileStorageOnFirstRun(): Promise<void> {
