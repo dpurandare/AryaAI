@@ -3801,6 +3801,105 @@ describe('Orchestrator (integration, mocked provider)', () => {
     })
   })
 
+  describe('a run stuck repeating one identical call that keeps "succeeding" with nothing new (TASKS.md #202, found live: mcp_list_connections repeated identically 4x on gpt-4o-mini and 26x on gpt-4o before the user had to press Stop)', () => {
+    const listConnections: Tool = {
+      name: 'mcp_list_connections',
+      description: 'list configured MCP servers',
+      inputSchema: { type: 'object', properties: {} },
+      mutates: false,
+      execute: async () => '"Context7": connected, 2 tools'
+    }
+    const checkStatus: Tool = {
+      name: 'api_check_status',
+      description: 'poll an async job',
+      inputSchema: { type: 'object', properties: { jobId: { type: 'string' } } },
+      mutates: false,
+      execute: async () => 'still pending'
+    }
+
+    function build(turns: ScriptedTurn[], options: ConstructorParameters<typeof Orchestrator>[8] = { planningEnabled: false }) {
+      const registry = new ToolRegistry()
+      registry.register(listConnections)
+      registry.register(checkStatus)
+      const agents = createAgents(registry)
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, options)
+      return { provider, orchestrator }
+    }
+    const call = (id: string, name = 'mcp_list_connections', input: Record<string, unknown> = {}): ScriptedTurn => ({
+      toolCalls: [{ id, name, input }],
+      stopReason: 'tool_use'
+    })
+
+    it('nudges once after 2 identical calls (naming delegate_to_mcp_operator, since it is available), then stops after 2 more if the model ignores the nudge', async () => {
+      const turns: ScriptedTurn[] = Array.from({ length: 6 }, (_, i) => call(`c${i}`))
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'List the tools available with the mcp Context7' }] }])
+      expect(provider.requests).toHaveLength(4)
+      const notes = events.filter((e) => e.kind === 'stream' && e.event.type === 'user_note').map((e) => (e as { event: { text: string } }).event.text)
+      expect(notes).toHaveLength(1)
+      expect(notes[0]).toMatch(/"mcp_list_connections" was just called again with the exact same input/)
+      expect(notes[0]).toMatch(/delegate_to_mcp_operator/)
+      const warning = events.find((e) => e.kind === 'stream' && e.event.type === 'warning') as { event: { message: string } } | undefined
+      expect(warning?.event.message).toMatch(/^Stopped: "mcp_list_connections" was called 4 times in a row with the exact same input/)
+      const last = events.filter((e) => e.kind === 'stream').map((e) => e.event).at(-1)
+      expect(last).toMatchObject({ type: 'message_stop', stopReason: 'end_turn' })
+    })
+
+    it('does not trip when the input changes between calls, even for the same tool', async () => {
+      const turns: ScriptedTurn[] = [
+        call('a', 'mcp_list_connections', {}),
+        call('b', 'mcp_list_connections', { verbose: true }),
+        call('c', 'mcp_list_connections', {}),
+        call('d', 'mcp_list_connections', { verbose: true }),
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      expect(provider.requests).toHaveLength(5)
+      expect(events.some((e) => e.kind === 'stream' && (e.event.type === 'warning' || e.event.type === 'user_note'))).toBe(false)
+    })
+
+    it('does not trip a tool outside the guarded admin/status set, even repeated identically many times (api_check_status, meant to be polled)', async () => {
+      const turns: ScriptedTurn[] = [
+        ...Array.from({ length: 5 }, (_, i) => call(`p${i}`, 'api_check_status', { jobId: 'job-1' })),
+        { text: 'Still pending after several checks.', stopReason: 'end_turn' }
+      ]
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'check on the job' }] }])
+      expect(provider.requests).toHaveLength(6)
+      expect(events.some((e) => e.kind === 'stream' && (e.event.type === 'warning' || e.event.type === 'user_note'))).toBe(false)
+    })
+
+    it('does not name delegate_to_mcp_operator in the nudge when no MCP server is connected', async () => {
+      const turns: ScriptedTurn[] = Array.from({ length: 6 }, (_, i) => call(`c${i}`))
+      const { provider, orchestrator } = build(turns, {
+        planningEnabled: false,
+        getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp: 0 })
+      })
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      expect(provider.requests).toHaveLength(4)
+      const notes = events.filter((e) => e.kind === 'stream' && e.event.type === 'user_note').map((e) => (e as { event: { text: string } }).event.text)
+      expect(notes).toHaveLength(1)
+      expect(notes[0]).not.toMatch(/delegate_to_mcp_operator/)
+    })
+
+    it('does not trip when a differently-named call breaks the streak, so a model trying something else gets its tries', async () => {
+      const turns: ScriptedTurn[] = [
+        call('a'),
+        call('b'),
+        { toolCalls: [{ id: 'x', name: 'api_check_status', input: { jobId: '1' } }], stopReason: 'tool_use' },
+        call('c'),
+        call('d'),
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      expect(provider.requests).toHaveLength(6)
+      expect(events.some((e) => e.kind === 'stream' && e.event.type === 'warning')).toBe(false)
+    })
+  })
+
   describe('outside-the-workspace access', () => {
     let outside: string
     let always: string[]

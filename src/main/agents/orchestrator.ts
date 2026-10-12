@@ -222,6 +222,78 @@ const MAX_COMPLETION_GATE_NUDGES = 6
 const MAX_CONSECUTIVE_TOOL_FAILURES = 6
 
 /**
+ * TASKS.md #202 — found live with both gpt-4o-mini (4x) and gpt-4o (26x, user had to press Stop) asked to use a
+ * connected MCP server's real tools: each round called `mcp_list_connections` again with the exact same (empty)
+ * input and got the exact same result, with no new information and no error — so MAX_CONSECUTIVE_TOOL_FAILURES
+ * above never applies (every call "succeeded"). Unlike a failing call, a *successful*-but-identical repeat gets one
+ * chance to self-correct: a nudge after this many in a row, pointing at delegate_to_mcp_operator when relevant
+ * (see identicalCallNudge below) — only an outright hard stop (MAX_IDENTICAL_CALLS_AFTER_NUDGE below) if ignored.
+ */
+const MAX_IDENTICAL_CALLS_BEFORE_NUDGE = 2
+
+/** How many more identical calls are tolerated after the one nudge above before the run is stopped outright. */
+const MAX_IDENTICAL_CALLS_AFTER_NUDGE = 2
+
+/**
+ * Opt-in, not opt-out: the identical-call guard above only watches this small set of admin/status tools, which
+ * report configuration/connection state that cannot change from one identical call to the next — repeating one is
+ * never a legitimate way to make progress, only a sign the model doesn't know what else to do. Deliberately NOT a
+ * blanket rule over every tool with a few exceptions carved out: a first attempt at that (TASKS.md #202) tripped on
+ * several already-correct, already-tested repeat patterns elsewhere — a user explicitly asking to list the same
+ * directory 4 times, and the existing research completion-gate's own nudge for repeated `web_search` calls, which
+ * owns that specific case already and has its own, more specific wording. Everything outside this set (reads,
+ * writes, web_search, api_check_status polling a job, etc.) is left entirely to the mechanisms that already govern
+ * it: MAX_CONSECUTIVE_TOOL_FAILURES for failures, the completion gate for research, context-bloat capping for cost.
+ */
+const GUARDED_IDENTICAL_CALL_TOOLS: ReadonlySet<string> = new Set([
+  'mcp_list_connections',
+  'mcp_create_connection',
+  'db_list_connections',
+  'db_create_connection',
+  'api_list_connections',
+  'api_create_connection'
+])
+
+/** Key-order-independent so two calls built from the same object literal always compare equal; falls back to the raw text on malformed JSON (never throws). */
+function stableInputKey(inputJson: string): string {
+  try {
+    return JSON.stringify(canonicalizeForKey(JSON.parse(inputJson)))
+  } catch {
+    return inputJson
+  }
+}
+
+function canonicalizeForKey(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeForKey)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((k) => [k, canonicalizeForKey((value as Record<string, unknown>)[k])])
+    )
+  }
+  return value
+}
+
+/**
+ * The nudge text for MAX_IDENTICAL_CALLS_BEFORE_NUDGE: names the repeated tool plainly, and — when it's one of the
+ * Configurator's/router's own mcp_* admin tools and an MCP Operator is actually available — points at
+ * delegate_to_mcp_operator by name, since that's what TASKS.md #202 found was missing: nothing told the model this
+ * was the correct next step, so it just kept re-listing/re-creating connections instead.
+ */
+function identicalCallNudge(toolName: string, mcpOperatorAvailable: boolean): string {
+  const base = `[Repetition check by Sachivji] "${toolName}" was just called again with the exact same input and returned the same result as before — repeating it again will not produce anything new.`
+  if (toolName.startsWith('mcp_') && mcpOperatorAvailable) {
+    return (
+      `${base} If the goal is to actually use a connected MCP server's own tools (look something up, query its ` +
+      "docs, etc.), call delegate_to_mcp_operator now — mcp_list_connections/mcp_create_connection only manage " +
+      'connections, they cannot do that. Otherwise, answer with what you already have or try something genuinely different.'
+    )
+  }
+  return `${base} Answer with what you already have, try something genuinely different, or ask the user — do not call it again with the same input.`
+}
+
+/**
  * TASKS.md #91 — how many app-level rate-limit retries a single round gets
  * (separate from, and on top of, each SDK's own internal ~2-retry backoff —
  * see `rate-limit.ts`). Bounded so a genuinely persistent rate limit still
@@ -1991,6 +2063,12 @@ export class Orchestrator {
     // See MAX_CONSECUTIVE_TOOL_FAILURES.
     let failureStreak = 0
     let lastFailedTool: string | undefined
+    // See MAX_IDENTICAL_CALLS_BEFORE_NUDGE/MAX_IDENTICAL_CALLS_AFTER_NUDGE — tracks a run calling the exact same
+    // tool with the exact same input round after round, success or failure, since failureStreak above only ever
+    // catches the failing case.
+    let identicalCallStreak = 0
+    let lastIdenticalCallKey: string | undefined
+    let identicalCallNudged = false
     // See Agent.completionGate: what this run has called so far, and what it was asked to do.
     const toolCallCounts = new Map<string, number>()
     // URLs this run's searches returned and the ones its parse_html calls opened, so a nudge can name pages still unread.
@@ -2490,6 +2568,46 @@ export class Orchestrator {
       if (failureStreak >= MAX_CONSECUTIVE_TOOL_FAILURES) {
         const lastError = toolResults[toolResults.length - 1].content.replace(/\s+/g, ' ').slice(0, 300)
         const stopMessage = `Stopped: "${failedTool}" failed ${failureStreak} times in a row with nothing succeeding in between, so it was not retried further. Last error: ${lastError}`
+        if (isTopLevel) {
+          yield { kind: 'stream', event: tagEvent({ type: 'warning', message: stopMessage }, agentRole) }
+          yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message: stopMessage }] }
+          yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'end_turn' }, agentRole, isTopLevel) }
+        }
+        return { text: stopMessage, isError: true }
+      }
+
+      // Stop a run that keeps calling the exact same tool with the exact same input, success or failure alike
+      // (see MAX_IDENTICAL_CALLS_BEFORE_NUDGE/MAX_IDENTICAL_CALLS_AFTER_NUDGE) — failureStreak above only ever
+      // catches the failing case, so a repeated call that "succeeds" with nothing new each time sailed straight
+      // through it (found live, TASKS.md #202: mcp_list_connections called identically 4x on gpt-4o-mini and
+      // 26x on gpt-4o before the user had to press Stop).
+      const repeatedToolName = calledNames.size === 1 ? [...calledNames][0] : undefined
+      const sameInputThisRound =
+        toolCalls.length > 0 && toolCalls.every((c) => stableInputKey(c.inputJson) === stableInputKey(toolCalls[0].inputJson))
+      const identicalCallKey =
+        repeatedToolName && GUARDED_IDENTICAL_CALL_TOOLS.has(repeatedToolName) && sameInputThisRound
+          ? `${repeatedToolName}:${stableInputKey(toolCalls[0].inputJson)}`
+          : undefined
+      if (identicalCallKey && identicalCallKey === lastIdenticalCallKey) {
+        identicalCallStreak++
+      } else {
+        identicalCallStreak = identicalCallKey ? 1 : 0
+        identicalCallNudged = false
+      }
+      lastIdenticalCallKey = identicalCallKey
+
+      if (identicalCallKey && identicalCallStreak === MAX_IDENTICAL_CALLS_BEFORE_NUDGE && !identicalCallNudged) {
+        identicalCallNudged = true
+        const mcpAgentForNudge = this.agents.get('mcp-operator')
+        const mcpOperatorAvailable = !!mcpAgentForNudge && isRoleAvailable(mcpAgentForNudge, this.options.getConfiguration?.())
+        const note = identicalCallNudge(repeatedToolName!, mcpOperatorAvailable)
+        conversation.push({ role: 'user', content: [{ type: 'user_note', text: note, source: 'app' }] })
+        yield { kind: 'stream', event: tagEvent({ type: 'user_note', text: note, source: 'app' }, agentRole) }
+        yield { kind: 'message', role: 'user', content: [{ type: 'user_note', text: note, source: 'app' }] }
+      } else if (identicalCallKey && identicalCallStreak >= MAX_IDENTICAL_CALLS_BEFORE_NUDGE + MAX_IDENTICAL_CALLS_AFTER_NUDGE) {
+        const stopMessage =
+          `Stopped: "${repeatedToolName}" was called ${identicalCallStreak} times in a row with the exact same input and the same ` +
+          'result each time, including after being told so — ending the turn instead of repeating it further.'
         if (isTopLevel) {
           yield { kind: 'stream', event: tagEvent({ type: 'warning', message: stopMessage }, agentRole) }
           yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message: stopMessage }] }

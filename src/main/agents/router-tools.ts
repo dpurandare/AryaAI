@@ -53,9 +53,22 @@ export function withoutMcpTools(all: readonly Tool[]): Tool[] {
 /** Tools only a specialist uses; the router never calls them, and each costs tokens on every request it makes. */
 const SPECIALIST_ONLY_TOOLS: ReadonlySet<string> = new Set(['save_research_note', 'read_research_notes'])
 
-/** What the FULL router sees: no MCP tools (see withoutMcpTools) and no specialist-only tools. */
+/**
+ * The Configurator's own connection-setup tools (roles.ts: "you only set connections up — using them afterwards is
+ * another specialist's job"). Found live, TASKS.md #202, with both gpt-4o-mini and gpt-4o: left reachable directly
+ * from the full router, a model asked to use an already-configured MCP server retried `mcp_create_connection`
+ * against it instead of delegating, since a plausible-looking tool was sitting right there (slim router already
+ * excluded these the same way `selectRouterTools` excludes every specialist-owned tool; full router did not, since
+ * it only ever filtered by MCP-prefix and the small SPECIALIST_ONLY_TOOLS set). Named explicitly rather than
+ * excluding by ownership generally, because the full router deliberately keeps some tools a specialist owns too —
+ * `find_stock_images`/`download_image` (Researcher-owned) are needed directly for the deck-building flow, which is
+ * router-only since no specialist can delegate to Page Creator; a blanket ownership exclusion would silently break that.
+ */
+const CONNECTION_SETUP_TOOLS: ReadonlySet<string> = new Set(['mcp_create_connection', 'db_create_connection', 'api_create_connection'])
+
+/** What the FULL router sees: no MCP tools (see withoutMcpTools), no specialist-only tools, and no connection-setup tools (see CONNECTION_SETUP_TOOLS). */
 export function fullRouterTools(all: readonly Tool[]): Tool[] {
-  return withoutMcpTools(all).filter((t) => !SPECIALIST_ONLY_TOOLS.has(t.name))
+  return withoutMcpTools(all).filter((t) => !SPECIALIST_ONLY_TOOLS.has(t.name) && !CONNECTION_SETUP_TOOLS.has(t.name))
 }
 
 export function selectRouterTools(all: readonly Tool[], agents: ReadonlyMap<AgentRole, Agent>): Tool[] {

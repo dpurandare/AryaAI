@@ -88,4 +88,13 @@ describe('fullRouterTools', () => {
     expect(names).not.toContain('read_research_notes')
     expect(names).toEqual(expect.arrayContaining(['find_stock_images', 'download_image', 'pptx_start_deck', 'web_search']))
   })
+
+  it('drops the Configurator\'s connection-setup tools too (TASKS.md #202: live-reproduced with gpt-4o-mini and gpt-4o retrying mcp_create_connection instead of delegating), but keeps mcp_list_connections since it is core', () => {
+    const { registry } = setup()
+    const names = fullRouterTools(registry.list()).map((t) => t.name)
+    for (const gone of ['mcp_create_connection', 'db_create_connection', 'api_create_connection']) {
+      expect(names, gone).not.toContain(gone)
+    }
+    expect(names).toContain('mcp_list_connections')
+  })
 })
