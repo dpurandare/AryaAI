@@ -46,7 +46,12 @@ describe('McpManager', () => {
     await manager.connectAll(registry)
 
     expect(registry.get('mcp__fs__read_file')).toBeDefined()
-    expect(manager.getStatus('a')).toEqual({ status: 'connected', error: undefined, toolCount: 1 })
+    expect(manager.getStatus('a')).toEqual({
+      status: 'connected',
+      error: undefined,
+      toolCount: 1,
+      toolNames: ['mcp__fs__read_file']
+    })
   })
 
   it('a failed server records an error status and does not block a successful one in the same batch', async () => {
@@ -60,7 +65,7 @@ describe('McpManager', () => {
     await manager.connectAll(registry)
 
     expect(manager.getStatus('a')?.status).toBe('connected')
-    expect(manager.getStatus('b')).toEqual({ status: 'error', error: 'spawn failed', toolCount: 0 })
+    expect(manager.getStatus('b')).toEqual({ status: 'error', error: 'spawn failed', toolCount: 0, toolNames: [] })
     expect(registry.get('mcp__fs__read_file')).toBeDefined()
   })
 

@@ -22,9 +22,15 @@ describe('mcp_list_connections', () => {
     ])
     const out = await mcpListConnectionsTool.execute(
       {},
-      ctx((id) => (id === 'a' ? { status: 'connected', toolCount: 2 } : { status: 'error', error: 'refused', toolCount: 0 }))
+      ctx((id) =>
+        id === 'a'
+          ? { status: 'connected', toolCount: 2, toolNames: ['mcp__context7__resolve-library-id', 'mcp__context7__get-library-docs'] }
+          : { status: 'error', error: 'refused', toolCount: 0, toolNames: [] }
+      )
     )
-    expect(out).toContain('"context7" (stdio: npx -y @upstash/context7-mcp) — Docs: connected, 2 tools (named mcp__context7__*)')
+    expect(out).toContain(
+      '"context7" (stdio: npx -y @upstash/context7-mcp) — Docs: connected, 2 tools: mcp__context7__resolve-library-id, mcp__context7__get-library-docs'
+    )
     expect(out).toContain('"wiki" (http: http://x): NOT connected — refused')
   })
 

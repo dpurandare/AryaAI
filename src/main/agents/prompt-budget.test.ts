@@ -167,7 +167,10 @@ const CEILINGS = {
   // distinct from `no_information` (found nothing) — 520 -> 567. Deliberate.
   // Manual test 8.2 (2026-10-08): MCP Operator searched the wiki for the user's own database. Added the "servers hold knowledge, never the user's data" rule
   // and trimmed the long "found live" retelling next to it — measured ~678, 640 -> 700. Deliberate: it is the rule that stops that.
-  'role:mcp-operator': 770,
+  // 2026-10-12: mcp_list_connections now reports each connected server's actual tool names, not just a
+  // count — found live: asked to list Context7's tools, the model had no way to get that and looped
+  // calling this same tool 20 times before giving up with a vague non-answer. 770 -> 772. Deliberate.
+  'role:mcp-operator': 772,
   'role:page-creator': 1400,
   'role:email': 700
 } as const
@@ -286,6 +289,8 @@ describe('per-tool schema budget', () => {
     const total = registry.list().reduce((n, t) => n + tokensFor(t), 0)
     // 2026-10-09: get_environment added (~27 tokens) - 9950 -> 9990. Deliberate.
     // 2026-10-10: api_create_connection gained `apiKeyIn` (NewsAPI.ai only reads its key from the URL query; the Configurator had no way to say so) - 9990 -> 10000. Deliberate.
-    expect(total).toBeLessThanOrEqual(10000)
+    // 2026-10-12: mcp_list_connections now reports each connected server's actual tool names, not just a
+    // count (TASKS #202 follow-up: fixes a 20-call loop found live) - 10000 -> 10009. Deliberate.
+    expect(total).toBeLessThanOrEqual(10009)
   })
 })
