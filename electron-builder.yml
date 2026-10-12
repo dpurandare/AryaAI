@@ -44,8 +44,18 @@ win:
     # A self-contained Node so `npx`-launched MCP servers (e.g. Context7, manual-test 13.4) work
     # with no system Node install — found live on the sponsor VM (`npx` not on PATH at all).
     # Fetched by `npm run fetch:bundled-node:win` (scripts/fetch-bundled-node-win.mjs).
+    # Split in two: electron-builder's own copy filter (app-builder-lib's createFilter,
+    # util/filter.js) unconditionally drops any directory named exactly "node_modules" sitting
+    # at a copy entry's own `from` root (meant to stop an app's own node_modules double-bundling,
+    # no opt-out) — found live on the sponsor VM when `npx` itself resolved but then crashed with
+    # MODULE_NOT_FOUND on npm's own node_modules/npm/bin/npx-cli.js, which turned out to be
+    # missing entirely from the installed build. A second entry rooted one level inside
+    # node_modules sidesteps the exact-string check (its own relative paths are never literally
+    # "node_modules").
     - from: resources/node-win-x64
       to: node-win-x64
+    - from: resources/node-win-x64/node_modules
+      to: node-win-x64/node_modules
     # The pulled nomic-embed-text's published context size (8192) exceeds its real trained
     # context (2048) and crashes llama-server on an embed call — see the file itself. Bundled
     # so `ollama-runtime.ts` can re-create the model in place with the fix, no network needed
