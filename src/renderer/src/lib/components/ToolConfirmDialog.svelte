@@ -11,6 +11,7 @@
     onApprove,
     onDeny,
     onTalkAboutIt,
+    onApproveWithComment,
     onStop,
     onValidate,
     onToggleAutoApprove,
@@ -36,6 +37,13 @@
      * props — this component only collects the text.
      */
     onTalkAboutIt: (comment: string) => void
+    /**
+     * TASKS.md #201: the equal-and-opposite choice to onTalkAboutIt — "go ahead, but also …" instead of
+     * "deny, because …". Runs the call (same validated/edited input `onApprove` would use) AND drops the
+     * same comment into the run via #158's steering queue, so the model sees both together: the call's
+     * real result, and the comment, at the start of its next round.
+     */
+    onApproveWithComment: (input: Record<string, unknown>, comment: string) => void
     /** Ends the whole turn right now, same as Stop during a normal response — distinct from Deny, which only rejects this one call and lets the turn keep going. Was always reachable before this was inline (a z-index fix kept the composer's own Stop button clickable over the old modal overlay) — kept as its own action here rather than silently dropped now that this replaces the composer instead of floating over it. */
     onStop: () => void
     onValidate: (input: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
@@ -101,13 +109,11 @@
     }
   }
 
-  async function approve(): Promise<void> {
-    if (isFolderAccess) {
-      onApprove({ ...input, remember })
-      return
-    }
+  /** Shared by approve() and approveWithComment() — same validated/edited input either way, only what happens with it once it's ready differs. */
+  async function resolveApprovedInput(): Promise<Record<string, unknown> | null> {
+    if (isFolderAccess) return { ...input, remember }
     const merged = combinedInput()
-    if (!merged) return
+    if (!merged) return null
 
     if (hasValidation) {
       validating = true
@@ -116,10 +122,22 @@
       validating = false
       if (!result.ok) {
         validationError = result.error ?? 'Validation failed.'
-        return
+        return null
       }
     }
-    onApprove(merged)
+    return merged
+  }
+
+  async function approve(): Promise<void> {
+    const merged = await resolveApprovedInput()
+    if (merged) onApprove(merged)
+  }
+
+  async function approveWithComment(): Promise<void> {
+    const text = talkAboutItText.trim()
+    if (!text) return
+    const merged = await resolveApprovedInput()
+    if (merged) onApproveWithComment(merged, text)
   }
 </script>
 
@@ -186,24 +204,20 @@
   {/if}
 
   {#if showTalkAboutIt}
-    <!-- TASKS.md #154: a fourth resolution for this one call, alongside Deny/Approve/Edit-then-Approve —
-         denies this call and drops a free-text comment into the run via #158's steering queue together. -->
+    <!-- TASKS.md #154/#201: a comment can go either way now — "deny, because …" (#154, the original) or
+         "go ahead, but also …" (#201) — both drop the same free-text comment into the run via #158's
+         steering queue; only whether this one call actually runs differs. -->
     <div class="talk-about-it">
-      <textarea
-        class="talk-about-it-input"
-        placeholder="What should it do differently? (denies this call, then the model sees your comment)"
-        bind:value={talkAboutItText}
-        onkeydown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault()
-            sendTalkAboutIt()
-          }
-        }}
+      <!-- No Enter-to-submit here (unlike a plain steering note) — now that a comment can either deny
+           or actually run this call, picking one of those on a bare Enter would be a real footgun;
+           Enter/Shift+Enter both just insert a newline, and either action needs its own explicit click. -->
+      <textarea class="talk-about-it-input" placeholder="What should it know? (either deny this call with your comment, or let it run and send the comment alongside)" bind:value={talkAboutItText}
       ></textarea>
       <div class="actions">
         <button type="button" class="ghost" onclick={() => (showTalkAboutIt = false)}>Cancel</button>
-        <button type="button" class="primary" onclick={sendTalkAboutIt} disabled={!talkAboutItText.trim()}>
-          Deny &amp; send comment
+        <button type="button" onclick={sendTalkAboutIt} disabled={!talkAboutItText.trim()}> Deny &amp; send comment </button>
+        <button type="button" class="primary" onclick={approveWithComment} disabled={!talkAboutItText.trim() || validating}>
+          {validating ? 'Validating…' : 'Approve & send comment'}
         </button>
       </div>
     </div>

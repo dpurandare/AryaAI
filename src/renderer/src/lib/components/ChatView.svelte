@@ -698,6 +698,10 @@ import { formatToolInputForDisplay } from '../tool-input-display'
           onSteer(comment)
           onDenyTool()
         }}
+        onApproveWithComment={(input, comment) => {
+          onSteer(comment)
+          onApproveTool(input)
+        }}
         {onStop}
         onValidate={(input) => onValidateTool(pendingConfirm.name, input)}
         onToggleAutoApprove={onToggleAutoApprove}
