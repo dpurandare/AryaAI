@@ -92,6 +92,25 @@ describe('renderMarkdown', () => {
     expect(html.replace(/<[^>]*>/g, '')).not.toMatch(/\$/)
   })
 
+  it('renders a long bare-$ expression as plain wrapping text instead of one unbroken KaTeX span (TASKS.md #182)', () => {
+    const divisors = Array.from({ length: 40 }, (_, i) => (i + 1) * 131).join(', ')
+    const { html } = renderMarkdown(`The divisors are $${divisors}$, in order.`)
+    expect(html).not.toContain('class="katex"')
+    expect(html).toContain(divisors)
+    expect(html).toContain('$')
+  })
+
+  it('still renders a short bare-$ expression as real KaTeX, not plain text (the #182 fallback has a length floor)', () => {
+    const { html } = renderMarkdown('The area is $A = \\pi r^2$, roughly.')
+    expect(html).toContain('class="katex"')
+  })
+
+  it('never falls back to plain text for an explicit \\(...\\) delimiter, even past the #182 length threshold', () => {
+    const longButExplicit = Array.from({ length: 40 }, (_, i) => (i + 1) * 131).join(', ')
+    const { html } = renderMarkdown(`\\(${longButExplicit}\\)`)
+    expect(html).toContain('class="katex"')
+  })
+
   it('still leaves prices alone with bare-$ math on (Pandoc rules: no space after the opening $, no space before / digit after the closing $)', () => {
     for (const text of [
       'It costs $5 to $10, depending on size.',

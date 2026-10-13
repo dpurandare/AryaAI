@@ -89,9 +89,28 @@ const PLACEHOLDER_RE = new RegExp(`${PH_START}(\\d+)${PH_END}`, 'g')
  * elsewhere in this file's history — this sidesteps that entirely rather
  * than widening the allowlist).
  */
+/**
+ * TASKS.md #182: a long single-`$...$` match that is really just digits/commas/etc rather than an
+ * equation (e.g. every divisor of a large number, written out) renders as one unbroken KaTeX span —
+ * `white-space:nowrap` is baked into KaTeX's own CSS for every formula, inline or display, since a
+ * real equation's layout (fractions, radicals, sub/superscripts) depends on staying one unit, so it
+ * can't be force-wrapped generically. Past this length, skip KaTeX for a *single-$* match specifically
+ * (never for an explicit `\(...\)`/`\[...\]`/`$$...$$` delimiter, which is the model deliberately
+ * asking for real math) and show the literal text instead, which wraps normally like any other text.
+ */
+const SINGLE_DOLLAR_PLAIN_TEXT_THRESHOLD = 60
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 function extractMath(text: string): { text: string; blocks: string[] } {
   const blocks: string[] = []
-  const renderToPlaceholder = (source: string, displayMode: boolean): string => {
+  const renderToPlaceholder = (source: string, displayMode: boolean, plainFallback = false): string => {
+    if (plainFallback && !displayMode && source.length > SINGLE_DOLLAR_PLAIN_TEXT_THRESHOLD) {
+      const index = blocks.push(`$${escapeHtml(source)}$`) - 1
+      return `${PH_START}${index}${PH_END}`
+    }
     let html: string
     try {
       // A bare `%` is LaTeX's comment character — it swallows everything
@@ -125,7 +144,7 @@ function extractMath(text: string): { text: string; blocks: string[] } {
   // Single-$ inline math, on the parts of the text that are not code (split() with a capture group puts the code segments at odd indices).
   result = result
     .split(CODE_SEGMENT)
-    .map((part, i) => (i % 2 === 1 ? part : part.replace(SINGLE_DOLLAR_MATH, (_m, source: string) => renderToPlaceholder(source, false))))
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(SINGLE_DOLLAR_MATH, (_m, source: string) => renderToPlaceholder(source, false, true))))
     .join('')
   return { text: result, blocks }
 }
