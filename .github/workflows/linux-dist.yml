@@ -1,0 +1,34 @@
+name: Linux installer (manual)
+
+# On-demand build of the real Linux installer (electron-builder's deb + AppImage targets,
+# TASKS #207). Unlike windows-dist.yml/macos-dist.yml, this project's own dev machine IS Linux
+# x64 and already builds/runs these natively — this workflow exists for reproducibility on a
+# clean runner (not this one dev box) and so a .deb/.AppImage can be grabbed without a local
+# build. Does not publish a GitHub Release or a version tag — unlike release.yml, this never
+# runs automatically; it only produces a downloadable build artifact from the Actions run page.
+on:
+  workflow_dispatch:
+
+jobs:
+  dist-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run dist:linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sachivji-linux-installer
+          path: |
+            release/*.deb
+            release/*.AppImage
+          retention-days: 14
