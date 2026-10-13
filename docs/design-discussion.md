@@ -812,9 +812,12 @@ core, and rises for multi-domain requests.
      was a *general-release* default, not an argument against bundling where it's worth the installer size: TASKS #202 (Windows, 2026-10-11)
      bundled Python + a CPU-only Ollama runtime for one non-developer sponsor's Windows build; TASKS #207 (Linux, 2026-10-13) extended the same
      approach and made it the *general* Linux release policy (deb + AppImage both bundle Python/Ollama/Node now, not a special build) — decided
-     with the user specifically because this dev machine can build and test Linux natively, unlike Windows. Mac (not yet built) will need its own
-     decision when it's next. The system Python detection/fallback path (`detectPython`) is unchanged on every platform; a bundled interpreter is
-     only ever tried first, never the only path.
+     with the user specifically because this dev machine can build and test Linux natively, unlike Windows. TASKS #208 (macOS, 2026-10-13)
+     extended it again to Apple Silicon only (Intel Mac explicitly deferred — a universal build is possible via `@electron/universal` but roughly
+     doubles the Python/Node bundling work, judged not worth it yet); unlike Linux, this dev machine cannot execute arm64 binaries at all, so #208
+     is wired and config-correct but **genuinely unverified** until tested on real hardware or the new `macos-dist.yml` CI runner — tracked as a
+     priority follow-up in TASKS #208 itself, not glossed over here. The system Python detection/fallback path (`detectPython`) is unchanged on
+     every platform; a bundled interpreter is only ever tried first, never the only path.
    - **Enforcement.** Onboarding gate with an explicit "continue without
      Python" escape (recommended), or hard-block app start? Chat- and
      DB-only users argue for the gate.

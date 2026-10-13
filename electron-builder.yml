@@ -17,11 +17,11 @@ asarUnpack:
   - '**/*.node'
   - 'node_modules/sqlite-vec-*/**'
 # Shared by every platform that bundles a local-embeddings Ollama runtime (Windows #202, Linux
-# #207): the pulled nomic-embed-text's published context size (8192) exceeds its real trained
-# context (2048) and crashes llama-server on an embed call — see the file itself. Bundled so
-# `ollama-runtime.ts` can re-create the model in place with the fix, no network needed for this
-# part. A single top-level entry (not per-platform) since every bundling platform needs the
-# exact same small text file.
+# #207, macOS #208): the pulled nomic-embed-text's published context size (8192) exceeds its
+# real trained context (2048) and crashes llama-server on an embed call — see the file itself.
+# Bundled so `ollama-runtime.ts` can re-create the model in place with the fix, no network
+# needed for this part. A single top-level entry (not per-platform) since every bundling
+# platform needs the exact same small text file.
 extraResources:
   - from: models/ModelFileNomicEmbed
     to: ModelFileNomicEmbed
@@ -32,7 +32,26 @@ mac:
   notarize: false # set to true once an Apple Developer notarization profile is configured (TASKS.md #63/#64)
   identity: null # no Apple Developer ID yet (TASKS.md #63) — explicit, not an implicit auto-discovery fallback
   target:
-    - dmg
+    - target: dmg
+      arch:
+        - arm64 # Apple Silicon only for now (TASKS #208) — Intel Mac deliberately deferred; explicit so electron-builder never defaults to the host arch or a universal build
+  # General macOS release (TASKS #208, extending the Windows (#202) / Linux (#207) approach):
+  # a self-contained Python, Ollama (kept close to the full official tarball rather than
+  # stripped down — see fetch-bundled-ollama-mac.mjs's header comment for why) and Node, so the
+  # app needs none of the three installed on the system. Fetched by `npm run fetch:bundled-*:mac`
+  # (scripts/fetch-bundled-{python,ollama,node}-mac.mjs) into resources/ (gitignored) before
+  # packaging. Arm64 only, matching the `target.arch` above — bundling Intel resources too would
+  # need a second, parallel set of entries plus a `process.arch` branch in the runtime lookups,
+  # deferred along with Intel Mac support generally.
+  extraResources:
+    - from: resources/python-mac-arm64
+      to: python-mac-arm64
+    - from: resources/python-mac-arm64-wheels
+      to: python-mac-arm64-wheels
+    - from: resources/ollama-mac-arm64
+      to: ollama-mac-arm64
+    - from: resources/node-mac-arm64
+      to: node-mac-arm64
 win:
   target:
     - nsis

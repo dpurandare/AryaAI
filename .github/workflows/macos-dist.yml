@@ -1,0 +1,32 @@
+name: macOS installer (manual)
+
+# On-demand build of the real macOS installer (electron-builder's dmg target, Apple Silicon
+# only for now — TASKS #208), since this project's Linux dev machine cannot build or execute
+# arm64 Mach-O binaries at all. Mirrors windows-dist.yml's role for #202: a downloadable build
+# artifact from a real target-platform runner, not a published release.
+# Does not publish a GitHub Release or a version tag — unlike release.yml, this never runs
+# automatically; it only produces a downloadable build artifact from the Actions run page.
+on:
+  workflow_dispatch:
+
+jobs:
+  dist-mac:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run dist:mac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sachivji-macos-installer
+          path: release/*.dmg
+          retention-days: 14

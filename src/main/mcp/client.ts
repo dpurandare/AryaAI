@@ -8,12 +8,12 @@ import type { Tool, ToolContext } from '../tools/types'
 import type { McpServerConfig } from './config'
 
 /**
- * Prepends the bundled Node runtime's directory (TASKS #202 on Windows, #207 on Linux) to PATH
- * so `cross-spawn` (what `StdioClientTransport` uses internally, confirmed by reading its
- * source — it resolves a bare command via `which.sync(command, { path: env.PATH })`, not
- * `process.env` directly, so an explicit `env.PATH` here really is what gets searched) resolves
- * a bare `npx`/`npm`/`node` command to it. A genuinely clean machine — the sponsor scenario the
- * Windows bundle targets, and the general case the Linux release now also covers — has no
+ * Prepends the bundled Node runtime's directory (TASKS #202 on Windows, #207 on Linux, #208 on
+ * macOS) to PATH so `cross-spawn` (what `StdioClientTransport` uses internally, confirmed by
+ * reading its source — it resolves a bare command via `which.sync(command, { path: env.PATH })`,
+ * not `process.env` directly, so an explicit `env.PATH` here really is what gets searched)
+ * resolves a bare `npx`/`npm`/`node` command to it. A genuinely clean machine — the sponsor
+ * scenario the Windows bundle targets, and the general case Linux/macOS now also cover — has no
  * system Node at all, and most real MCP servers (e.g. Context7, manual-test 13.4) launch via
  * `npx`; found live testing #202 on the sponsor VM. `bundledNodeDir` is `undefined` on every
  * build/platform without the resource, so this is a no-op everywhere else — the exact
@@ -40,6 +40,11 @@ function defaultBundledNodeDir(): string | undefined {
     // Linux's tarball keeps node/npm/npx under bin/ (unlike the Windows zip, which has them at
     // its root) — PATH must point at the directory that actually contains the executables.
     const dir = path.join(resourcesPath, 'node-linux-x64', 'bin')
+    return existsSync(path.join(dir, 'npx')) ? dir : undefined
+  }
+  if (process.platform === 'darwin') {
+    // Same bin/ layout as Linux's official tarball.
+    const dir = path.join(resourcesPath, 'node-mac-arm64', 'bin')
     return existsSync(path.join(dir, 'npx')) ? dir : undefined
   }
   return undefined

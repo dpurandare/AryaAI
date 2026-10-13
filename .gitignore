@@ -29,3 +29,11 @@ resources/python-linux-x64/
 resources/python-linux-x64-wheels/
 resources/ollama-linux-x64/
 resources/node-linux-x64/
+
+# Fetched by scripts/fetch-bundled-python-mac.mjs / fetch-bundled-ollama-mac.mjs /
+# fetch-bundled-node-mac.mjs for the macOS Apple Silicon release (TASKS #208) — binary assets,
+# not source
+resources/python-mac-arm64/
+resources/python-mac-arm64-wheels/
+resources/ollama-mac-arm64/
+resources/node-mac-arm64/

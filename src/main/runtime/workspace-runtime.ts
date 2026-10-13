@@ -118,14 +118,14 @@ export function defaultRuntimeDeps(): RuntimeDeps {
       }
     },
     bundledPython: () => {
-      const p =
-        process.platform === 'win32'
-          ? bundledResourcePath('python-win-x64', 'python.exe')
-          : bundledResourcePath('python-linux-x64', 'bin', 'python3')
+      let p: string | undefined
+      if (process.platform === 'win32') p = bundledResourcePath('python-win-x64', 'python.exe')
+      else if (process.platform === 'darwin') p = bundledResourcePath('python-mac-arm64', 'bin', 'python3')
+      else p = bundledResourcePath('python-linux-x64', 'bin', 'python3')
       return p && existsSync(p) ? p : undefined
     },
     bundledWheelhouse: () => {
-      const dir = process.platform === 'win32' ? 'python-win-x64-wheels' : 'python-linux-x64-wheels'
+      const dir = process.platform === 'win32' ? 'python-win-x64-wheels' : process.platform === 'darwin' ? 'python-mac-arm64-wheels' : 'python-linux-x64-wheels'
       const p = bundledResourcePath(dir)
       return p && existsSync(p) ? p : undefined
     }
@@ -135,11 +135,12 @@ export function defaultRuntimeDeps(): RuntimeDeps {
 /**
  * Path under the packaged app's `resources/` (Electron sets `process.resourcesPath`;
  * unset outside Electron, e.g. under Vitest/plain Node — returns `undefined` there, which
- * is correct: no bundled interpreter exists in dev). Windows (TASKS #202) and Linux (TASKS #207),
- * both AMD64-only for now; mac is not yet built.
+ * is correct: no bundled interpreter exists in dev). Windows (TASKS #202), Linux (TASKS #207)
+ * and macOS (TASKS #208, Apple Silicon only) — all single-architecture for now (AMD64 on
+ * Windows/Linux, arm64 on mac; Intel Mac is deliberately deferred).
  */
 function bundledResourcePath(...segments: string[]): string | undefined {
-  if (process.platform !== 'win32' && process.platform !== 'linux') return undefined
+  if (process.platform !== 'win32' && process.platform !== 'linux' && process.platform !== 'darwin') return undefined
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
   return resourcesPath ? path.join(resourcesPath, ...segments) : undefined
 }
