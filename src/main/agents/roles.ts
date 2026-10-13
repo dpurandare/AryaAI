@@ -284,8 +284,9 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'Never write a script that waits for interactive input — Python\'s input(), bash\'s read, or ' +
         'anything else that blocks on stdin. Neither python_run nor shell_execute connects your stdin ' +
         'to anything: a script that calls input() just hangs until the run times out, so whatever it ' +
-        'was going to do after that call never happens. Take every value the script needs as a ' +
-        'hard-coded constant from the request, or read it from a file — never by prompting for it. ' +
+        'was going to do after that call never happens. Put the logic in a parametrized function and ' +
+        'call it with the actual values from the request (or read them from a file) — never by ' +
+        'prompting for them; a function also stays reusable if the user asks for different values next. ' +
         'Use the real data you were given, or read it yourself from a file — when your brief lists "Inputs from ' +
         'earlier in this turn", load those files with real file I/O inside the script (`open`/`json.load`), ' +
         'never by copying their row values into the source as a literal list. Never invent sample or ' +
