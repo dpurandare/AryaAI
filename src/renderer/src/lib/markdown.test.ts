@@ -213,3 +213,32 @@ describe('renderMarkdown', () => {
     })
   })
 })
+
+describe('renderMarkdown strips a trailing [handoff: ...] tag (TASKS.md #206)', () => {
+  it('drops the tag and its suggested role from a pinned role\'s out-of-scope reply', () => {
+    const { html } = renderMarkdown('This question is outside my email role.\n\n[handoff: out_of_scope -> coding]')
+    expect(html).toContain('This question is outside my email role')
+    expect(html).not.toContain('handoff')
+    expect(html).not.toContain('coding')
+  })
+
+  it('drops every tag shape (needs_input, no_information, incomplete), with or without a suggested role', () => {
+    for (const tag of ['[handoff: needs_input]', '[handoff: no_information]', '[handoff: incomplete]', '[Handoff: OUT_OF_SCOPE -> data-processor]']) {
+      const { html } = renderMarkdown(`Some real answer text.\n\n${tag} some detail afterward`)
+      expect(html).toContain('Some real answer text')
+      expect(html.toLowerCase()).not.toContain('handoff')
+    }
+  })
+
+  it('leaves ordinary text alone when there is no tag at all', () => {
+    const { html } = renderMarkdown('Just a normal reply with no tag.')
+    expect(html).toContain('Just a normal reply with no tag.')
+  })
+
+  it('only treats a tag within the last 1200 characters as real — an earlier mention (e.g. quoting the instruction) survives', () => {
+    const earlyMention = `Here's the instruction I was given: [handoff: out_of_scope -> coding]. ${'padding '.repeat(200)}Real final answer.`
+    const { html } = renderMarkdown(earlyMention)
+    expect(html).toContain('Real final answer')
+    expect(html).toContain('instruction I was given')
+  })
+})

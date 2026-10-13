@@ -4,6 +4,25 @@ import katex from 'katex'
 
 marked.setOptions({ gfm: true, breaks: true })
 
+/**
+ * TASKS.md #206: a pinned specialist's own reply is shown verbatim, unlike a delegated run (where the
+ * orchestrator builds a fresh summary and never re-displays the raw tag) — so a pinned role's "out of
+ * scope" answer leaked the literal `[handoff: out_of_scope -> coding] ...` line straight into the chat.
+ * Duplicated from `src/main/agents/handoff.ts`'s `TAG`/`parseHandoffTag` (can't import it directly —
+ * main and renderer are separate processes) with the same semantics: only a tag within the last 1200
+ * characters counts as a real trailing tag, not an earlier in-message mention (e.g. quoting this exact
+ * instruction back) that just happens to use the same bracket syntax.
+ */
+const HANDOFF_TAG = /\[handoff:\s*(?:needs_input|out_of_scope|no_information|incomplete)(?:\s*(?:->|→)\s*[a-z][a-z0-9-]*)?\s*\]/gi
+const HANDOFF_TAG_TAIL_CHARS = 1200
+
+function stripHandoffTag(text: string): string {
+  const tailStart = Math.max(0, text.length - HANDOFF_TAG_TAIL_CHARS)
+  let last: RegExpExecArray | undefined
+  for (const m of text.matchAll(HANDOFF_TAG)) if (m.index >= tailStart) last = m
+  return last ? text.slice(0, last.index).trim() : text
+}
+
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (node.tagName === 'A') {
     node.setAttribute('target', '_blank')
@@ -204,7 +223,8 @@ export interface RenderedMarkdown {
   mermaidBlocks: Map<string, string>
 }
 
-export function renderMarkdown(text: string): RenderedMarkdown {
+export function renderMarkdown(rawText: string): RenderedMarkdown {
+  const text = stripHandoffTag(rawText)
   const { text: withPlaceholders, blocks: mathBlocks } = extractMath(text)
   const dirty = marked.parse(withPlaceholders, { async: false }) as string
   const { html: dirtyWithMermaidPlaceholders, blocks: mermaidBlocks } = extractMermaid(dirty)
