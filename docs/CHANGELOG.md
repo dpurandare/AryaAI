@@ -34,6 +34,10 @@ version is still `0`.
 - **Experimental slim router** (Settings > Slim router, off by default): the assistant's fixed per-request size drops from about 10,800 to about 2,800 tokens by keeping a few everyday tools directly and reaching the rest through specialists; earlier turns' calls to tools it no longer carries are replayed as text. Early testing on one local model shows it delegates data and history requests reliably but file, code and document requests less so — leave it off unless you are testing. `scripts/routing-eval.mts` lets you evaluate routing and history-replay compatibility with your own provider keys. Real tool usage is now counted locally.
 - New `python_run` tool: the Developer runs Python by passing the source (or a `.py` path) directly — no shell quoting — in the workspace's virtual environment, and gets back the exit code, output, and the list of files the run really created (found by the app). You approve every run and see the code first. Charts and Word documents built with matplotlib and python-docx work end to end.
 - **Specialists now hand each other real results.** The full result of a data-producing call (SQL rows, parsed files, API responses) is saved to a workspace file and given to the next specialist as an input, so it works from the actual data instead of a summary; the files a specialist really created or changed are detected by the app and listed as verified; a specialist can say it needs information from you (the plan pauses and you are asked) or that a request belongs to another specialist (redirected once). A tool that belongs to a specialist now answers "call delegate_to_<role>" instead of "Unknown tool".
+- Each message can optionally show which model answered it, off by default.
+- Tool output gained a third "Hidden" state alongside shown/collapsed: a tool's text is hidden, but an image or chart it produced is always shown, since that's usually the point of the result. Saving a session as Markdown or PDF now respects Hidden too.
+- **The Windows installer now bundles a standalone Python interpreter with the same pinned packages described above, and a CPU-only Ollama runtime for local search history** — neither needs to be installed separately on Windows. The `nomic-embed-text` embedding model itself is pulled once over the network on first run (keeps the installer smaller); a new onboarding step shows its progress, and Settings > Runtime has a matching "Local embeddings" section with status and Retry. Chat still needs a cloud provider key, added in Settings. An MCP server launched through `npx`/`npm`/`node` (such as Context7) also now works out of the box on Windows, via a bundled Node.js runtime.
+- The Windows installer now shows the standard install wizard — a page to choose the install folder and a Finish page, with desktop and Start Menu shortcuts created — instead of a bare one-click progress bar.
 
 ### Changed
 
@@ -41,6 +45,22 @@ version is still `0`.
 - The planner is told which roles are unavailable (e.g. no email account configured) and that a later step only sees earlier results, so earlier steps must return the actual values.
 - Specialist roles are now defined in one manifest (labels, summaries, picker / plan flags, examples) instead of several parallel lists. No routing behaviour change.
 - The message an agent gets when `python` is not found now points at Settings > Runtime instead of asking it to build a virtual environment itself.
+
+### Fixed
+
+- A very large, single-block tool result (e.g. raw JSON with no blank lines) could crash the local embedding server and then retry forever, flooding the log with the same crash. Oversized results are now split with a hard size cap, and a result that keeps failing is given up on after a few tries instead of looping (#171).
+- A database query result over 200 rows was silently cut down while still reporting the real, uncapped row count as if nothing were missing. The complete result is now written to a workspace file instead of ever being truncated (#172).
+- A question that needed both outside knowledge and your own data could skip the knowledge lookup entirely and go straight to the data, on both cloud and local models. It now reliably checks first (#173).
+- A turn that ended on a bare warning — a misconfigured model, or clicking Stop — could leave the message box stuck as if still sending. It now resets correctly (#174).
+- A tool call cut off mid-way by the reply length limit failed the whole step with "(no response)". It's now retried once with a nudge before giving up (#175).
+- The assistant could accept an irrelevant search result as "domain knowledge found," and could query the same data twice instead of recognizing a matching column already in your database — producing a meaningless zigzag chart from unsorted data. Both are fixed: relevance is now judged, not assumed, and an existing matching column is recognized and reused (#176, #177).
+- When the assistant found something but not enough to fully answer, it previously had no way to say so. It now reports "found something, not enough" and follows up once automatically (#178).
+- A question that was pure domain knowledge could get both an MCP/wiki lookup and a web search scheduled before either had run. Web search now stays reactive instead of being scheduled in advance for this case (#179).
+- Windows: the default workspace folder could land inside OneDrive sync instead of the plain Documents folder, when OneDrive has taken over the Windows Documents location — risky for the Python environment, database and model files it holds. The workspace now always resolves to the plain profile Documents folder on Windows (#202).
+- Windows: after finishing first-run setup, the provider list and your sessions could stay empty until the app was fully restarted. They now appear immediately (#202).
+- Asking what tools an MCP server has could send the assistant into a loop of up to 20 identical calls before giving a vague non-answer, because the tool only ever reported a count, never the real names. It now lists the actual tool names directly (#202).
+- A follow-up question about an already-connected MCP server could make the assistant repeat the same lookup or connection-setup call dozens of times in a row (observed up to 26) instead of delegating to the right specialist. It now stops after two identical repeats with a clear message, or delegates correctly before that point (#202).
+- Windows: an MCP server launched via `npx`/`npm` (such as Context7) failed to connect because the bundled Node runtime's own `node_modules` folder was being silently dropped from the installer. It's now included (#202).
 
 ## [0.2.2] - 2026-09-25
 
