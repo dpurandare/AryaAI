@@ -118,11 +118,15 @@ export function defaultRuntimeDeps(): RuntimeDeps {
       }
     },
     bundledPython: () => {
-      const p = bundledResourcePath('python-win-x64', 'python.exe')
+      const p =
+        process.platform === 'win32'
+          ? bundledResourcePath('python-win-x64', 'python.exe')
+          : bundledResourcePath('python-linux-x64', 'bin', 'python3')
       return p && existsSync(p) ? p : undefined
     },
     bundledWheelhouse: () => {
-      const p = bundledResourcePath('python-win-x64-wheels')
+      const dir = process.platform === 'win32' ? 'python-win-x64-wheels' : 'python-linux-x64-wheels'
+      const p = bundledResourcePath(dir)
       return p && existsSync(p) ? p : undefined
     }
   }
@@ -131,11 +135,11 @@ export function defaultRuntimeDeps(): RuntimeDeps {
 /**
  * Path under the packaged app's `resources/` (Electron sets `process.resourcesPath`;
  * unset outside Electron, e.g. under Vitest/plain Node — returns `undefined` there, which
- * is correct: no bundled interpreter exists in dev). Windows-only for now (TASKS #202 scopes
- * the sponsor build to AMD64 — see the ARM64 note in TASKS #202).
+ * is correct: no bundled interpreter exists in dev). Windows (TASKS #202) and Linux (TASKS #207),
+ * both AMD64-only for now; mac is not yet built.
  */
 function bundledResourcePath(...segments: string[]): string | undefined {
-  if (process.platform !== 'win32') return undefined
+  if (process.platform !== 'win32' && process.platform !== 'linux') return undefined
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
   return resourcesPath ? path.join(resourcesPath, ...segments) : undefined
 }

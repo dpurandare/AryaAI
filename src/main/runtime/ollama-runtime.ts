@@ -15,9 +15,9 @@ import type { OllamaRuntimeState } from '@shared/runtime'
  * trained context of 2048 and crashes `llama-server` on an embed call otherwise).
  *
  * A strict no-op everywhere else: `bundledExe()` returns `undefined` on every build that isn't
- * this specific Windows bundle (dev, mac, linux, or a win32 build without the resource), so a
- * user's own "bring your own Ollama" setup is never started, stopped, or otherwise touched by
- * this module.
+ * one of these bundles (dev, mac, or a win32/linux build without the resource), so a user's own
+ * "bring your own Ollama" setup is never started, stopped, or otherwise touched by this module.
+ * Linux bundling (TASKS #207) extends the same approach from the Windows sponsor build (#202).
  */
 
 const execFileAsync = promisify(execFile)
@@ -49,7 +49,7 @@ export interface OllamaRuntimeDeps {
 }
 
 function bundledResourcePath(...segments: string[]): string | undefined {
-  if (process.platform !== 'win32') return undefined
+  if (process.platform !== 'win32' && process.platform !== 'linux') return undefined
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
   return resourcesPath ? path.join(resourcesPath, ...segments) : undefined
 }
@@ -69,7 +69,8 @@ function sleep(ms: number): Promise<void> {
 export function defaultOllamaRuntimeDeps(): OllamaRuntimeDeps {
   return {
     bundledExe: () => {
-      const p = bundledResourcePath('ollama-win-x64', 'ollama.exe')
+      const p =
+        process.platform === 'win32' ? bundledResourcePath('ollama-win-x64', 'ollama.exe') : bundledResourcePath('ollama-linux-x64', 'bin', 'ollama')
       return p && existsSync(p) ? p : undefined
     },
     modelfilePath: () => {

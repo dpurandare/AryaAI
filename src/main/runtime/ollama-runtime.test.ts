@@ -160,7 +160,7 @@ describe('OllamaRuntime', () => {
 })
 
 describe('defaultOllamaRuntimeDeps', () => {
-  it('bundledExe/modelfilePath short-circuit on the platform check on this (non-win32) test machine', () => {
+  it('bundledExe/modelfilePath return undefined under Vitest even on a supported platform (no real resourcesPath outside Electron)', () => {
     const deps = defaultOllamaRuntimeDeps()
     expect(deps.bundledExe()).toBeUndefined()
     expect(deps.modelfilePath()).toBeUndefined()

@@ -22,3 +22,10 @@ resources/python-win-x64/
 resources/python-win-x64-wheels/
 resources/ollama-win-x64/
 resources/node-win-x64/
+
+# Fetched by scripts/fetch-bundled-python-linux.mjs / fetch-bundled-ollama-linux.mjs /
+# fetch-bundled-node-linux.mjs for the general Linux release (TASKS #207) — binary assets, not source
+resources/python-linux-x64/
+resources/python-linux-x64-wheels/
+resources/ollama-linux-x64/
+resources/node-linux-x64/

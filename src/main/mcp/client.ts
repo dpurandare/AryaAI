@@ -8,15 +8,16 @@ import type { Tool, ToolContext } from '../tools/types'
 import type { McpServerConfig } from './config'
 
 /**
- * Prepends the bundled Windows Node runtime's directory (TASKS #202) to PATH so `cross-spawn`
- * (what `StdioClientTransport` uses internally, confirmed by reading its source — it resolves a
- * bare command via `which.sync(command, { path: env.PATH })`, not `process.env` directly, so an
- * explicit `env.PATH` here really is what gets searched) resolves a bare `npx`/`npm`/`node`
- * command to it. A genuinely clean Windows machine — the sponsor scenario this bundle targets —
- * has no system Node at all, and most real MCP servers (e.g. Context7, manual-test 13.4) launch
- * via `npx`; found live testing #202 on the sponsor VM. `bundledNodeDir` is `undefined` on every
- * build/platform but this one, so this is a no-op everywhere else — the exact pre-existing
- * "merge onto the SDK's own default env" behavior is unchanged there.
+ * Prepends the bundled Node runtime's directory (TASKS #202 on Windows, #207 on Linux) to PATH
+ * so `cross-spawn` (what `StdioClientTransport` uses internally, confirmed by reading its
+ * source — it resolves a bare command via `which.sync(command, { path: env.PATH })`, not
+ * `process.env` directly, so an explicit `env.PATH` here really is what gets searched) resolves
+ * a bare `npx`/`npm`/`node` command to it. A genuinely clean machine — the sponsor scenario the
+ * Windows bundle targets, and the general case the Linux release now also covers — has no
+ * system Node at all, and most real MCP servers (e.g. Context7, manual-test 13.4) launch via
+ * `npx`; found live testing #202 on the sponsor VM. `bundledNodeDir` is `undefined` on every
+ * build/platform without the resource, so this is a no-op everywhere else — the exact
+ * pre-existing "merge onto the SDK's own default env" behavior is unchanged there.
  */
 export function resolveStdioEnv(
   configEnv: Record<string, string> | undefined,
@@ -27,13 +28,21 @@ export function resolveStdioEnv(
   return { ...base, PATH: `${bundledNodeDir}${path.delimiter}${base.PATH ?? ''}` }
 }
 
-/** Windows-only (same gate as the bundled Python/Ollama resource paths); `undefined` in dev/Vitest/mac/linux. */
+/** Same gate as the bundled Python/Ollama resource paths; `undefined` in dev/Vitest/mac or a build without the resource. */
 function defaultBundledNodeDir(): string | undefined {
-  if (process.platform !== 'win32') return undefined
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
   if (!resourcesPath) return undefined
-  const dir = path.join(resourcesPath, 'node-win-x64')
-  return existsSync(path.join(dir, 'npx.cmd')) ? dir : undefined
+  if (process.platform === 'win32') {
+    const dir = path.join(resourcesPath, 'node-win-x64')
+    return existsSync(path.join(dir, 'npx.cmd')) ? dir : undefined
+  }
+  if (process.platform === 'linux') {
+    // Linux's tarball keeps node/npm/npx under bin/ (unlike the Windows zip, which has them at
+    // its root) — PATH must point at the directory that actually contains the executables.
+    const dir = path.join(resourcesPath, 'node-linux-x64', 'bin')
+    return existsSync(path.join(dir, 'npx')) ? dir : undefined
+  }
+  return undefined
 }
 
 function buildTransport(config: McpServerConfig, token: string | undefined, bundledNodeDir: string | undefined): Transport {

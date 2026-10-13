@@ -16,6 +16,15 @@ files:
 asarUnpack:
   - '**/*.node'
   - 'node_modules/sqlite-vec-*/**'
+# Shared by every platform that bundles a local-embeddings Ollama runtime (Windows #202, Linux
+# #207): the pulled nomic-embed-text's published context size (8192) exceeds its real trained
+# context (2048) and crashes llama-server on an embed call — see the file itself. Bundled so
+# `ollama-runtime.ts` can re-create the model in place with the fix, no network needed for this
+# part. A single top-level entry (not per-platform) since every bundling platform needs the
+# exact same small text file.
+extraResources:
+  - from: models/ModelFileNomicEmbed
+    to: ModelFileNomicEmbed
 mac:
   category: public.app-category.productivity
   hardenedRuntime: true
@@ -56,12 +65,6 @@ win:
       to: node-win-x64
     - from: resources/node-win-x64/node_modules
       to: node-win-x64/node_modules
-    # The pulled nomic-embed-text's published context size (8192) exceeds its real trained
-    # context (2048) and crashes llama-server on an embed call — see the file itself. Bundled
-    # so `ollama-runtime.ts` can re-create the model in place with the fix, no network needed
-    # for this part.
-    - from: models/ModelFileNomicEmbed
-      to: ModelFileNomicEmbed
 # Sponsor build (TASKS #202): electron-builder's NSIS default is "oneClick" — a bare
 # progress bar that closes with no Finish page, no visible confirmation, and no shortcut
 # of its own. Fine for a developer who knows to search the Start Menu; confusing for a
@@ -80,12 +83,35 @@ linux:
     - AppImage
     - deb
   category: Utility
+  # General Linux release (TASKS #207, extending the Windows sponsor-build approach from #202):
+  # a self-contained Python, CPU-only Ollama and Node so neither the deb nor the AppImage needs
+  # any of the three installed on the system. Fetched by `npm run fetch:bundled-*:linux`
+  # (scripts/fetch-bundled-{python,ollama,node}-linux.mjs) into resources/ (gitignored) before
+  # packaging; `workspace-runtime.ts`/`ollama-runtime.ts`/`mcp/client.ts`'s bundled-resource
+  # lookups check `process.resourcesPath` for these at runtime, same pattern as Windows.
+  extraResources:
+    - from: resources/python-linux-x64
+      to: python-linux-x64
+    - from: resources/python-linux-x64-wheels
+      to: python-linux-x64-wheels
+    - from: resources/ollama-linux-x64
+      to: ollama-linux-x64
+    # Unlike Windows (where npm's node_modules sits directly at the zip root, and so needs the
+    # split-entry workaround above), Node's official Linux tarball nests it two levels down at
+    # lib/node_modules — never a path whose relative-to-copy-root string is exactly
+    # "node_modules" — so electron-builder's copy filter never drops it here. Confirmed by
+    # inspecting the packaged release/linux-unpacked output directly: lib/node_modules/npm
+    # (and therefore npx) survives with just the one entry below.
+    - from: resources/node-linux-x64
+      to: node-linux-x64
 deb:
   maintainer: "Deepak Purandare <dpurandare@users.noreply.github.com>"
   # Setting `depends` REPLACES electron-builder's defaults, so those are repeated here
-  # (electron-builder 26.15.3's documented deb defaults) with Python added: Sachivji's
-  # workspace runtime needs `python3` and the separately-packaged `python3-venv`
-  # (docs/design-discussion.md 4.3). dmg / AppImage / NSIS cannot declare this — see README.
+  # (electron-builder 26.15.3's documented deb defaults). Python is no longer listed: the bundled
+  # interpreter above (TASKS #207) covers it, the same way the Windows build needs no system
+  # Python — `python3`/`python3-venv` was the general-release requirement in
+  # docs/design-discussion.md §4.3 before this; a system Python is still used as a fallback if
+  # found (detectPython tries the bundled one first).
   depends:
     - libgtk-3-0
     - libnotify4
@@ -96,8 +122,6 @@ deb:
     - libatspi2.0-0
     - libuuid1
     - libsecret-1-0
-    - python3
-    - python3-venv
 publish:
   provider: github
   owner: dpurandare
