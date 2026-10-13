@@ -6,6 +6,7 @@ import { setDbPath } from './db'
 import { getSetting, setSetting } from './db/settings'
 import { attachZoomShortcuts, ZOOM_SETTING_KEY } from './window/zoom'
 import { attachBoundsPersistence, parseWindowBounds, resolveInitialBounds, WINDOW_BOUNDS_SETTING_KEY } from './window/bounds'
+import { attachSpellcheckContextMenu } from './window/context-menu'
 import { initUpdater } from './updater'
 
 // On GNOME/Wayland, Electron auto-selects the native Wayland backend, whose
@@ -52,6 +53,8 @@ function createMainWindow(): BrowserWindow {
     { get: () => getSetting(ZOOM_SETTING_KEY), set: (value) => setSetting(ZOOM_SETTING_KEY, value) },
     process.platform === 'darwin'
   )
+
+  attachSpellcheckContextMenu(mainWindow.webContents)
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
