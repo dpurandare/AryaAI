@@ -44,6 +44,10 @@ describe('getDb', () => {
     })
 
     afterEach(async () => {
+      // Closes whatever connection this test opened (setDbPath now does that itself) before the
+      // temp dir is removed — otherwise deleting a file a connection still has open is a Windows
+      // EBUSY (confirmed live on Windows CI), even though POSIX tolerates it silently.
+      setDbPath(':memory:')
       await rm(dir, { recursive: true, force: true })
     })
 

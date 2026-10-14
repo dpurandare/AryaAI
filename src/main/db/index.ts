@@ -39,6 +39,12 @@ let dbPath: string | undefined
  * function body (including a guard inside getDb()) ever runs.
  */
 export function setDbPath(path: string): void {
+  // Close any previously-open connection before discarding the reference — just dropping it
+  // leaked the native OS file handle. POSIX tolerates that (unlinking an open file works fine),
+  // which is why this went unnoticed until the first real Windows CI run: Windows refuses to
+  // delete a file a process still has open, so a test re-pointing setDbPath at a new temp dir and
+  // then cleaning up the old one hit "EBUSY: resource busy or locked" on the leaked handle.
+  db?.close()
   dbPath = path
   db = undefined
 }

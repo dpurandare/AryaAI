@@ -66,7 +66,11 @@ describe('createToolContext', () => {
     } finally {
       delete process.env.SACHIV_WORKSPACE_DIR
     }
-    expect(defaultWorkspaceRoot()).toBe(join(documentsDir, 'Sachivji Workspace'))
+    // On the real win32 CI runner this really is process.platform, not a faked value like the
+    // "on Windows" test above — TASKS #202's own OneDrive-avoiding default (home/Documents, not
+    // app.getPath('documents')) genuinely applies here too, confirmed live on Windows CI.
+    const expectedDefault = process.platform === 'win32' ? join(homeDir, 'Documents', 'Sachivji Workspace') : join(documentsDir, 'Sachivji Workspace')
+    expect(defaultWorkspaceRoot()).toBe(expectedDefault)
   })
 
   it('uses the persisted workspace root when one is configured', async () => {
