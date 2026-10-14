@@ -8,6 +8,8 @@ version is still `0`.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-14
+
 ### Added
 
 - The workspace's Python environment is now created automatically together with the workspace folders (`code/`, `documents/`, `resources/`, and `venv/`) when Python 3.10+ is installed, with pinned base packages for charts and Word/Excel files (matplotlib, numpy, pillow, python-docx, openpyxl). Settings > Runtime shows its state and offers Retry, Repair and Turn Python off. Existing environments are adopted, never overwritten.
@@ -39,6 +41,9 @@ version is still `0`.
 - **The Windows installer now bundles a standalone Python interpreter with the same pinned packages described above, and a CPU-only Ollama runtime for local search history** — neither needs to be installed separately on Windows. The `nomic-embed-text` embedding model itself is pulled once over the network on first run (keeps the installer smaller); a new onboarding step shows its progress, and Settings > Runtime has a matching "Local embeddings" section with status and Retry. Chat still needs a cloud provider key, added in Settings. An MCP server launched through `npx`/`npm`/`node` (such as Context7) also now works out of the box on Windows, via a bundled Node.js runtime.
 - The Windows installer now shows the standard install wizard — a page to choose the install folder and a Finish page, with desktop and Start Menu shortcuts created — instead of a bare one-click progress bar.
 - **The Linux release (`.deb` and AppImage) now bundles the same self-contained Python, local-embeddings Ollama runtime and Node.js as the Windows installer**, so neither a system Python, Ollama nor Node is required — the `.deb`'s own package dependencies no longer list Python at all. Everything else about the bundled runtime (the pinned packages, the first-run embedding pull, the Settings status sections, `npx`-launched MCP servers working out of the box) is the same as the Windows entry above.
+- Chat window size and position are now remembered between launches.
+- The message composer now offers right-click spelling suggestions and "Add to Dictionary" for an underlined word (Chromium's own built-in spellchecker, not previously wired up to anything).
+- The tool confirmation dialog's "Talk about it" panel can now approve a call and send your comment alongside it ("Approve & send comment"), not only deny with one.
 
 ### Changed
 
@@ -62,6 +67,11 @@ version is still `0`.
 - Asking what tools an MCP server has could send the assistant into a loop of up to 20 identical calls before giving a vague non-answer, because the tool only ever reported a count, never the real names. It now lists the actual tool names directly (#202).
 - A follow-up question about an already-connected MCP server could make the assistant repeat the same lookup or connection-setup call dozens of times in a row (observed up to 26) instead of delegating to the right specialist. It now stops after two identical repeats with a clear message, or delegates correctly before that point (#202).
 - Windows: an MCP server launched via `npx`/`npm` (such as Context7) failed to connect because the bundled Node runtime's own `node_modules` folder was being silently dropped from the installer. It's now included (#202).
+- A long bare-`$...$` math expression wrapped as plain text past 60 characters instead of stretching the chat panel to fit it (#182).
+- A pinned specialist's reply could show the raw `[handoff: ...]` tag text when a request fell outside its role, instead of just the plain-language explanation (#206).
+- `python_run`/`shell_execute` could hang for minutes if the script they ran tried to read interactive input (e.g. Python's `input()`) — neither tool is connected to anything that could answer it. Such a script now fails immediately with a clear message instead of hanging until the run times out (#210).
+- A comment added while approving a tool call, right after that specialist had already finished its task, could trigger a wasteful full restart of the whole task instead of a small addition to the work already done — and could leave a leftover helper file behind. Both are fixed: a follow-up like this is now handled as a small continuation of the existing work, with no debris left behind (#211).
+- Saving a session as Markdown or PDF with tool output shown could print a delegated specialist's reply twice — once as its own message, once again as the delegation's own result. It's now shown once (#211).
 
 ## [0.2.2] - 2026-09-25
 
