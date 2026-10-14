@@ -18,6 +18,16 @@
     return message.content.length > 0 && message.content.every((b) => b.type === 'tool_result' || b.type === 'image')
   }
 
+  /**
+   * TASKS.md #211 finding 3: a `delegate_to_*` call's own `tool_result` is the specialist's reply
+   * formatted for the orchestrator — the specialist's own attributed `text` block right after it
+   * already carries the same words. ChatView.svelte already skips rendering it live for exactly this
+   * reason; this export (and sessionToMarkdown in export.ts) didn't, so `toolDisplayMode: 'shown'`
+   * genuinely printed the same reply twice back to back. Built once per session, same as App.svelte's
+   * toolSegmentsById: a tool_result block only carries its toolUseId, not the tool's name.
+   */
+  const delegateToolUseIds = new Set<string>()
+
   onMount(async () => {
     try {
       const sessionId = new URLSearchParams(location.search).get('sessionId')
@@ -30,6 +40,11 @@
       ])
       title = sessions.find((s) => s.id === sessionId)?.title ?? title
       messages = records
+      for (const message of records) {
+        for (const block of message.content) {
+          if (block.type === 'tool_use' && block.name.startsWith('delegate_to_')) delegateToolUseIds.add(block.id)
+        }
+      }
       if (storedMode === 'hidden' || storedMode === 'partial' || storedMode === 'shown') toolDisplayMode = storedMode
     } catch (err) {
       error = err instanceof Error ? err.message : String(err)
@@ -69,7 +84,7 @@
             {/if}
           </div>
         </div>
-      {:else if block.type === 'tool_result' && toolDisplayMode !== 'hidden'}
+      {:else if block.type === 'tool_result' && toolDisplayMode !== 'hidden' && !delegateToolUseIds.has(block.toolUseId)}
         <div class="tool-result" class:error={block.isError}>
           {toolDisplayMode === 'shown' ? block.content : block.isError ? 'Error' : 'Done'}
         </div>

@@ -138,6 +138,40 @@ describe('sessionToMarkdown', () => {
     expect(md.match(/## User/g)).toBeNull()
   })
 
+  // TASKS.md #211 finding 3: confirmed live that the specialist's own reply text is stored twice —
+  // once as its own `text` message, once again wrapped as the `delegate_to_*` call's `tool_result` —
+  // and that ChatView.svelte already special-cases this live (never renders a resolved delegate
+  // call's tool_result at all). Markdown/PDF export had no such exclusion before this fix.
+  it('omits a delegate_to_* call\'s own tool_result — the specialist\'s text block right after it already carries the same reply', () => {
+    const messages: MessageRecord[] = [
+      {
+        id: 'm1',
+        sessionId: 's1',
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'call_1', name: 'delegate_to_coding', input: { task: 'write a script' } }],
+        createdAt: 1
+      },
+      {
+        id: 'm2',
+        sessionId: 's1',
+        role: 'user',
+        content: [{ type: 'tool_result', toolUseId: 'call_1', content: 'I wrote the script to code/print_numbers.py and ran it.' }],
+        createdAt: 2
+      },
+      {
+        id: 'm3',
+        sessionId: 's1',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'I wrote the script to code/print_numbers.py and ran it.', agentRole: 'coding' }],
+        createdAt: 3
+      }
+    ]
+    const md = sessionToMarkdown(session, messages, 'shown')
+    expect(md).toContain('🔧 **delegate_to_coding**')
+    expect(md.match(/I wrote the script to code\/print_numbers\.py and ran it\./g)).toHaveLength(1)
+    expect(md).not.toContain('→ Result')
+  })
+
   it('marks an error tool_result distinctly from a successful one', () => {
     const messages: MessageRecord[] = [
       {

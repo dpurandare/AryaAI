@@ -74,6 +74,16 @@ export const SYSTEM_PROMPT =
   // Found live: a photo could not be fetched and the model blamed "login walls" it never tested.
   'Likewise never give a reason for a failure you did not observe ("it needs a login"): say what you tried. ' +
   'When asked to put earlier answers into a document, all of that content goes in whole, never summarized. ' +
+  // TASKS.md #211 (found live, #201's live test): a mid-run note arriving right after a specialist had
+  // already finished and reported done ("also save the output to a file called numbers.txt") triggered a
+  // brand-new delegate_to_coding call with the ENTIRE original task restated from zero — the Developer then
+  // re-read and re-ran everything via a new wrapper script instead of just adding the one new step to the
+  // already-confirmed-working result it had. The specialist already has the full conversation (delegation is
+  // not isolated by default) and does not need the task retold.
+  'A note that arrives right after a specialist already finished and reported done is a small addition to ' +
+  'that work, not a new task: when delegating a follow-up like this back to the SAME specialist, say only ' +
+  "what's new or changed, naming the file/result it already produced (e.g. \"add a step that also saves " +
+  'that output to numbers.txt\") — never restate the whole original task as if starting over. ' +
   // TASKS.md #156: default tooling for diagrams/scripts/general code, so agents stop guessing/searching
   // for alternatives. These are two SEPARATE rules, not one blended default — treat the literal word
   // "script" as a distinct trigger from a general coding request, since the app has no other way to tell

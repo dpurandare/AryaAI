@@ -132,13 +132,18 @@ const schemaTokens = (defs: Array<{ name: string; description: string; inputSche
 const CEILINGS = {
   // TASKS.md #178: the final-synthesis prompt now requires explicit disclosure when a plan step ended
   // PARTIAL INFORMATION, not just NEEDS INPUT/OUT OF SCOPE/FAILED — 1230 -> 1278. Deliberate, not drift.
-  routerPrompt: 1730,
+  // TASKS.md #211: a mid-run note arriving right after a specialist already finished and reported done
+  // is a small addition to that work, not a new task — found live, a follow-up asking to additionally
+  // save a script's output got re-delegated as the entire original task restated from zero. 1789 measured,
+  // ceiling raised to 1850 (also raises slimRouterBare to match). Deliberate growth, not drift.
+  routerPrompt: 1850,
   // TASKS.md #172 (continued again): db_execute_sql's description reworded to describe the large-result
   // file-export behavior (writes to a file instead of "gets truncated") — 9970 -> 9983. Deliberate, not drift.
   routerToolSchemas: 11190,
   routerBare: 12920,
   slimRouterToolSchemas: 2390,
-  slimRouterBare: 4120,
+  // Raised to match routerPrompt's #211 bump above — 4156 measured, ceiling raised to 4220.
+  slimRouterBare: 4220,
   routerCore: 990,
   // TASKS.md #179: the planning prompt's compound-step rule now explicitly says not to plan an MCP
   // Operator step AND a Research/web step for one domain-knowledge question up front (found live — a
@@ -159,7 +164,13 @@ const CEILINGS = {
   // TASKS.md #210: found live — a script calling input() hangs until python_run/shell_execute time out,
   // since neither connects stdin to anything. One rule bans writing interactive scripts, in favor of a
   // parametrized function called with real values (more reusable than a bare constant) — 3120 -> 3191. Deliberate.
-  'role:coding': 3200,
+  // TASKS.md #210 (updated): stdin is now actually closed (python-run.ts/shell.ts), so such a script fails
+  // fast with a clear error instead of hanging — the rule's wording updated to match, no longer "hangs".
+  // TASKS.md #211 finding 1: found live — a follow-up ("also save the output to a file") got handled by
+  // wrapping an already-working script in a brand-new throwaway one, then not cleaning up the leftover
+  // helper file it had noticed but left behind. New rule: edit the SAME script for a follow-up, and clean
+  // up any genuinely one-off helper file yourself. 3191 -> 3342. Deliberate growth, not drift.
+  'role:coding': 3400,
   'role:data': 2860,
   'role:data-processor': 2230,
   'role:document-creator': 2440,

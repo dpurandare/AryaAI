@@ -283,10 +283,24 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
         'Settings > Runtime rather than trying to install Python yourself. ' +
         'Never write a script that waits for interactive input — Python\'s input(), bash\'s read, or ' +
         'anything else that blocks on stdin. Neither python_run nor shell_execute connects your stdin ' +
-        'to anything: a script that calls input() just hangs until the run times out, so whatever it ' +
-        'was going to do after that call never happens. Put the logic in a parametrized function and ' +
+        'to anything: a script that reads it now fails immediately with a clear error, instead of the ' +
+        'old silent hang, but either way whatever it was going to do after that read never happens. ' +
+        'Put the logic in a parametrized function and ' +
         'call it with the actual values from the request (or read them from a file) — never by ' +
         'prompting for them; a function also stays reusable if the user asks for different values next. ' +
+        // TASKS.md #211 finding 1 (found live, #201's live test): asked to additionally save a script's
+        // output to a file, wrote a brand-new wrapper that re-ran the already-working script via
+        // subprocess just to capture its stdout — then correctly noticed, but did not remove, the
+        // leftover helper file it had just created (python_run auto-saves a bare `code` block under
+        // code/run_<time>.py). A follow-up on a script already in this conversation is a small edit to
+        // that SAME script, not a reason to wrap it in a new one.
+        'A follow-up that extends or tweaks something you already wrote this conversation (e.g. "also save ' +
+        'the output to a file") is a small edit to that SAME script — pass the revised source as `code` ' +
+        "again, or edit the file with write_file and re-run it with `script`; don't wrap an already-" +
+        'working script in a new throwaway one just to add a small step. If you genuinely do create a ' +
+        'file solely as a one-off helper (not something the user would want to keep or re-run), delete it ' +
+        'yourself once you no longer need it (e.g. a shell_execute rm, or os.remove inside the script) ' +
+        "rather than leaving it behind and only mentioning it in your reply. " +
         'Use the real data you were given, or read it yourself from a file — when your brief lists "Inputs from ' +
         'earlier in this turn", load those files with real file I/O inside the script (`open`/`json.load`), ' +
         'never by copying their row values into the source as a literal list. Never invent sample or ' +

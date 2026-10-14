@@ -191,6 +191,18 @@ describe('python_run', () => {
       await expect(pending).rejects.toThrow()
     })
 
+    // TASKS.md #210: stdin is explicitly closed before the child starts, so a script that reads it
+    // (input()) hits EOFError immediately instead of hanging until the timeout.
+    runIt('fails fast with an actionable hint on a script that reads stdin, instead of hanging until the timeout', async () => {
+      await installVenv()
+      const start = Date.now()
+      const out = await pythonRunTool.execute({ code: 'x = input("name: ")\nprint(x)', timeoutSeconds: 10 }, ctx)
+      expect(Date.now() - start).toBeLessThan(5_000)
+      expect(out).toContain('exit code: 1')
+      expect(out).toMatch(/EOFError/)
+      expect(out).toContain('python_run does not support')
+    })
+
     runIt('keeps only the tail of very long output (the traceback is at the end)', async () => {
       await installVenv()
       const out = await pythonRunTool.execute({ code: 'print("x" * 50000)\nprint("THE-END")' }, ctx)

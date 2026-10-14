@@ -50,7 +50,12 @@ export const shellExecuteTool: Tool = {
     const effectiveCommand = process.platform === 'win32' ? windowsPowerShellCommand(command) : command
 
     return new Promise((resolvePromise, reject) => {
-      exec(
+      // exec doesn't accept a `stdio` option (silently ignored — it always pipes all three streams itself
+      // to buffer output for the callback) and leaves stdin as an open, unconnected pipe by default. There
+      // is no user on the other end to answer an interactive prompt (`read`, a password prompt, a REPL), so
+      // stdin is ended right away: such a command hits EOF immediately instead of hanging until the
+      // timeout (TASKS.md #210).
+      const child = exec(
         effectiveCommand,
         { cwd: ctx.workspaceGuard.root, env, timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER_BYTES, signal },
         (error, stdout, stderr) => {
@@ -67,6 +72,7 @@ export const shellExecuteTool: Tool = {
           resolvePromise(parts.join('\n\n'))
         }
       )
+      child.stdin?.end()
     })
   }
 }

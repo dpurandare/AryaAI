@@ -78,6 +78,20 @@ describe('shell_execute', () => {
     expect(shellExecuteTool.cancellable).toBe(true)
   })
 
+  // TASKS.md #210: stdin is explicitly closed, so a command that tries to read it (an interactive
+  // prompt, a `read`, a password prompt) hits EOF immediately instead of hanging until TIMEOUT_MS.
+  // POSIX-only: Windows's equivalent (PowerShell's Read-Host) talks to the console host rather than
+  // the piped stdin handle this fix closes, so it is not exercised the same way here.
+  it.skipIf(isWindows)('fails fast on a command that reads stdin, instead of hanging until the timeout', async () => {
+    const start = Date.now()
+    // `read`'s own exit code (1 on EOF) is discarded by `;`, so what actually proves stdin was
+    // closed — rather than just not written to — is that `read` returns immediately with nothing,
+    // not that it hangs until TIMEOUT_MS then reports a timeout.
+    const result = await shellExecuteTool.execute({ command: 'read x; echo "got: [$x]"' }, ctx)
+    expect(Date.now() - start).toBeLessThan(5_000)
+    expect(result).toContain('got: []')
+  })
+
   it('actually kills the running process when the signal aborts, instead of letting it run to completion', async () => {
     const controller = new AbortController()
     const command = isWindows ? 'ping -n 10 127.0.0.1 > out.txt' : 'sleep 5 && echo done > out.txt'

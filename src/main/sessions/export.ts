@@ -31,12 +31,16 @@ function isPureToolResult(message: MessageRecord): boolean {
 }
 
 /**
- * `null` means "omit this block entirely" — only reachable for `tool_use`/a tool `tool_result` in
- * `'hidden'` mode (TASKS.md #181). An `image` block is never affected by `mode`, any value — "Hidden
- * should show the image as it is important part of the output" (explicit user decision, 2026-10-02):
- * a content-type rule, not a per-tool one, matching the live chat view's identical exception.
+ * `null` means "omit this block entirely" — reachable for `tool_use`/a tool `tool_result` in
+ * `'hidden'` mode (TASKS.md #181), and unconditionally for a `delegate_to_*` call's own `tool_result`
+ * (TASKS.md #211 finding 3): that result is the specialist's own reply text, formatted for the
+ * orchestrator's benefit — the specialist's own attributed `text` block already carries the same
+ * words right after it in the transcript, same reasoning ChatView.svelte already applies live (see
+ * its "Delegate calls need no result box of their own" comment). An `image` block is never affected
+ * by `mode`, any value — "Hidden should show the image as it is important part of the output"
+ * (explicit user decision, 2026-10-02): a content-type rule, not a per-tool one.
  */
-function blockToMarkdown(block: ContentBlock, mode: ToolDisplayMode): string | null {
+function blockToMarkdown(block: ContentBlock, mode: ToolDisplayMode, delegateToolUseIds: ReadonlySet<string>): string | null {
   if (block.type === 'text') {
     const prefix = block.agentRole ? `*${roleLabel(block.agentRole)} agent:* ` : ''
     return `${prefix}${block.text}`
@@ -64,6 +68,7 @@ function blockToMarkdown(block: ContentBlock, mode: ToolDisplayMode): string | n
     return mode === 'shown' ? `> 🧠 *Thinking:* ${block.text}` : '> 🧠 *Thinking* (collapsed)'
   }
   // tool_result
+  if (delegateToolUseIds.has(block.toolUseId)) return null
   if (mode === 'hidden') return null
   const label = block.isError ? '⚠️ Error' : '→ Result'
   return mode === 'shown' ? `> ${label}: ${block.content}` : `> ${label.replace(/:.*$/, '')}`
@@ -71,13 +76,23 @@ function blockToMarkdown(block: ContentBlock, mode: ToolDisplayMode): string | n
 
 /** Human-readable transcript — `## User`/`## Assistant` sections in order, tool calls and their results rendered inline. Tool output respects the same `toolDisplayMode` the live chat view uses (TASKS.md #181). */
 export function sessionToMarkdown(session: SessionRecord, messages: MessageRecord[], mode: ToolDisplayMode = currentToolDisplayMode()): string {
+  // Built once over the whole session, same as the live view's toolSegmentsById (App.svelte) — a
+  // tool_result block only carries its toolUseId, not the tool's name, so matching it back to the
+  // delegate_to_* call that produced it needs this id -> isDelegate lookup across every message.
+  const delegateToolUseIds = new Set<string>()
+  for (const message of messages) {
+    for (const block of message.content) {
+      if (block.type === 'tool_use' && block.name.startsWith('delegate_to_')) delegateToolUseIds.add(block.id)
+    }
+  }
+
   const lines: string[] = [`# ${session.title}`, '']
   for (const message of messages) {
     if (!isPureToolResult(message)) {
       lines.push(message.role === 'user' ? '## User' : '## Assistant', '')
     }
     for (const block of message.content) {
-      const line = blockToMarkdown(block, mode)
+      const line = blockToMarkdown(block, mode, delegateToolUseIds)
       if (line !== null) lines.push(line, '')
     }
   }

@@ -36,6 +36,15 @@ const MAX_OUTPUT_CHARS = 20_000
 const DESCRIBE_PREVIEW_CHARS = 2_000
 const MAX_LISTED_FILES = 20
 
+/** #210: stdin is always closed before the child even starts (see the execFile call below), so any read of it fails
+ *  immediately with one of these — recognized here to turn a bare traceback into an actionable message. */
+const STDIN_READ_ATTEMPTED = /EOFError: EOF when reading a line|ValueError: I\/O operation on closed file/
+
+const STDIN_NOT_SUPPORTED_HINT =
+  'This script tried to read from stdin (e.g. `input()`), which python_run does not support — there is no user on ' +
+  'the other end to answer it, so the read fails immediately instead of hanging. Rewrite it to take its values as ' +
+  'a parametrized function called with the real values, or as `args`, instead of reading them interactively.'
+
 function clip(text: string): string {
   return text.length > MAX_OUTPUT_CHARS ? `[…${text.length - MAX_OUTPUT_CHARS} earlier characters omitted…]\n${text.slice(-MAX_OUTPUT_CHARS)}` : text
 }
@@ -151,7 +160,12 @@ export const pythonRunTool: Tool = {
 
     const before = await snapshotWorkspace(root)
     const outcome = await new Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }>((resolvePromise, reject) => {
-      execFile(
+      // execFile/exec don't accept a `stdio` option (silently ignored — they always pipe all three streams
+      // themselves to buffer output for the callback) and leave stdin as an open, unconnected pipe by default.
+      // Neither this tool nor the user has any way to answer an interactive prompt, so stdin is ended right
+      // away: a script calling input() then hits an immediate EOFError instead of blocking until the timeout
+      // kills it (TASKS.md #210).
+      const child = execFile(
         interpreter.python,
         [scriptRel, ...args],
         { cwd: root, env, timeout: timeoutS * 1000, maxBuffer: MAX_BUFFER_BYTES, signal, windowsHide: true },
@@ -166,6 +180,7 @@ export const pythonRunTool: Tool = {
           resolvePromise({ code: typeof e?.code === 'number' ? e.code : 0, stdout, stderr, timedOut: false })
         }
       )
+      child.stdin?.end()
     })
     const diff = diffSnapshots(before, await snapshotWorkspace(root))
     // A bulk of loose new files in the workspace root is filed away (see tidyRootStrays); report their new locations.
@@ -183,6 +198,7 @@ export const pythonRunTool: Tool = {
     parts.push(`script: ${scriptRel}${generated ? ' (saved from `code`; to re-run it UNCHANGED, pass `script` ALONE — never together with `code`; for a fix, pass the revised source as `code` again instead)' : ''}`)
     if (outcome.stdout.trim()) parts.push(`stdout:\n${clip(outcome.stdout)}`)
     if (outcome.stderr.trim()) parts.push(`stderr:\n${clip(outcome.stderr)}`)
+    if (STDIN_READ_ATTEMPTED.test(outcome.stderr)) parts.push(STDIN_NOT_SUPPORTED_HINT)
     if (moved.length) {
       parts.push(
         `Moved ${moved.length} file(s) the script left in the workspace root: ${moved.slice(0, MAX_LISTED_FILES).map((m) => `${m.from} -> ${m.to}`).join(', ')}${moved.length > MAX_LISTED_FILES ? ', ...' : ''}. Use the new paths — and put scratch files in tmp/ (env SACHIV_TMP) next time.`
