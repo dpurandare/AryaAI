@@ -35,6 +35,43 @@ export async function overheadTokens(overhead: TurnOverhead, model: string, prov
   return provider.countTokens([{ role: 'user', content: [{ type: 'text', text }] }], model)
 }
 
+/** Tools whose result is one entry per line (a file/directory listing) — TASKS.md #148: a blind character cut mid-line is
+ * both uglier and less useful than cutting at a line boundary with an honest "N found, showing first K" count.
+ * Exported for reuse by orchestrator.ts's `capRepeatedToolResults` (#149), which needs the same "this is a listing"
+ * knowledge to collapse an older result compactly instead of erasing it. */
+export const LISTING_TOOL_NAMES = new Set(['list_directory', 'find_files'])
+
+/** `toolUseId` -> the tool name that produced it, built once from every `tool_use` block across the whole array — a
+ * `tool_result` only carries the id (`shared/protocol.ts`), never the name, so this is the only way to know which tool a
+ * given result came from without re-plumbing the name onto `tool_result` itself. */
+function toolNamesByUseId(messages: Message[]): Map<string, string> {
+  const names = new Map<string, string>()
+  for (const m of messages) {
+    for (const block of m.content) {
+      if (block.type === 'tool_use') names.set(block.id, block.name)
+    }
+  }
+  return names
+}
+
+/** Cuts `content` at the last full line within the budget rather than mid-line, and reports a listing-shaped count
+ * ("N found, showing first K") instead of a raw character count — TASKS.md #148/#149's shared "compact but complete,
+ * never silently lossy" principle: the model should know exactly how much it isn't seeing and how to see the rest. */
+function trimListingResult(content: string): string {
+  if (content.length <= TOOL_RESULT_MAX_CHARS) return content
+  const lines = content.split('\n')
+  let kept = 0
+  let usedChars = 0
+  for (const line of lines) {
+    const lineChars = line.length + 1 // +1 for the newline this line re-adds when joined back
+    if (usedChars + lineChars > TOOL_RESULT_MAX_CHARS && kept > 0) break
+    usedChars += lineChars
+    kept++
+  }
+  const omitted = lines.length - kept
+  return `${lines.slice(0, kept).join('\n')}\n...[${lines.length} found, showing first ${kept} — narrow the pattern/path or use write_file to persist the full list, ${omitted} more not shown]`
+}
+
 /**
  * Caps any oversized tool_result content before it's sent to the provider —
  * a large file read or `git log` can otherwise balloon a request by itself.
@@ -42,10 +79,14 @@ export async function overheadTokens(overhead: TurnOverhead, model: string, prov
  * transcript untouched, so nothing the user can see is ever silently cut.
  */
 export function trimToolResults(messages: Message[]): Message[] {
+  const toolNames = toolNamesByUseId(messages)
   return messages.map((m) => ({
     ...m,
     content: m.content.map((block): ContentBlock => {
       if (block.type !== 'tool_result' || block.content.length <= TOOL_RESULT_MAX_CHARS) return block
+      if (LISTING_TOOL_NAMES.has(toolNames.get(block.toolUseId) ?? '')) {
+        return { ...block, content: trimListingResult(block.content) }
+      }
       const omitted = block.content.length - TOOL_RESULT_MAX_CHARS
       return {
         ...block,
@@ -55,13 +96,77 @@ export function trimToolResults(messages: Message[]): Message[] {
   }))
 }
 
-/** A pure-tool_result message is the continuation of the turn before it (a tool round-trip), not a new one — same convention already used by the renderer (App.svelte's mapMessagesToDisplay). An `image` block (TASKS.md #82) rides alongside its `show_media` call's own `tool_result` in the same message, so it counts as a continuation too — never sent to the model either way (see toOpenAIMessages/toAnthropicMessages/Google's own mapping), but must not be misread as the start of a new turn for trimming purposes. */
+/** A message made only of tool_result/image/user_note blocks is the continuation of the turn before it, not a new one
+ * — same convention already used by the renderer (App.svelte's mapMessagesToDisplay). An `image` block (TASKS.md #82)
+ * rides alongside its `show_media` call's own `tool_result` in the same message, so it counts as a continuation too —
+ * never sent to the model either way (see toOpenAIMessages/toAnthropicMessages/Google's own mapping), but must not be
+ * misread as the start of a new turn for trimming purposes. A `user_note` (TASKS.md #158, a mid-run steering comment)
+ * is the newest case here for the identical reason: it must never fracture the turn it was injected into. */
 function isPureToolResult(m: Message): boolean {
-  return m.content.length > 0 && m.content.every((b) => b.type === 'tool_result' || b.type === 'image')
+  return m.content.length > 0 && m.content.every((b) => b.type === 'tool_result' || b.type === 'image' || b.type === 'user_note')
 }
 
-/** Groups messages into complete turns (one real user message through the next), never splitting a tool_use/tool_result pair — the API rejects a dangling one. */
-function splitIntoTurns(messages: Message[]): Message[][] {
+/** TASKS.md #158: a `user_note` block reads as ordinary text to the MODEL — the `user_note` type is purely an
+ * internal distinction for turn-boundary (`isPureToolResult` above) and UI-rendering purposes. Applied to
+ * `messagesToSend` right before every `provider.stream()` call (orchestrator.ts's `runLoop`), never to what's
+ * persisted or shown in the transcript, same as every other wire-only transform in this file. */
+export function normalizeUserNotesForWire(messages: Message[]): Message[] {
+  return messages.map((m) => ({
+    ...m,
+    content: m.content.map((b): ContentBlock => (b.type === 'user_note' ? { type: 'text', text: b.text } : b))
+  }))
+}
+
+const BACKGROUND_REPLIES = 6
+const BACKGROUND_REPLY_CHARS = 1200
+
+/**
+ * A specialist pinned in a conversation that others already answered in copies them (and so does Auto, `currentRole` undefined, after pinned turns): found live (11.6), Research, Developer, Data
+ * Access, Data Processor and History each greeted the user as another specialist because the earlier replies said so. Marking those
+ * replies in place did not hold (a small model repeated the marker). So before the current turn, text another specialist (or Auto)
+ * wrote is taken out of the conversation and returned as `background` for the system prompt, where there is no assistant turn to
+ * imitate. Tool calls and results stay, so no pair is broken; the user's own messages stay. Wire-only, like the other transforms here.
+ */
+export function setAsideOtherSpecialistsReplies(
+  messages: Message[],
+  currentRole: string | undefined,
+  labelOf: (role: string) => string,
+  autoLabel = 'Sachivji (Auto)'
+): { messages: Message[]; background: string } {
+  let turnStart = messages.length
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user' && !isPureToolResult(messages[i])) {
+      turnStart = i
+      break
+    }
+  }
+  const setAside: string[] = []
+  const kept: Message[] = []
+  messages.forEach((m, index) => {
+    if (index >= turnStart || m.role !== 'assistant') {
+      kept.push(m)
+      return
+    }
+    const content = m.content.filter((b) => {
+      if (b.type !== 'text' || (currentRole ? b.agentRole === currentRole : !b.agentRole)) return true
+      if (b.text.trim()) setAside.push(`- ${b.agentRole ? labelOf(b.agentRole) : autoLabel}: ${b.text.trim().slice(0, BACKGROUND_REPLY_CHARS)}`)
+      return false
+    })
+    if (content.length > 0) kept.push({ ...m, content })
+  })
+  const background =
+    setAside.length === 0
+      ? ''
+      : '\n\n---\nEarlier in this conversation other specialists answered the user. This is background only: those replies are not yours, ' +
+        (currentRole
+          ? `and you are the ${labelOf(currentRole)} specialist, so never answer in their role.\n`
+          : 'and you are Sachivji, the orchestrator that routes work to them, so never answer in their role.\n') +
+        setAside.slice(-BACKGROUND_REPLIES).join('\n')
+  return { messages: kept, background }
+}
+
+/** Groups messages into complete turns (one real user message through the next), never splitting a tool_use/tool_result pair — the API rejects a dangling one. Exported for reuse by orchestrator.ts's `capRepeatedToolResults` (#149), which needs the same turn boundary to genuinely scope its cap to "the current turn" as its own doc comment always claimed but never enforced — this is the one canonical definition of a turn boundary in this codebase; a second, inconsistent one must not be invented elsewhere. */
+export function splitIntoTurns(messages: Message[]): Message[][] {
   const turns: Message[][] = []
   for (const m of messages) {
     if (turns.length === 0 || (m.role === 'user' && !isPureToolResult(m))) {
@@ -240,6 +345,87 @@ function dropOrphanResults(messages: Message[]): Message[] {
 }
 
 /**
+ * Delegate tools that no longer exist because their role was merged into
+ * another (step 2 of design-discussion.md: Terminal/DevOps and Distribution
+ * became the Developer, id `coding`). Saved sessions still contain calls to
+ * them; replaying a call to a tool that is absent from the request's tool list
+ * is a provider-compat risk (design section 8, risk gate 1), and it would show
+ * the model a delegate it can no longer use. Renamed to the current name on
+ * replay only — the stored transcript and the UI keep the original.
+ */
+const LEGACY_DELEGATE_NAMES: Readonly<Record<string, string>> = {
+  delegate_to_terminal_devops: 'delegate_to_coding',
+  delegate_to_distribution: 'delegate_to_coding'
+}
+
+export function migrateLegacyDelegateNames(messages: Message[]): Message[] {
+  let changed = false
+  const result = messages.map((m) => {
+    if (!m.content.some((b) => b.type === 'tool_use' && b.name in LEGACY_DELEGATE_NAMES)) return m
+    changed = true
+    return {
+      ...m,
+      content: m.content.map((b) => (b.type === 'tool_use' && b.name in LEGACY_DELEGATE_NAMES ? { ...b, name: LEGACY_DELEGATE_NAMES[b.name] } : b))
+    }
+  })
+  return changed ? result : messages
+}
+
+/**
+ * Replays calls to tools that are NOT in the request's tool list as compact text.
+ *
+ * The slim router (design-discussion.md 3.1) carries only a hot core, so earlier turns' history
+ * can contain calls to tools the current request does not define — the model may copy such a call
+ * and get "Unknown tool", and some providers may reject a `tool_use` for a tool absent from the
+ * request. Rather than verify every provider (risk gate 1), make it moot: no provider is ever
+ * shown a call to a tool it was not given. The call and its result become plain text in place
+ * ("[earlier: called xlsx_write(...) -> ok]"), so the model still knows what happened.
+ *
+ * Pairing stays valid: a converted `tool_use` and its `tool_result` both become text, and any
+ * text produced from results is placed AFTER the remaining `tool_result` blocks of that message
+ * (Anthropic requires tool_result blocks first). Replay-only — the stored transcript and the UI
+ * are untouched, same convention as every other pass here. Returns the input array when nothing
+ * needs converting.
+ */
+export function collapseUnavailableToolCalls(messages: Message[], availableTools: ReadonlySet<string>): Message[] {
+  const absent = new Map<string, string>() // tool_use id -> tool name
+  for (const m of messages) {
+    for (const b of m.content) if (b.type === 'tool_use' && !availableTools.has(b.name)) absent.set(b.id, b.name)
+  }
+  if (absent.size === 0) return messages
+
+  const compact = (input: Record<string, unknown>): string => {
+    const json = JSON.stringify(input)
+    return json.length > 160 ? json.slice(0, 160) + '…' : json
+  }
+  return messages.map((m) => {
+    if (!m.content.some((b) => (b.type === 'tool_use' && absent.has(b.id)) || (b.type === 'tool_result' && absent.has(b.toolUseId)))) return m
+    const convert = (b: ContentBlock): ContentBlock | undefined => {
+      if (b.type === 'tool_use' && absent.has(b.id)) {
+        return { type: 'text', text: `[earlier: called ${b.name}(${compact(b.input)})]`, ...(b.agentRole ? { agentRole: b.agentRole } : {}) }
+      }
+      if (b.type === 'tool_result' && absent.has(b.toolUseId)) {
+        const body = b.content.length > 500 ? b.content.slice(0, 500) + '…' : b.content
+        return { type: 'text', text: `[earlier result of ${absent.get(b.toolUseId)}${b.isError ? ' (error)' : ''}: ${body}]` }
+      }
+      return undefined
+    }
+    // Assistant messages: convert in place, so the model's own text keeps its order.
+    if (m.role === 'assistant') return { ...m, content: m.content.map((b) => convert(b) ?? b) }
+    // User messages: remaining tool_results first, converted ones after them (Anthropic requires tool_result blocks first).
+    const kept: ContentBlock[] = []
+    const asText: ContentBlock[] = []
+    for (const b of m.content) {
+      const c = convert(b)
+      if (c) asText.push(c)
+      else kept.push(b)
+    }
+    const content = [...kept, ...asText]
+    return { ...m, content }
+  })
+}
+
+/**
  * Makes the replayed history satisfy the tool-call pairing rule every provider
  * enforces, in both directions (no unanswered `tool_use`, no orphan
  * `tool_result`). Only affects what's sent — SQLite and the UI transcript are
@@ -402,5 +588,10 @@ export async function prepareConversation(
   provider: ModelProvider,
   overhead?: TurnOverhead
 ): Promise<SlidingWindowResult> {
-  return applySlidingWindow(collapseFailedTurns(trimToolResults(repairToolPairs(messages))), model, provider, overhead)
+  return applySlidingWindow(
+    collapseFailedTurns(trimToolResults(repairToolPairs(migrateLegacyDelegateNames(messages)))),
+    model,
+    provider,
+    overhead
+  )
 }

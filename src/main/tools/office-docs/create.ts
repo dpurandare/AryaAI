@@ -12,10 +12,11 @@ import {
   WidthType
 } from 'docx'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, extname, relative } from 'node:path'
+import { dirname, extname } from 'node:path'
 import pptxgen from 'pptxgenjs'
+import { parseHandoffTag } from '../../agents/handoff'
 import type { Tool } from '../types'
-import { resolveNewFilePath } from '../workspace-layout'
+import { resolveNewFilePath, workspaceRelativePath } from '../workspace-layout'
 
 interface DocxTable {
   headers?: string[]
@@ -30,6 +31,35 @@ interface DocxSection {
   table?: DocxTable
 }
 
+const SECTION_KEYS: Record<string, keyof DocxSection> = {
+  heading: 'heading', title: 'heading', header: 'heading',
+  paragraphs: 'paragraphs', paragraph: 'paragraphs', text: 'paragraphs', body: 'paragraphs',
+  bullets: 'bullets', bullet: 'bullets', list: 'bullets', items: 'bullets',
+  numbers: 'numbers', numbered: 'numbers', steps: 'numbers',
+  table: 'table'
+}
+
+/**
+ * A weak model's section keys come out damaged: found live, a Word file had a heading on its first section only because
+ * every later one was written as `"- heading"` (a Markdown list marker pasted into the key), which was silently ignored -
+ * the document came out as one long run of text. Read the obvious variants, and refuse a key that means nothing instead
+ * of dropping it with its content.
+ */
+export function normalizeSections(raw: unknown[]): DocxSection[] {
+  return raw.map((entry, index) => {
+    const out: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries((entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>)) {
+      const canonical = SECTION_KEYS[key.replace(/^[\s\-*#"'`]+|[\s:"'`]+$/g, '').toLowerCase()]
+      if (!canonical) {
+        throw new Error(`Section ${index + 1} has a field "${key}" that is not one of: heading, paragraphs, bullets, numbers, table. Fix it and call again - nothing was written.`)
+      }
+      const asList = canonical === 'paragraphs' || canonical === 'bullets' || canonical === 'numbers'
+      out[canonical] = asList && typeof value === 'string' ? [value] : value
+    }
+    return out as DocxSection
+  })
+}
+
 interface PptxSlide {
   title?: string
   bullets?: string[]
@@ -38,6 +68,29 @@ interface PptxSlide {
 
 function extensionOf(path: string): string {
   return extname(path).slice(1).toLowerCase()
+}
+
+/**
+ * A report must have a head and a tail. Found live: a "Top 5 customers" request produced a Word file that was just
+ * a bare table — no title, no statement of what it is or where the data came from, no closing note. Prompts did not
+ * stop it, so the tool refuses until the sections carry an opening and a closing paragraph.
+ */
+export const documentFraming = { enforce: true }
+
+function documentFramingProblem(title: string | undefined, sections: DocxSection[]): string | null {
+  const hasProse = (s: DocxSection | undefined): boolean => !!s?.paragraphs?.some((p) => typeof p === 'string' && p.trim())
+  const isProseOnly = (s: DocxSection): boolean => !s.table && !s.bullets?.length && !s.numbers?.length
+  const missing: string[] = []
+  if (!title?.trim()) missing.push('a `title`')
+  if (!hasProse(sections[0])) {
+    missing.push('an opening section whose `paragraphs` say what the document is, its purpose, where the information comes from and what it contains')
+  }
+  const last = sections[sections.length - 1]
+  if (sections.length < 2 || !last || !hasProse(last) || !isProseOnly(last)) {
+    missing.push('a final prose-only section (paragraphs, no table or list) that summarises the findings or states the conclusion')
+  }
+  if (missing.length === 0) return null
+  return `The document has no head or tail. Add ${missing.join('; and ')}. Then call again.`
 }
 
 const NUMBERED_LIST_REFERENCE = 'office-create-document-numbered-list'
@@ -52,7 +105,9 @@ const NUMBERED_LIST_REFERENCE = 'office-create-document-numbered-list'
  * ***bold italic***) — real output from this app has never needed more
  * than one level, and a full CommonMark inline parser is overkill here.
  */
-const INLINE_MARKDOWN = /\*\*(.+?)\*\*|__(.+?)__|\*(.+?)\*|_(.+?)_|`(.+?)`/g
+// `_`/`__` only count as emphasis at a word edge: inside snake_case names and file names (db_query_top_customers.json)
+// they are just characters — found live, a path in a document lost every underscore to "italics".
+const INLINE_MARKDOWN = /\*\*(.+?)\*\*|(?<![A-Za-z0-9_])__(.+?)__(?![A-Za-z0-9_])|\*(.+?)\*|(?<![A-Za-z0-9_])_(.+?)_(?![A-Za-z0-9_])|`(.+?)`/g
 
 function parseInlineRuns(text: string): TextRun[] {
   const runs: TextRun[] = []
@@ -113,6 +168,11 @@ function splitTableRowLine(line: string): string[] {
     .map((cell) => cell.trim())
 }
 
+/** A table cell's text, with each `<br>` (how chat tables put several lines in one cell) becoming its own paragraph. */
+function cellParagraphs(cell: string): Paragraph[] {
+  return cell.split(/<br\s*\/?>/i).map((line) => new Paragraph({ children: parseInlineRuns(line.trim()) }))
+}
+
 function buildTable(table: DocxTable): Table {
   const rows: TableRow[] = []
   if (table.headers?.length) {
@@ -132,7 +192,7 @@ function buildTable(table: DocxTable): Table {
   for (const row of table.rows) {
     rows.push(
       new TableRow({
-        children: row.map((cell) => new TableCell({ children: [new Paragraph({ children: parseInlineRuns(cell) })] }))
+        children: row.map((cell) => new TableCell({ children: cellParagraphs(cell) }))
       })
     )
   }
@@ -198,9 +258,86 @@ function renderParagraphText(text: string): (Paragraph | Table)[] {
   return blocks
 }
 
-async function buildDocx(title: string | undefined, sections: DocxSection[]): Promise<Buffer> {
+const HEADING_LEVELS = [
+  HeadingLevel.HEADING_1,
+  HeadingLevel.HEADING_2,
+  HeadingLevel.HEADING_3,
+  HeadingLevel.HEADING_4,
+  HeadingLevel.HEADING_5,
+  HeadingLevel.HEADING_6
+]
+
+/**
+ * A whole chat answer (Markdown) as Word blocks, for `fromPreviousAnswer`. Unlike `renderParagraphText` this also
+ * covers what a long answer contains: headings, fenced code, horizontal rules, quotes and nested bullets. Every line
+ * of the source ends up in the document — nothing is summarised or skipped; the only thing dropped is the
+ * horizontal-rule line itself, which is a divider rather than content.
+ */
+function renderMarkdownBlocks(markdown: string): (Paragraph | Table)[] {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
+  const blocks: (Paragraph | Table)[] = []
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    if (line.trim() === '') {
+      i++
+      continue
+    }
+    const fence = /^\s*(```|~~~)/.exec(line)
+    if (fence) {
+      i++
+      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) {
+        blocks.push(new Paragraph({ children: [new TextRun({ text: lines[i], font: 'Courier New' })] }))
+        i++
+      }
+      i++ // closing fence
+      continue
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line) && !/^\s*[-*]\s+\S/.test(line)) {
+      i++
+      continue
+    }
+    const heading = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line)
+    if (heading) {
+      blocks.push(new Paragraph({ children: parseInlineRuns(heading[2]), heading: HEADING_LEVELS[heading[1].length - 1] }))
+      i++
+      continue
+    }
+    if (isTableRowLine(line)) {
+      const start = i
+      while (i < lines.length && (isTableRowLine(lines[i]) || isTableSeparatorLine(lines[i]))) i++
+      blocks.push(...renderParagraphText(lines.slice(start, i).join('\n')))
+      continue
+    }
+    const quote = /^\s*>\s?(.*)$/.exec(line)
+    if (quote) {
+      blocks.push(new Paragraph({ indent: { left: 720 }, children: parseInlineRuns(quote[1]) }))
+      i++
+      continue
+    }
+    const bullet = /^(\s*)[-*•]\s+(.*)$/.exec(line)
+    if (bullet) {
+      const level = Math.min(8, Math.floor(bullet[1].replace(/\t/g, '    ').length / 2))
+      blocks.push(new Paragraph({ bullet: { level }, children: parseInlineRuns(bullet[2]) }))
+      i++
+      continue
+    }
+    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line)
+    if (numbered) {
+      blocks.push(new Paragraph({ numbering: { reference: NUMBERED_LIST_REFERENCE, level: 0 }, children: parseInlineRuns(numbered[1]) }))
+      i++
+      continue
+    }
+    blocks.push(new Paragraph({ children: parseInlineRuns(line.trim()) }))
+    i++
+  }
+  return blocks
+}
+
+async function buildDocx(title: string | undefined, sections: DocxSection[], bodyMarkdown?: string): Promise<Buffer> {
   const children: (Paragraph | Table)[] = []
   if (title) children.push(new Paragraph({ children: parseInlineRuns(title), heading: HeadingLevel.TITLE }))
+  if (bodyMarkdown) children.push(...renderMarkdownBlocks(bodyMarkdown))
   for (const section of sections) {
     if (section.heading) {
       children.push(new Paragraph({ children: parseInlineRuns(section.heading), heading: HeadingLevel.HEADING_1 }))
@@ -256,31 +393,21 @@ async function buildPptx(absPath: string, title: string | undefined, slides: Ppt
 export const officeCreateDocumentTool: Tool = {
   name: 'office_create_document',
   description:
-    'Create a new .docx or .pptx file from scratch inside the workspace — the format is chosen by the ' +
-    "path's extension. Automatically placed under documents/ regardless of the path given, unless a file " +
-    'already exists at that path (then it writes back there instead) — the result names the real path ' +
-    'used. This can only build a new document, never open/edit an existing one (docx/pptxgenjs ' +
-    "have no load capability for these formats — see office_fill_template for the one supported way back " +
-    "into 'editing', via a user-authored template). For .docx, provide sections (each an optional heading " +
-    'plus paragraphs/bullets/numbers/table). **bold**, *italic*/_italic_, and `code` inside any text field ' +
-    "render as real formatting, not literal asterisks — write prose the normal way, it doesn't need " +
-    'special handling. Use the dedicated `table` field (headers + rows) for any tabular data — it renders ' +
-    'as a real Word table with a shaded header row, not a wall of pipe characters. Likewise prefer `bullets`/' +
-    "`numbers` over typing \"- \"/\"1. \" into a paragraph yourself — real Word list formatting, not literal " +
-    'list-marker text. For .pptx, provide slides (each an optional title, bullets, and speaker notes) — ' +
-    'but this .pptx path is deliberately plain: a title and a flat bullet list per slide, no charts, ' +
-    'tables, images, or real visual layout at all, regardless of what the content actually needs. Found ' +
-    'live: asked for "a presentation," a model used this tool directly and produced a wall of bullet-only ' +
-    'slides — a valid file, but not what a real presentation-building request wants. For an actual ' +
-    'presentation (more than a handful of slides, or any real visual design — charts, tables, images, ' +
-    "varied layouts), use pptx_start_deck + delegate_to_page-creator per slide instead (see this app's " +
-    "own system prompt for the full flow) — reserve this tool's .pptx path for a genuinely minimal, " +
-    'text-only deck where a flat bullet list is actually fine.',
+    'Create a new .docx or .pptx file from scratch inside the workspace — the format follows the path\'s extension. ' +
+    'It is placed under documents/ regardless of the path given (unless a file already exists at that path, which it ' +
+    'then overwrites); the result names the real path. It cannot open or edit an existing document (the way back into ' +
+    'editing is office_fill_template). For .docx give a `title` and sections: the first introduces the document (what it ' +
+    'is, its purpose, the source of the information), the last is a prose-only conclusion — a bare table or list is ' +
+    'refused. Each section is an optional heading plus paragraphs / bullets / numbers / table; **bold**, *italic* and ' +
+    '`code` render. Use `table` for tabular data and `bullets`/`numbers` for lists, never markdown pipes or typed ' +
+    'markers. No images or charts. For .pptx give slides (title, bullets, notes) — deliberately plain, a flat bullet ' +
+    'list per slide; for a real presentation use pptx_start_deck + delegate_to_page-creator per slide.',
   inputSchema: {
     type: 'object',
     properties: {
       path: { type: 'string', description: 'Output path relative to the workspace root, .docx or .pptx' },
       title: { type: 'string', description: 'Optional document title / opening title slide' },
+      fromPreviousAnswer: { type: 'boolean', description: 'docx only: your previous answer, in full, as the body' },
       sections: {
         type: 'array',
         description: 'docx only',
@@ -291,16 +418,13 @@ export const officeCreateDocumentTool: Tool = {
             paragraphs: {
               type: 'array',
               items: { type: 'string' },
-              description:
-                'Ordinary prose paragraphs. **bold**/*italic*/`code` render as real formatting. Avoid ' +
-                "writing a table or list here as raw markdown text — use the table/bullets/numbers fields " +
-                'instead so they render as real Word constructs, not literal pipe/dash/number characters.'
+              description: 'Ordinary prose paragraphs (inline **bold** / *italic* / `code` render). Not for tables or lists.'
             },
             bullets: { type: 'array', items: { type: 'string' }, description: 'Real Word bulleted list items.' },
             numbers: { type: 'array', items: { type: 'string' }, description: 'Real Word numbered list items.' },
             table: {
               type: 'object',
-              description: 'A real Word table — use this for any tabular data instead of a markdown pipe table.',
+              description: 'A real Word table.',
               properties: {
                 headers: { type: 'array', items: { type: 'string' }, description: 'Optional header row (shaded, bold).' },
                 rows: { type: 'array', items: { type: 'array', items: { type: 'string' } }, description: 'Data rows, each an array of cell values.' }
@@ -327,7 +451,7 @@ export const officeCreateDocumentTool: Tool = {
   },
   mutates: true,
   describe(input) {
-    return `Create "${String(input.path ?? '')}"`
+    return `Create "${String(input.path ?? '')}"${input.fromPreviousAnswer === true ? ' from the previous answer' : ''}`
   },
   async execute(input, ctx) {
     const relPath = String(input.path ?? '')
@@ -335,18 +459,43 @@ export const officeCreateDocumentTool: Tool = {
     if (extension !== 'docx' && extension !== 'pptx') {
       throw new Error(`office_create_document only supports .docx and .pptx (got "${relPath}").`)
     }
+    // Internal working files (the handoff folder) are plumbing, not content for the reader. Found live: a model
+    // wrote "retrieved from data file .sachiv-handoff/…json" into a report's opening line. Refuse and let it rewrite.
+    if (/\.sachiv-handoff[\\/]/.test(JSON.stringify([input.title, input.sections, input.slides]))) {
+      throw new Error(
+        'The document text mentions an internal working file (.sachiv-handoff/…). Remove every file path, tool name and ' +
+          'step reference from it — the document is for the reader, who only needs the content — and call again.'
+      )
+    }
+    if (/\[handoff:/i.test(JSON.stringify([input.title, input.sections, input.slides]))) {
+      throw new Error(
+        'The document text contains a "[handoff: …]" routing tag. That is internal plumbing, not content — remove it, and any ' +
+          'sentence about being unable to do the task, and call again.'
+      )
+    }
     const absPath = resolveNewFilePath(ctx.workspaceGuard, relPath)
     await mkdir(dirname(absPath), { recursive: true })
     const title = typeof input.title === 'string' ? input.title : undefined
+    if (input.fromPreviousAnswer === true && extension !== 'docx') throw new Error('fromPreviousAnswer works for .docx only.')
 
     if (extension === 'docx') {
-      const sections = Array.isArray(input.sections) ? (input.sections as DocxSection[]) : []
-      const buffer = await buildDocx(title, sections)
+      const sections = Array.isArray(input.sections) ? normalizeSections(input.sections) : []
+      let body: string | undefined
+      if (input.fromPreviousAnswer === true) {
+        body = ctx.previousAnswerText?.()
+        if (body) body = parseHandoffTag(body).text
+        if (!body) throw new Error('There is no previous answer in this conversation to put in the document — write the sections yourself.')
+      }
+      if (body === undefined && documentFraming.enforce) {
+        const problem = documentFramingProblem(title, sections)
+        if (problem) throw new Error(problem)
+      }
+      const buffer = await buildDocx(title, sections, body)
       await writeFile(absPath, buffer)
     } else {
       const slides = Array.isArray(input.slides) ? (input.slides as PptxSlide[]) : []
       await buildPptx(absPath, title, slides)
     }
-    return `Created ${relative(ctx.workspaceGuard.root, absPath)}.`
+    return `Created ${workspaceRelativePath(ctx.workspaceGuard.root, absPath)}.`
   }
 }

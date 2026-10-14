@@ -1,9 +1,13 @@
 import type pptxgen from 'pptxgenjs'
 import type { SavedQueryDto } from '@shared/ipc-contract'
 import type { WorkspaceGuard } from '../security/workspace-guard'
+import type { McpServerStatusInfo } from '../mcp/manager'
+import type { ExternalAccess, ExternalAccessKind } from '../security/external-access'
 
 export interface ToolContext {
   workspaceGuard: WorkspaceGuard
+  /** Grants for reading folders outside the workspace and creating new files there (see security/external-access.ts). Absent in tests, where outside paths are simply refused. */
+  externalAccess?: ExternalAccess
   /** The session the current chat turn belongs to. No current tool reads this (search_history stopped excluding the active session — see its own doc comment), but it's real per-turn context a future tool may reasonably need. */
   currentSessionId: string
   /**
@@ -15,6 +19,10 @@ export interface ToolContext {
   registerSavedQuery?: (query: SavedQueryDto) => void
   /** Live-reconnects a freshly-saved MCP server (see mcp_create_connection in tools/config-gen/mcp.ts) so its tools appear immediately — same call the Settings > MCP servers save flow already makes. Optional/absent in tests, same reasoning as registerSavedQuery. */
   connectMcpServer?: (id: string) => Promise<void>
+  /** The previous assistant answer in this conversation, as Markdown (office_create_document's fromPreviousAnswer) — undefined when there is none. Optional/absent in tests. */
+  previousAnswerText?: () => string | undefined
+  /** Live connection state of a configured MCP server (mcp_list_connections) — undefined when the server isn't tracked. Optional/absent in tests. */
+  mcpServerStatus?: (id: string) => McpServerStatusInfo | undefined
   /**
    * In-progress decks (#78), keyed by an id `pptx_start_deck` generates —
    * the only way state can survive across the top-level `pptx_add_slide`
@@ -26,7 +34,13 @@ export interface ToolContext {
    * A plain `Map`, not a class, since nothing else needs to own behavior
    * around it. Optional/absent in tests that don't need deck tools.
    */
-  activeDecks?: Map<string, { pres: pptxgen; slides: pptxgen.Slide[] }>
+  activeDecks?: Map<string, { pres: pptxgen; slides: pptxgen.Slide[]; /** Indexes of slides that have been composed. */ composed?: Set<number> }>
+  /**
+   * Live state of the workspace's managed Python runtime (`runtime/workspace-runtime.ts`), read by `python_run` so it can say
+   * "Python is turned off" / "still being set up" instead of failing obscurely. Optional/absent in tests, where the tool falls
+   * back to checking for the venv on disk.
+   */
+  runtimeState?: () => import('@shared/runtime').RuntimeState | undefined
 }
 
 /**
@@ -35,8 +49,20 @@ export interface ToolContext {
  * depends on the actual SQL text per call) routes the call through the
  * human-in-loop confirmation flow in ipc/register.ts before `execute` runs.
  */
+/** A path a tool call will touch that may lie outside the workspace. */
+export interface ExternalPathRequest {
+  path: string
+  access: ExternalAccessKind
+}
+
 export interface Tool {
   name: string
+  /**
+   * Paths this call would read or create that may be outside the workspace. The orchestrator asks the user about each
+   * outside folder BEFORE running the tool (and before its own confirmation), then the tool resolves the path with
+   * `resolveReadable` / `resolveWritableNewOutside`. A tool that never touches outside paths omits this.
+   */
+  externalPaths?(input: Record<string, unknown>, ctx: ToolContext): ExternalPathRequest[]
   description: string
   inputSchema: Record<string, unknown>
   mutates: boolean | ((input: Record<string, unknown>) => boolean)
@@ -66,6 +92,12 @@ export interface Tool {
    * in the background" for that specific tool.
    */
   execute(input: Record<string, unknown>, ctx: ToolContext, signal?: AbortSignal): Promise<string>
+  /**
+   * Set only on tools discovered from an MCP server (mcp/client.ts). Lets the rest of the app group a
+   * server's tools, and show the user-written server description, without parsing the `mcp__<server>__`
+   * name.
+   */
+  mcp?: { server: string; serverDescription?: string }
   /** True if `execute` actually honors `signal` to stop the underlying work, not just the orchestrator's wait on it. Defaults to false. */
   cancellable?: boolean
 }

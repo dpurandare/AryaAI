@@ -12,10 +12,11 @@ function configFromInput(input: Record<string, unknown>, id: string): McpServerC
       name: String(input.name ?? ''),
       transport: 'stdio',
       command: String(input.command ?? ''),
-      args: Array.isArray(input.args) ? input.args.map(String) : []
+      args: Array.isArray(input.args) ? input.args.map(String) : [],
+      description: typeof input.description === 'string' ? input.description : undefined
     }
   }
-  return { id, name: String(input.name ?? ''), transport: 'http', url: String(input.url ?? '') }
+  return { id, name: String(input.name ?? ''), transport: 'http', url: String(input.url ?? ''), description: typeof input.description === 'string' ? input.description : undefined }
 }
 
 /** Connects for real (the same handshake McpManager uses live) then immediately closes — a probe, not a lasting connection; the real one is established afterward by ctx.connectMcpServer once the config is actually saved. */
@@ -47,6 +48,7 @@ export const mcpCreateConnectionTool: Tool = {
       command: { type: 'string', description: 'stdio only' },
       args: { type: 'array', items: { type: 'string' }, description: 'stdio only' },
       url: { type: 'string', description: 'http only' },
+      description: { type: 'string', description: 'One short line (max 200 chars) on what this server is for, e.g. "Energy-sector wiki: runbooks and maintenance guides". Shown to the assistant instead of the server\'s own text — write it from what the user told you.' },
       token: { type: 'string', description: 'http only — user enters this directly, do not ask for it in chat' }
     },
     required: ['name', 'transport']
@@ -66,15 +68,17 @@ export const mcpCreateConnectionTool: Tool = {
     }
     await probeConnection(input)
     const transport = String(input.transport ?? '') as McpTransport
+    const description = typeof input.description === 'string' ? input.description : undefined
     const saveInput: SaveMcpServerInput =
       transport === 'stdio'
         ? {
             name,
             transport: 'stdio',
             command: String(input.command ?? ''),
-            args: Array.isArray(input.args) ? input.args.map(String) : []
+            args: Array.isArray(input.args) ? input.args.map(String) : [],
+            description
           }
-        : { name, transport: 'http', url: String(input.url ?? ''), token: typeof input.token === 'string' ? input.token : undefined }
+        : { name, transport: 'http', url: String(input.url ?? ''), token: typeof input.token === 'string' ? input.token : undefined, description }
 
     const saved = saveServerConfig(saveInput)
     await ctx.connectMcpServer?.(saved.id)

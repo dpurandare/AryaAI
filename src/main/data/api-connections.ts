@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { ApiAuthType, ApiConnectionDto, ApiConnectionSpecSummary, SaveApiConnectionInput } from '@shared/ipc-contract'
+import type { ApiAuthType, ApiConnectionDto, ApiKeyPlacement, ApiConnectionSpecSummary, SaveApiConnectionInput } from '@shared/ipc-contract'
 import { getSetting, setSetting } from '../db/settings'
 import { deleteApiKey, getApiKey, setApiKey } from '../security/keychain'
 
@@ -20,6 +20,7 @@ export interface ResolvedApiConnection {
   baseUrl: string
   authType: ApiAuthType
   apiKeyHeader?: string
+  apiKeyIn?: ApiKeyPlacement
   username?: string
   secret?: string
   specUrl?: string
@@ -69,6 +70,7 @@ export function saveApiConnection(input: SaveApiConnectionInput): ApiConnectionD
     baseUrl: input.baseUrl.replace(/\/+$/, ''),
     authType: input.authType,
     apiKeyHeader: input.authType === 'apiKey' ? input.apiKeyHeader?.trim() || 'X-API-Key' : undefined,
+    apiKeyIn: input.authType === 'apiKey' && input.apiKeyIn === 'query' ? 'query' : undefined,
     username: input.authType === 'basic' ? input.username : undefined,
     hasSecret,
     specUrl: input.specUrl || undefined,
@@ -107,6 +109,7 @@ export function resolveApiConnection(nameOrId: string): ResolvedApiConnection | 
     baseUrl: dto.baseUrl,
     authType: dto.authType,
     apiKeyHeader: dto.apiKeyHeader,
+    apiKeyIn: dto.apiKeyIn,
     username: dto.username,
     secret: dto.hasSecret ? getApiKey(KEYCHAIN_PREFIX + dto.id) : undefined,
     specUrl: dto.specUrl

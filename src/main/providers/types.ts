@@ -13,6 +13,17 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>
 }
 
+/**
+ * Asks the provider to constrain the reply to this JSON Schema (provider-enforced structured output) instead of merely asking for JSON in the
+ * prompt. Used by one-shot classification calls that have no tools. Each adapter maps it to its provider's mechanism — OpenAI-compatible
+ * `response_format` json_schema, Gemini `responseJsonSchema`, Anthropic a forced tool call — and always delivers the JSON as ordinary
+ * `text_delta`s, so callers read it the same way whatever the provider. A provider or model that does not accept it throws; the caller falls back.
+ */
+export interface StructuredOutputRequest {
+  name: string
+  schema: Record<string, unknown>
+}
+
 export interface CompletionRequest {
   model: string
   system?: string
@@ -20,6 +31,21 @@ export interface CompletionRequest {
   tools?: ToolDefinition[]
   maxTokens: number
   signal?: AbortSignal
+  /** Only meaningful without `tools`. */
+  structuredOutput?: StructuredOutputRequest
+  /**
+   * 0 (deterministic) .. 1 (provider default-ish). Undefined = send nothing, provider's own default
+   * applies. Settings > Model behavior (ipc/register.ts's TEMPERATURE_SETTING_KEY), threaded through
+   * unchanged by every adapter — never clamped or reinterpreted per-provider here, since 0..1 is a safe
+   * subset of every supported provider's own range (Anthropic caps at 1; OpenAI/Google go to 2).
+   */
+  temperature?: number
+}
+
+/** Per-turn provider construction options, read from Settings by the caller. Only Anthropic uses `promptCaching` today. */
+export interface ProviderOptions {
+  /** Default true. False sends no `cache_control` markers (Settings > Prompt caching). */
+  promptCaching?: boolean
 }
 
 export interface ModelProvider {

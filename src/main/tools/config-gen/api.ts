@@ -11,6 +11,7 @@ function connectionFromInput(input: Record<string, unknown>): ResolvedApiConnect
     baseUrl: String(input.baseUrl ?? '').replace(/\/+$/, ''),
     authType,
     apiKeyHeader: authType === 'apiKey' ? String(input.apiKeyHeader ?? 'X-API-Key') : undefined,
+    apiKeyIn: authType === 'apiKey' && input.apiKeyIn === 'query' ? 'query' : undefined,
     username: authType === 'basic' ? String(input.username ?? '') : undefined,
     secret:
       authType === 'apiKey'
@@ -48,7 +49,8 @@ export const apiCreateConnectionTool: Tool = {
       name: { type: 'string' },
       baseUrl: { type: 'string' },
       authType: { type: 'string', enum: ['none', 'apiKey', 'bearer', 'basic'] },
-      apiKeyHeader: { type: 'string', description: 'apiKey only, default "X-API-Key"' },
+      apiKeyHeader: { type: 'string', description: 'apiKey: header or query-param name' },
+      apiKeyIn: { type: 'string', enum: ['header', 'query'] },
       username: { type: 'string', description: 'basic only' },
       apiKey: { type: 'string', description: 'apiKey only — user enters this directly, do not ask for it in chat' },
       token: { type: 'string', description: 'bearer only — user enters this directly, do not ask for it in chat' },
@@ -85,6 +87,7 @@ export const apiCreateConnectionTool: Tool = {
       baseUrl: String(input.baseUrl ?? ''),
       authType,
       apiKeyHeader: typeof input.apiKeyHeader === 'string' ? input.apiKeyHeader : undefined,
+      apiKeyIn: input.apiKeyIn === 'query' ? 'query' : undefined,
       username: typeof input.username === 'string' ? input.username : undefined,
       secret,
       specUrl: typeof input.specUrl === 'string' ? input.specUrl : undefined

@@ -1,5 +1,6 @@
 import { readFile, stat } from 'node:fs/promises'
 import { extname } from 'node:path'
+import { resolveReadable } from '../security/external-access'
 import type { Tool } from './types'
 
 /**
@@ -42,6 +43,8 @@ export interface ShowMediaPayload {
   path: string
   mimeType: string
   dataBase64: string
+  /** Extra text for the MODEL only (the user sees just the image) — e.g. a reminder that it has not seen the picture. */
+  note?: string
 }
 
 export const showMediaTool: Tool = {
@@ -57,10 +60,11 @@ export const showMediaTool: Tool = {
     required: ['path']
   },
   mutates: false,
+  externalPaths: (input) => [{ path: String(input.path ?? ''), access: 'read' }],
   async execute(input, ctx) {
     const relPath = String(input.path ?? '')
     if (!relPath.trim()) throw new Error('No path given.')
-    const path = ctx.workspaceGuard.assertWithinWorkspace(relPath)
+    const path = resolveReadable(ctx, relPath)
     const ext = extname(path).toLowerCase()
     const mimeType = IMAGE_MIME_TYPES[ext]
     if (!mimeType) {

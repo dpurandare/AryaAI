@@ -1,10 +1,10 @@
 import Docxtemplater from 'docxtemplater'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, extname, relative } from 'node:path'
+import { dirname, extname } from 'node:path'
 import PizZip from 'pizzip'
 import type { Tool } from '../types'
 import { extractOfficeText } from './extract'
-import { resolveNewFilePath } from '../workspace-layout'
+import { resolveNewFilePath, workspaceRelativePath } from '../workspace-layout'
 
 const MAX_TEMPLATE_BYTES = 20_000_000
 const PLACEHOLDER_PATTERN = /\{[^}]+\}/g
@@ -89,6 +89,6 @@ export const officeFillTemplateTool: Tool = {
     const outputBuffer = doc.getZip().generate({ type: 'nodebuffer' })
     await mkdir(dirname(outputAbsPath), { recursive: true })
     await writeFile(outputAbsPath, outputBuffer)
-    return `Filled template written to ${relative(ctx.workspaceGuard.root, outputAbsPath)}.`
+    return `Filled template written to ${workspaceRelativePath(ctx.workspaceGuard.root, outputAbsPath)}.`
   }
 }

@@ -1,7 +1,8 @@
 import mysql from 'mysql2/promise'
 import type { DbDriver, DbQueryResult, DbTable } from './types'
 
-const MAX_RETURNED_ROWS = 200
+/** TASKS.md #172: raised from a 200-row UX cap to a safety backstop — see sqlite-driver.ts's identical constant for the full reasoning. */
+const MAX_SAFETY_ROWS = 100_000
 const STATEMENT_TIMEOUT_MS = 10_000
 
 export interface MysqlConfig {
@@ -68,7 +69,7 @@ export class MysqlDriver implements DbDriver {
     const conn = await this.ensureConnected()
     const [result] = await conn.query(sql, params)
     if (Array.isArray(result)) {
-      return { rows: result.slice(0, MAX_RETURNED_ROWS) as Record<string, unknown>[], rowCount: result.length }
+      return { rows: result.slice(0, MAX_SAFETY_ROWS) as Record<string, unknown>[], rowCount: result.length }
     }
     const header = result as mysql.ResultSetHeader
     return { rowCount: header.affectedRows ?? 0 }

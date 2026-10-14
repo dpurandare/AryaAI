@@ -42,6 +42,14 @@ export async function setThemeMode(mode: ThemeMode): Promise<void> {
   await window.sachiv.setSetting(THEME_SETTING_KEY, mode)
 }
 
+/** Re-reads the stored mode and applies it — for after an import changed it behind the renderer's back. (initTheme must run only once: it registers the system listener.) */
+export async function reloadThemeMode(): Promise<ThemeMode> {
+  const stored = await window.sachiv.getSetting(THEME_SETTING_KEY)
+  currentMode = stored === 'light' || stored === 'dark' || stored === 'system' ? stored : DEFAULT_THEME_MODE
+  apply()
+  return currentMode
+}
+
 export function getThemeMode(): ThemeMode {
   return currentMode
 }

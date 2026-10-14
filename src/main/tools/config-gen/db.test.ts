@@ -18,7 +18,7 @@ vi.mock('electron', () => ({
 
 const { setDbPath } = await import('../../db')
 const { listConnections } = await import('../../data/connections')
-const { dbCreateConnectionTool } = await import('./db')
+const { dbCreateConnectionTool, normalizeEngine } = await import('./db')
 
 function makeCtx(workspaceRoot: string): ToolContext {
   return { workspaceGuard: new WorkspaceGuard(workspaceRoot), currentSessionId: '' }
@@ -147,4 +147,38 @@ describe('db_create_connection', () => {
     await expect(dbCreateConnectionTool.execute(input, {} as never)).rejects.toThrow()
     expect(listConnections().some((c) => c.name === 'Warehouse')).toBe(false)
   }, 15000)
+})
+
+describe('engine names', () => {
+  it.each([
+    ['SQL Server', 'mssql'],
+    ['sql-server', 'mssql'],
+    ['Microsoft SQL Server', 'mssql'],
+    ['MSSQL', 'mssql'],
+    ['PostgreSQL', 'postgres'],
+    ['Postgres', 'postgres'],
+    ['MariaDB', 'mysql'],
+    ['MySQL', 'mysql'],
+    ['SQLite3', 'sqlite'],
+    ['sqlite', 'sqlite']
+  ])('normalizes "%s" to %s', (raw, expected) => {
+    expect(normalizeEngine(raw)).toBe(expected)
+  })
+
+  it('leaves an unrecognised engine as given, so the error can name it', async () => {
+    expect(normalizeEngine('Oracle')).toBe('Oracle')
+    await expect(dbCreateConnectionTool.execute({ name: 'X', engine: 'Oracle' }, {} as never)).rejects.toThrow(/Unknown engine "Oracle"/)
+  })
+
+  it('accepts the "SQL Server" label: gets past the engine check and fails only on the unreachable host', async () => {
+    const input = { name: 'Label', engine: 'SQL Server', host: 'this-host-does-not-exist.invalid', port: 1433, database: 'db', username: 'sa', password: 'pw' }
+    const err = await dbCreateConnectionTool.execute(input, {} as never).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).not.toMatch(/Unknown engine/)
+    expect(listConnections().some((c) => c.name === 'Label')).toBe(false)
+  }, 15000)
+
+  it('shows the canonical engine in the confirmation text', () => {
+    expect(dbCreateConnectionTool.describe?.({ name: 'N', engine: 'SQL Server', host: 'h', database: 'd' })).toBe('Create mssql connection "N" → h/d')
+  })
 })

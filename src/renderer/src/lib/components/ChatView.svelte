@@ -2,10 +2,13 @@
   import { tick } from 'svelte'
   import ModelPicker from './ModelPicker.svelte'
   import ContextMeter from './ContextMeter.svelte'
+  import { stripHandoffTag } from '../handoff-tag'
   import MarkdownText from './MarkdownText.svelte'
   import ToolConfirmDialog from './ToolConfirmDialog.svelte'
-  import { AGENT_ROLES, AGENT_ROLE_LABELS, type AgentRole } from '@shared/agents'
+  import { AGENT_ROLES, roleLabel, type AgentRole } from '@shared/agents'
+  import type { RoleRosterEntryDto } from '@shared/ipc-contract'
   import { parseSearchHistoryResult } from '../search-history-result'
+import { formatToolInputForDisplay } from '../tool-input-display'
   import type { ToolConfirmRequestPayload, LimitReachedRequestPayload } from '@shared/ipc-contract'
 
   interface ToolCallDisplay {
@@ -20,10 +23,12 @@
 
   interface DisplaySegment {
     id: string
-    kind: 'text' | 'tool' | 'warning'
+    kind: 'text' | 'tool' | 'warning' | 'user_note' | 'thinking'
     agentRole?: AgentRole
-    /** Holds the plain message for both 'text' and 'warning' kinds. */
+    /** Holds the plain message for 'text', 'warning', 'user_note' and 'thinking' kinds. */
     text?: string
+    /** A 'user_note' that Sachivji wrote (a completion check), not the user. */
+    fromApp?: boolean
     toolCall?: ToolCallDisplay
   }
 
@@ -34,6 +39,13 @@
     statusText?: string
     plan?: { steps: { role: AgentRole; description: string }[]; stepStatus: ('pending' | 'running' | 'done' | 'error')[] }
     segments: DisplaySegment[]
+    /** App-generated plan-step hand-off note — see App.svelte's DisplayMessage.stepNote. */
+    stepNote?: { label: string; body: string }
+    /** "<providerId>:<model>" that answered — shown only when showAnsweringModel is on. */
+    model?: string
+    /** User message: when sent. Assistant message: when that round finished (see App.svelte's doc comment
+        on this same field). Message-level only — no finer per-segment timestamp exists. */
+    createdAt?: number
   }
 
   interface Provider {
@@ -55,9 +67,10 @@
     onChangeModel,
     onNeedKey,
     sessionUsage,
+    contextTokens,
     contextWindow,
-    toolDetailsExpanded,
-    onToggleToolDetails,
+    toolDisplayMode,
+    onCycleToolDisplayMode,
     isMac,
     pendingConfirm,
     autoApproveTools,
@@ -68,11 +81,21 @@
     onToggleAutoApprove,
     onToggleAutoApproveRule,
     pendingLimit,
-    onRespondLimit
+    onRespondLimit,
+    roleRoster = [],
+    onSteer,
+    showAnsweringModel = false,
+    showTimestamps = true
   }: {
     messages: DisplayMessage[]
     statusLine: string
     sending: boolean
+    /** Off by default — shows each assistant message's "<providerId>:<model>" badge. */
+    showAnsweringModel?: boolean
+    /** Off by default — shows each message's createdAt, both on the bubble and (once expanded) on a tool/thinking block. */
+    showTimestamps?: boolean
+    /** Built-in and user-defined roles (the picker, and labels for user-defined ones). Empty until the first load: the built-ins are used. */
+    roleRoster?: readonly RoleRosterEntryDto[]
     onSend: (text: string, forcedRole?: AgentRole | null) => void
     onStop: () => void
     providers: readonly Provider[]
@@ -83,10 +106,11 @@
     onChangeModel: (model: string) => void
     onNeedKey: () => void
     sessionUsage: { inputTokens: number; outputTokens: number }
+    contextTokens: number | null
     contextWindow: { tokens: number; isEstimate: boolean } | null
-    /** Global "show full tool output" toggle (Cmd/Ctrl+O, owned by App.svelte so the hotkey works regardless of what has focus) — see the .tool-call rendering below. */
-    toolDetailsExpanded: boolean
-    onToggleToolDetails: () => void
+    /** Global tool-output display state — 'hidden' | 'partial' | 'shown' (Cmd/Ctrl+O cycles it, owned by App.svelte so the hotkey works regardless of what has focus) — see the .tool-call rendering below. An `image` block is never affected by this, any state — see TASKS.md #181. */
+    toolDisplayMode: 'hidden' | 'partial' | 'shown'
+    onCycleToolDisplayMode: () => void
     /** For the tool-output toggle's tooltip label only — the real Cmd/Ctrl+O handling lives in App.svelte. */
     isMac: boolean
     /**
@@ -110,9 +134,22 @@
     /** Same idea as pendingConfirm, for a different question — a round/time budget ran out and the orchestrator is waiting to hear whether to keep going (see orchestrator.ts's askToContinue) rather than silently wrapping up. Mutually exclusive with pendingConfirm in the composer-area render below. */
     pendingLimit: LimitReachedRequestPayload | null
     onRespondLimit: (continueWorking: boolean) => void
+    /** TASKS.md #158: drop a correcting comment in while the orchestrator is actively working, without
+     * waiting for the whole turn or hitting Stop — a softer, non-destructive alternative to Stop. */
+    onSteer: (text: string) => void
   } = $props()
 
   let draft = $state('')
+  /** TASKS.md #158: separate from `draft` so an in-progress note doesn't clobber (or get clobbered by) the
+   * next real message's own draft, which the composer reverts to showing the moment `sending` goes false. */
+  let steerDraft = $state('')
+
+  function steer(): void {
+    const text = steerDraft.trim()
+    if (!text) return
+    steerDraft = ''
+    onSteer(text)
+  }
 
   // Drag-to-resize the composer, matching the sidebar's own resize-handle
   // pattern (App.svelte's startSidebarResize) instead of the textarea's
@@ -153,7 +190,7 @@
    * TASKS.md #88 — separate from `expandedIds` above (that one caps a
    * single block's own *content* preview; this one is a per-tool-call
    * override of the whole block's collapsed/expanded state, layered on top
-   * of #72's global `toolDetailsExpanded` toggle). `undefined` = no
+   * of #72/#181's global `toolDisplayMode` state). `undefined` = no
    * explicit choice yet, so the default below applies; `true`/`false` once
    * the user has clicked that specific entry's head line.
    */
@@ -200,19 +237,28 @@
 
   /** `null` = Auto (orchestrator decides). Sticky across sends until cycled again. */
   let forcedRole: AgentRole | null = $state(null)
-  const MODE_CYCLE: (AgentRole | null)[] = [null, ...AGENT_ROLES]
+  // The picker cycles Auto plus every pickable, enabled role — built-in or user-defined — from the roster.
+  const modeCycle = $derived<(AgentRole | null)[]>([
+    null,
+    ...(roleRoster.length ? roleRoster.filter((r) => r.pickable && r.enabled).map((r) => r.id) : AGENT_ROLES)
+  ])
+
+  /** A role's label: the roster's (covers user-defined roles), else the built-in / humanized one. */
+  function label(role: AgentRole): string {
+    return roleRoster.find((r) => r.id === role)?.label ?? roleLabel(role)
+  }
 
   function cycleMode(direction: 1 | -1): void {
-    const idx = MODE_CYCLE.indexOf(forcedRole)
-    forcedRole = MODE_CYCLE[(idx + direction + MODE_CYCLE.length) % MODE_CYCLE.length]
+    const idx = modeCycle.indexOf(forcedRole)
+    forcedRole = modeCycle[(idx + direction + modeCycle.length) % modeCycle.length]
   }
 
   function modeLabel(role: AgentRole | null): string {
-    return role ? AGENT_ROLE_LABELS[role] : 'Auto'
+    return role ? label(role) : 'Auto'
   }
 
   function limitReachedMessage(limit: LimitReachedRequestPayload): string {
-    const who = limit.agentRole ? `The ${AGENT_ROLE_LABELS[limit.agentRole]} specialist` : 'This turn'
+    const who = limit.agentRole ? `The ${label(limit.agentRole)} specialist` : 'This turn'
     return limit.reason === 'time'
       ? `${who} has been working for a while without finishing. Give it more time, or stop here?`
       : `${who} has used all ${limit.maxRounds} steps available without finishing. Allow more steps, or stop here?`
@@ -261,14 +307,103 @@
     return last
   })
 
-  /** Whether a given tool-call segment's body should currently render in full — see `toolBlockOverride`'s own doc comment for the default-vs-override split. */
+  /** Whether a given tool-call segment's body should currently render in full — see `toolBlockOverride`'s own doc comment for the default-vs-override split. Only meaningful in 'shown' mode — 'hidden'/'partial' never show a full body (the row itself may not even render — see the .tool-call markup below). */
   function isToolBlockExpanded(segmentId: string): boolean {
-    return toolDetailsExpanded && (toolBlockOverride[segmentId] ?? segmentId === lastToolSegmentId)
+    return toolDisplayMode === 'shown' && (toolBlockOverride[segmentId] ?? segmentId === lastToolSegmentId)
   }
 
   function toggleToolBlock(segmentId: string): void {
-    if (!toolDetailsExpanded) return
+    if (toolDisplayMode !== 'shown') return
     toolBlockOverride[segmentId] = !isToolBlockExpanded(segmentId)
+  }
+
+  /** In 'hidden' mode, a round whose only segments were tool calls (no image) renders nothing at all — this
+      keeps the message's own bubble from still showing as an empty box around that nothing. Always true for
+      a plan, a still-in-flight message, or any segment kind other than 'tool' (text/thinking/warning/note all
+      render something regardless of toolDisplayMode). */
+  function messageHasVisibleContent(message: DisplayMessage): boolean {
+    if (message.stepNote) return toolDisplayMode !== 'hidden'
+    if (message.pending) return true
+    // The live plan checklist is tool-level detail like a tool call: Tool output "hidden" hides it too.
+    if (message.plan && toolDisplayMode !== 'hidden') return true
+    return message.segments.some((segment) =>
+      segment.kind === 'tool' && segment.toolCall
+        ? toolDisplayMode !== 'hidden' || Boolean(segment.toolCall.image)
+        : true
+    )
+  }
+
+  /** `h:mm:ss AM/PM` — seconds included, for the per-segment stamp next to an expanded tool/thinking block
+      (see formatClockTime below for the coarser turn-summary version, which doesn't need that precision). */
+  function formatTimestamp(epochMs: number): string {
+    return new Date(epochMs).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' })
+  }
+
+  /** `8:54 PM` — no seconds, matching how Claude Code's own "done" stamp reads. */
+  function formatClockTime(epochMs: number): string {
+    return new Date(epochMs).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  }
+
+  /** `4m 41s` / `41s` / `1h 4m` — same shape as Claude Code's own status line ("Cogitated for 4m 41s"). */
+  function formatDuration(ms: number): string {
+    const totalSeconds = Math.max(0, Math.round(ms / 1000))
+    const h = Math.floor(totalSeconds / 3600)
+    const m = Math.floor((totalSeconds % 3600) / 60)
+    const s = totalSeconds % 60
+    if (h > 0) return `${h}h ${m}m`
+    if (m > 0) return `${m}m ${s}s`
+    return `${s}s`
+  }
+
+  /** True when the assistant message at `index` is the last bubble of its turn — either the end of the list,
+      or immediately followed by the next user message. A multi-round turn produces one bubble per round (see
+      App.svelte's mapMessagesToDisplay), so only the last one should carry the turn's overall "took Xm Ys ·
+      done H:MM" summary below, not every round. */
+  function isTurnEnd(index: number): boolean {
+    const next = messages[index + 1]
+    return !next || next.role === 'user'
+  }
+
+  /** Walks back from `index` to the user message that started this turn — the reference point `turnDuration`
+      diffs against. `undefined` only for a malformed/partial history (an assistant message with no user
+      message before it at all). */
+  function turnStart(index: number): DisplayMessage | undefined {
+    for (let i = index - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') return messages[i]
+    }
+    return undefined
+  }
+
+  /** Whether the turn's last bubble itself ends in a failure: an `Error:` reply or a warning notice. A tool call that
+      failed earlier and was worked around does not count — the turn still produced its answer. */
+  function turnEndedInError(message: DisplayMessage): boolean {
+    return message.segments.some((s) => s.kind === 'warning' || (s.kind === 'text' && s.text?.startsWith('Error:')))
+  }
+
+  /**
+   * TASKS.md #147 — same pattern as `lastToolSegmentId`/`isToolBlockExpanded`/`toggleToolBlock` above,
+   * reusing the shared `toolDetailsExpanded` toggle and `toolBlockOverride` map rather than a new
+   * convention (segment ids never collide across kinds, so one override map safely serves both). Tracked
+   * separately from `lastToolSegmentId` since "most recent thinking block" and "most recent tool call" are
+   * different things that can both legitimately want to default open at once.
+   */
+  let lastThinkingSegmentId = $derived.by((): string | undefined => {
+    let last: string | undefined
+    for (const m of messages) {
+      for (const s of m.segments) {
+        if (s.kind === 'thinking') last = s.id
+      }
+    }
+    return last
+  })
+
+  function isThinkingBlockExpanded(segmentId: string): boolean {
+    return toolDisplayMode === 'shown' && (toolBlockOverride[segmentId] ?? segmentId === lastThinkingSegmentId)
+  }
+
+  function toggleThinkingBlock(segmentId: string): void {
+    if (toolDisplayMode !== 'shown') return
+    toolBlockOverride[segmentId] = !isThinkingBlockExpanded(segmentId)
   }
 </script>
 
@@ -277,9 +412,24 @@
     {#if messages.length === 0}
       <p class="placeholder">Say hello to get started.</p>
     {/if}
-    {#each messages as message (message.id)}
-      <div class="bubble {message.role}">
-        {#if message.plan}
+    {#each messages as message, msgIndex (message.id)}
+      {#if messageHasVisibleContent(message)}
+      <div class="bubble {message.role}" class:step-note={Boolean(message.stepNote)}>
+        {#if showAnsweringModel && message.role === 'assistant' && message.model}
+          <div class="model-badge">{message.model}</div>
+        {/if}
+        {#if message.stepNote}
+          {@const notePreview = previewOf(message.stepNote.body)}
+          {@const noteExpanded = Boolean(expandedIds[message.id])}
+          <div class="step-note-head">{message.stepNote.label}</div>
+          <div class="step-note-body">{noteExpanded ? message.stepNote.body : notePreview.text}{#if notePreview.truncated && !noteExpanded}…{/if}</div>
+          {#if notePreview.truncated}
+            <button class="expand-toggle" onclick={() => toggleExpand(message.id)}>
+              {noteExpanded ? 'Show less' : 'Show more'}
+            </button>
+          {/if}
+        {/if}
+        {#if message.plan && toolDisplayMode !== 'hidden'}
           <div class="plan-checklist">
             {#each message.plan.steps as step, i (i)}
               {@const status = message.plan.stepStatus[i]}
@@ -287,7 +437,7 @@
                 <span class="plan-step-icon"
                   >{status === 'done' ? '✓' : status === 'error' ? '✗' : status === 'running' ? '⋯' : '○'}</span
                 >
-                <span class="plan-step-role">{AGENT_ROLE_LABELS[step.role]}</span>
+                <span class="plan-step-role">{label(step.role)}</span>
                 <span class="plan-step-desc">{step.description}</span>
               </div>
             {/each}
@@ -295,39 +445,63 @@
         {/if}
         {#each message.segments as segment, i (segment.id)}
           {@const prevRole = i > 0 ? message.segments[i - 1].agentRole : undefined}
-          {#if segment.agentRole && segment.agentRole !== prevRole}
-            <div class="agent-chip">{AGENT_ROLE_LABELS[segment.agentRole]} agent</div>
+          {@const chipHiddenToolCall = segment.kind === 'tool' && segment.toolCall && toolDisplayMode === 'hidden' && !segment.toolCall.image}
+          {#if segment.agentRole && segment.agentRole !== prevRole && !chipHiddenToolCall}
+            <div class="agent-chip">{label(segment.agentRole)} agent</div>
           {/if}
           {#if segment.kind === 'tool' && segment.toolCall}
             {@const isDelegate = segment.toolCall.name.startsWith('delegate_to_')}
             {@const isResolved = segment.toolCall.result !== undefined}
             {@const showFull = isToolBlockExpanded(segment.id)}
-            {@const blockClickable = toolDetailsExpanded && !isDelegate && isResolved}
+            {@const blockClickable = toolDisplayMode === 'shown' && !isDelegate && isResolved}
+            {@const rowHidden = toolDisplayMode === 'hidden'}
+            {#if !rowHidden || segment.toolCall.image}
             <div class="tool-call" class:collapsed={!showFull}>
-              <svelte:element
-                this={blockClickable ? 'button' : 'div'}
-                class="tool-call-head"
-                class:clickable={blockClickable}
-                type={blockClickable ? 'button' : undefined}
-                role={blockClickable ? 'button' : undefined}
-                onclick={blockClickable ? () => toggleToolBlock(segment.id) : undefined}
-              >
-                <span class="tool-icon">⚙</span>
-                <code>{segment.toolCall.name}</code>
-                <span class="tool-input">{segment.toolCall.input}</span>
-                {#if !showFull && !isDelegate && isResolved}
-                  <!-- Collapsed + already resolved: a one-glyph result indicator
-                       instead of the full body below — full detail is one
-                       Cmd/Ctrl+O (or a click on this entry, TASKS.md #88) away,
-                       not lost, just not filling the transcript by default.
-                       Reported directly: full tool output shown for every call
-                       by default made the chat look broken/noisy even when the
-                       app was working correctly. -->
-                  <span class="tool-status" class:error={segment.toolCall.isError} title={segment.toolCall.isError ? 'Error — click or Cmd/Ctrl+O for details' : 'Done — click or Cmd/Ctrl+O for details'}>
-                    {segment.toolCall.isError ? '✗' : '✓'}
-                  </span>
+              {#if !rowHidden}
+                <svelte:element
+                  this={blockClickable ? 'button' : 'div'}
+                  class="tool-call-head"
+                  class:clickable={blockClickable}
+                  type={blockClickable ? 'button' : undefined}
+                  role={blockClickable ? 'button' : undefined}
+                  onclick={blockClickable ? () => toggleToolBlock(segment.id) : undefined}
+                >
+                  <span class="tool-icon">⚙</span>
+                  <code>{segment.toolCall.name}</code>
+                  {#if message.createdAt && ((showTimestamps && showFull) || segment.toolCall.isError)}
+                    <span class="segment-timestamp" class:error={segment.toolCall.isError}>{formatTimestamp(message.createdAt)}</span>
+                  {/if}
+                  {#if !(showFull && !isDelegate)}
+                    <span class="tool-input">{segment.toolCall.input}</span>
+                  {/if}
+                  {#if !showFull && !isDelegate && isResolved}
+                    <!-- Collapsed + already resolved: a one-glyph result indicator
+                         instead of the full body below — full detail is one
+                         Cmd/Ctrl+O (or a click on this entry, TASKS.md #88) away,
+                         not lost, just not filling the transcript by default.
+                         Reported directly: full tool output shown for every call
+                         by default made the chat look broken/noisy even when the
+                         app was working correctly. -->
+                    <span class="tool-status" class:error={segment.toolCall.isError} title={segment.toolCall.isError ? 'Error — click or Cmd/Ctrl+O for details' : 'Done — click or Cmd/Ctrl+O for details'}>
+                      {segment.toolCall.isError ? '✗' : '✓'}
+                    </span>
+                  {/if}
+                </svelte:element>
+              {/if}
+              {#if showFull && !isDelegate && segment.toolCall.input}
+                <!-- TASKS.md #109: an expanded block shows the whole command, wrapped (the collapsed head's single ellipsised line
+                     hid most of a long command even after opening the block). Same capped-preview-plus-toggle as the result body
+                     (#87), keyed separately so the two toggles never collide. -->
+                {@const inputText = formatToolInputForDisplay(segment.toolCall.input)}
+                {@const inputPreview = previewOf(inputText)}
+                {@const inputExpanded = Boolean(expandedIds[segment.id + ':input'])}
+                <div class="tool-input-full">{inputExpanded ? inputText : inputPreview.text}{#if inputPreview.truncated && !inputExpanded}…{/if}</div>
+                {#if inputPreview.truncated}
+                  <button class="expand-toggle" onclick={() => toggleExpand(segment.id + ':input')}>
+                    {inputExpanded ? 'Show less' : 'Show more'}
+                  </button>
                 {/if}
-              </svelte:element>
+              {/if}
               {#if segment.toolCall.image}
                 <!-- TASKS.md #82 — always shown regardless of the block's own
                      collapsed/expanded state: showing the image *is* the
@@ -339,6 +513,7 @@
                   alt={segment.toolCall.image.path}
                 />
               {/if}
+              {#if !rowHidden}
               {#if !isDelegate}
                 {#if isResolved}
                   {#if showFull}
@@ -390,8 +565,43 @@
                      target role (not the raw "Working...") is the orchestrator's own routing
                      decision surfacing as a real, live status instead of another dead pause. -->
                 <div class="tool-result pending">
-                  Delegating to {(AGENT_ROLE_LABELS as Record<string, string>)[delegateRole] ?? delegateRole} agent…
+                  Delegating to {label(delegateRole)} agent…
                 </div>
+              {/if}
+              {/if}
+            </div>
+            {/if}
+          {:else if segment.kind === 'thinking'}
+            <!-- TASKS.md #147: real model reasoning, collapsed by default — reuses #72/#88's tool-output
+                 collapse toggle/state rather than a new convention (isThinkingBlockExpanded/toggleThinkingBlock). -->
+            {@const showFull = isThinkingBlockExpanded(segment.id)}
+            {@const thinkingClickable = toolDisplayMode === 'shown'}
+            <div class="thinking-block" class:collapsed={!showFull}>
+              <svelte:element
+                this={thinkingClickable ? 'button' : 'div'}
+                class="thinking-head"
+                class:clickable={thinkingClickable}
+                type={thinkingClickable ? 'button' : undefined}
+                role={thinkingClickable ? 'button' : undefined}
+                onclick={thinkingClickable ? () => toggleThinkingBlock(segment.id) : undefined}
+              >
+                <span class="thinking-icon">🧠</span>
+                <span class="thinking-label">{showFull ? 'Thinking' : 'Thinking (click to expand)'}</span>
+                {#if showTimestamps && showFull && message.createdAt}
+                  <span class="segment-timestamp">{formatTimestamp(message.createdAt)}</span>
+                {/if}
+              </svelte:element>
+              {#if showFull}
+                {@const thinkingPreview = previewOf(segment.text ?? '')}
+                {@const thinkingExpanded = Boolean(expandedIds[segment.id])}
+                <div class="thinking-body">{thinkingExpanded
+                    ? segment.text
+                    : thinkingPreview.text}{#if thinkingPreview.truncated && !thinkingExpanded}…{/if}</div>
+                {#if thinkingPreview.truncated}
+                  <button class="expand-toggle" onclick={() => toggleExpand(segment.id)}>
+                    {thinkingExpanded ? 'Show less' : 'Show more'}
+                  </button>
+                {/if}
               {/if}
             </div>
           {:else if segment.kind === 'text'}
@@ -407,10 +617,24 @@
                 </button>
               {/if}
             {:else}
-              <MarkdownText text={segment.text ?? ''} />
+              <MarkdownText text={stripHandoffTag(segment.text ?? '')} />
+              {#if message.createdAt && segment.text?.startsWith('Error:')}
+                <div class="segment-timestamp error">{formatTimestamp(message.createdAt)}</div>
+              {/if}
             {/if}
           {:else if segment.kind === 'warning'}
-            <div class="warning-note">⚠️ {segment.text}</div>
+            <div class="warning-note">
+              ⚠️ {segment.text}
+              {#if message.createdAt}<span class="segment-timestamp error">{formatTimestamp(message.createdAt)}</span>{/if}
+            </div>
+          {:else if segment.kind === 'user_note'}
+            <!-- TASKS.md #158: a mid-run steering comment — visually distinct from both the assistant's own
+                 text and a warning, since it's the user's own words injected partway through. -->
+            {#if segment.fromApp}
+              <div class="user-note app-note">🔍 {segment.text}</div>
+            {:else}
+              <div class="user-note">💬 <strong>Note added mid-run:</strong> {segment.text}</div>
+            {/if}
           {/if}
         {/each}
         {#if message.pending}
@@ -430,7 +654,22 @@
             <span class="thinking">{message.statusText ?? 'Thinking…'}</span>
           {/if}
         {/if}
+        {#if !message.pending && message.role === 'assistant' && !message.stepNote && message.createdAt && isTurnEnd(msgIndex)}
+          {@const start = turnStart(msgIndex)}
+          <!-- With timestamps off, only a turn that actually ENDED in an error gets a time line. An error the run
+               recovered from (a failed tool call it then worked around) already shows its own red time on that call. -->
+          {#if start?.createdAt && (showTimestamps || turnEndedInError(message))}
+            <div class="turn-summary" class:error={turnEndedInError(message)}>
+              {#if showTimestamps}
+                Took {formatDuration(message.createdAt - start.createdAt)} · done {formatClockTime(message.createdAt)}
+              {:else}
+                Error · {formatClockTime(message.createdAt)}
+              {/if}
+            </div>
+          {/if}
+        {/if}
       </div>
+      {/if}
     {/each}
   </div>
 
@@ -455,6 +694,14 @@
         autoApproveTool={Boolean(autoApproveRules[pendingConfirm.name])}
         onApprove={onApproveTool}
         onDeny={onDenyTool}
+        onTalkAboutIt={(comment) => {
+          onSteer(comment)
+          onDenyTool()
+        }}
+        onApproveWithComment={(input, comment) => {
+          onSteer(comment)
+          onApproveTool(input)
+        }}
         {onStop}
         onValidate={(input) => onValidateTool(pendingConfirm.name, input)}
         onToggleAutoApprove={onToggleAutoApprove}
@@ -468,13 +715,31 @@
           <button type="button" class="primary" onclick={() => onRespondLimit(true)}>Continue</button>
         </div>
       </div>
+    {:else if sending}
+      <!-- TASKS.md #158: while a turn is running, the composer becomes a steering-note input instead of a
+           frozen, disabled box — Enter sends a correcting comment (onSteer), not a new turn. Stop stays
+           available alongside it, unchanged, for a hard abort. -->
+      <form class="composer" onsubmit={(e) => (e.preventDefault(), steer())}>
+        <textarea
+          bind:value={steerDraft}
+          style="height: {composerHeight}px"
+          placeholder="Add a note while this is running (Enter to send) — Stop to cancel instead"
+          onkeydown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              steer()
+            }
+          }}
+        ></textarea>
+        <button class="send steer" type="submit" disabled={!steerDraft.trim()} aria-label="Add note">💬</button>
+        <button class="send stop" type="button" onclick={onStop} aria-label="Stop generating">⏹</button>
+      </form>
     {:else}
       <form class="composer" onsubmit={(e) => (e.preventDefault(), submit())}>
         <textarea
           bind:value={draft}
           style="height: {composerHeight}px"
           placeholder="Message Sachivji..."
-          disabled={sending}
           onkeydown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
@@ -488,11 +753,7 @@
             }
           }}
         ></textarea>
-        {#if sending}
-          <button class="send stop" type="button" onclick={onStop} aria-label="Stop generating">⏹</button>
-        {:else}
-          <button class="send" type="submit" disabled={!draft.trim()} aria-label="Send">↵</button>
-        {/if}
+        <button class="send" type="submit" disabled={!draft.trim()} aria-label="Send">↵</button>
       </form>
     {/if}
 
@@ -515,6 +776,7 @@
             {model}
             inputTokens={sessionUsage.inputTokens}
             outputTokens={sessionUsage.outputTokens}
+            {contextTokens}
             {contextWindow}
           />
         {/if}
@@ -522,12 +784,12 @@
       <div class="status-right">
         <button
           class="tool-details-toggle"
-          class:on={toolDetailsExpanded}
+          class:on={toolDisplayMode === 'shown'}
           type="button"
-          onclick={onToggleToolDetails}
-          title={`${toolDetailsExpanded ? 'Hide' : 'Show'} full tool output (${isMac ? 'Cmd' : 'Ctrl'}+O)`}
+          onclick={onCycleToolDisplayMode}
+          title={`Cycle tool output display — hidden / partial / full (${isMac ? 'Cmd' : 'Ctrl'}+O)`}
         >
-          {toolDetailsExpanded ? 'Tool output: shown' : 'Tool output: hidden'}
+          Tool output: {toolDisplayMode}
         </button>
         <ModelPicker
           {providers}
@@ -581,6 +843,21 @@
     max-width: 92%;
     background: var(--panel);
   }
+  /* App-generated hand-off between plan steps: app output (left), visibly secondary to real replies. */
+  .bubble.step-note {
+    white-space: normal;
+    background: transparent;
+    border: 1px dashed var(--border);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+  .step-note-head {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+  .step-note-body {
+    white-space: pre-wrap;
+  }
   .agent-chip {
     display: inline-block;
     margin-bottom: 0.3rem;
@@ -591,6 +868,35 @@
     color: var(--accent);
     font-size: 0.7rem;
     font-weight: 600;
+  }
+  .model-badge {
+    display: inline-block;
+    margin-bottom: 0.3rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-family: monospace;
+  }
+  .turn-summary {
+    margin-top: 0.5rem;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+  }
+  .turn-summary.error {
+    color: var(--danger);
+    font-weight: 600;
+  }
+  .segment-timestamp {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-weight: 400;
+    flex-shrink: 0;
+  }
+  .segment-timestamp.error {
+    color: var(--danger);
   }
   .bubble.assistant :global(.markdown-body) {
     white-space: normal;
@@ -688,6 +994,13 @@
     white-space: nowrap;
     font-family: ui-monospace, monospace;
   }
+  .tool-input-full {
+    font-family: ui-monospace, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--text);
+    margin: 0.2rem 0 0.3rem;
+  }
   .tool-result {
     font-family: ui-monospace, monospace;
     white-space: pre-wrap;
@@ -727,6 +1040,68 @@
     color: var(--warn);
     font-size: 0.82rem;
     background: color-mix(in srgb, var(--warn) 10%, transparent);
+  }
+  /* TASKS.md #158: same shape as .warning-note but in --accent, so a mid-run steering note reads as
+     "the user said this," not as a problem the app is flagging. */
+  .user-note {
+    margin-bottom: 0.4rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    color: var(--accent);
+    font-size: 0.82rem;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  /* A check Sachivji sent a specialist, not something the user said: muted, like the tool calls. */
+  .user-note.app-note {
+    border-color: var(--border);
+    color: var(--text-muted);
+    background: transparent;
+  }
+  /* TASKS.md #147: same collapsible-block shape as .tool-call, styled distinctly (muted/italic) so the
+     model's own reasoning reads as a different kind of thing from an executed tool call or its own answer. */
+  .thinking-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.65rem;
+    margin-bottom: 0.4rem;
+    font-size: 0.78rem;
+  }
+  .thinking-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    text-align: left;
+    width: 100%;
+  }
+  .thinking-head.clickable {
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .thinking-head.clickable:hover {
+    color: var(--text);
+  }
+  .thinking-head.clickable:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .thinking-label {
+    font-style: italic;
+  }
+  .thinking-body {
+    color: var(--text-muted);
+    font-style: italic;
+    white-space: pre-wrap;
   }
   .plan-checklist {
     display: flex;
@@ -889,6 +1264,13 @@
   .send:disabled {
     opacity: 0.35;
     cursor: default;
+  }
+  /* TASKS.md #158: a lighter, outline treatment vs. .stop's solid fill — Stop (the more consequential,
+     destructive action) should read as the primary control; Add-note is the secondary, softer one. */
+  .send.steer {
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
   }
   .status-bar {
     display: flex;

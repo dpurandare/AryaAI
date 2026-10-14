@@ -21,12 +21,20 @@ export const IpcChannel = {
   SessionsGetUsage: 'sessions:get-usage',
 
   ProvidersList: 'providers:list',
+  /** TASKS.md #161 — separate from ProvidersList (chat/embedding providers); reuses the same generic ProvidersSetApiKey/ProvidersHasApiKey (keychain) channels below, keyed by the web-search provider's own id, same as the existing Tavily key already was. */
+  WebSearchProvidersList: 'web-search-providers:list',
   ProvidersSetApiKey: 'providers:set-api-key',
   ProvidersHasApiKey: 'providers:has-api-key',
+  /** Masked first-10/last-5 preview of a configured key, or null if none — lets Settings show every provider's status without ever sending a full key to the renderer. */
+  ProvidersGetApiKeyPreview: 'providers:get-api-key-preview',
   ProvidersListModels: 'providers:list-models',
 
   SettingsGet: 'settings:get',
   SettingsSet: 'settings:set',
+  /** TASKS.md #150 — admin-to-user settings provisioning, curated subset only (providers, MCP servers, DB connections). Never carries a live secret. */
+  SettingsExport: 'settings:export',
+  SettingsImportPreview: 'settings:import-preview',
+  SettingsImportApply: 'settings:import-apply',
 
   DataConnectionsList: 'data-connections:list',
   DataConnectionsSave: 'data-connections:save',
@@ -50,15 +58,42 @@ export const IpcChannel = {
   WorkspaceGetRoot: 'workspace:get-root',
   WorkspaceSetRoot: 'workspace:set-root',
 
+  RolesGet: 'roles:get',
+  RolesSetEnabled: 'roles:set-enabled',
+  RolesOpenFolder: 'roles:open-folder',
+  RolesCreateExample: 'roles:create-example',
+
+  RuntimeGetState: 'runtime:get-state',
+  /** Re-run `ensureWorkspace` (the "Retry" button): finishes a failed package install, or re-detects Python. */
+  RuntimeEnsure: 'runtime:ensure',
+  /** Delete and rebuild `<workspace>/venv` — explicit user action only. */
+  RuntimeRepair: 'runtime:repair',
+  /** Turn the Python runtime on/off ("continue without Python"). */
+  RuntimeSetEnabled: 'runtime:set-enabled',
+  /** Pushed from main whenever the runtime state changes. */
+  RuntimeStateChanged: 'runtime:state-changed',
+
+  /** The bundled, CPU-only Ollama runtime for the Windows sponsor build (TASKS #202) — `undefined`/`'unavailable'` on every other build. */
+  OllamaGetState: 'ollama:get-state',
+  /** Starts (or re-starts, after a failure) the bundled server + embedding-model pull. A no-op, resolving 'unavailable', when nothing is bundled. */
+  OllamaEnsure: 'ollama:ensure',
+  /** Pushed from main whenever the bundled Ollama runtime's state changes. */
+  OllamaStateChanged: 'ollama:state-changed',
+
   SecretStorageGetInfo: 'secret-storage:get-info',
   SecretStorageSwitchToFile: 'secret-storage:switch-to-file',
 
   ToolsList: 'tools:list',
+  ExternalFoldersList: 'external-folders:list',
+  ExternalFoldersRemove: 'external-folders:remove',
+  ToolsListByRole: 'tools:list-by-role',
 
   ContextWindowGet: 'context-window:get',
 
   ChatSend: 'chat:send',
   ChatCancel: 'chat:cancel',
+  /** TASKS.md #158: appends a mid-run steering comment for the given streamId — distinct from ChatSend, since it never starts a second run. */
+  ChatSteer: 'chat:steer',
   ChatStreamEvent: 'chat:stream-event',
 
   ToolConfirmRequest: 'tools:confirm-request',
@@ -71,6 +106,8 @@ export const IpcChannel = {
 
   SearchHistoryStatus: 'search-history:status',
   SearchHistoryRebuildIndex: 'search-history:rebuild-index',
+  /** TASKS.md #162 — a real, small embed call against the given provider/model, returning the actual vector length rather than a guessed/hardcoded dimension. */
+  EmbeddingProbeDimension: 'embedding:probe-dimension',
 
   SessionTitleUpdated: 'sessions:title-updated',
 
@@ -95,11 +132,22 @@ export interface ProviderDescriptor {
   supportsEmbeddings: boolean
 }
 
+/** TASKS.md #161 — the web_search tool's own provider set, fetched via WebSearchProvidersList; a smaller shape than ProviderDescriptor since a web-search provider is just an id/displayName/requiresApiKey, no embeddings/model-list concept. */
+export interface WebSearchProviderDescriptor {
+  id: string
+  displayName: string
+  requiresApiKey: boolean
+}
+
 export interface AppInfo {
   name: string
   version: string
   platform: NodeJS.Platform
   userName: string
+  /** Runtime details for the About screen — not used anywhere else today. */
+  electronVersion: string
+  chromeVersion: string
+  nodeVersion: string
 }
 
 /** Pushed from main to renderer when electron-updater finds a newer release. */
@@ -130,6 +178,90 @@ export interface SessionExportResult {
   path?: string
 }
 
+/**
+ * TASKS.md #150, widened 2026-10-10 (format version 2) after manual test 11d.9 found the first export too narrow: everything
+ * that is not a secret — chat provider/model selection, MCP servers, database connections (with their saved queries), External API
+ * connections, email accounts, auto-approve rules, preferences (theme, zoom, temperature, …) and user-defined role files.
+ * **Never carries a live secret** — no API key, no MCP bearer token, no DB or email password — only connection *shape* (same
+ * "shape without the secret" precedent #155's edit-by-id already established); an imported connection needs its credentials
+ * filled in separately by whoever uses it. Version-1 files (providers, MCP servers and database connections only) still import.
+ */
+export interface SettingsExportPayload {
+  formatVersion: 1 | 2
+  exportedAt: string
+  providers: {
+    activeProviderId?: string
+    /** providerId -> model, only for providers with a model actually selected locally. */
+    models: Record<string, string>
+  }
+  mcpServers: Array<{
+    name: string
+    transport: McpTransport
+    command?: string
+    args?: string[]
+    url?: string
+    description?: string
+  }>
+  dataConnections: Array<{
+    name: string
+    engine: DbEngine
+    filePath?: string
+    host?: string
+    port?: number
+    database?: string
+    username?: string
+    /** Format 2: the connection's saved queries (no ids; `mutates` is recomputed on import). */
+    savedQueries?: Array<{ name: string; description: string; sql: string; params: SavedQueryParam[] }>
+  }>
+  /** Format 2 and later — everything below is optional so a version-1 file is still valid. */
+  apiConnections?: Array<{
+    name: string
+    baseUrl: string
+    authType: ApiAuthType
+    apiKeyHeader?: string
+    apiKeyIn?: ApiKeyPlacement
+    username?: string
+    specUrl?: string
+  }>
+  emailConnections?: Array<{
+    name: string
+    emailAddress: string
+    provider: EmailProvider
+    host?: string
+    port?: number
+    secure?: boolean
+  }>
+  /** Allowed settings keys (see settings/import-export.ts PREFERENCE_KEYS) -> the stored string, only for keys actually set. */
+  preferences?: Record<string, string>
+  /** Tool name -> true, the "always auto-approve this tool" rules. Importing these widens what runs without asking. */
+  autoApproveToolRules?: Record<string, boolean>
+  /** User-defined role files (`.md`, not starting with `_`) from the roles folder. */
+  roleFiles?: Array<{ fileName: string; content: string }>
+}
+
+/** One entry in an import preview — `willImport: false` means a same-name/same-key entry already exists locally and this one will be skipped, not overwritten. */
+export interface SettingsImportPreviewItem {
+  category: 'provider' | 'mcpServer' | 'dataConnection' | 'apiConnection' | 'emailConnection' | 'preference' | 'autoApprove' | 'role'
+  label: string
+  willImport: boolean
+  /** Shown beside the entry: what the user must still do or know ("needs its password entered in Settings", "runs without asking"). */
+  note?: string
+}
+
+export type SettingsExportResult = { cancelled: true } | { cancelled: false; path: string } | { error: string }
+
+export type SettingsImportPreviewResult =
+  | { cancelled: true }
+  | { error: string }
+  | { cancelled: false; payload: SettingsExportPayload; items: SettingsImportPreviewItem[] }
+
+export interface SettingsImportApplyResult {
+  imported: number
+  skipped: number
+  /** Imported entries whose key/password was not in the file and must be entered in Settings before they work. */
+  needsSecret: number
+}
+
 /** Pushed from main to renderer once a session's title is auto-generated from its first message — see db/sessions.ts's titleFromMessage. */
 export interface SessionTitleUpdatedPayload {
   sessionId: string
@@ -142,6 +274,8 @@ export interface MessageDto {
   role: 'user' | 'assistant'
   content: ContentBlock[]
   createdAt: number
+  /** "<providerId>:<model>" that answered — assistant messages only, shown optionally (Settings > off by default). */
+  model?: string
 }
 
 export interface SessionUsageDto {
@@ -284,6 +418,7 @@ export interface SaveSavedQueryInput {
 }
 
 export type ApiAuthType = 'none' | 'apiKey' | 'bearer' | 'basic'
+export type ApiKeyPlacement = 'header' | 'query'
 
 /**
  * A cheap, endpoint-count-only hint of what a connection's API exposes —
@@ -309,8 +444,10 @@ export interface ApiConnectionDto {
   name: string
   baseUrl: string
   authType: ApiAuthType
-  /** apiKey auth only — the header name the key is sent in, e.g. "X-API-Key". */
+  /** apiKey auth only — the header name (or, when `apiKeyIn` is "query", the query-parameter name) the key is sent in, e.g. "X-API-Key" or "apiKey". */
   apiKeyHeader?: string
+  /** apiKey auth only — where the key goes: a request header (default) or a URL query parameter (some APIs, e.g. NewsAPI.ai, only read it from there). */
+  apiKeyIn?: ApiKeyPlacement
   /** basic auth only. */
   username?: string
   hasSecret: boolean
@@ -326,6 +463,7 @@ export interface SaveApiConnectionInput {
   baseUrl: string
   authType: ApiAuthType
   apiKeyHeader?: string
+  apiKeyIn?: ApiKeyPlacement
   username?: string
   secret?: string
   specUrl?: string
@@ -386,6 +524,9 @@ export interface ValidateEmailConnectionInput {
 export type McpTransport = 'stdio' | 'http'
 export type McpServerStatus = 'connecting' | 'connected' | 'error'
 
+/** Max characters of the user-written MCP server description (Settings, and pre-filled by the Configurator). */
+export const MCP_SERVER_DESCRIPTION_MAX = 200
+
 /** Config metadata plus live connection state — never carries a bearer token. */
 export interface McpServerDto {
   id: string
@@ -396,6 +537,8 @@ export interface McpServerDto {
   env?: Record<string, string>
   url?: string
   hasToken?: boolean
+  /** User-written, length-capped one-liner: what this server is for. The only text about a server the assistant is shown that the user authored. */
+  description?: string
   status: McpServerStatus
   error?: string
   toolCount: number
@@ -411,6 +554,7 @@ export interface SaveMcpServerInput {
   env?: Record<string, string>
   url?: string
   token?: string
+  description?: string
 }
 
 /**
@@ -423,4 +567,60 @@ export interface ToolDescriptor {
   name: string
   description: string
   mutates: 'always' | 'sometimes'
+}
+
+/**
+ * TASKS.md #164 — the full, unfiltered set of tools each role actually has,
+ * grouped by role, as a reference for a user defining a new custom role
+ * ("what can an existing role do that my new role might also need"). Unlike
+ * `ToolDescriptor` above (built for the auto-approve list, which has nothing
+ * useful to do with a tool that never mutates), `mutates` here includes
+ * `'never'` so a read-only tool like `web_search` still shows up.
+ */
+export interface RoleToolsDto {
+  role: string
+  roleLabel: string
+  summary: string
+  tools: Array<{ name: string; description: string; mutates: 'always' | 'sometimes' | 'never' }>
+}
+
+/** A problem found while loading a role file (file-level errors, and quality warnings for a role that did load). */
+export interface RoleProblemDto {
+  /** File name within the roles folder. */
+  file: string
+  level: 'error' | 'warning'
+  message: string
+}
+
+/** One role as the renderer sees it — built-in or user-defined. */
+export interface RoleRosterEntryDto {
+  id: string
+  label: string
+  summary: string
+  description: string
+  builtin: boolean
+  pickable: boolean
+  plannable: boolean
+  /** User roles only: switched off in Settings. Built-ins are always enabled. */
+  enabled: boolean
+  /** Rough tokens this role adds to EVERY request (its delegate tool, plus its line in the planner's role list when plannable). */
+  tokenCost: number
+  /** Quality warnings for a user role that loaded. */
+  warnings: string[]
+  /** User roles: file name within the roles folder. */
+  file?: string
+  /** True when the file's latest edit has errors and the previous working version is in use. */
+  stale?: boolean
+}
+
+/** Everything the renderer needs about roles, in one call: the picker, the labels, and the Settings > Roles list. */
+export interface RoleRosterDto {
+  roles: RoleRosterEntryDto[]
+  problems: RoleProblemDto[]
+  /** Absolute path of the user roles folder. */
+  folder: string
+  /** Tokens the ENABLED user roles add to every request, together. */
+  userTokenCost: number
+  /** Set when the enabled user roles together are heavy enough to be worth a warning. */
+  budgetWarning?: string
 }

@@ -3,6 +3,7 @@ import type { Tool } from '../types'
 import { openDriver } from './driver-factory'
 import { buildSchemaSummary, formatSchemaSummary } from './schema-summary'
 import { isMutatingSql } from './sql-classifier'
+import { formatQueryResult } from './types'
 
 export { dbListRowsTool, dbCountRowsTool, dbFindRowsTool } from './crud'
 export { dbSaveQueryTool } from './save-query-tool'
@@ -21,8 +22,14 @@ export const dbListConnectionsTool: Tool = {
     if (!connections.length) {
       return 'No data connections configured yet. Ask the user to add one in Settings > Data sources.'
     }
+    // The name is quoted — not just space-separated from `(engine)` — because a connection's own
+    // name is free text (Settings has no restriction against it) and can itself contain parentheses,
+    // e.g. "Northwind (Docker)". Found live: unquoted, that produced the line
+    // "- Northwind (Docker) (mssql): ..." — genuinely ambiguous between the name being "Northwind" or
+    // "Northwind (Docker)" — and the model oscillated between both wrong guesses for several rounds
+    // before giving up, since db_introspect_schema only ever does an exact match against the real name.
     return connections
-      .map((c) => `- ${c.name} (${c.engine}): ${formatSchemaSummary(c.schemaSummary)}`)
+      .map((c) => `- "${c.name}" (${c.engine}): ${formatSchemaSummary(c.schemaSummary)}`)
       .join('\n')
   }
 }
@@ -63,7 +70,10 @@ export const dbExecuteSqlTool: Tool = {
   name: 'db_execute_sql',
   description:
     'Run SQL against a configured data connection. Reads run immediately; writes ' +
-    '(INSERT/UPDATE/DELETE/DDL, or multiple statements) require approval first.',
+    '(INSERT/UPDATE/DELETE/DDL, or multiple statements) require approval first. ' +
+    'A large result is written to a file (path given back) rather than shown inline — for a ' +
+    'trend/pattern/comparison question, prefer GROUP BY/aggregation over a raw row pull so the summary ' +
+    'is small enough to read directly.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -76,14 +86,11 @@ export const dbExecuteSqlTool: Tool = {
   describe(input) {
     return `Execute SQL on "${String(input.connection ?? '')}": ${String(input.sql ?? '')}`
   },
-  async execute(input) {
+  async execute(input, ctx) {
     const driver = openDriver(String(input.connection ?? ''))
     try {
       const result = await driver.execute(String(input.sql ?? ''))
-      if (result.rows) {
-        return `${result.rowCount} row(s):\n${JSON.stringify(result.rows, null, 2)}`
-      }
-      return `${result.rowCount} row(s) affected.`
+      return await formatQueryResult(result, ctx.workspaceGuard.root)
     } finally {
       await driver.close()
     }

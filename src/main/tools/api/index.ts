@@ -25,8 +25,11 @@ export const apiListConnectionsTool: Tool = {
     if (!connections.length) {
       return 'No API connections configured yet. Ask the user to add one in Settings > External APIs.'
     }
+    // Quoted for the same reason db_list_connections quotes its name (found live, TASKS): a
+    // connection's own name is free text and can itself contain parentheses, which would otherwise
+    // make it genuinely ambiguous against the trailing "(baseUrl, auth: ...)" annotation.
     return connections
-      .map((c) => `- ${c.name} (${c.baseUrl}, auth: ${c.authType}): ${formatSpecSummary(c.specSummary)}`)
+      .map((c) => `- "${c.name}" (${c.baseUrl}, auth: ${c.authType}): ${formatSpecSummary(c.specSummary)}`)
       .join('\n')
   }
 }

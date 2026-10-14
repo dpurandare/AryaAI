@@ -15,6 +15,7 @@ export interface McpServerStatusInfo {
   status: McpServerStatus
   error?: string
   toolCount: number
+  toolNames: string[]
 }
 
 /**
@@ -68,7 +69,7 @@ export class McpManager {
   getStatus(id: string): McpServerStatusInfo | undefined {
     const managed = this.servers.get(id)
     if (!managed) return undefined
-    return { status: managed.status, error: managed.error, toolCount: managed.toolNames.length }
+    return { status: managed.status, error: managed.error, toolCount: managed.toolNames.length, toolNames: managed.toolNames }
   }
 
   private async connect(config: McpServerConfig, registry: ToolRegistry): Promise<void> {

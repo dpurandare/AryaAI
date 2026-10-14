@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS messages (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   role TEXT NOT NULL,
   content TEXT NOT NULL, -- JSON-serialized ContentBlock[]
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  model TEXT -- "<providerId>:<model>" that answered (assistant messages only); NULL for user messages and pre-existing rows
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
@@ -40,6 +41,17 @@ CREATE TABLE IF NOT EXISTS classify_gate_log (
   message_length INTEGER NOT NULL,
   created_at INTEGER NOT NULL
 );
+
+-- Real tool calls, by tool and by who made them (the router, or a specialist role). Purely local. Its
+-- job is to keep the slim router's hot core honest (design-discussion.md 3.1): a tool belongs in the
+-- core only when the data says it is used, so this replaces a one-day sample with running counts.
+CREATE TABLE IF NOT EXISTS tool_usage_log (
+  id TEXT PRIMARY KEY,
+  tool_name TEXT NOT NULL,
+  agent_role TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tool_usage_log_tool ON tool_usage_log(tool_name);
 
 -- search_history: which (provider, model) — and the dimension it produced —
 -- the current message_chunk_vectors index was built with. A single row

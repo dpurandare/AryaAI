@@ -1,8 +1,8 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import type { WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
 import { userInfo } from 'node:os'
 import {
   IpcChannel,
@@ -18,19 +18,29 @@ import {
   type ToolConfirmRequestPayload,
   type LimitReachedRequestPayload,
   type ToolDescriptor,
+  type RoleToolsDto,
   type ToolValidateResult,
   type SecretStorageInfo,
   type SearchHistoryStatusDto,
-  type SessionTitleUpdatedPayload
+  type SessionTitleUpdatedPayload,
+  type SettingsExportPayload,
+  type SettingsExportResult,
+  type SettingsImportPreviewResult,
+  type SettingsImportApplyResult
 } from '@shared/ipc-contract'
-import type { AgentRole } from '@shared/agents'
+import { isValidRoleId, roleLabel, type AgentRole } from '@shared/agents'
+import type { RuntimeState } from '@shared/runtime'
 import { createSession, listSessions, deleteSession, getSession, updateSessionTitle, titleFromMessage } from '../db/sessions'
 import { insertMessage, listMessages } from '../db/messages'
+import { externalAccess } from '../security/external-access-store'
+import { previousAnswerText } from '../agents/previous-answer'
 import { enqueueMessage, getEmbeddingConfig, getIndexState, rebuildIndex, runBackfill } from '../search-history/indexer'
 import { getSetting, setSetting } from '../db/settings'
 import { addUsage, getUsage } from '../db/usage'
+import type { StreamEvent } from '../../shared/protocol'
+import { isFinalStop } from './final-stop'
 import { logClassifyGateSample } from '../db/classify-gate-log'
-import { setApiKey, getApiKey, envFilePath, getSecretStorageMode, switchToFileStorage } from '../security/keychain'
+import { setApiKey, getApiKey, getApiKeyPreview, envFilePath, getSecretStorageMode, switchToFileStorage } from '../security/keychain'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import {
   deleteConnection,
@@ -48,15 +58,18 @@ import {
   setDefaultEmailConnection
 } from '../data/email-connections'
 import { verifyEmailConnection } from '../tools/email/transport'
-import { prepareConversation, resolveContextWindow } from '../context/prepare-context'
+import { collapseUnavailableToolCalls, prepareConversation, resolveContextWindow } from '../context/prepare-context'
 import { deleteServerConfig, listServerConfigs, saveServerConfig } from '../mcp/config'
 import { McpManager } from '../mcp/manager'
 import { openDriver } from '../tools/db/driver-factory'
 import { buildSchemaSummary } from '../tools/db/schema-summary'
 import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
-import { createDefaultProviderRegistry } from '../providers/setup'
-import type { Message, ModelProvider } from '../providers/types'
+import { createDefaultProviderRegistry, probeEmbeddingDimension, setBundledOllamaBaseUrl } from '../providers/setup'
+import { createDefaultWebSearchProviderRegistry } from '../tools/web-search-providers'
+import type { Message, ModelProvider, ProviderOptions } from '../providers/types'
 import { exportSession } from '../sessions/export'
+import { WorkspaceRuntime } from '../runtime/workspace-runtime'
+import { OllamaRuntime } from '../runtime/ollama-runtime'
 import {
   createDefaultRegistry,
   createToolContext,
@@ -66,6 +79,7 @@ import {
 } from '../tools/setup'
 import type { ToolContext } from '../tools/types'
 import {
+  delegateToolName,
   Orchestrator,
   type ConfirmDecision,
   type ToolConfirmRequest,
@@ -73,85 +87,118 @@ import {
   type LimitReachedRequest
 } from '../agents/orchestrator'
 import { createAgents } from '../agents/roles'
-
-// search_history is registered in the default tool registry (tools/setup.ts),
-// which makes it directly callable at the top level, not just via a
-// delegated Research round — but until this line existed, only Research's
-// own systemPrompt (roles.ts) ever told a model when to reach for it. A
-// top-level "Auto" conversation had the tool available with no prompted
-// reason to use it, so a "do you remember..." question got answered from
-// the model's own (nonexistent) memory instead of an actual search —
-// confirmed live: searchIndex() itself correctly found the right past
-// session when queried directly, so this was a missing-instruction gap,
-// not a broken search.
-const SYSTEM_PROMPT =
-  "You are Sachivji, a helpful AI assistant running locally on the user's machine. Before responding, " +
-  "identify every distinct action/question the request actually contains — found live: asked to search " +
-  'for something AND save the findings to a Word document, the search happened but the document never ' +
-  "did, silently, with no error or acknowledgment that half the request was skipped; the user had to " +
-  'ask again to get the file. A tool call returning a good result is progress, not completion, if the ' +
-  'request asked for more than that — keep going (calling further tools/delegating further steps) ' +
-  "until every explicit part has actually been done, not just discussed. A tool call that fails is not " +
-  "the same as the capability not existing — found live: asked what documents were stored in an MCP " +
-  'wiki server, the model called its search tool without the knowledge_base argument it required, got ' +
-  'back a clear error naming exactly that missing field, and told the user "I currently don\'t have the ' +
-  'necessary tools" — when the same tool, called correctly seconds later (after the user supplied the ' +
-  'missing value), worked immediately. Read what a tool error actually says: a validation/missing-' +
-  'argument/bad-value error means retry the same tool with a corrected argument, informed by its own ' +
-  "inputSchema or by first calling a listing/lookup tool to find the right value (e.g. this same " +
-  'server\'s list-knowledge-bases-shaped tool) — never conclude a capability is missing from one failed ' +
-  "call without first ruling out a fixable mistake in how it was called. If some part genuinely can't " +
-  "be completed (missing capability, missing information, a tool reporting it's unavailable), say " +
-  "plainly which part and why, rather than silently ending the turn as if everything asked for was " +
-  'finished. When asked to ' +
-  'recall something from an earlier conversation, or to compare how a detail changed over time, use ' +
-  "the search_history tool (it searches the user's own past sessions, including this one — useful " +
-  'if this conversation has grown long enough that something earlier may no longer be visible to ' +
-  "you) rather than guessing or claiming you have no memory of past conversations. If it reports no results or " +
-  "that it's unavailable, say so plainly instead of working around it. A request can need more than " +
-  'just retrieving that past context — e.g. "search for the analysis we did for X, and show a ' +
-  'comparison for Y" means finding X via search_history AND THEN actually redoing the analysis for Y ' +
-  "using the same method, presented as a comparison — not just relaying the retrieved excerpt as the " +
-  'whole answer. To set up a new Database, External API, or MCP server connection from details the user ' +
-  'gives you in chat, use db_create_connection/api_create_connection/mcp_create_connection instead of ' +
-  'telling the user to fill out the corresponding Settings form by hand — gather the non-secret details ' +
-  "yourself, but never ask the user to type a password/API key/token/bearer token into chat: the " +
-  "confirmation dialog that appears has its own real password field for that, which never reaches you. " +
-  'Each of these tools tests the connection for real before saving it, so a bad host/credential fails ' +
-  'clearly right away. To build a PowerPoint presentation: call pptx_start_deck once, then for each ' +
-  'planned slide call pptx_add_slide and delegate_to_page-creator with a brief for that slide (heading, ' +
-  'key content/data points, tone/style notes) — page-creator decides the actual visual design and calls ' +
-  "pptx_compose_slide itself; you decide the deck's overall structure/flow/slide order, not what a slide " +
-  'looks like. pptx_add_slide/pptx_compose_slide/pptx_save_deck only need an explicit deckId if you are ' +
-  'building more than one deck in the same turn — omit it otherwise, since it is a short opaque id that ' +
-  'is easy to mistype or invent by accident when passed through a task description; only mention it in ' +
-  "a page-creator brief if you're certain of the exact value. If a slide's result looks thin, wrong, or " +
-  'incomplete, first retry that one delegate_to_page-creator call yourself with a more specific/' +
-  "corrective brief (e.g. \"simplify, fewer elements\"); if it still isn't right after that, stop and " +
-  'ask the user for their own direction on that slide rather than retrying indefinitely. Call ' +
-  'pptx_save_deck exactly once, after every planned slide has been composed. To send an email, use ' +
-  'delegate_to_email with the recipients and roughly what it should say — it drafts the actual subject/ ' +
-  'body itself and sends it directly (with its own confirmation dialog), so you do not need to draft the ' +
-  'message yourself first.'
+import { buildRoster } from '../roles/roster'
+import { EXAMPLE_ROLE_FILE, EXAMPLE_ROLE_FILE_NAME, UserRoleLoader } from '../roles/user-roles'
+import { SYSTEM_PROMPT } from '../agents/system-prompt'
+import { createDescribeCapabilitiesTool } from '../agents/capabilities'
+import { fullRouterTools, selectRouterTools } from '../agents/router-tools'
+import { logToolUse } from '../db/tool-usage-log'
+import {
+  ACTIVE_PROVIDER_KEY,
+  DEFAULT_PROVIDER_ID,
+  modelSettingKey,
+  exportSettings,
+  previewSettingsImport,
+  applySettingsImport
+} from '../settings/import-export'
 
 const providerRegistry = createDefaultProviderRegistry()
-
-const ACTIVE_PROVIDER_KEY = 'activeProviderId'
-const DEFAULT_PROVIDER_ID = 'openai'
-
-function modelSettingKey(providerId: string): string {
-  return `model:${providerId}`
-}
+/** TASKS.md #161 — separate registry/namespace from the chat-provider one above; a web-search provider is a different kind of thing (one `search` call, not a full ModelProvider). */
+const webSearchProviderRegistry = createDefaultWebSearchProviderRegistry()
 
 const toolRegistry = createDefaultRegistry()
-const agents = createAgents(toolRegistry)
+/** Settings key: JSON array of user-defined role ids the user switched off in Settings > Roles. */
+const DISABLED_ROLES_SETTING_KEY = 'disabledRoles'
+
+/** User-defined roles live here, one `.md` file each (design-discussion.md section 11). */
+const userRolesFolder = (): string => join(app.getPath('userData'), 'roles')
+const userRoleLoader = new UserRoleLoader(userRolesFolder)
+
+function readDisabledRoleIds(): Set<string> {
+  try {
+    const parsed = JSON.parse(getSetting(DISABLED_ROLES_SETTING_KEY) ?? '[]')
+    return new Set(Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+/**
+ * The agents in force. Rebuilt from the roles folder on every chat turn (a directory read plus a modification-time check per file), so an edit
+ * to a role file applies to the next message with no restart. Starts as the built-ins only.
+ */
+let agents = createAgents(toolRegistry)
+
+async function refreshRoles(): Promise<ReturnType<typeof buildRoster>> {
+  const loaded = await userRoleLoader.load({ disabledIds: readDisabledRoleIds() })
+  agents = createAgents(toolRegistry, loaded.roles.filter((r) => r.enabled).map((r) => r.file))
+  return buildRoster(loaded, userRolesFolder())
+}
 const mcpManager = new McpManager()
 const savedQueryManager = new SavedQueryToolManager()
 let toolContext: ToolContext | undefined
 
+/**
+ * Settings key: `'true'` turns on the slim router (design-discussion.md step 4): the top-level assistant carries only a hot core of tools
+ * plus delegate tools, and earlier turns' calls to tools it no longer has are replayed as text. **Off by default** — the design makes this
+ * a release gate (per-provider replay check, multi-model routing evaluation, caching economics); see scripts/routing-eval.mts.
+ */
+export const SLIM_ROUTER_SETTING_KEY = 'slimRouter'
+
+/**
+ * Settings key: `'false'` turns Anthropic prompt caching off (default on when unset). Caching sends `cache_control` markers that have only been
+ * verified against a mocked SDK (TASKS #121/#137), so this is the recovery switch if the API ever rejects them.
+ */
+export const PROMPT_CACHING_SETTING_KEY = 'promptCaching'
+
+function providerOptions(): ProviderOptions {
+  return { promptCaching: getSetting(PROMPT_CACHING_SETTING_KEY) !== 'false' }
+}
+
+/**
+ * Settings key: 0..1, how deterministic the model should be. Default 0.2 — most of what Sachivji does
+ * (querying data, writing code, planning/classifying, building documents) benefits from precision over
+ * variety; this is not a creative-writing app. Found live (2026-10-01): the classify step, at a
+ * provider's own default temperature, occasionally misrouted an otherwise-correctly-worded request
+ * (Northwind top-10-customers -> Researcher instead of Data Access, on a local 20B model) — a plain
+ * sampling-variance flake a lower temperature reduces, not something the classify prompt's wording
+ * could fix on its own. Unset or unparseable = the default, never undefined (unlike promptCaching's
+ * undefined-is-a-valid-provider-option shape above, "send no temperature at all" is a real, different
+ * choice from "send a specific low one" — a corrupt setting should fail toward the safer default, not
+ * toward the provider's own, usually much higher, default).
+ */
+export const TEMPERATURE_SETTING_KEY = 'temperature'
+const DEFAULT_TEMPERATURE = 0.2
+
+function resolveTemperature(): number {
+  const raw = Number(getSetting(TEMPERATURE_SETTING_KEY))
+  return Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : DEFAULT_TEMPERATURE
+}
+
+/** Settings key: `'true'` shows which provider/model answered each message in the chat transcript. Off by default — purely a debugging/curiosity aid, not needed for normal use. */
+export const SHOW_ANSWERING_MODEL_SETTING_KEY = 'showAnsweringModel'
+
+/** Settings key: `'true'` when the user chose to continue without Python (design-discussion.md section 4.3). */
+export const PYTHON_RUNTIME_DISABLED_SETTING_KEY = 'pythonRuntimeDisabled'
+
+const workspaceRuntime = new WorkspaceRuntime()
+const ollamaRuntime = new OllamaRuntime()
+
+function ensureRuntimeFor(root: string, opts: { repair?: boolean } = {}): Promise<RuntimeState> {
+  return workspaceRuntime.ensureWorkspace(root, {
+    skipPython: getSetting(PYTHON_RUNTIME_DISABLED_SETTING_KEY) === 'true',
+    repair: opts.repair
+  })
+}
+
 const pendingConfirmations = new Map<string, (decision: ConfirmDecision) => void>()
 const pendingLimitDecisions = new Map<string, (decision: LimitDecision) => void>()
 const activeStreams = new Map<string, AbortController>()
+/** TASKS.md #158: comments submitted via ChatSteer for a still-running stream, keyed the same way as
+ * activeStreams (per-streamId) — drained non-blockingly by the Orchestrator's own runLoop between rounds
+ * (see drainSteeringComments), never awaited/blocked on here. Cleared in ChatSend's own `.finally()` below
+ * alongside activeStreams so nothing leaks past the stream it belonged to. */
+const pendingSteeringComments = new Map<string, string[]>()
 
 /**
  * Central place where every ipcMain.handle/on channel is registered.
@@ -160,6 +207,67 @@ const activeStreams = new Map<string, AbortController>()
  */
 export function registerIpcHandlers(): void {
   toolContext = createToolContext()
+
+  // Registered here rather than in createDefaultRegistry() because it needs the agents
+  // and the live runtime state, both created in this module. The router sees the full
+  // registry, so it can call it; specialists (fixed tool lists) do not.
+  toolRegistry.register(
+    createDescribeCapabilitiesTool({
+      getAgents: () => agents,
+      getRegistry: () => toolRegistry,
+      getConnections: () => ({
+        databases: listConnections().map((c) => ({ name: c.name, engine: c.engine })),
+        apis: listApiConnections().map((c) => ({ name: c.name, baseUrl: c.baseUrl })),
+        email: listEmailConnections().map((c) => ({ name: c.name, emailAddress: c.emailAddress, isDefault: c.isDefault })),
+        mcp: listServerConfigs().map((c) => {
+          const live = mcpManager.getStatus(c.id)
+          return { name: c.name, status: live?.status ?? 'unknown', error: live?.error }
+        })
+      }),
+      getRuntime: () => workspaceRuntime.getState()
+    })
+  )
+
+  void refreshRoles().catch((err: unknown) => console.error('Failed to load user-defined roles:', err))
+
+  ipcMain.handle(IpcChannel.RolesGet, () => refreshRoles())
+  ipcMain.handle(IpcChannel.RolesSetEnabled, async (_event, id: string, enabled: boolean) => {
+    const disabled = readDisabledRoleIds()
+    if (enabled) disabled.delete(id)
+    else disabled.add(id)
+    setSetting(DISABLED_ROLES_SETTING_KEY, JSON.stringify([...disabled]))
+    return refreshRoles()
+  })
+  ipcMain.handle(IpcChannel.RolesOpenFolder, async () => {
+    mkdirSync(userRolesFolder(), { recursive: true })
+    const error = await shell.openPath(userRolesFolder())
+    if (error) throw new Error(error)
+  })
+  ipcMain.handle(IpcChannel.RolesCreateExample, () => {
+    mkdirSync(userRolesFolder(), { recursive: true })
+    const target = join(userRolesFolder(), EXAMPLE_ROLE_FILE_NAME)
+    if (!existsSync(target)) writeFileSync(target, EXAMPLE_ROLE_FILE, 'utf-8')
+    return target
+  })
+
+  // Folders + the Python venv, created with the workspace (design-discussion.md 4.3).
+  // Fire-and-forget like MCP below — creating a venv and installing packages can
+  // take minutes; the renderer follows progress via RuntimeStateChanged.
+  workspaceRuntime.onChange((state) => {
+    for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IpcChannel.RuntimeStateChanged, state)
+  })
+  void ensureRuntimeFor(toolContext.workspaceGuard.root)
+
+  // Bundled Ollama (TASKS #202) — a strict no-op on every build except the Windows sponsor
+  // one (OllamaRuntime.ensure() resolves 'unavailable' immediately otherwise). Starting the
+  // server and pulling the embedding model can take a while on first run; the renderer
+  // follows progress via OllamaStateChanged, same pattern as the Python runtime above.
+  ollamaRuntime.onChange((state) => {
+    setBundledOllamaBaseUrl(state.baseUrl)
+    for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IpcChannel.OllamaStateChanged, state)
+  })
+  void ollamaRuntime.ensure()
+  app.on('before-quit', () => ollamaRuntime.stop())
 
   // Fire-and-forget: connecting can involve spawning a process or a network
   // round trip, and shouldn't block app startup. toolRegistry.list() is
@@ -197,7 +305,10 @@ export function registerIpcHandlers(): void {
       name: 'Sachivji',
       version: app.getVersion(),
       platform: process.platform,
-      userName: userInfo().username
+      userName: userInfo().username,
+      electronVersion: process.versions.electron,
+      chromeVersion: process.versions.chrome,
+      nodeVersion: process.versions.node
     })
   )
 
@@ -221,11 +332,17 @@ export function registerIpcHandlers(): void {
         supportsEmbeddings
       }))
   )
+  ipcMain.handle(IpcChannel.WebSearchProvidersList, () =>
+    webSearchProviderRegistry.list().map(({ id, displayName, requiresApiKey }) => ({ id, displayName, requiresApiKey }))
+  )
   ipcMain.handle(IpcChannel.ProvidersSetApiKey, (_event, providerId: string, apiKey: string) => {
     setApiKey(providerId, apiKey)
   })
   ipcMain.handle(IpcChannel.ProvidersHasApiKey, (_event, providerId: string) =>
     Boolean(getApiKey(providerId))
+  )
+  ipcMain.handle(IpcChannel.ProvidersGetApiKeyPreview, (_event, providerId: string) =>
+    getApiKeyPreview(providerId) ?? null
   )
   ipcMain.handle(IpcChannel.ProvidersListModels, async (_event, providerId: string) => {
     const descriptor = providerRegistry.get(providerId)
@@ -326,7 +443,8 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle(IpcChannel.McpServersReconnect, (_event, id: string) => mcpManager.reconnect(id, toolRegistry))
 
-  ipcMain.handle(IpcChannel.WorkspaceGetRoot, () => toolContext?.workspaceGuard.root ?? defaultWorkspaceRoot())
+  const currentWorkspaceRoot = (): string => toolContext?.workspaceGuard.root ?? defaultWorkspaceRoot()
+  ipcMain.handle(IpcChannel.WorkspaceGetRoot, () => currentWorkspaceRoot())
   ipcMain.handle(IpcChannel.WorkspaceSetRoot, (_event, path: string) => {
     if (!path || !isAbsolute(path)) {
       throw new Error('Workspace root must be a non-empty absolute path.')
@@ -339,7 +457,20 @@ export function registerIpcHandlers(): void {
       // on the very next message with no app restart.
       toolContext.workspaceGuard = new WorkspaceGuard(path)
     }
+    // A venv embeds absolute paths, so a new root needs its own.
+    void ensureRuntimeFor(path)
   })
+
+  ipcMain.handle(IpcChannel.RuntimeGetState, () => workspaceRuntime.getState() ?? null)
+  ipcMain.handle(IpcChannel.RuntimeEnsure, () => ensureRuntimeFor(currentWorkspaceRoot()))
+  ipcMain.handle(IpcChannel.RuntimeRepair, () => ensureRuntimeFor(currentWorkspaceRoot(), { repair: true }))
+  ipcMain.handle(IpcChannel.RuntimeSetEnabled, (_event, enabled: boolean) => {
+    setSetting(PYTHON_RUNTIME_DISABLED_SETTING_KEY, enabled ? 'false' : 'true')
+    return ensureRuntimeFor(currentWorkspaceRoot())
+  })
+
+  ipcMain.handle(IpcChannel.OllamaGetState, () => ollamaRuntime.getState() ?? null)
+  ipcMain.handle(IpcChannel.OllamaEnsure, () => ollamaRuntime.ensure())
 
   ipcMain.handle(
     IpcChannel.SecretStorageGetInfo,
@@ -350,6 +481,23 @@ export function registerIpcHandlers(): void {
     return { mode: getSecretStorageMode(), envFilePath: envFilePath() }
   })
 
+  // TASKS.md #150 — admin-to-user settings provisioning. Preview and Apply are deliberately separate
+  // calls: the renderer shows the user exactly what Preview decided before Apply re-derives (never
+  // re-asks) the same willImport decisions and actually writes them — see import-export.ts's own doc
+  // comment on why that re-derivation is safe.
+  ipcMain.handle(IpcChannel.SettingsExport, (event): Promise<SettingsExportResult> =>
+    exportSettings(providerRegistry, currentWorkspaceRoot(), BrowserWindow.fromWebContents(event.sender), userRolesFolder())
+  )
+  ipcMain.handle(IpcChannel.SettingsImportPreview, (event): Promise<SettingsImportPreviewResult> =>
+    previewSettingsImport(BrowserWindow.fromWebContents(event.sender), userRolesFolder())
+  )
+  ipcMain.handle(IpcChannel.SettingsImportApply, (_event, payload: SettingsExportPayload): SettingsImportApplyResult =>
+    applySettingsImport(payload, userRolesFolder())
+  )
+
+  ipcMain.handle(IpcChannel.ExternalFoldersList, (): string[] => externalAccess.listAlways())
+  ipcMain.handle(IpcChannel.ExternalFoldersRemove, (_event, folder: string): void => externalAccess.revokeAlways(folder))
+
   ipcMain.handle(IpcChannel.ToolsList, (): ToolDescriptor[] =>
     toolRegistry
       .list()
@@ -359,6 +507,24 @@ export function registerIpcHandlers(): void {
         description: tool.description,
         mutates: typeof tool.mutates === 'function' ? 'sometimes' : 'always'
       }))
+  )
+
+  // TASKS.md #164 — unfiltered (unlike ToolsList above, which drops never-mutating tools for the
+  // auto-approve list's own purpose), grouped by role: a reference for a user defining a new custom
+  // role. Reads `agents` fresh (the same module-level binding the orchestrator itself uses), so it
+  // reflects custom roles and mid-session tool-registry changes (MCP connects, saved queries) exactly
+  // like every other consumer of `agents` already does.
+  ipcMain.handle(IpcChannel.ToolsListByRole, (): RoleToolsDto[] =>
+    [...agents.values()].map((agent) => ({
+      role: agent.role,
+      roleLabel: roleLabel(agent.role),
+      summary: agent.summary,
+      tools: agent.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        mutates: typeof tool.mutates === 'function' ? 'sometimes' : tool.mutates ? 'always' : 'never'
+      }))
+    }))
   )
 
   // Pull-based counterpart to the context_window *stream* event runChat
@@ -389,6 +555,9 @@ export function registerIpcHandlers(): void {
     }
   })
   ipcMain.handle(IpcChannel.SearchHistoryRebuildIndex, () => rebuildIndex())
+  ipcMain.handle(IpcChannel.EmbeddingProbeDimension, (_event, providerId: string, model: string) =>
+    probeEmbeddingDimension(providerId, getApiKey(providerId), model)
+  )
 
   ipcMain.handle(
     IpcChannel.ChatSend,
@@ -400,7 +569,9 @@ export function registerIpcHandlers(): void {
       // never race ahead of this being in the map.
       const controller = new AbortController()
       activeStreams.set(streamId, controller)
-      runChat(sessionId, text, streamId, sender, forcedRole, controller.signal)
+      // The renderer is a separate process: a pinned role arrives as an arbitrary value. Anything that is not a well-formed role id is
+      // treated as "no pin" here; a well-formed id that does not resolve is handled (fallback to Auto + notice) by the orchestrator.
+      runChat(sessionId, text, streamId, sender, isValidRoleId(forcedRole) ? forcedRole : null, controller.signal)
         .catch((err: unknown) => {
           const errorMessage = err instanceof Error ? err.message : String(err)
           emit(sender, { streamId, sessionId, event: { type: 'error', message: errorMessage } })
@@ -419,7 +590,10 @@ export function registerIpcHandlers(): void {
           enqueueMessage(record.id, sessionId, record.content)
           emit(sender, { streamId, sessionId, event: { type: 'warning', message, failureCategory: 'communication_failure' } })
         })
-        .finally(() => activeStreams.delete(streamId))
+        .finally(() => {
+          activeStreams.delete(streamId)
+          pendingSteeringComments.delete(streamId)
+        })
       return { streamId }
     }
   )
@@ -428,6 +602,18 @@ export function registerIpcHandlers(): void {
     // A no-op if the stream already finished — same defensive shape as
     // ToolConfirmRespond's "no matching pending entry" handling below.
     activeStreams.get(streamId)?.abort()
+  })
+
+  ipcMain.handle(IpcChannel.ChatSteer, (_event, streamId: string, comment: string) => {
+    // TASKS.md #158. A no-op (nothing thrown) if the stream already finished by the time this arrives —
+    // same "harmless if stale" shape as ChatCancel above; the comment is simply never drained. Only
+    // queues it — persistence happens when runLoop actually drains and injects it (see Orchestrator's
+    // drainSteeringComments option), not here, so a comment is never persisted twice.
+    const text = comment.trim()
+    if (!text || !activeStreams.has(streamId)) return
+    const list = pendingSteeringComments.get(streamId) ?? []
+    list.push(text)
+    pendingSteeringComments.set(streamId, list)
   })
 
   ipcMain.handle(
@@ -520,7 +706,7 @@ function tryResolveActiveProvider(): { provider: ModelProvider; model: string } 
   if (!descriptor || !model) return undefined
   const apiKey = getApiKey(providerId)
   if (descriptor.requiresApiKey && !apiKey) return undefined
-  return { provider: descriptor.create(apiKey), model }
+  return { provider: descriptor.create(apiKey, providerOptions()), model }
 }
 
 async function runChat(
@@ -549,14 +735,12 @@ async function runChat(
     throw new Error('Tool context not initialized.')
   }
 
-  const provider = descriptor.create(apiKey)
+  const provider = descriptor.create(apiKey, providerOptions())
 
-  // Read once, up front, and acted on only after the turn actually
-  // completes (below) — checking the session's *current title*, not a
-  // message count, so a first attempt that errors out mid-turn (thrown
-  // before reaching the rename) still leaves the next successful attempt
-  // able to auto-title, rather than a message-count check silently
-  // consuming the "first turn" opportunity on a failed one.
+  // Read once, up front, before this turn's own user message is inserted — checking the session's
+  // *current title*, not a message count, so a first turn that never gets this far (fails before even
+  // reaching the rename below) still leaves the next attempt able to auto-title, rather than a
+  // message-count check silently consuming the "first turn" opportunity on one that never happened.
   const sessionBeforeTurn = getSession(sessionId)
 
   const history = listMessages(sessionId)
@@ -564,7 +748,10 @@ async function runChat(
   // Trims oversized tool results and drops the oldest turns once the loaded
   // history is getting close to the model's context window — operates only
   // on what's about to be sent, never on what's persisted/displayed.
-  const { messages: conversation, droppedTurns, contextWindow } = await prepareConversation(priorTurns, model, provider, {
+  await refreshRoles() // user-defined roles are re-read every turn
+  const slimRouter = getSetting(SLIM_ROUTER_SETTING_KEY) === 'true'
+  const routerTools = slimRouter ? selectRouterTools(toolRegistry.list(), agents) : fullRouterTools(toolRegistry.list())
+  const prepared = await prepareConversation(priorTurns, model, provider, {
     system: SYSTEM_PROMPT,
     // The top-level round's real tool list — matches what's actually about
     // to be sent alongside this conversation (built just below via the
@@ -572,8 +759,13 @@ async function runChat(
     // synthetic tools the Orchestrator adds internally per specialist —
     // those are few and small next to the full registry, and not known
     // until the Orchestrator itself is constructed a few lines down.
-    tools: toolRegistry.list()
+    tools: routerTools
   })
+  const { droppedTurns, contextWindow } = prepared
+  // Slim router: no provider is ever shown an earlier call to a tool that is not in this request's tool list (replay-only).
+  const conversation = slimRouter
+    ? collapseUnavailableToolCalls(prepared.messages, new Set([...routerTools.map((t) => t.name), ...[...agents.keys()].map(delegateToolName)]))
+    : prepared.messages
   // Once per turn, not per round — tells the renderer's context meter the
   // real window this turn was budgeted against (a live Ollama reading when
   // available) instead of it falling back to its own static guess, which
@@ -606,6 +798,20 @@ async function runChat(
   const userMessage = insertMessage(sessionId, 'user', [{ type: 'text', text }])
   enqueueMessage(userMessage.id, sessionId, userMessage.content)
 
+  // "Asked and answered" — only once, only from a session's actual first exchange (the title guard
+  // above). Found live (2026-10-01): doing this at the END of the turn instead meant a turn that got
+  // stuck (slow/looping local model) or was manually stopped never reached it, leaving the session
+  // titled "New Chat" forever — the per-turn guard only retries on a session's *next* turn, and a
+  // session that never finishes a turn cleanly never gets one. The title comes from the user's own
+  // first message text, which can't change no matter how the turn itself goes, so there's nothing to
+  // gain by waiting for it to finish — do it right away, optimistically, the moment the message lands.
+  if (sessionBeforeTurn?.title === DEFAULT_SESSION_TITLE) {
+    const title = titleFromMessage(text)
+    updateSessionTitle(sessionId, title)
+    const payload: SessionTitleUpdatedPayload = { sessionId, title }
+    sender.send(IpcChannel.SessionTitleUpdated, payload)
+  }
+
   // A named local, not an inline `new Map()`, specifically so the
   // finally-block below can still see whatever's left in it after the
   // turn ends — see that block's own comment for why that matters.
@@ -616,39 +822,77 @@ async function runChat(
     model,
     agents,
     SYSTEM_PROMPT,
-    toolRegistry.list(),
+    routerTools,
     makeConfirmTool(sender, streamId, sessionId),
     {
       ...toolContext,
       currentSessionId: sessionId,
       registerSavedQuery: (query) => savedQueryManager.register(query, toolRegistry),
       connectMcpServer: (id) => mcpManager.reconnect(id, toolRegistry),
+      mcpServerStatus: (id) => mcpManager.getStatus(id),
+      previousAnswerText: () => previousAnswerText(listMessages(sessionId)),
+      runtimeState: () => workspaceRuntime.getState(),
       activeDecks
     },
     signal,
     {
       // Missing/unset reads as enabled — default on (see PLANNING_ENABLED_SETTING_KEY's own doc comment).
       planningEnabled: getSetting(PLANNING_ENABLED_SETTING_KEY) !== 'false',
+      temperature: resolveTemperature(),
       confirmContinue: makeConfirmContinue(sender, streamId, sessionId),
       // TASKS.md #95, phase 2 — persists every real classify-and-plan
       // result alongside the deterministic gate's own verdict, so the
       // gate's accuracy can be measured before it's ever widened.
-      logClassifyGateSample: logClassifyGateSample
+      logClassifyGateSample: logClassifyGateSample,
+      logToolUse,
+      // Live configuration for the classifier's role digest (a plan must not route to a role with nothing configured).
+      getConfiguration: () => ({
+        databases: listConnections().length,
+        apis: listApiConnections().length,
+        email: listEmailConnections().length,
+        mcp: new Set(toolRegistry.list().flatMap((t) => (t.mcp ? [t.mcp.server] : []))).size
+      }),
+      // What each connected MCP server covers, in the user's own words (Settings > MCP servers > description).
+      getKnowledgeServers: () => {
+        const byServer = new Map<string, string | undefined>()
+        for (const t of toolRegistry.list()) if (t.mcp && !byServer.has(t.mcp.server)) byServer.set(t.mcp.server, t.mcp.serverDescription)
+        return [...byServer].map(([name, description]) => ({ name, description }))
+      },
+      // The user's own data sources: a domain-knowledge step must never be about one of them (agents/domain-topic.ts).
+      getUserDataNames: () => [
+        ...listConnections().flatMap((c) => [c.name, c.database ?? '']),
+        ...listApiConnections().map((c) => c.name)
+      ].filter(Boolean),
+      // TASKS.md #158 — drains and clears whatever ChatSteer queued for this stream since the last check.
+      drainSteeringComments: () => {
+        const list = pendingSteeringComments.get(streamId) ?? []
+        pendingSteeringComments.set(streamId, [])
+        return list
+      }
     }
   )
 
+  // The turn's final stop is held until the run ends: the renderer stops listening at it, and a round's usage event comes after it.
+  let heldFinalStop: StreamEvent | undefined
   try {
     for await (const orchestratorEvent of orchestrator.run(conversation, forcedRole)) {
       if (orchestratorEvent.kind === 'stream') {
-        emit(sender, { streamId, sessionId, event: orchestratorEvent.event })
+        if (isFinalStop(orchestratorEvent.event)) heldFinalStop = orchestratorEvent.event
+        else emit(sender, { streamId, sessionId, event: orchestratorEvent.event })
         if (orchestratorEvent.event.type === 'usage') {
           addUsage(sessionId, orchestratorEvent.event.inputTokens, orchestratorEvent.event.outputTokens)
         }
       } else {
-        const record = insertMessage(sessionId, orchestratorEvent.role, orchestratorEvent.content)
+        const record = insertMessage(
+          sessionId,
+          orchestratorEvent.role,
+          orchestratorEvent.content,
+          orchestratorEvent.role === 'assistant' ? `${providerId}:${model}` : undefined
+        )
         enqueueMessage(record.id, sessionId, record.content)
       }
     }
+    if (heldFinalStop) emit(sender, { streamId, sessionId, event: heldFinalStop })
   } finally {
     // `activeDecks` is fresh per turn (see its own construction above) and
     // never persisted — a deck composed here but not explicitly saved via
@@ -688,16 +932,5 @@ async function runChat(
         console.error(`runChat: failed to auto-save in-progress deck "${deckId}" at turn end:`, err)
       }
     }
-  }
-
-  // "Asked and answered" — only once, only from a session's actual first
-  // exchange (the title guard above), and only once the turn has genuinely
-  // finished (success or a clean abort both reach here; a thrown error does
-  // not, leaving the opportunity open for the next attempt).
-  if (sessionBeforeTurn?.title === DEFAULT_SESSION_TITLE) {
-    const title = titleFromMessage(text)
-    updateSessionTitle(sessionId, title)
-    const payload: SessionTitleUpdatedPayload = { sessionId, title }
-    sender.send(IpcChannel.SessionTitleUpdated, payload)
   }
 }

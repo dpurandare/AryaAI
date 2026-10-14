@@ -3,6 +3,10 @@ import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/register'
 import { setDbPath } from './db'
+import { getSetting, setSetting } from './db/settings'
+import { attachZoomShortcuts, ZOOM_SETTING_KEY } from './window/zoom'
+import { attachBoundsPersistence, parseWindowBounds, resolveInitialBounds, WINDOW_BOUNDS_SETTING_KEY } from './window/bounds'
+import { attachSpellcheckContextMenu } from './window/context-menu'
 import { initUpdater } from './updater'
 
 // On GNOME/Wayland, Electron auto-selects the native Wayland backend, whose
@@ -21,8 +25,7 @@ const devIconPath = join(__dirname, '../../build/icon.png')
 
 function createMainWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    ...resolveInitialBounds(parseWindowBounds(getSetting(WINDOW_BOUNDS_SETTING_KEY))),
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#171717',
@@ -38,7 +41,20 @@ function createMainWindow(): BrowserWindow {
     }
   })
 
+  attachBoundsPersistence(mainWindow, {
+    get: () => getSetting(WINDOW_BOUNDS_SETTING_KEY),
+    set: (value) => setSetting(WINDOW_BOUNDS_SETTING_KEY, value)
+  })
+
   mainWindow.on('ready-to-show', () => mainWindow.show())
+
+  attachZoomShortcuts(
+    mainWindow.webContents,
+    { get: () => getSetting(ZOOM_SETTING_KEY), set: (value) => setSetting(ZOOM_SETTING_KEY, value) },
+    process.platform === 'darwin'
+  )
+
+  attachSpellcheckContextMenu(mainWindow.webContents)
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)

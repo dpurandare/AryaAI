@@ -1,12 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
-import { dirname, relative } from 'node:path'
+import { dirname } from 'node:path'
 import pptxgen from 'pptxgenjs'
 import type { Tool, ToolContext } from '../types'
-import { resolveNewFilePath } from '../workspace-layout'
-import { applyElement, validateElement, type SlideElementInput } from './elements'
+import { resolveNewFilePath, workspaceRelativePath } from '../workspace-layout'
+import { applyElement, normalizeElement, validateElement, withRealLineBreaks } from './elements'
+import { fixDeckPackage } from './package-fix'
 
-function requireDecks(ctx: ToolContext): Map<string, { pres: pptxgen; slides: pptxgen.Slide[] }> {
+type DeckState = NonNullable<ToolContext['activeDecks']> extends Map<string, infer D> ? D : never
+
+function requireDecks(ctx: ToolContext): Map<string, DeckState> {
   if (!ctx.activeDecks) throw new Error('Deck tools are unavailable in this context.')
   return ctx.activeDecks
 }
@@ -32,7 +35,7 @@ function resolveDeckId(ctx: ToolContext, deckId: string | undefined): string {
   throw new Error(`Multiple decks are in progress (${[...decks.keys()].join(', ')}) — specify deckId explicitly.`)
 }
 
-function requireDeck(ctx: ToolContext, deckId: string | undefined): { pres: pptxgen; slides: pptxgen.Slide[]; id: string } {
+function requireDeck(ctx: ToolContext, deckId: string | undefined): DeckState & { id: string } {
   const id = resolveDeckId(ctx, deckId)
   const deck = requireDecks(ctx).get(id)
   if (!deck) throw new Error(`Unknown deck "${id}" — call pptx_start_deck first.`)
@@ -43,15 +46,21 @@ export const pptxStartDeckTool: Tool = {
   name: 'pptx_start_deck',
   description:
     'Start a new, empty presentation in memory (#78). Returns a deckId — use it with pptx_add_slide, ' +
-    "delegate_to_page-creator, and pptx_save_deck for the rest of this deck. Nothing is written to disk " +
-    'until pptx_save_deck.',
-  inputSchema: { type: 'object', properties: {} },
+    "delegate_to_page-creator, and pptx_save_deck for the rest of this deck. Give slides: N to create all N empty " +
+    'slides now (indexes 0..N-1) instead of one pptx_add_slide call each — then give every slide\'s index in its brief. ' +
+    'Nothing is written to disk until pptx_save_deck.',
+  inputSchema: { type: 'object', properties: { slides: { type: 'number', description: 'How many empty slides to create now (1-40)' } } },
   mutates: false,
-  async execute(_input, ctx) {
+  async execute(input, ctx) {
     const decks = requireDecks(ctx)
     const deckId = randomUUID().slice(0, 8)
-    decks.set(deckId, { pres: new pptxgen(), slides: [] })
-    return `Started deck "${deckId}".`
+    const pres = new pptxgen()
+    pres.layout = 'LAYOUT_16x9' // 10 x 5.625 in — the size every element position is checked against
+    const slides: ReturnType<typeof pres.addSlide>[] = []
+    const wanted = Math.min(40, Math.max(0, Math.floor(Number(input.slides) || 0)))
+    for (let i = 0; i < wanted; i++) slides.push(pres.addSlide())
+    decks.set(deckId, { pres, slides, composed: wanted ? new Set() : undefined })
+    return wanted ? `Started deck "${deckId}" with ${wanted} empty slides (indexes 0 to ${wanted - 1}).` : `Started deck "${deckId}".`
   }
 }
 
@@ -76,16 +85,22 @@ export const pptxAddSlideTool: Tool = {
   }
 }
 
+/** What the slide now says, quoted — so the specialist and the router report what is really on it, not what they meant to put there. */
+function textOnSlide(elements: Array<{ type: string; text?: unknown }>): string {
+  const texts = elements.filter((e) => e.type === 'text' && typeof e.text === 'string' && e.text.trim()).map((e) => withRealLineBreaks(String(e.text)).replace(/\s+/g, ' ').trim().slice(0, 70))
+  return texts.length ? ` Text on the slide: ${texts.map((t) => `"${t}"`).join(' | ')}.` : ''
+}
+
 export const pptxComposeSlideTool: Tool = {
   name: 'pptx_compose_slide',
   description:
     'Fill a slide with your visual design for it — an array of elements, each an object with a "type" ' +
-    '(text/image/shape/chart/table) plus x/y/w/h in inches (a slide is 10x7.5in). deckId/slideIndex are ' +
+    '(text/image/shape/chart/table) plus x/y/w/h in inches (slide 10x5.625in; numeric x,y,w,h required). deckId/slideIndex are ' +
     'usually given to you in your task brief; if you were not told them, or are unsure, omit both — this ' +
     'defaults to the most recently added slide of the only deck in progress, which is correct for the ' +
-    'normal one-slide-per-call flow. text: {type:"text", text, x,y,w,h, fontSize?, bold?, color? (hex, ' +
-    'no #), align? ("left"/"center"/"right"), bullet?}. image: {type:"image", path (workspace-relative), ' +
-    'x,y,w,h}. shape: {type:"shape", shape (e.g. "rect","roundRect","oval","line"), x,y,w,h, fill? (hex), ' +
+    'normal one-slide-per-call flow. background? (hex, no #) sets the slide colour. text: {type:"text", text, x,y,w,h, fontSize?, bold?, italic?, fontFace?, color? (hex, ' +
+    'no #), align? ("left"/"center"/"right"), valign? ("top"/"middle"/"bottom"), bullet?}. image: {type:"image", path (workspace-relative), ' +
+    'x,y,w,h}. shape: {type:"shape", shape (e.g. "rect","roundRect","ellipse","line"), x,y,w,h, fill? (hex), ' +
     'line? (hex)}. chart: {type:"chart", chartType ("bar"/"line"/"pie"/"doughnut"/"area"/"radar"), ' +
     'categories (string[]), series ([{name, values: number[]}]), x,y,w,h}. table: {type:"table", rows ' +
     '(string[][]), x,y,w,h}. Express the whole slide as one call, not one element per call.',
@@ -94,6 +109,7 @@ export const pptxComposeSlideTool: Tool = {
     properties: {
       deckId: { type: 'string', description: 'Only needed if more than one deck is in progress' },
       slideIndex: { type: 'number', description: 'Only needed if unsure which slide — defaults to the most recently added' },
+      background: { type: 'string', description: 'Slide background colour, hex without #' },
       elements: { type: 'array', items: { type: 'object' } }
     },
     required: ['elements']
@@ -101,14 +117,19 @@ export const pptxComposeSlideTool: Tool = {
   mutates: false,
   async execute(input, ctx) {
     const deck = requireDeck(ctx, typeof input.deckId === 'string' ? input.deckId : undefined)
-    const slideIndex =
-      typeof input.slideIndex === 'number' ? input.slideIndex : deck.slides.length - 1
+    // No index given: the most recently added slide — or, for a deck started with all its slides at once, the first one still empty.
+    const firstEmpty = deck.composed ? deck.slides.findIndex((_, i) => !deck.composed?.has(i)) : -1
+    const slideIndex = typeof input.slideIndex === 'number' ? input.slideIndex : firstEmpty >= 0 ? firstEmpty : deck.slides.length - 1
     const slide = deck.slides[slideIndex]
     if (!slide) {
       throw new Error(`Deck "${deck.id}" has no slide at index ${slideIndex}. Call pptx_add_slide first.`)
     }
-    const elements = Array.isArray(input.elements) ? (input.elements as SlideElementInput[]) : []
-    if (elements.length === 0) throw new Error('"elements" must be a non-empty array.')
+    const given = Array.isArray(input.elements) ? (input.elements as unknown[]) : []
+    if (given.length === 0) throw new Error('"elements" must be a non-empty array.')
+    // Recover an element whose "type" came out missing or garbled from the fields it does have (see normalizeElement).
+    const normalized = given.map(normalizeElement)
+    const elements = normalized.map((n) => n.element)
+    const correctedCount = normalized.filter((n) => n.corrected).length
 
     // Validate every element before applying any of them — a slide is not
     // undoable once mutated (pptxgenjs has no remove-element API), so a
@@ -116,8 +137,14 @@ export const pptxComposeSlideTool: Tool = {
     // ones permanently applied; a corrected retry then duplicated them.
     for (const el of elements) await validateElement(el, ctx)
     for (const el of elements) applyElement(slide, el, ctx)
+    requireDecks(ctx).get(deck.id)?.composed?.add(slideIndex)
+    if (typeof input.background === 'string' && /^#?[0-9a-fA-F]{6}$/.test(input.background.trim())) slide.background = { color: input.background.trim().replace(/^#/, '') }
 
-    return `Composed slide ${slideIndex} of deck "${deck.id}" with ${elements.length} element(s).`
+    return (
+      `Composed slide ${slideIndex} of deck "${deck.id}" with ${elements.length} element(s).` +
+      textOnSlide(elements) +
+      (correctedCount ? ` (${correctedCount} element(s) had a missing or malformed "type" and were corrected from their other fields — set "type" to exactly one word next time.)` : '')
+    )
   }
 }
 
@@ -147,8 +174,9 @@ export const pptxSaveDeckTool: Tool = {
     const absPath = resolveNewFilePath(ctx.workspaceGuard, relPath)
     await mkdir(dirname(absPath), { recursive: true })
     await deck.pres.writeFile({ fileName: absPath })
+    await fixDeckPackage(absPath)
     requireDecks(ctx).delete(deck.id)
-    const savedRelPath = relative(ctx.workspaceGuard.root, absPath)
+    const savedRelPath = workspaceRelativePath(ctx.workspaceGuard.root, absPath)
     return `Saved ${savedRelPath} (${deck.slides.length} slide(s)).`
   }
 }

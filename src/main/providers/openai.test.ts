@@ -34,6 +34,28 @@ describe('OpenAIProvider', () => {
     mockList.mockReset()
   })
 
+  it('reports the cached part of the prompt when the provider says so (automatic prefix caching), without changing inputTokens', async () => {
+    mockCreate.mockResolvedValue(
+      fakeStream([
+        { choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }] },
+        {
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 3000, completion_tokens: 4, prompt_tokens_details: { cached_tokens: 2560 } }
+        }
+      ])
+    )
+    const events = await collect(new OpenAIProvider('key').stream({ model: 'gpt-5-mini', messages: [], maxTokens: 10 }))
+    expect(events).toContainEqual({ type: 'usage', inputTokens: 3000, outputTokens: 4, cacheReadTokens: 2560 })
+  })
+
+  it('reports no cacheReadTokens key when nothing was cached', async () => {
+    mockCreate.mockResolvedValue(
+      fakeStream([{ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 50, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 0 } } }])
+    )
+    const events = await collect(new OpenAIProvider('key').stream({ model: 'gpt-5-mini', messages: [], maxTokens: 10 }))
+    expect(events).toContainEqual({ type: 'usage', inputTokens: 50, outputTokens: 2 })
+  })
+
   it('streams text deltas and a final end_turn stop with usage', async () => {
     mockCreate.mockResolvedValue(
       fakeStream([

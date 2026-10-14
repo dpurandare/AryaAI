@@ -16,6 +16,15 @@ files:
 asarUnpack:
   - '**/*.node'
   - 'node_modules/sqlite-vec-*/**'
+# Shared by every platform that bundles a local-embeddings Ollama runtime (Windows #202, Linux
+# #207, macOS #208): the pulled nomic-embed-text's published context size (8192) exceeds its
+# real trained context (2048) and crashes llama-server on an embed call — see the file itself.
+# Bundled so `ollama-runtime.ts` can re-create the model in place with the fix, no network
+# needed for this part. A single top-level entry (not per-platform) since every bundling
+# platform needs the exact same small text file.
+extraResources:
+  - from: models/ModelFileNomicEmbed
+    to: ModelFileNomicEmbed
 mac:
   category: public.app-category.productivity
   hardenedRuntime: true
@@ -23,17 +32,115 @@ mac:
   notarize: false # set to true once an Apple Developer notarization profile is configured (TASKS.md #63/#64)
   identity: null # no Apple Developer ID yet (TASKS.md #63) — explicit, not an implicit auto-discovery fallback
   target:
-    - dmg
+    - target: dmg
+      arch:
+        - arm64 # Apple Silicon only for now (TASKS #208) — Intel Mac deliberately deferred; explicit so electron-builder never defaults to the host arch or a universal build
+  # General macOS release (TASKS #208, extending the Windows (#202) / Linux (#207) approach):
+  # a self-contained Python, Ollama (kept close to the full official tarball rather than
+  # stripped down — see fetch-bundled-ollama-mac.mjs's header comment for why) and Node, so the
+  # app needs none of the three installed on the system. Fetched by `npm run fetch:bundled-*:mac`
+  # (scripts/fetch-bundled-{python,ollama,node}-mac.mjs) into resources/ (gitignored) before
+  # packaging. Arm64 only, matching the `target.arch` above — bundling Intel resources too would
+  # need a second, parallel set of entries plus a `process.arch` branch in the runtime lookups,
+  # deferred along with Intel Mac support generally.
+  extraResources:
+    - from: resources/python-mac-arm64
+      to: python-mac-arm64
+    - from: resources/python-mac-arm64-wheels
+      to: python-mac-arm64-wheels
+    - from: resources/ollama-mac-arm64
+      to: ollama-mac-arm64
+    - from: resources/node-mac-arm64
+      to: node-mac-arm64
 win:
   target:
     - nsis
+  # Sponsor build (TASKS #202): a self-contained Python so the installer needs no system
+  # Python at all. Fetched by `npm run fetch:bundled-python:win` (scripts/fetch-bundled-python-win.mjs)
+  # into resources/ (gitignored) before packaging; `workspace-runtime.ts`'s `defaultRuntimeDeps()`
+  # looks for it under `process.resourcesPath` at runtime.
+  # CPU-only Ollama (no CUDA/Vulkan), fetched by `npm run fetch:bundled-ollama:win`
+  # (scripts/fetch-bundled-ollama-win.mjs) — the embedding model itself isn't bundled, it's
+  # pulled over the network on first run, so this is just the ~66MB runtime.
+  extraResources:
+    - from: resources/python-win-x64
+      to: python-win-x64
+    - from: resources/python-win-x64-wheels
+      to: python-win-x64-wheels
+    - from: resources/ollama-win-x64
+      to: ollama-win-x64
+    # A self-contained Node so `npx`-launched MCP servers (e.g. Context7, manual-test 13.4) work
+    # with no system Node install — found live on the sponsor VM (`npx` not on PATH at all).
+    # Fetched by `npm run fetch:bundled-node:win` (scripts/fetch-bundled-node-win.mjs).
+    # Split in two: electron-builder's own copy filter (app-builder-lib's createFilter,
+    # util/filter.js) unconditionally drops any directory named exactly "node_modules" sitting
+    # at a copy entry's own `from` root (meant to stop an app's own node_modules double-bundling,
+    # no opt-out) — found live on the sponsor VM when `npx` itself resolved but then crashed with
+    # MODULE_NOT_FOUND on npm's own node_modules/npm/bin/npx-cli.js, which turned out to be
+    # missing entirely from the installed build. A second entry rooted one level inside
+    # node_modules sidesteps the exact-string check (its own relative paths are never literally
+    # "node_modules").
+    - from: resources/node-win-x64
+      to: node-win-x64
+    - from: resources/node-win-x64/node_modules
+      to: node-win-x64/node_modules
+# Sponsor build (TASKS #202): electron-builder's NSIS default is "oneClick" — a bare
+# progress bar that closes with no Finish page, no visible confirmation, and no shortcut
+# of its own. Fine for a developer who knows to search the Start Menu; confusing for a
+# non-technical sponsor who needs to see the install actually finished and how to launch
+# it. The standard wizard below shows a Finish page with an explicit "Run now" checkbox
+# and creates both shortcuts.
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  runAfterFinish: true
 linux:
   target:
     - AppImage
     - deb
   category: Utility
+  # General Linux release (TASKS #207, extending the Windows sponsor-build approach from #202):
+  # a self-contained Python, CPU-only Ollama and Node so neither the deb nor the AppImage needs
+  # any of the three installed on the system. Fetched by `npm run fetch:bundled-*:linux`
+  # (scripts/fetch-bundled-{python,ollama,node}-linux.mjs) into resources/ (gitignored) before
+  # packaging; `workspace-runtime.ts`/`ollama-runtime.ts`/`mcp/client.ts`'s bundled-resource
+  # lookups check `process.resourcesPath` for these at runtime, same pattern as Windows.
+  extraResources:
+    - from: resources/python-linux-x64
+      to: python-linux-x64
+    - from: resources/python-linux-x64-wheels
+      to: python-linux-x64-wheels
+    - from: resources/ollama-linux-x64
+      to: ollama-linux-x64
+    # Unlike Windows (where npm's node_modules sits directly at the zip root, and so needs the
+    # split-entry workaround above), Node's official Linux tarball nests it two levels down at
+    # lib/node_modules — never a path whose relative-to-copy-root string is exactly
+    # "node_modules" — so electron-builder's copy filter never drops it here. Confirmed by
+    # inspecting the packaged release/linux-unpacked output directly: lib/node_modules/npm
+    # (and therefore npx) survives with just the one entry below.
+    - from: resources/node-linux-x64
+      to: node-linux-x64
 deb:
   maintainer: "Deepak Purandare <dpurandare@users.noreply.github.com>"
+  # Setting `depends` REPLACES electron-builder's defaults, so those are repeated here
+  # (electron-builder 26.15.3's documented deb defaults). Python is no longer listed: the bundled
+  # interpreter above (TASKS #207) covers it, the same way the Windows build needs no system
+  # Python — `python3`/`python3-venv` was the general-release requirement in
+  # docs/design-discussion.md §4.3 before this; a system Python is still used as a fallback if
+  # found (detectPython tries the bundled one first).
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
 publish:
   provider: github
   owner: dpurandare

@@ -43,6 +43,20 @@ export function setDbPath(path: string): void {
   db = undefined
 }
 
+/**
+ * `schema.sql`'s `CREATE TABLE IF NOT EXISTS` is naturally idempotent for a brand-new table, but adds
+ * nothing to a `messages` table that already exists on disk from before a column was added — SQLite (and
+ * this codebase, which has no prior migration of this kind) has no `ADD COLUMN IF NOT EXISTS`, so this
+ * checks `PRAGMA table_info` directly and only runs `ALTER TABLE` when the column is genuinely missing.
+ * A fresh install never hits the `ALTER TABLE` branch at all (the column is already in `schema.sql`).
+ */
+function migrateMessagesModelColumn(database: Database.Database): void {
+  const columns = database.prepare('PRAGMA table_info(messages)').all() as { name: string }[]
+  if (!columns.some((c) => c.name === 'model')) {
+    database.exec('ALTER TABLE messages ADD COLUMN model TEXT')
+  }
+}
+
 export function getDb(): Database.Database {
   if (!db) {
     if (!dbPath) {
@@ -53,6 +67,7 @@ export function getDb(): Database.Database {
     db.pragma('journal_mode = WAL')
     db.pragma('foreign_keys = ON')
     db.exec(schema)
+    migrateMessagesModelColumn(db)
   }
   return db
 }

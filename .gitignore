@@ -12,3 +12,28 @@ release
 *.sqlite
 *.sqlite3
 *.tsbuildinfo
+
+# Scratch files the agent writes while working
+tmp/
+
+# Fetched by scripts/fetch-bundled-python-win.mjs / fetch-bundled-ollama-win.mjs /
+# fetch-bundled-node-win.mjs for the Windows sponsor build (TASKS #202) — binary assets, not source
+resources/python-win-x64/
+resources/python-win-x64-wheels/
+resources/ollama-win-x64/
+resources/node-win-x64/
+
+# Fetched by scripts/fetch-bundled-python-linux.mjs / fetch-bundled-ollama-linux.mjs /
+# fetch-bundled-node-linux.mjs for the general Linux release (TASKS #207) — binary assets, not source
+resources/python-linux-x64/
+resources/python-linux-x64-wheels/
+resources/ollama-linux-x64/
+resources/node-linux-x64/
+
+# Fetched by scripts/fetch-bundled-python-mac.mjs / fetch-bundled-ollama-mac.mjs /
+# fetch-bundled-node-mac.mjs for the macOS Apple Silicon release (TASKS #208) — binary assets,
+# not source
+resources/python-mac-arm64/
+resources/python-mac-arm64-wheels/
+resources/ollama-mac-arm64/
+resources/node-mac-arm64/

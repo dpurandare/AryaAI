@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { evaluateClassifyGate, shouldSampleForCalibration } from './classify-gate'
 
+describe('evaluateClassifyGate with a knowledge server connected (found live in 13.4.3: an axios how-to was answered from memory)', () => {
+  const withServers = { knowledgeServers: true }
+
+  it('no longer skips a short question, which may be one the server covers', () => {
+    expect(evaluateClassifyGate('How do I set a default request timeout in axios?')).toBe('skip')
+    expect(evaluateClassifyGate('How do I set a default request timeout in axios?', withServers)).toBe('run')
+    expect(evaluateClassifyGate('What is a mutex?', withServers)).toBe('run')
+  })
+
+  it('still skips a greeting or a thank-you', () => {
+    expect(evaluateClassifyGate('hi', withServers)).toBe('skip')
+    expect(evaluateClassifyGate('thanks!', withServers)).toBe('skip')
+  })
+})
+
 describe('evaluateClassifyGate', () => {
   it('skips an obviously simple, short greeting', () => {
     expect(evaluateClassifyGate('hi')).toBe('skip')

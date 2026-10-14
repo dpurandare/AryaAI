@@ -10,10 +10,12 @@ import { ToolRegistry } from '../tools/registry'
 import { readFileTool, listDirectoryTool, writeFileTool } from '../tools/file-ops'
 import { pptxAddSlideTool, pptxComposeSlideTool, pptxSaveDeckTool, pptxStartDeckTool } from '../tools/deck'
 import { officeReadDocumentTool } from '../tools/office-docs/read'
+import { downloadImageTool } from '../tools/download-image'
+import { ExternalAccess } from '../security/external-access'
 import { showMediaTool } from '../tools/show-media'
-import type { ToolContext } from '../tools/types'
+import type { Tool, ToolContext } from '../tools/types'
 import { createAgents } from './roles'
-import { Orchestrator, type Agent, type ConfirmDecision, type OrchestratorEvent, type ToolConfirmRequest } from './orchestrator'
+import { Orchestrator, detectsSourceRestriction, parseJsonObjectLoosely, type Agent, type ConfirmDecision, type OrchestratorEvent, type ToolConfirmRequest } from './orchestrator'
 
 // Deliberately builds the tool registry/context directly rather than via
 // tools/setup.ts, which imports `electron` at module scope and would crash
@@ -57,6 +59,126 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
+  })
+
+  async function runDelegation(routerReply: string) {
+    const registry = buildRegistry()
+    const agents = createAgents(registry)
+    const provider = new MockProvider([
+      { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'count the customers' } }] },
+      { text: 'There are **91 customers** in the Northwind database.', stopReason: 'end_turn' },
+      { text: routerReply, stopReason: 'end_turn' }
+    ])
+    const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+    const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'How many customers?' }] }])
+    const stream = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+    const routerTexts = stream.filter((e) => e.type === 'text_delta' && !(e as { agentRole?: string }).agentRole).map((e) => (e as { text: string }).text)
+    const finalStops = stream.filter((e) => e.type === 'message_stop' && !(e as { agentRole?: string }).agentRole && (e as { stopReason: string }).stopReason !== 'tool_use')
+    const persistedRouterText = events.some(
+      (e) => e.kind === 'message' && e.role === 'assistant' && JSON.stringify(e.content).includes(routerReply)
+    )
+    return { routerTexts, finalStops, persistedRouterText }
+  }
+
+  it('drops the router\'s own reply when it only restates what the delegate already showed (manual test 9.5: the answer appeared twice)', async () => {
+    const { routerTexts, finalStops, persistedRouterText } = await runDelegation('There are 91 customers in the Northwind database.')
+    expect(routerTexts).toEqual([])
+    expect(persistedRouterText).toBe(false)
+    expect(finalStops).toHaveLength(1)
+  })
+
+  it('keeps the router\'s reply when it adds something to the delegate\'s answer', async () => {
+    const reply = 'There are 91 customers. Most are in Germany, France and the USA, so regional campaigns would reach the bulk of them.'
+    const { routerTexts, finalStops, persistedRouterText } = await runDelegation(reply)
+    expect(routerTexts.join('')).toBe(reply)
+    expect(persistedRouterText).toBe(true)
+    expect(finalStops).toHaveLength(1)
+  })
+
+  describe('a delegate that returns nothing', () => {
+    const delegate = { toolCalls: [{ id: 'd', name: 'delegate_to_coding', input: { task: 'count the customers' } }] }
+    const delegateAgain = { toolCalls: [{ id: 'd2', name: 'delegate_to_coding', input: { task: 'count the customers, answer in one line' } }] }
+    // One empty reply plus the two empty-reply retries the round loop makes before giving up.
+    const silent = [1, 2, 3].map(() => ({ text: '', stopReason: 'end_turn' as const }))
+
+    async function run(turns: ScriptedTurn[]) {
+      const registry = buildRegistry()
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'How many customers?' }] }])
+      const lastMessage = (i: number) => JSON.stringify(provider.requests[i].messages.at(-1))
+      return { events, provider, lastMessage }
+    }
+
+    it('tells the router to say so and retry once, and the retry can succeed', async () => {
+      const { events, provider, lastMessage } = await run([
+        delegate,
+        ...silent,
+        delegateAgain,
+        { text: 'There are 91 customers.', stopReason: 'end_turn' },
+        { text: 'The first attempt returned nothing; the retry found it.', stopReason: 'end_turn' }
+      ])
+      expect(lastMessage(4)).toContain('ended without any output')
+      expect(lastMessage(4)).toContain('trying again')
+      expect(provider.requests).toHaveLength(7)
+      expect(events.some((e) => e.kind === 'message' && JSON.stringify(e.content).includes('ended without any output'))).toBe(false)
+    })
+
+    it('does not retry a second time: the router is told to report it plainly', async () => {
+      const { lastMessage, provider } = await run([delegate, ...silent, delegateAgain, ...silent, { text: 'It produced nothing twice.', stopReason: 'end_turn' }])
+      expect(lastMessage(8)).toContain('returned nothing again')
+      expect(lastMessage(8)).toContain('Do not call it again')
+      expect(provider.requests).toHaveLength(9)
+    })
+
+    it('shows a fixed message when the router then stays silent too, instead of a blank turn', async () => {
+      const { events } = await run([delegate, ...silent, ...silent])
+      const warnings = events.filter((e) => e.kind === 'stream' && e.event.type === 'warning')
+      expect((warnings.at(-1) as { event: { message: string } }).event.message).toMatch(/coding specialist returned no output/i)
+    })
+  })
+
+  describe('knowledge servers before the open web', () => {
+    const webSearch = (q: string) => ({ toolCalls: [{ id: 'w1', name: 'web_search', input: { query: q } }] })
+
+    async function run(request: string, mcp: number, turns: ScriptedTurn[]) {
+      const registry = buildRegistry()
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: false,
+        getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp })
+      })
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: request }] }])
+      const results = events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'tool_result' ? [e.event] : []))
+      return { events, results, provider }
+    }
+
+    it('holds back the first open-web lookup for a knowledge question when a knowledge server is connected (real case: IEC 61400-26 went straight to the web)', async () => {
+      const { results } = await run('What does the IEC 61400-26 loss category taxonomy look like?', 1, [
+        webSearch('IEC 61400-26 loss category taxonomy'),
+        { text: 'Let me check the wiki first.', stopReason: 'end_turn' }
+      ])
+      expect(results[0]).toMatchObject({ isError: true })
+      expect(results[0].content).toMatch(/delegate_to_mcp_operator/)
+    })
+
+    it('lets the same search run when the model repeats it (not a knowledge question after all)', async () => {
+      const { results } = await run('What does the IEC 61400-26 loss category taxonomy look like?', 1, [
+        webSearch('a'),
+        webSearch('a'),
+        { text: 'Found it.', stopReason: 'end_turn' }
+      ])
+      expect(results[0].isError).toBe(true)
+      expect(results[0].content).toMatch(/Not run yet/)
+      expect(results[1].content).not.toMatch(/Not run yet/)
+    })
+
+    it('does not hold back a search the user asked for, or when no knowledge server is connected', async () => {
+      const asked = await run('Search the web for the latest IEC 61400-26 news', 1, [webSearch('x'), { text: 'ok', stopReason: 'end_turn' }])
+      expect(asked.results[0].content).not.toMatch(/Not run yet/)
+      const none = await run('What does the IEC 61400-26 loss category taxonomy look like?', 0, [webSearch('x'), { text: 'ok', stopReason: 'end_turn' }])
+      expect(none.results[0].content).not.toMatch(/Not run yet/)
+    })
   })
 
   it('delegates to the Coding specialist, which writes a real file through real confirmation', async () => {
@@ -202,6 +324,28 @@ describe('Orchestrator (integration, mocked provider)', () => {
     expect(streamEvents.some((e) => e.type === 'tool_use_start')).toBe(false)
     expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hello! How can I help?' })
     expect(provider.requests).toHaveLength(1)
+  })
+
+  it('forwards options.temperature to every provider.stream() call this turn makes; omits it when unset (2026-10-01)', async () => {
+    // Found live: the classify step, at a provider's own default temperature, occasionally misrouted
+    // an otherwise-correctly-worded request on a local model — Settings > Model behavior's whole point
+    // is that this is reachable and actually takes effect, not just plumbed through and silently dropped.
+    const registry = buildRegistry()
+    const agents = createAgents(registry)
+
+    const withTemp = new MockProvider([{ text: 'Hello!', stopReason: 'end_turn' }])
+    const orchestratorWithTemp = new Orchestrator(
+      withTemp, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false, temperature: 0.2 }
+    )
+    await collect(orchestratorWithTemp, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+    expect(withTemp.requests[0].temperature).toBe(0.2)
+
+    const withoutTemp = new MockProvider([{ text: 'Hello!', stopReason: 'end_turn' }])
+    const orchestratorWithoutTemp = new Orchestrator(
+      withoutTemp, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false }
+    )
+    await collect(orchestratorWithoutTemp, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+    expect(withoutTemp.requests[0].temperature).toBeUndefined()
   })
 
   it('a denied confirmation surfaces as an error tool_result without writing the file', async () => {
@@ -356,27 +500,69 @@ describe('Orchestrator (integration, mocked provider)', () => {
     expect(streamEvents.at(-1)).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
   })
 
-  it('run() throws for an unknown forced role (observed on the first iteration)', async () => {
+  it('an unknown pinned role falls back to Auto with a visible, persisted notice — it no longer fails the turn (design 11.4)', async () => {
     const registry = buildRegistry()
     const agents = createAgents(registry)
-    const provider = new MockProvider([])
-    const orchestrator = new Orchestrator(
-      provider,
-      'mock-model',
-      agents,
-      'You are Sachivji.',
-      registry.list(),
-      autoApprove(),
-      ctx,
-      signal
-    )
+    const provider = new MockProvider([{ text: 'Hello from Auto.', stopReason: 'end_turn' }])
+    const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
 
-    const iterable = orchestrator.run(
-      [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
-      'not-a-real-role' as never
+    const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], 'sql-reporter')
+
+    const warning = events.find((e) => e.kind === 'stream' && e.event.type === 'warning')
+    expect(warning && warning.kind === 'stream' && warning.event.type === 'warning' ? warning.event.message : '').toMatch(/pinned "Sql Reporter" agent is not available.*using Auto instead/)
+    expect(events.some((e) => e.kind === 'message' && e.role === 'assistant' && e.content.some((c) => c.type === 'warning'))).toBe(true)
+    // ...and the turn ran normally as Auto: the router's own prompt and delegate tools, and an ordinary reply.
+    expect(provider.requests[0].tools?.some((t) => t.name === 'delegate_to_coding')).toBe(true)
+    expect(events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'text_delta' ? [e.event.text] : [])).join('')).toBe('Hello from Auto.')
+  })
+
+  it('a pinned specialist that says the request is not its job hands it back to the orchestrator, which answers it (13.4.4)', async () => {
+    const registry = buildRegistry()
+    const provider = new MockProvider([
+      { text: 'Axios questions are not my job, I only handle email. [handoff: out_of_scope -> coding]', stopReason: 'end_turn' },
+      { text: 'Set axios.defaults.timeout.', stopReason: 'end_turn' }
+    ])
+    const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+    const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'How do I set a default timeout in axios?' }] }], 'email')
+    const statuses = events.filter((e) => e.kind === 'stream' && e.event.type === 'status').map((e) => (e as { event: { message: string } }).event.message)
+    expect(statuses.some((m) => /can't handle this — passing it to the orchestrator/.test(m))).toBe(true)
+    expect(provider.requests).toHaveLength(2)
+    // the second request is the orchestrator's: no pinned-specialist notice, and the user's question is the last message, with no leftover "not my job" reply
+    expect(provider.requests[1].system ?? '').not.toContain('pinned to the')
+    const last = provider.requests[1].messages.at(-1)
+    expect(last?.role).toBe('user')
+    expect(JSON.stringify(provider.requests[1].messages)).not.toContain('not my job')
+    const text = events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'text_delta' ? [e.event.text] : [])).join('')
+    expect(text).toContain('Set axios.defaults.timeout.')
+  })
+
+  it('a pinned specialist that already did work before saying so keeps the request', async () => {
+    const registry = buildRegistry()
+    const provider = new MockProvider([
+      { toolCalls: [{ id: 'c1', name: 'list_directory', input: { path: '.' } }] },
+      { text: 'Listed it; the rest is not my job. [handoff: out_of_scope -> coding]', stopReason: 'end_turn' }
+    ])
+    const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+    await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'list files then fix the bug' }] }], 'coding')
+    expect(provider.requests).toHaveLength(2)
+  })
+
+  it('a pinned specialist sees earlier replies from other specialists only as background in its instructions, not as its own turns (found live in 11.6)', async () => {
+    const registry = buildRegistry()
+    const provider = new MockProvider([{ text: 'Hello from research.', stopReason: 'end_turn' }])
+    const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+    await collect(
+      orchestrator,
+      [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'Hello! I am the Planning Specialist.', agentRole: 'planning' }] },
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
+      ],
+      'research'
     )
-    const iterator = iterable[Symbol.asyncIterator]()
-    await expect(iterator.next()).rejects.toThrow(/Unknown agent role/)
+    expect(JSON.stringify(provider.requests[0].messages)).not.toContain('I am the Planning Specialist')
+    expect(provider.requests[0].system).toContain('- Planner: Hello! I am the Planning Specialist.')
+    expect(provider.requests[0].system).toContain('never answer in their role')
   })
 
   it('forcedRole runs that specialist directly with no routing/delegate call', async () => {
@@ -457,10 +643,11 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
     // Exactly one usage event per round (3 rounds), not 2 per round even
     // though the mock yielded each round's usage twice.
+    // Only the router's own rounds say how big the context is (input + reply); the delegate's round, in its own smaller context, does not.
     expect(usageEvents).toEqual([
-      { type: 'usage', inputTokens: 100, outputTokens: 10 },
+      { type: 'usage', inputTokens: 100, outputTokens: 10, contextTokens: 110 },
       { type: 'usage', inputTokens: 50, outputTokens: 5 },
-      { type: 'usage', inputTokens: 20, outputTokens: 8 }
+      { type: 'usage', inputTokens: 20, outputTokens: 8, contextTokens: 28 }
     ])
     const total = usageEvents.reduce(
       (acc, e) => ({ input: acc.input + e.inputTokens, output: acc.output + e.outputTokens }),
@@ -497,7 +684,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     // explicit "stopped, no answer" note, so this doesn't get silently
     // resent as unanswered "real" context on the next send.
     expect(streamEvents).toEqual([
-      { type: 'status', message: 'Model (mock-model) is thinking… (round 1/20)' },
+      { type: 'status', message: 'Model (mock-model) is thinking… (round 1/30)' },
       { type: 'warning', message: 'This request was stopped before producing a response. No answer was given.', failureCategory: 'stopped_by_user' },
       { type: 'message_stop', stopReason: 'aborted' }
     ])
@@ -659,6 +846,120 @@ describe('Orchestrator (integration, mocked provider)', () => {
     })
   })
 
+  describe('the write-up after a plan does not repeat the steps (real case: IEC 61400-26, three quarters re-presented)', () => {
+    const classify = {
+      text: '{"complexity": "compound", "steps": [{"role": "research", "description": "x"}, {"role": "data", "description": "y"}]}',
+      stopReason: 'end_turn' as const
+    }
+    const stepOne = 'The standard defines availability states for turbines including operative, non-operative, standby and environmental categories.'
+
+    async function run(finalText: string) {
+      vi.spyOn(Math, 'random').mockReturnValue(0.99)
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        classify,
+        { text: stepOne, stopReason: 'end_turn' },
+        { text: 'The figures cover the last quarter only.', stopReason: 'end_turn' },
+        { text: finalText, stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: true
+      })
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }])
+      const routerText = events
+        .filter((e) => e.kind === 'stream' && e.event.type === 'text_delta' && !(e.event as { agentRole?: string }).agentRole)
+        .map((e) => (e as { event: { text: string } }).event.text)
+        .join('')
+      return { events, provider, routerText }
+    }
+
+    it('tells the router the user has read the steps, and drops a write-up that only repeats them', async () => {
+      const { provider, routerText } = await run('The standard defines availability states for turbines including operative, non-operative, standby and environmental categories.')
+      expect(JSON.stringify(provider.requests.at(-1)!.messages.at(-1))).toContain('already read every step')
+      expect(routerText).toBe('')
+    })
+
+    it('keeps a write-up that adds something, minus any sentence naming a scratch file', async () => {
+      const { routerText, events } = await run(
+        'The sources disagree on where standby sits, so treat the hierarchy as indicative. Research notes are saved at tmp/research-notes-ab12cd34.md.'
+      )
+      expect(routerText).toBe('The sources disagree on where standby sits, so treat the hierarchy as indicative.')
+      expect(JSON.stringify(events.filter((e) => e.kind === 'message'))).not.toContain('research-notes')
+    })
+  })
+
+  describe('prompt-cache stability (design step 7)', () => {
+    // Prefix caching (Anthropic cache_control; automatic on OpenAI-compatible providers) only pays if the system prompt and the tool list
+    // are BYTE-identical from one round to the next. Anything that varied per round — a timestamp, a counter, an unordered Map — would
+    // silently turn every request into a cache miss.
+    const prefixOf = (req: { system?: string; tools?: unknown }): string => JSON.stringify({ system: req.system, tools: req.tools })
+
+    it('the router\'s system prompt and tool list are byte-identical on every round of a multi-round turn', async () => {
+      const registry = buildRegistry()
+      await writeFile(join(root, 'a.txt'), 'hello')
+      const provider = new MockProvider([
+        { toolCalls: [{ id: '1', name: 'read_file', input: { path: 'a.txt' } }] },
+        { toolCalls: [{ id: '2', name: 'list_directory', input: { path: '.' } }] },
+        { text: 'done', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'look around' }] }])
+      expect(provider.requests).toHaveLength(3)
+      expect(new Set(provider.requests.map(prefixOf)).size).toBe(1)
+    })
+
+    it('a specialist\'s prefix is byte-identical across its own rounds', async () => {
+      const registry = buildRegistry()
+      await writeFile(join(root, 'a.txt'), 'hello')
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'd', name: 'delegate_to_coding', input: { task: 'read it twice' } }] },
+        { toolCalls: [{ id: '1', name: 'read_file', input: { path: 'a.txt' } }] }, // specialist round 1
+        { toolCalls: [{ id: '2', name: 'read_file', input: { path: 'a.txt' } }] }, // specialist round 2
+        { text: 'read it', stopReason: 'end_turn' }, // specialist round 3
+        { text: 'done', stopReason: 'end_turn' } // router final
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      const nested = provider.requests.slice(1, 4)
+      expect(new Set(nested.map(prefixOf)).size).toBe(1)
+      // ...and it differs from the router's (different role, different tools), so the two are cached independently.
+      expect(prefixOf(nested[0])).not.toBe(prefixOf(provider.requests[0]))
+    })
+
+    it('two separately-built orchestrators over the same registry produce the same prefix (nothing depends on construction order or time)', async () => {
+      const build = async (): Promise<string> => {
+        const registry = buildRegistry()
+        const provider = new MockProvider([{ text: 'hi', stopReason: 'end_turn' }])
+        const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+        await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+        return prefixOf(provider.requests[0])
+      }
+      const first = await build()
+      await new Promise((r) => setTimeout(r, 15)) // a wall-clock-dependent prompt would differ now
+      expect(await build()).toBe(first)
+    })
+  })
+
+  describe('router prompt (step 2)', () => {
+    it('carries each specialist summary once — in its delegate tool description — not again as a roster in the system prompt', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ text: 'hello', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      const req = provider.requests[0]
+      const summary = agents.get('coding')!.summary
+      expect(req.system).not.toContain(summary)
+      expect(req.system).not.toMatch(/delegate_to_coding\)/)
+      const delegate = req.tools?.find((t) => t.name === 'delegate_to_coding')
+      expect(delegate?.description).toContain(summary)
+      expect(delegate?.description).toContain('Developer')
+      // The trailer still tells the model when to delegate, and points code work at the Developer.
+      expect(req.system).toMatch(/Developer/)
+    })
+  })
+
   describe('classify-and-plan (planningEnabled)', () => {
     it('a simple request costs one extra classify call but otherwise behaves exactly as before', async () => {
       const registry = buildRegistry()
@@ -809,9 +1110,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
       const classifySystem = provider.requests[0].system ?? ''
       expect(classifySystem).not.toMatch(/-\s*page-creator:/)
-      expect(classifySystem).toMatch(/deck-building/i)
-      expect(classifySystem).toContain('research')
-      expect(classifySystem).toContain('coding')
+      expect(classifySystem).toMatch(/slide deck\/presentation is never a plan step for any role/i)
+      expect(classifySystem).toContain('- research:')
+      expect(classifySystem).toContain('- coding:')
     })
 
     it('explicitly tells the classifier not to fold "gather info, then save a file" into one research-only step', async () => {
@@ -842,11 +1143,16 @@ describe('Orchestrator (integration, mocked provider)', () => {
       await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
 
       const classifySystem = provider.requests[0].system ?? ''
-      expect(classifySystem).toMatch(/write it into a Word document/i)
-      expect(classifySystem).toMatch(/research has no file-writing tools/i)
+      // The role facts are GENERATED from each role's own summary (no hand-written per-role prose):
+      // Research's line says what it cannot do (history, configured APIs) and that it saves its own findings, and the rule tells the classifier to honour both.
+      expect(classifySystem).toMatch(/- research: .*Does not recall past chats/i)
+      expect(classifySystem).toMatch(/- research: .*saves findings to a file/i)
+      expect(classifySystem).toMatch(/Researcher saves its own findings to a text file as part of its research step/i)
+      expect(classifySystem).toMatch(/never route a step to a role its summary excludes/i)
+      expect(classifySystem).toMatch(/saved file\/document\/spreadsheet is its own step/i)
     })
 
-    it('explicitly tells the classifier that writing code and running it are two separate steps, not one', async () => {
+    it('tells the classifier that writing code and running it are ONE step for the Developer (Appendix D: no plan with a write step and no run step)', async () => {
       // Found live: "generate a chart image from this data" was classified
       // as a single "coding" step. Coding wrote the Python script, tried to
       // run it directly, hit "Unknown tool" (coding has no shell access at
@@ -877,8 +1183,131 @@ describe('Orchestrator (integration, mocked provider)', () => {
       await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
 
       const classifySystem = provider.requests[0].system ?? ''
-      expect(classifySystem).toMatch(/code to be written AND actually run/i)
-      expect(classifySystem).toMatch(/coding has no shell access at all/i)
+      // Step 2 reversed the old rule: Developer writes AND runs, so splitting write-from-run is what's forbidden now.
+      expect(classifySystem).toMatch(/- coding: Writes AND runs code/)
+      expect(classifySystem).toMatch(/writes AND runs code handles both in ONE step/i)
+      expect(classifySystem).not.toMatch(/terminal-devops/)
+      expect(classifySystem).not.toMatch(/no shell access/i)
+    })
+
+    it('names domain knowledge + data as its own compound pattern, always two steps even in one sentence (design-discussion.md §13.2(a), TASKS #142)', async () => {
+      // The #139 probe found the PLF question ("...you may use the information from wiki and database")
+      // planned inconsistently — sometimes `simple`, and the first step split between data/research —
+      // because "two independent sources" was the only guidance, never named as a recognizable shape.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Sure, here you go.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: true }
+      )
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+      const classifySystem = provider.requests[0].system ?? ''
+      expect(classifySystem).toMatch(/domain knowledge.*together with the data those rules apply to.*is always compound/is)
+      expect(classifySystem).toMatch(/one step per source, even in a single sentence/i)
+    })
+
+    it('names chart/image generation + embedding into a document as ONE Developer step, never split and never routed to Document Creator (2026-10-01, manual_testing.md section 4)', async () => {
+      // Found live: the blanket "a file/document is its own step" rule, applied literally, split chart
+      // generation (Developer) from "put it in a Word file" (Document Creator) across two steps — but
+      // Document Creator cannot embed an image at all and only ever bounces that step back. Worse, with
+      // the document part framed as someone else's job, the chart step's own wording never even asked
+      // Developer to save the document, so Developer quietly over-delivered it anyway, unasked, on a
+      // worse, redundant second pass.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Sure, here you go.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: true }
+      )
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+      const classifySystem = provider.requests[0].system ?? ''
+      expect(classifySystem).toMatch(/chart or image generated from data AND embedded into it/i)
+      expect(classifySystem).toMatch(/never split the chart generation from the document creation/i)
+      expect(classifySystem).toMatch(/never route the document part to Document Creator/i)
+    })
+
+    it('the planning call asks the provider for structured output limited to the plannable roles; ordinary rounds never do', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: true
+      })
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }])
+      const so = provider.requests[0].structuredOutput as { name: string; schema: { properties: { steps: { items: { properties: { role: { enum: string[] } } } } } } }
+      expect(so.name).toBe('classify_and_plan')
+      expect(so.schema.properties.steps.items.properties.role.enum).toContain('data')
+      expect(so.schema.properties.steps.items.properties.role.enum).not.toContain('page-creator')
+      expect(provider.requests[1].structuredOutput).toBeUndefined()
+    })
+
+    it('a provider that rejects structured output (HTTP 400) gets the same call as a plain prompt, remembered for the next turn', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const make = (turns: ScriptedTurn[]) => {
+        const provider = new MockProvider(turns)
+        // A model name no other test uses: the "rejected" memo is per provider:model for the whole app session.
+        const o = new Orchestrator(provider, 'mock-model-no-schema', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+          planningEnabled: true
+        })
+        return { provider, o }
+      }
+      const first = make([
+        { throwError: 'response_format is not supported by this model', throwStatus: 400 },
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const events = await collect(first.o, [{ role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }])
+      expect(first.provider.requests.map((r) => Boolean(r.structuredOutput))).toEqual([true, false, false])
+      expect(events.filter((e) => e.kind === 'stream').some((e) => e.event.type === 'error')).toBe(false)
+
+      const second = make([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      await collect(second.o, [{ role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }])
+      expect(second.provider.requests.map((r) => Boolean(r.structuredOutput))).toEqual([false, false])
+    })
+
+    it('a non-client error on the planning call (no 4xx status) is not blamed on the schema and still surfaces', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ throwError: 'socket hang up' }])
+      const orchestrator = new Orchestrator(provider, 'mock-model-net', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: true
+      })
+      await expect(collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }])).rejects.toThrow('socket hang up')
+      expect(provider.requests).toHaveLength(1)
+    })
+
+    it('a classifier reply with prose around the JSON (common with local reasoning models) still yields the plan', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        {
+          text: 'Sure, here is the classification:\n```json\n{"complexity": "compound", "steps": [{"role": "research", "description": "find X"}, {"role": "data", "description": "find Y"}]}\n```\nLet me know if you need more.',
+          stopReason: 'end_turn'
+        },
+        { text: 'X is 5.', stopReason: 'end_turn' },
+        { text: 'Y is 10.', stopReason: 'end_turn' },
+        { text: 'X is 5 and Y is 10.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: true
+      })
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'find X and Y' }] }])
+      const plan = events.filter((e) => e.kind === 'stream').map((e) => e.event).find((e) => e.type === 'plan')
+      expect(plan).toBeDefined()
+      expect(provider.requests).toHaveLength(4)
     })
 
     it('a compound plan dispatches each step to its tagged specialist in order, then synthesizes a final answer', async () => {
@@ -934,14 +1363,14 @@ describe('Orchestrator (integration, mocked provider)', () => {
         userMessages.some(
           (e) =>
             e.kind === 'message' &&
-            e.content.some((c) => c.type === 'text' && c.text.includes('[Plan step 1 — Research]') && c.text.includes('X is 5.'))
+            e.content.some((c) => c.type === 'text' && c.text.includes('[Plan step 1 — Researcher]') && c.text.includes('X is 5.'))
         )
       ).toBe(true)
       expect(
         userMessages.some(
           (e) =>
             e.kind === 'message' &&
-            e.content.some((c) => c.type === 'text' && c.text.includes('[Plan step 2 — Data]') && c.text.includes('Y is 10.'))
+            e.content.some((c) => c.type === 'text' && c.text.includes('[Plan step 2 — Data Access]') && c.text.includes('Y is 10.'))
         )
       ).toBe(true)
 
@@ -1038,9 +1467,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const userMessages = events.filter((e) => e.kind === 'message' && e.role === 'user')
       const step1Text = userMessages
         .flatMap((e) => (e.kind === 'message' ? e.content : []))
-        .find((c) => c.type === 'text' && c.text.includes('[Plan step 1 — Data]'))
+        .find((c) => c.type === 'text' && c.text.includes('[Plan step 1 — Data Access]'))
       expect(step1Text && step1Text.type === 'text' ? step1Text.text : '').toMatch(
-        /\[Plan step 1 — Data\] \(FAILED — no usable result\):/
+        /\[Plan step 1 — Data Access\] \(FAILED — no usable result\):/
       )
       expect(
         step1Text && step1Text.type === 'text' ? step1Text.text : ''
@@ -1049,8 +1478,321 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // A step that actually succeeded must NOT get the FAILED marker.
       const step2Text = userMessages
         .flatMap((e) => (e.kind === 'message' ? e.content : []))
-        .find((c) => c.type === 'text' && c.text.includes('[Plan step 2 — Coding]'))
-      expect(step2Text && step2Text.type === 'text' ? step2Text.text : '').toMatch(/^\[Plan step 2 — Coding\]:/)
+        .find((c) => c.type === 'text' && c.text.includes('[Plan step 2 — Developer]'))
+      expect(step2Text && step2Text.type === 'text' ? step2Text.text : '').toMatch(/^\[Plan step 2 — Developer\]:/)
+    })
+
+    it('marks a role UNAVAILABLE in the classifier digest when nothing it needs is configured, and not when it is', async () => {
+      // A plan must not route "email it to X" to a role with no account to send from, or "query the
+      // database" to Data Access with no connection (design 3.6: the digest carries live state).
+      const run = async (config: { databases: number; apis: number; email: number; mcp: number }): Promise<string> => {
+        const registry = buildRegistry()
+        const provider = new MockProvider([
+          { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+          { text: 'ok', stopReason: 'end_turn' }
+        ])
+        const orchestrator = new Orchestrator(
+          provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+          { planningEnabled: true, getConfiguration: () => config }
+        )
+        await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+        return provider.requests[0].system ?? ''
+      }
+
+      const none = await run({ databases: 0, apis: 0, email: 0, mcp: 0 })
+      expect(none).toMatch(/- data: .*UNAVAILABLE right now: no database or external API is configured/)
+      expect(none).toMatch(/- email: .*UNAVAILABLE right now: no email account is configured/)
+      expect(none).toMatch(/- mcp-operator: .*UNAVAILABLE right now: no MCP server is connected/)
+
+      const apiOnly = await run({ databases: 0, apis: 1, email: 1, mcp: 1 })
+      expect(apiOnly).not.toMatch(/- data: .*UNAVAILABLE/) // Data Access needs a database OR an API
+      expect(apiOnly).not.toMatch(/- email: .*UNAVAILABLE/)
+      expect(apiOnly).not.toMatch(/- mcp-operator: .*UNAVAILABLE/)
+    })
+
+    it('rewrites an mcp-operator plan step to research when no MCP server is connected (design-discussion.md §13.3, #145)', async () => {
+      // No MCP server connected at all is a fact known before any model runs — the step must not be
+      // dispatched to mcp-operator (it would just report "no connected server fits" and waste itself);
+      // it should be transparently rewritten to research, with the substitution's reason and the
+      // original task both visible, before the step is even shown in the live plan. Two steps, since
+      // executePlan (where this fix lives) is only reached for a plan with more than one step —
+      // a single-step plan runs through the ordinary top-level round instead (a separate, known gap).
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "steps": [' +
+            '{"role": "mcp-operator", "description": "look up the maintenance policy for inverter faults"}, ' +
+            '{"role": "research", "description": "check for any recent public advisories on the same fault"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'No wiki is connected, and the web has nothing specific either.', stopReason: 'end_turn' },
+        { text: 'No recent public advisories found.', stopReason: 'end_turn' },
+        { text: 'Here is what I found.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp: 0 }) }
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'look up the maintenance policy for the inverter fault and check for public advisories' }] }
+      ])
+
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const planSteps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : undefined
+      expect(planSteps?.[0].role).toBe('research') // rewritten from mcp-operator
+      expect(planSteps?.[1].role).toBe('research') // untouched, was already research
+
+      const stepText = events
+        .filter((e) => e.kind === 'message' && e.role === 'user')
+        .flatMap((e) => (e.kind === 'message' ? e.content : []))
+        .find((c) => c.type === 'text' && c.text.includes('[Plan step 1 — Researcher]'))
+      const text = stepText && stepText.type === 'text' ? stepText.text : ''
+      expect(text).toMatch(/No MCP\/knowledge-base server is connected/)
+      expect(text).toContain('Original task: look up the maintenance policy for inverter faults')
+
+      // The rewritten step actually ran as research, not mcp-operator — confirmed via the delegate's own request.
+      expect(provider.requests[1].system ?? '').toMatch(/Research specialist/)
+    })
+
+    it('leaves an mcp-operator plan step untouched when an MCP server is connected', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "steps": [' +
+            '{"role": "mcp-operator", "description": "look up the maintenance policy for inverter faults"}, ' +
+            '{"role": "research", "description": "check for any recent public advisories on the same fault"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'No connected server fits the request.', stopReason: 'end_turn' },
+        { text: 'No recent public advisories found.', stopReason: 'end_turn' },
+        { text: 'Here is what I found.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp: 1 }) }
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'look up the maintenance policy for the inverter fault and check for public advisories' }] }
+      ])
+
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const planSteps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : undefined
+      expect(planSteps?.[0].role).toBe('mcp-operator')
+      expect(provider.requests[1].system ?? '').toMatch(/MCP Operator specialist/)
+    })
+
+    it('inserts a domain-knowledge step when needsDomainKnowledge is true but the plan omitted one, and a server is connected (TASKS #173)', async () => {
+      // Found live 2026-10-02: the planner's own step list omitted mcp-operator entirely for a question
+      // needing domain interpretation (a connected wiki had directly relevant content for it), on two
+      // different models, despite the planning prompt's prose rule saying this should always be compound.
+      // Moving the judgment into a structured needsDomainKnowledge field and enforcing it here in code
+      // closes the gap regardless of what a given model's own step list says.
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "needsDomainKnowledge": true, "domainKnowledgeTopic": "anomaly threshold rule for sensor readings", "needsUserData": true, "steps": [' +
+            '{"role": "data", "description": "query the sensor readings"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'Rule: a deviation over 5% counts as an anomaly.', stopReason: 'end_turn' },
+        { text: 'Readings deviate by 8%.', stopReason: 'end_turn' },
+        { text: 'Yes, this is an anomaly by that rule.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 1, apis: 0, email: 0, mcp: 1 }) }
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'analyze the sensor readings and check if they are anomalous per our rules' }] }
+      ])
+
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const planSteps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : undefined
+      expect(planSteps).toHaveLength(2)
+      expect(planSteps?.[0].role).toBe('mcp-operator') // inserted — not in the model's own plan
+      expect(planSteps?.[1].role).toBe('data') // the model's own step, untouched
+      expect(provider.requests[1].system ?? '').toMatch(/MCP Operator specialist/)
+    })
+
+    it('a short library how-to is classified, told what the connected server covers, and looked up there instead of answered from memory (found live in 13.4.3)', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text: '{"complexity": "simple", "needsDomainKnowledge": true, "domainKnowledgeTopic": "axios default request timeout", "needsUserData": false, "steps": []}',
+          stopReason: 'end_turn'
+        },
+        { text: 'axios.defaults.timeout = 5000 (from the docs).', stopReason: 'end_turn' },
+        { text: 'Set axios.defaults.timeout.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        {
+          planningEnabled: true,
+          getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp: 1 }),
+          getKnowledgeServers: () => [{ name: 'Context7', description: 'Up-to-date library/API docs for coding' }]
+        }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'How do I set a default request timeout in axios?' }] }])
+
+      // 48 characters, one clause: without the server it would have skipped the classifier. It was asked, and was told what Context7 covers.
+      expect(provider.requests[0].system ?? '').toContain('- Context7: Up-to-date library/API docs for coding')
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const steps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : undefined
+      expect(steps?.[0].role).toBe('mcp-operator')
+      expect(steps?.[0].description).toContain('axios default request timeout')
+    })
+
+    it('inserts the domain-knowledge step with the concrete topic and a ban on searching for the user\'s own data', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "needsDomainKnowledge": true, "domainKnowledgeTopic": "CERC convention for calculating PLF", "needsUserData": true, "steps": [' +
+            '{"role": "data", "description": "query the plant load factor"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'PLF uses 8,766 hours.', stopReason: 'end_turn' },
+        { text: 'PLF is 71%.', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 1, apis: 0, email: 0, mcp: 1 }) }
+      )
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'work out the plant load factor from our plant database readings and check it against the CERC convention for calculating PLF' }] }])
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const step = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps[0] : undefined
+      expect(step?.role).toBe('mcp-operator')
+      expect(step?.description).toContain('CERC convention for calculating PLF')
+      expect(step?.description).toMatch(/Do not search for the user's own data/)
+    })
+
+    it('inserts no domain-knowledge step when the flag is true but no concrete topic was given (found live, test 8.2: wiki searched for the user\'s database)', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "needsDomainKnowledge": true, "domainKnowledgeTopic": "", "needsUserData": true, "steps": [' +
+            '{"role": "data", "description": "top 10 customers per year"}, {"role": "coding", "description": "chart them into a Word file"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'rows', stopReason: 'end_turn' },
+        { text: 'doc made', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 1, apis: 0, email: 0, mcp: 1 }) }
+      )
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'create a word document with bar charts of the top 10 customers every year from Northwind' }] }])
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const steps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : []
+      expect(steps.map((x) => x.role)).toEqual(['data', 'coding'])
+    })
+
+    it('inserts no domain-knowledge step when the topic names a data source (found live, test 8.2 run 2: topic "Northwind database schema")', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "needsDomainKnowledge": true, "domainKnowledgeTopic": "Northwind sales history", "needsUserData": true, "steps": [' +
+            '{"role": "data", "description": "top 10 customers per year"}, {"role": "coding", "description": "chart them into a Word file"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'rows', stopReason: 'end_turn' },
+        { text: 'doc made', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 1, apis: 0, email: 0, mcp: 1 }), getUserDataNames: () => ['NorthwindSQLServer'] }
+      )
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'create a word document with bar charts of the top 10 customers every year from Northwind' }] }])
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const steps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : []
+      expect(steps.map((x) => x.role)).toEqual(['data', 'coding'])
+    })
+
+    it('does not insert a domain-knowledge step when no MCP server is connected, even if needsDomainKnowledge is true', async () => {
+      // The no-server case is substituteUnavailableMcpOperator's job, not this one's — inserting a step
+      // that can't run would just waste a round on "no connected server fits."
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "needsDomainKnowledge": true, "domainKnowledgeTopic": "anomaly threshold rule for sensor readings", "needsUserData": true, "steps": [' +
+            '{"role": "data", "description": "query the sensor readings"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'Readings deviate by 8%.', stopReason: 'end_turn' },
+        { text: 'Here is what I found.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 1, apis: 0, email: 0, mcp: 0 }) }
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'analyze the sensor readings and check if they are anomalous per our rules' }] }
+      ])
+
+      // No insertion happened, so the plan stays at 1 step — which never emits a 'plan' event at all and
+      // runs through the ordinary top-level round instead (same as any other single-step plan; see the
+      // sibling mcp-availability tests' own comment on why a 2-step plan is used there and not here).
+      expect(events.find((e) => e.kind === 'stream' && e.event.type === 'plan')).toBeUndefined()
+    })
+
+    it('does not insert a duplicate domain-knowledge step when the plan already includes one', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        {
+          text:
+            '{"complexity": "compound", "needsDomainKnowledge": true, "domainKnowledgeTopic": "anomaly threshold rule for sensor readings", "needsUserData": true, "steps": [' +
+            '{"role": "mcp-operator", "description": "look up the anomaly rule"}, ' +
+            '{"role": "data", "description": "query the sensor readings"}]}',
+          stopReason: 'end_turn'
+        },
+        { text: 'Rule: a deviation over 5% counts as an anomaly.', stopReason: 'end_turn' },
+        { text: 'Readings deviate by 8%.', stopReason: 'end_turn' },
+        { text: 'Yes, this is an anomaly by that rule.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true, getConfiguration: () => ({ databases: 1, apis: 0, email: 0, mcp: 1 }) }
+      )
+
+      const events = await collect(orchestrator, [
+        { role: 'user', content: [{ type: 'text', text: 'analyze the sensor readings and check if they are anomalous per our rules' }] }
+      ])
+
+      const planEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'plan')
+      const planSteps = planEvent && planEvent.kind === 'stream' && planEvent.event.type === 'plan' ? planEvent.event.steps : undefined
+      expect(planSteps).toHaveLength(2) // not 3 — no duplicate inserted
+      expect(planSteps?.[0].role).toBe('mcp-operator')
+      expect(planSteps?.[1].role).toBe('data')
+    })
+
+    it('tells the classifier a later step only sees written results, so an earlier step must return the actual values (Appendix D2: fabricated chart data)', async () => {
+      const registry = buildRegistry()
+      const provider = new MockProvider([
+        { text: '{"complexity": "simple", "steps": []}', stopReason: 'end_turn' },
+        { text: 'ok', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal,
+        { planningEnabled: true }
+      )
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+      const classifySystem = provider.requests[0].system ?? ''
+      expect(classifySystem).toMatch(/only sees the written result of earlier steps/i)
+      expect(classifySystem).toMatch(/never from assumed or example data/i)
     })
 
     it('malformed classifier JSON fails open to normal behavior instead of crashing the turn', async () => {
@@ -1320,6 +2062,61 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(persistedWarning).toBeDefined()
     })
 
+    it('a round truncated mid-tool-call (max_tokens with a tool call already started) retries once with an informative tool_result instead of failing the step outright (TASKS #172/#173)', async () => {
+      // Found live 2026-10-02: gpt-4o-mini's output hit the per-round token limit mid-tool-call
+      // (python_run, right after being told to read captured data from its handoff file rather than
+      // embed it), leaving a garbage/empty call that previously just ended the whole step with
+      // "(no response)" — no chance to recover.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_1', name: 'read_file', input: {}, rawInput: '{"path": "unfinished' }], stopReason: 'max_tokens' },
+        { text: 'All done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'read the file' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      // The truncated call was never actually executed — a real read_file call on a missing path
+      // would error with a path-not-found message, not this one's specific wording.
+      const toolResults = streamEvents.filter((e) => e.type === 'tool_result')
+      expect(toolResults).toHaveLength(1)
+      expect(toolResults[0]).toMatchObject({ isError: true })
+      expect((toolResults[0] as { content: string }).content).toMatch(/cut off by the output-length limit/i)
+
+      // The round recovered instead of failing the whole step/turn.
+      const finalText = streamEvents
+        .filter((e) => e.type === 'text_delta')
+        .map((e) => (e.type === 'text_delta' ? e.text : ''))
+        .join('')
+      expect(finalText).toBe('All done.')
+      expect(provider.requests).toHaveLength(2) // one retry, not more
+    })
+
+    it('stops retrying after MAX_TRUNCATED_TOOL_CALL_RETRIES and fails the round like before, rather than looping forever', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_1', name: 'read_file', input: {} }], stopReason: 'max_tokens' },
+        { toolCalls: [{ id: 'call_2', name: 'read_file', input: {} }], stopReason: 'max_tokens' }
+      ])
+      const orchestrator = new Orchestrator(
+        provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'read the file' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      // One retry happened (2 requests total: the original + the one retry), then it gave up — not
+      // an unbounded loop.
+      expect(provider.requests).toHaveLength(2)
+      const warning = streamEvents.find((e) => e.type === 'warning')
+      expect(warning).toMatchObject({ type: 'warning' })
+    })
+
     it('a round that ends cleanly (not max_tokens) with no text and no tool call reports a warning instead of ending in total silence', async () => {
       // Found live against gpt-oss/Ollama on a long, tool-heavy conversation:
       // the stream ended with finish_reason "stop" (the output budget was
@@ -1330,7 +2127,11 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // silently done nothing.
       const registry = buildRegistry()
       const agents = createAgents(registry)
-      const provider = new MockProvider([{ text: '', stopReason: 'end_turn' }])
+      const provider = new MockProvider([
+        { text: '', stopReason: 'end_turn' },
+        { text: '', stopReason: 'end_turn' },
+        { text: '', stopReason: 'end_turn' }
+      ])
       const orchestrator = new Orchestrator(
         provider,
         'mock-model',
@@ -1345,6 +2146,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
       const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
+      // The first two empty rounds are retried (see the recovery tests below); only the third is reported.
+      expect(provider.requests).toHaveLength(3)
+      expect(streamEvents.filter((e) => e.type === 'message_stop')).toHaveLength(1)
       const warning = streamEvents.find((e) => e.type === 'warning')
       expect(warning).toMatchObject({ type: 'warning' })
       expect((warning as { message: string }).message).toMatch(/no visible output/i)
@@ -1354,6 +2158,50 @@ describe('Orchestrator (integration, mocked provider)', () => {
         (e) => e.kind === 'message' && e.content.some((c) => c.type === 'warning')
       )
       expect(persistedWarning).toBeDefined()
+    })
+
+    it('an empty round right after a tool result is retried with a nudge and the turn completes (real case: gpt-oss went silent after db_introspect_schema)', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'c1', name: 'read_file', input: { path: 'a.txt' } }] },
+        { text: '', stopReason: 'end_turn' },
+        { text: 'Here is the answer.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'read a.txt and summarise' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      expect(streamEvents.some((e) => e.type === 'warning')).toBe(false)
+      expect(streamEvents.some((e) => e.type === 'text_delta' && e.text === 'Here is the answer.')).toBe(true)
+      // The stream ends exactly once, with the real answer — the empty round's own end_turn was not forwarded as the end of the turn.
+      const stops = streamEvents.filter((e) => e.type === 'message_stop')
+      expect(stops.at(-1)).toMatchObject({ stopReason: 'end_turn' })
+      expect(stops.map((s) => (s as { stopReason: string }).stopReason)).toEqual(['tool_use', 'end_turn'])
+      // The retry carries the nudge as its last message; the round before it did not.
+      const lastOf = (i: number) => JSON.stringify(provider.requests[i].messages.at(-1))
+      expect(lastOf(2)).toContain('previous reply was empty')
+      expect(lastOf(1)).not.toContain('previous reply was empty')
+      // The nudge is never persisted into the conversation record.
+      expect(events.some((e) => e.kind === 'message' && JSON.stringify(e.content).includes('previous reply was empty'))).toBe(false)
+    })
+
+    it('an empty round that held only reasoning is retried with a nudge saying reasoning is not an action (real case: gemma4 "I will call office_create_document again" and nothing else)', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { thinking: 'I will call the tool again.', text: '', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: false
+      })
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'again' }] }])
+
+      expect(JSON.stringify(provider.requests[1].messages.at(-1))).toContain('only reasoning')
+      expect(events.some((e) => e.kind === 'stream' && e.event.type === 'warning')).toBe(false)
     })
 
     it('a delegate whose own round hits the output-token limit surfaces isError on its tool_result, not a silent success', async () => {
@@ -1383,6 +2231,60 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const toolResult = streamEvents.find((e) => e.type === 'tool_result')
       expect(toolResult).toMatchObject({ isError: true })
       expect(streamEvents.some((e) => e.type === 'warning' && e.agentRole === 'research')).toBe(true)
+    })
+
+    it('a direct delegate_to_mcp-operator tool call is rewritten to research when no MCP server is connected, with matching attribution (design-discussion.md §13.3, TASKS #146)', async () => {
+      // The more common shape than a multi-step plan (#145): the top-level model calls a delegate tool
+      // directly. The persisted tool_use name must match the specialist that actually ran — rewriting
+      // AFTER dispatch would leave a `delegate_to_mcp-operator` tool_use next to a Researcher's result.
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_mcp-operator', input: { task: 'look up the inverter maintenance policy' } }] },
+        { text: 'No wiki connected, and the web has nothing specific.', stopReason: 'end_turn' },
+        { text: 'Here is what I found.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: false,
+        getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp: 0 })
+      })
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'look up the inverter maintenance policy' }] }])
+
+      const toolUse = events
+        .filter((e) => e.kind === 'message' && e.role === 'assistant')
+        .flatMap((e) => (e.kind === 'message' ? e.content : []))
+        .find((c): c is Extract<typeof c, { type: 'tool_use' }> => c.type === 'tool_use')
+      expect(toolUse).toMatchObject({ name: 'delegate_to_research' })
+      const task = toolUse?.input.task
+      expect(task).toMatch(/No MCP\/knowledge-base server is connected/)
+      expect(task).toContain('Original task: look up the inverter maintenance policy')
+
+      // Actually dispatched as Researcher, not left unresolved or sent to mcp-operator.
+      expect(provider.requests[1]?.system ?? '').toMatch(/Research specialist/)
+    })
+
+    it('leaves a direct delegate_to_mcp-operator tool call untouched when an MCP server is connected', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_mcp-operator', input: { task: 'look up the inverter maintenance policy' } }] },
+        { text: 'No connected server fits the request.', stopReason: 'end_turn' },
+        { text: 'Here is what I found.', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: false,
+        getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp: 1 })
+      })
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'look up the inverter maintenance policy' }] }])
+
+      const toolUse = events
+        .filter((e) => e.kind === 'message' && e.role === 'assistant')
+        .flatMap((e) => (e.kind === 'message' ? e.content : []))
+        .find((c) => c.type === 'tool_use')
+      expect(toolUse).toMatchObject({ name: 'delegate_to_mcp-operator' })
+      expect(provider.requests[1]?.system ?? '').toMatch(/MCP Operator specialist/)
     })
 
     it('a classify-and-plan call that hits the output-token limit reports why, instead of silently falling open unremarked', async () => {
@@ -1453,13 +2355,88 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // Still falls open to normal behavior — the real reply still happens.
       expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hi there!' })
     })
+
+    it('a classify-and-plan call returning a genuinely empty reply (no text at all, not cut off) retries once and recovers a real plan — TASKS #140/#141', async () => {
+      // Found live against Ollama gpt-oss-custom: the classify call returned literally no text (hidden
+      // reasoning exhausted the output budget) and the request fell open to "no plan" on the very first
+      // such reply, with no recovery — losing a compound request's step split. Distinct from the malformed-
+      // but-non-empty case above (routine, left alone) and the output-token-limit case (already surfaced).
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '', stopReason: 'end_turn' }, // attempt 1: genuinely empty
+        {
+          text: JSON.stringify({
+            complexity: 'compound',
+            steps: [
+              { role: 'research', description: 'find X' },
+              { role: 'data', description: 'find Y' }
+            ]
+          }),
+          stopReason: 'end_turn'
+        }, // attempt 2 (the one retry): a real plan
+        { text: 'X is 5.', stopReason: 'end_turn' }, // step 1 — Researcher
+        { text: 'Y is 10.', stopReason: 'end_turn' }, // step 2 — Data Access
+        { text: 'Both found.', stopReason: 'end_turn' } // final synthesis
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      // requests: [0] classify attempt 1 (empty), [1] classify attempt 2 (the plan), [2] research, [3] data, [4] final
+      expect(provider.requests).toHaveLength(5)
+      expect(streamEvents.some((e) => e.type === 'plan')).toBe(true)
+      expect(streamEvents.find((e) => e.type === 'warning')).toBeUndefined()
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Both found.' })
+    })
+
+    it('two genuinely empty classify-and-plan replies in a row still fall open to no plan — only one retry, not a loop', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '', stopReason: 'end_turn' }, // attempt 1: empty
+        { text: '', stopReason: 'end_turn' }, // attempt 2 (the one retry): still empty
+        { text: 'Hi there!', stopReason: 'end_turn' } // falls open — ordinary round proceeds
+      ])
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: true }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+      const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+
+      // requests: [0] classify attempt 1, [1] classify attempt 2 (the one retry) — not a third attempt.
+      expect(provider.requests).toHaveLength(3)
+      // Falls open silently (console-only), same as the malformed-non-empty case above.
+      expect(streamEvents.find((e) => e.type === 'warning')).toBeUndefined()
+      expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hi there!' })
+    })
   })
 
   describe('exhausting the MAX_TOTAL_ROUNDS budget (previously untested — a real bug found live)', () => {
     // Mirrors orchestrator.ts's own private MAX_TOTAL_ROUNDS — see that
     // describe block's own such mirrors elsewhere in this file for why
     // (drives real scripted-turn counts/assertions instead of importing it).
-    const MAX_TOTAL_ROUNDS = 20
+    const MAX_TOTAL_ROUNDS = 30
 
     it('synthesizes a real answer from what was actually gathered instead of a bare "stopped" stub', async () => {
       // Reported directly: real, on-topic content had already been found
@@ -2156,6 +3133,9 @@ describe('Orchestrator (integration, mocked provider)', () => {
         expect(warning).toBeDefined()
         expect((warning as { message: string }).message).toMatch(/rate limit/i)
         expect((warning as { message: string }).message).toMatch(/attempt 1\/5/i)
+        // Transient: the renderer drops it after the wait (2s backoff + 4s grace), and it is never persisted as a message.
+        expect((warning as { transientMs?: number }).transientMs).toBe(6000)
+        expect(events.some((e) => e.kind === 'message' && e.content.some((c) => c.type === 'warning'))).toBe(false)
         expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hello!' })
         expect(streamEvents.at(-1)).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
       })
@@ -2671,6 +3651,337 @@ describe('Orchestrator (integration, mocked provider)', () => {
     })
   })
 
+  describe('gap-filling follow-up after an incomplete wiki step (found live: research done three times over)', () => {
+    function follow(steps: Array<{ role: string; description: string }>) {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const orchestrator = new Orchestrator(new MockProvider([]), 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false })
+      const state = { handoff: { incompleteFollowUps: 0 } }
+      const added = (orchestrator as unknown as { ensureFollowUpOnIncomplete(s: unknown, i: number, r: string, d: string, st: unknown): boolean }).ensureFollowUpOnIncomplete(steps, 0, 'mcp-operator', 'look it up', state)
+      return { added, steps }
+    }
+
+    it('adds a web follow-up after an incomplete wiki step when no Researcher step is planned', () => {
+      const { added, steps } = follow([{ role: 'mcp-operator', description: 'wiki' }])
+      expect(added).toBe(true)
+      expect(steps.map((s) => s.role)).toEqual(['mcp-operator', 'research'])
+    })
+
+    it('does not add a second Researcher step when one is already planned after it', () => {
+      const { added, steps } = follow([{ role: 'mcp-operator', description: 'wiki' }, { role: 'research', description: 'do the research' }])
+      expect(added).toBe(false)
+      expect(steps.map((s) => s.role)).toEqual(['mcp-operator', 'research'])
+    })
+  })
+
+  describe('completion check for detailed research (found live: three searches, no pages read, a 36 second "research")', () => {
+    const fake = (name: string): Tool => ({ name, description: name, inputSchema: { type: 'object', properties: {} }, mutates: false, execute: async () => 'page text' })
+    function build(turns: ScriptedTurn[]) {
+      const registry = buildRegistry()
+      for (const n of ['web_search', 'parse_html', 'download_image', 'find_stock_images', 'save_research_note', 'read_research_notes']) registry.register(fake(n))
+      const agents = createAgents(registry)
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false })
+      return { provider, orchestrator }
+    }
+    const ask = (text: string): Message[] => [{ role: 'user', content: [{ type: 'text', text }] }]
+    const notes = (events: OrchestratorEvent[]): string[] => events.filter((e) => e.kind === 'stream' && e.event.type === 'user_note').map((e) => (e as { event: { text: string } }).event.text)
+
+    it('sends a shallow answer to a detailed-research request back to work, up to 6 times, then lets it stand', async () => {
+      const { provider, orchestrator } = build(Array.from({ length: 10 }, () => ({ text: 'Here is my summary.', stopReason: 'end_turn' as const })))
+      const events = await collect(orchestrator, ask('Do detailed research on AI agents in enterprises'), 'research')
+      expect(provider.requests).toHaveLength(7) // the answer, then six nudged tries, then it stands
+      const sent = notes(events)
+      expect(sent).toHaveLength(6)
+      expect(sent[0]).toMatch(/^\[Completion check by Sachivji\] This request needs detailed research, and you have read only 0 web page\(s\) after 0 search\(es\)/)
+      // marked as the app's own, so the chat does not show it as a note the user added
+      const streamed = events.filter((e) => e.kind === 'stream' && e.event.type === 'user_note').map((e) => (e as { event: { source?: string } }).event.source)
+      expect(streamed.every((source) => source === 'app')).toBe(true)
+      const saved = events.filter((e) => e.kind === 'message' && e.content.some((b) => b.type === 'user_note'))
+      expect(saved.length).toBeGreaterThan(0)
+    })
+
+    it('names pages from its own searches that it has not opened yet, so the nudge says exactly what to read', async () => {
+      const search: Tool = { name: 'web_search', description: 'search', inputSchema: { type: 'object', properties: {} }, mutates: false, execute: async () => '- A report: https://example.com/a\n  text\n- Another: https://example.org/b\n  text' }
+      const registry = buildRegistry()
+      for (const n of ['parse_html', 'download_image', 'find_stock_images', 'save_research_note', 'read_research_notes']) registry.register(fake(n))
+      registry.register(search)
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ toolCalls: [{ id: 's1', name: 'web_search', input: { query: 'x' } }], stopReason: 'tool_use' }, ...Array.from({ length: 8 }, () => ({ text: 'Done.', stopReason: 'end_turn' as const }))])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false })
+      const events = await collect(orchestrator, ask('Do detailed research on AI agents'), 'research')
+      expect(notes(events)[0]).toContain('Open these now with parse_html, in this round, one call each: https://example.com/a https://example.org/b.')
+    })
+
+    it('lets it finish once enough pages were really read', async () => {
+      const call = (id: string, name: string): ScriptedTurn => ({ toolCalls: [{ id, name, input: {} }], stopReason: 'tool_use' })
+      const note = (id: string, chars: number): ScriptedTurn => ({ toolCalls: [{ id, name: 'save_research_note', input: { section: 'S', content: 'fact. '.repeat(Math.ceil(chars / 6)) } }], stopReason: 'tool_use' })
+      const turns: ScriptedTurn[] = [
+        ...['s1', 's2', 's3', 's4'].map((id) => call(id, 'web_search')),
+        ...['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'].map((id) => call(id, 'parse_html')),
+        note('n1', 11000),
+        { text: 'The full result.', stopReason: 'end_turn' }
+      ]
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, ask('Do detailed research on AI agents in enterprises'), 'research')
+      expect(notes(events)).toHaveLength(0)
+      expect(provider.requests).toHaveLength(14)
+    })
+
+    it('after the pages are read, sends back notes that are too thin, and a saved file that is too short or has too few source links', async () => {
+      const call = (id: string, name: string, input: Record<string, unknown> = {}): ScriptedTurn => ({ toolCalls: [{ id, name, input }], stopReason: 'tool_use' })
+      const read = [...['s1', 's2', 's3', 's4'].map((id) => call(id, 'web_search')), ...['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'].map((id) => call(id, 'parse_html'))]
+      const thin = build([...read, call('n1', 'save_research_note', { section: 'S', content: 'one short fact' }), ...Array.from({ length: 9 }, () => ({ text: 'Done.', stopReason: 'end_turn' as const }))])
+      const thinNotes = notes(await collect(thin.orchestrator, ask('Do detailed research on AI agents in enterprises'), 'research'))
+      expect(thinNotes[0]).toMatch(/Your notes hold only 14 characters from 8 pages/)
+
+      const urls = Array.from({ length: 9 }, (_, i) => `https://example.com/${i}`).join('\n')
+      const short = build([...read, call('n1', 'save_research_note', { section: 'S', content: 'fact. '.repeat(2000) }), call('w1', 'write_file', { path: 'r.txt', content: 'too short' }), ...Array.from({ length: 9 }, () => ({ text: 'Done.', stopReason: 'end_turn' as const }))])
+      const shortNotes = notes(await collect(short.orchestrator, ask('Do detailed research on AI agents in enterprises and save it in r.txt'), 'research'))
+      expect(shortNotes[0]).toMatch(/The result file is only 9 characters with 0 source link\(s\)/)
+
+      const good = build([...read, call('n1', 'save_research_note', { section: 'S', content: 'fact. '.repeat(2000) }), call('w1', 'write_file', { path: 'r.txt', content: `${'detail. '.repeat(1700)}\nSources:\n${urls}` }), { text: 'Saved.', stopReason: 'end_turn' }])
+      expect(notes(await collect(good.orchestrator, ask('Do detailed research on AI agents in enterprises and save it in r.txt'), 'research'))).toHaveLength(0)
+    })
+
+    it('leaves an ordinary lookup alone — the check only applies when the request asks for depth', async () => {
+      const { provider, orchestrator } = build([{ text: 'It is 21 degrees.', stopReason: 'end_turn' }])
+      const events = await collect(orchestrator, ask('What is the weather in Pune?'), 'research')
+      expect(provider.requests).toHaveLength(1)
+      expect(notes(events)).toHaveLength(0)
+    })
+  })
+
+  describe('a run stuck repeating one failing call (found live: 34 broken pptx_compose_slide calls)', () => {
+    const failing: Tool = {
+      name: 'always_fails',
+      description: 'always fails',
+      inputSchema: { type: 'object', properties: {} },
+      mutates: false,
+      execute: async () => {
+        throw new Error('Unknown element type "undefined"')
+      }
+    }
+    const succeeding: Tool = { name: 'sometimes_ok', description: 'ok', inputSchema: { type: 'object', properties: {} }, mutates: false, execute: async () => 'fine' }
+
+    function build(turns: ScriptedTurn[]) {
+      const registry = new ToolRegistry()
+      registry.register(failing)
+      registry.register(succeeding)
+      const agents = createAgents(registry)
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false })
+      return { provider, orchestrator }
+    }
+    const call = (id: string, name: string): ScriptedTurn => ({ toolCalls: [{ id, name, input: {} }], stopReason: 'tool_use' })
+
+    it('stops after 6 failed calls in a row to the same tool, tells the user why, and ends the turn cleanly', async () => {
+      const turns: ScriptedTurn[] = Array.from({ length: 10 }, (_, i) => call(`c${i}`, 'always_fails'))
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      expect(provider.requests).toHaveLength(6)
+      const warning = events.find((e) => e.kind === 'stream' && e.event.type === 'warning') as { event: { message: string } } | undefined
+      expect(warning?.event.message).toMatch(/^Stopped: "always_fails" failed 6 times in a row.*Unknown element type/)
+      expect(events.some((e) => e.kind === 'message' && e.content.some((c) => c.type === 'warning'))).toBe(true)
+      const last = events.filter((e) => e.kind === 'stream').map((e) => e.event).at(-1)
+      expect(last).toMatchObject({ type: 'message_stop', stopReason: 'end_turn' })
+    })
+
+    it('does not trip when a success breaks the streak, so a model that is genuinely correcting itself gets its tries', async () => {
+      const turns: ScriptedTurn[] = [
+        ...Array.from({ length: 4 }, (_, i) => call(`a${i}`, 'always_fails')),
+        call('ok', 'sometimes_ok'),
+        ...Array.from({ length: 4 }, (_, i) => call(`b${i}`, 'always_fails')),
+        { text: 'Gave up politely.', stopReason: 'end_turn' }
+      ]
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      expect(provider.requests).toHaveLength(10)
+      expect(events.some((e) => e.kind === 'stream' && e.event.type === 'warning')).toBe(false)
+    })
+  })
+
+  describe('a run stuck repeating one identical call that keeps "succeeding" with nothing new (TASKS.md #202, found live: mcp_list_connections repeated identically 4x on gpt-4o-mini and 26x on gpt-4o before the user had to press Stop)', () => {
+    const listConnections: Tool = {
+      name: 'mcp_list_connections',
+      description: 'list configured MCP servers',
+      inputSchema: { type: 'object', properties: {} },
+      mutates: false,
+      execute: async () => '"Context7": connected, 2 tools'
+    }
+    const checkStatus: Tool = {
+      name: 'api_check_status',
+      description: 'poll an async job',
+      inputSchema: { type: 'object', properties: { jobId: { type: 'string' } } },
+      mutates: false,
+      execute: async () => 'still pending'
+    }
+
+    function build(turns: ScriptedTurn[], options: ConstructorParameters<typeof Orchestrator>[8] = { planningEnabled: false }) {
+      const registry = new ToolRegistry()
+      registry.register(listConnections)
+      registry.register(checkStatus)
+      const agents = createAgents(registry)
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, options)
+      return { provider, orchestrator }
+    }
+    const call = (id: string, name = 'mcp_list_connections', input: Record<string, unknown> = {}): ScriptedTurn => ({
+      toolCalls: [{ id, name, input }],
+      stopReason: 'tool_use'
+    })
+
+    it('nudges once after 2 identical calls (naming delegate_to_mcp_operator, since it is available), then stops after 2 more if the model ignores the nudge', async () => {
+      const turns: ScriptedTurn[] = Array.from({ length: 6 }, (_, i) => call(`c${i}`))
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'List the tools available with the mcp Context7' }] }])
+      expect(provider.requests).toHaveLength(4)
+      const notes = events.filter((e) => e.kind === 'stream' && e.event.type === 'user_note').map((e) => (e as { event: { text: string } }).event.text)
+      expect(notes).toHaveLength(1)
+      expect(notes[0]).toMatch(/"mcp_list_connections" was just called again with the exact same input/)
+      expect(notes[0]).toMatch(/delegate_to_mcp_operator/)
+      const warning = events.find((e) => e.kind === 'stream' && e.event.type === 'warning') as { event: { message: string } } | undefined
+      expect(warning?.event.message).toMatch(/^Stopped: "mcp_list_connections" was called 4 times in a row with the exact same input/)
+      const last = events.filter((e) => e.kind === 'stream').map((e) => e.event).at(-1)
+      expect(last).toMatchObject({ type: 'message_stop', stopReason: 'end_turn' })
+    })
+
+    it('does not trip when the input changes between calls, even for the same tool', async () => {
+      const turns: ScriptedTurn[] = [
+        call('a', 'mcp_list_connections', {}),
+        call('b', 'mcp_list_connections', { verbose: true }),
+        call('c', 'mcp_list_connections', {}),
+        call('d', 'mcp_list_connections', { verbose: true }),
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      expect(provider.requests).toHaveLength(5)
+      expect(events.some((e) => e.kind === 'stream' && (e.event.type === 'warning' || e.event.type === 'user_note'))).toBe(false)
+    })
+
+    it('does not trip a tool outside the guarded admin/status set, even repeated identically many times (api_check_status, meant to be polled)', async () => {
+      const turns: ScriptedTurn[] = [
+        ...Array.from({ length: 5 }, (_, i) => call(`p${i}`, 'api_check_status', { jobId: 'job-1' })),
+        { text: 'Still pending after several checks.', stopReason: 'end_turn' }
+      ]
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'check on the job' }] }])
+      expect(provider.requests).toHaveLength(6)
+      expect(events.some((e) => e.kind === 'stream' && (e.event.type === 'warning' || e.event.type === 'user_note'))).toBe(false)
+    })
+
+    it('does not name delegate_to_mcp_operator in the nudge when no MCP server is connected', async () => {
+      const turns: ScriptedTurn[] = Array.from({ length: 6 }, (_, i) => call(`c${i}`))
+      const { provider, orchestrator } = build(turns, {
+        planningEnabled: false,
+        getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp: 0 })
+      })
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      expect(provider.requests).toHaveLength(4)
+      const notes = events.filter((e) => e.kind === 'stream' && e.event.type === 'user_note').map((e) => (e as { event: { text: string } }).event.text)
+      expect(notes).toHaveLength(1)
+      expect(notes[0]).not.toMatch(/delegate_to_mcp_operator/)
+    })
+
+    it('does not trip when a differently-named call breaks the streak, so a model trying something else gets its tries', async () => {
+      const turns: ScriptedTurn[] = [
+        call('a'),
+        call('b'),
+        { toolCalls: [{ id: 'x', name: 'api_check_status', input: { jobId: '1' } }], stopReason: 'tool_use' },
+        call('c'),
+        call('d'),
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const { provider, orchestrator } = build(turns)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      expect(provider.requests).toHaveLength(6)
+      expect(events.some((e) => e.kind === 'stream' && e.event.type === 'warning')).toBe(false)
+    })
+  })
+
+  describe('outside-the-workspace access', () => {
+    let outside: string
+    let always: string[]
+    let access: ExternalAccess
+
+    beforeEach(async () => {
+      outside = await mkdtemp(join(tmpdir(), 'sachiv-outside-'))
+      await writeFile(join(outside, 'passport.txt'), 'expires 2027')
+      always = []
+      access = new ExternalAccess({ getAlways: () => always, setAlways: (l) => (always = l), home: join(tmpdir(), 'no-such-home') })
+      ctx = { ...ctx, externalAccess: access }
+    })
+    afterEach(async () => {
+      await rm(outside, { recursive: true, force: true })
+    })
+
+    function run(toolCalls: ScriptedTurn['toolCalls'], confirm: (r: ToolConfirmRequest) => Promise<ConfirmDecision>) {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ toolCalls, stopReason: 'tool_use' }, { text: 'ok', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), confirm, ctx, signal, { planningEnabled: false })
+      return collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+    }
+    const toolResult = (events: OrchestratorEvent[]): string => (events.filter((e) => e.kind === 'stream').map((e) => e.event).find((e) => e.type === 'tool_result') as { content: string }).content
+
+    it('asks before reading an outside folder, reads it once approved, and remembers an "always" choice so the next read does not ask', async () => {
+      const requests: ToolConfirmRequest[] = []
+      const confirm = async (r: ToolConfirmRequest): Promise<ConfirmDecision> => {
+        requests.push(r)
+        return { approved: true, input: { ...r.input, remember: 'always' } }
+      }
+      const events = await run([{ id: 'c1', name: 'read_file', input: { path: join(outside, 'passport.txt') } }], confirm)
+      expect(requests).toHaveLength(1)
+      expect(requests[0]).toMatchObject({ name: 'external_folder_access', input: { folder: outside, access: 'read', tool: 'read_file' } })
+      expect(toolResult(events)).toBe('expires 2027')
+      expect(always).toEqual([outside])
+
+      requests.length = 0
+      const second = await run([{ id: 'c2', name: 'read_file', input: { path: join(outside, 'passport.txt') } }], confirm)
+      expect(requests).toHaveLength(0)
+      expect(toolResult(second)).toBe('expires 2027')
+    })
+
+    it('"just once" allows only that call: the grant is dropped afterwards', async () => {
+      const confirm = async (r: ToolConfirmRequest): Promise<ConfirmDecision> => ({ approved: true, input: { ...r.input, remember: 'once' } })
+      await run([{ id: 'c1', name: 'read_file', input: { path: join(outside, 'passport.txt') } }], confirm)
+      expect(access.isReadAllowed('test-session', join(outside, 'passport.txt'))).toBe(false)
+      expect(always).toEqual([])
+    })
+
+    it('does not run the tool when the user refuses, and tells the model so', async () => {
+      const events = await run([{ id: 'c1', name: 'read_file', input: { path: join(outside, 'passport.txt') } }], async () => ({ approved: false }))
+      expect(toolResult(events)).toMatch(/^\[Rejected by user\] The user did not allow access/)
+    })
+
+    it('never asks about a protected location and never reads it', async () => {
+      const requests: ToolConfirmRequest[] = []
+      const events = await run([{ id: 'c1', name: 'read_file', input: { path: '/etc/hosts' } }], async (r) => (requests.push(r), { approved: true, input: r.input }))
+      expect(requests).toHaveLength(0)
+      expect(toolResult(events)).toMatch(/protected location/)
+    })
+
+    it('creating a NEW file outside asks every time and is never remembered; an existing file is never overwritten', async () => {
+      const requests: ToolConfirmRequest[] = []
+      const confirm = async (r: ToolConfirmRequest): Promise<ConfirmDecision> => {
+        requests.push(r)
+        return { approved: true, input: { ...r.input, remember: 'always' } } // "always" is ignored for writes
+      }
+      const target = join(outside, 'report.txt')
+      const first = await run([{ id: 'w1', name: 'write_file', input: { path: target, content: 'hello' } }], confirm)
+      expect(requests.map((r) => r.name)).toEqual(['external_folder_access', 'write_file']) // the folder prompt, then the normal tool confirmation
+      expect(requests[0].input).toMatchObject({ access: 'write-new' })
+      expect(toolResult(first)).toContain('the new file')
+      expect(await readFile(target, 'utf-8')).toBe('hello')
+      expect(always).toEqual([])
+
+      const again = await run([{ id: 'w2', name: 'write_file', input: { path: target, content: 'changed' } }], confirm)
+      expect(toolResult(again)).toMatch(/already exists.*never overwrites/)
+      expect(await readFile(target, 'utf-8')).toBe('hello')
+    })
+  })
+
   describe('show_media — inline image display (TASKS.md #82)', () => {
     it("splits a show_media result into a separate, real image block plus a short tool_result text — never the raw base64 as the model-visible content", async () => {
       const pngBytes = Buffer.from(
@@ -2729,6 +4040,32 @@ describe('Orchestrator (integration, mocked provider)', () => {
         (e) => e.kind === 'message' && e.role === 'user' && e.content.some((c) => c.type === 'image')
       )
       expect(persistedResultMessage).toBeDefined()
+    })
+
+    it('download_image\'s result is displayed too, not stored as raw base64 text — and the model is told it has not seen the picture (found live: the photo never appeared)', async () => {
+      const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c626001000000050001fce34d970000000049454e44ae426082', 'hex')
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(png, { status: 200 })))
+      try {
+        const registry = buildRegistry()
+        registry.register(downloadImageTool)
+        const agents = createAgents(registry)
+        const provider = new MockProvider([
+          { toolCalls: [{ id: 'call_dl', name: 'download_image', input: { url: 'https://img.test/p.png', name: 'p' } }], stopReason: 'tool_use' },
+          { text: 'Done.', stopReason: 'end_turn' }
+        ])
+        const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false })
+        const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'get the picture' }] }])
+        const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
+        const image = streamEvents.find((e) => e.type === 'image') as { path: string; dataBase64: string } | undefined
+        expect(image?.path).toBe('resources/p.png')
+        expect(image?.dataBase64).toBe(png.toString('base64'))
+        const result = (streamEvents.find((e) => e.type === 'tool_result') as { content: string }).content
+        expect(result).toMatch(/^Displayed resources\/p\.png to the user\. You have not seen the image/)
+        expect(result).not.toContain('dataBase64')
+        expect(result.length).toBeLessThan(400)
+      } finally {
+        vi.unstubAllGlobals()
+      }
     })
 
     it('a genuinely failed show_media call (unsupported file type) surfaces as an ordinary tool error, no image block emitted', async () => {
@@ -2861,6 +4198,352 @@ describe('Orchestrator (integration, mocked provider)', () => {
         .map((b) => b.content)
 
       expect(toolResultContents.every((c) => !c.includes('omitted to save context'))).toBe(true)
+    })
+
+    // TASKS.md #149: root-caused live against session `cd81e5f5` — 15 list_directory calls across ~5
+    // different real paths all shared one name-only bucket, so unrelated paths' calls evicted each other
+    // regardless of which directory they were actually about. This is the direct regression test for that.
+    it('#149: different list_directory paths do not compete for the same bucket, even well past the cap in total', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      for (const dir of ['charts', 'code', 'documents', 'resources', 'logs']) {
+        await writeFileTool.execute({ path: `${dir}/real.txt`, content: 'x' }, ctx)
+      }
+
+      const dirs = ['charts', 'code', 'documents', 'resources', 'logs']
+      const turns: ScriptedTurn[] = [
+        ...dirs.map((dir, i) => ({
+          toolCalls: [{ id: `ls${i + 1}`, name: 'list_directory', input: { path: dir } }],
+          stopReason: 'tool_use' as const
+        })),
+        { text: 'Done.', stopReason: 'end_turn' as const }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'list every folder' }] }])
+
+      const finalRequest = provider.requests[provider.requests.length - 1]
+      const toolResultContents = finalRequest.messages
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result')
+        .map((b) => b.content)
+
+      // 5 calls total (well past MAX_KEPT_RESULTS_PER_TOOL=3), but 5 genuinely different paths — none should
+      // collapse, since each path gets its own bucket and no single path was called more than once.
+      expect(toolResultContents).toHaveLength(5)
+      expect(toolResultContents.every((c) => c.includes('real.txt'))).toBe(true)
+    })
+
+    // TASKS.md #149: the same path called past the cap still collapses — resource-keying must not turn the
+    // cap into a no-op, only stop UNRELATED paths from sharing a bucket.
+    it('#149: the SAME list_directory path called past the cap still collapses its oldest calls, compactly not content-free', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      await writeFileTool.execute({ path: 'code/keep.py', content: 'x' }, ctx)
+
+      const turns: ScriptedTurn[] = [
+        ...Array.from({ length: 4 }, (_, i) => ({
+          toolCalls: [{ id: `ls${i + 1}`, name: 'list_directory', input: { path: 'code' } }],
+          stopReason: 'tool_use' as const
+        })),
+        { text: 'Done.', stopReason: 'end_turn' as const }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'list code four times' }] }])
+
+      const finalRequest = provider.requests[provider.requests.length - 1]
+      const toolResultContents = finalRequest.messages
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result')
+        .map((b) => b.content)
+
+      expect(toolResultContents).toHaveLength(4)
+      // The oldest of the 4 (4 - MAX_KEPT_RESULTS_PER_TOOL=3) is collapsed, but compactly — it still names
+      // the real file found, not the generic content-free "omitted" marker.
+      expect(toolResultContents[0]).not.toMatch(/omitted to save context/)
+      expect(toolResultContents[0]).toContain('keep.py')
+      expect(toolResultContents[0]).toContain('collapsed to save context but still complete')
+      // The 3 most recent stay fully untouched.
+      for (const c of toolResultContents.slice(1)) expect(c).toContain('keep.py')
+    })
+
+    // TASKS.md #149: an older, already-resolved turn's calls must never be counted together with the
+    // current turn's — the function's own doc comment always claimed "within a single turn" but, before
+    // #149, actually ran against the whole session array.
+    it('#149: an earlier turn\'s list_directory calls are never touched by the current turn\'s cap', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      // The new turn's single call actually executes for real against the workspace — needs `code/` to exist.
+      await writeFileTool.execute({ path: 'code/real.py', content: 'x' }, ctx)
+
+      // A prior, already-closed turn: exactly at the cap (3 calls to the same path) — nothing collapsed yet.
+      const priorConversation: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'earlier request' }] },
+        {
+          role: 'assistant',
+          content: [1, 2, 3].map((i) => ({
+            type: 'tool_use' as const,
+            id: `old${i}`,
+            name: 'list_directory',
+            input: { path: 'code' }
+          }))
+        },
+        {
+          role: 'user',
+          content: [1, 2, 3].map((i) => ({
+            type: 'tool_result' as const,
+            toolUseId: `old${i}`,
+            content: `old-listing-${i}`
+          }))
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'done with that earlier request' }] },
+        { role: 'user', content: [{ type: 'text', text: 'now list it again' }] }
+      ]
+
+      // The NEW turn: just one more list_directory call to the same path. If this wrongly shared a bucket
+      // with the prior turn's 3, the total (4) would push the prior turn's oldest call stale.
+      const turns: ScriptedTurn[] = [
+        { toolCalls: [{ id: 'new1', name: 'list_directory', input: { path: 'code' } }], stopReason: 'tool_use' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      await collect(orchestrator, priorConversation)
+
+      const finalRequest = provider.requests[provider.requests.length - 1]
+      const toolResultContents = finalRequest.messages
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result')
+        .map((b) => b.content)
+
+      // All 3 of the prior turn's results are still their real, original content — untouched by the new
+      // turn's single call, which is exactly what "scoped to the current turn" means.
+      expect(toolResultContents).toEqual(['old-listing-1', 'old-listing-2', 'old-listing-3', 'file  real.py'])
+    })
+  })
+
+  describe('mid-run steering (#158)', () => {
+    it('injects a drained comment between rounds: model sees plain text, persisted form keeps user_note, and a live event is streamed', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+
+      let drainCalls = 0
+      const drainSteeringComments = (): string[] => {
+        drainCalls++
+        // Nothing pending before round 1; one comment ready before round 2.
+        return drainCalls === 2 ? ['wrong path, try code/ instead'] : []
+      }
+
+      const turns: ScriptedTurn[] = [
+        { toolCalls: [{ id: 'call1', name: 'list_directory', input: { path: '.' } }], stopReason: 'tool_use' },
+        { toolCalls: [{ id: 'call2', name: 'list_directory', input: { path: 'code' } }], stopReason: 'tool_use' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false, drainSteeringComments }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'list things' }] }])
+
+      // The model's OWN request for round 2 (built after the drain) shows the note as ordinary text, never
+      // the internal user_note type — normalizeUserNotesForWire applied right before the wire.
+      const round2Request = provider.requests[1]
+      const round2UserTexts = round2Request.messages
+        .filter((m) => m.role === 'user')
+        .flatMap((m) => m.content)
+        .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
+        .map((b) => b.text)
+      expect(round2UserTexts).toContain('wrong path, try code/ instead')
+      expect(round2Request.messages.flatMap((m) => m.content).some((b) => b.type === 'user_note')).toBe(false)
+
+      // The persisted form (what ipc/register.ts's generic insertMessage/enqueueMessage handling receives)
+      // keeps the real user_note type, not normalized away — that's what lets splitIntoTurns/the renderer
+      // recognize it later.
+      const persistedNote = events.find(
+        (e) => e.kind === 'message' && e.role === 'user' && e.content.some((b) => b.type === 'user_note')
+      )
+      expect(persistedNote).toBeDefined()
+      if (persistedNote?.kind === 'message') {
+        expect(persistedNote.content).toEqual([{ type: 'user_note', text: 'wrong path, try code/ instead' }])
+      }
+
+      // A live stream event fires too, so the UI shows it inline without waiting for a reload.
+      const liveNoteEvent = events.find((e) => e.kind === 'stream' && e.event.type === 'user_note')
+      expect(liveNoteEvent).toBeDefined()
+      if (liveNoteEvent?.kind === 'stream' && liveNoteEvent.event.type === 'user_note') {
+        expect(liveNoteEvent.event.text).toBe('wrong path, try code/ instead')
+      }
+    })
+
+    it('never drains steering comments for a nested specialist\'s own rounds, only the top-level orchestrator\'s', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+
+      let drainCalls = 0
+      const drainSteeringComments = (): string[] => {
+        drainCalls++
+        return []
+      }
+
+      const turns: ScriptedTurn[] = [
+        // Round 1 (top-level): delegate to coding.
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'list files' } }] },
+        // Round 2 (nested, agentRole coding): a tool call.
+        { toolCalls: [{ id: 'call_ls', name: 'list_directory', input: { path: '.' } }], stopReason: 'tool_use' },
+        // Round 3 (nested, agentRole coding): wrap-up, end_turn.
+        { text: 'Listed.', stopReason: 'end_turn' },
+        // Round 4 (top-level): final reply, end_turn.
+        { text: 'The specialist listed the files.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false, drainSteeringComments }
+      )
+
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'please list files' }] }])
+
+      // 4 total rounds ran (confirmed by the 4 scripted turns above all being consumed), but only the 2
+      // TOP-LEVEL rounds (1 and 4) should have checked for a pending steering comment — the 2 nested
+      // specialist rounds (2 and 3) must not.
+      expect(drainCalls).toBe(2)
+    })
+  })
+
+  describe('real reasoning/thinking content (#147)', () => {
+    it('persists a thinking block before the text block, and streams it live too', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const turns: ScriptedTurn[] = [{ thinking: 'considering the request', text: 'Here is the answer.', stopReason: 'end_turn' }]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+
+      // Live: a real thinking_delta stream event fires, separate from text_delta.
+      expect(events.some((e) => e.kind === 'stream' && e.event.type === 'thinking_delta' && e.event.text === 'considering the request')).toBe(true)
+
+      // Persisted: the thinking block comes before the text block in the same assistant message.
+      const persistedMessage = events.find((e) => e.kind === 'message' && e.role === 'assistant')
+      expect(persistedMessage).toBeDefined()
+      if (persistedMessage?.kind === 'message') {
+        expect(persistedMessage.content).toEqual([
+          { type: 'thinking', text: 'considering the request', agentRole: undefined },
+          { type: 'text', text: 'Here is the answer.', agentRole: undefined }
+        ])
+      }
+    })
+
+    it('never persists a thinking block when nothing was streamed for it', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const turns: ScriptedTurn[] = [{ text: 'Just the answer, no reasoning streamed.', stopReason: 'end_turn' }]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+      const persistedMessage = events.find((e) => e.kind === 'message' && e.role === 'assistant')
+      if (persistedMessage?.kind === 'message') {
+        expect(persistedMessage.content.some((b) => b.type === 'thinking')).toBe(false)
+      }
+    })
+
+    it('tags a delegated specialist\'s thinking with its own agentRole, same as text_delta already is', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const turns: ScriptedTurn[] = [
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.txt' } }] },
+        { thinking: 'planning the write', text: 'Writing the file now.', stopReason: 'end_turn' },
+        { text: 'The specialist is done.', stopReason: 'end_turn' }
+      ]
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(
+        provider,
+        'mock-model',
+        agents,
+        'You are Sachivji.',
+        registry.list(),
+        autoApprove(),
+        ctx,
+        signal,
+        { planningEnabled: false }
+      )
+
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'write hello.txt' }] }])
+      const taggedThinking = events.find(
+        (e) => e.kind === 'stream' && e.event.type === 'thinking_delta' && e.event.agentRole === 'coding'
+      )
+      expect(taggedThinking).toBeDefined()
     })
   })
 
@@ -3185,5 +4868,416 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const text = await officeReadDocumentTool.execute({ path: 'documents/deck.pptx' }, deckCtx)
       expect(text).toContain('Hello')
     })
+  })
+
+  describe('typed handoff between specialists (design step 3, Appendix D2)', () => {
+    const rows = JSON.stringify(
+      Array.from({ length: 30 }, (_, i) => ({ Year: 1996 + (i % 3), CustomerID: `C${i}`, TotalSales: i * 100.5 })),
+      null,
+      2
+    )
+    const fakeSql: Tool = {
+      name: 'db_execute_sql',
+      description: 'fake',
+      inputSchema: { type: 'object', properties: {} },
+      mutates: false,
+      execute: async () => `30 row(s):\n${rows}`
+    }
+    const withSql = (): ToolRegistry => {
+      const registry = buildRegistry()
+      registry.register(fakeSql)
+      return registry
+    }
+    const planOf = (...steps: Array<[string, string]>): ScriptedTurn => ({
+      text: JSON.stringify({ complexity: 'compound', steps: steps.map(([role, description]) => ({ role, description })) }),
+      stopReason: 'end_turn'
+    })
+    const run = async (turns: ScriptedTurn[], registry: ToolRegistry = withSql(), message = 'hi and thanks') => {
+      const provider = new MockProvider(turns)
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: true
+      })
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: message }] }])
+      const userTexts = events
+        .filter((e) => e.kind === 'message' && e.role === 'user')
+        .flatMap((e) => (e.kind === 'message' ? e.content : []))
+        .flatMap((c) => (c.type === 'text' ? [c.text] : []))
+      return { provider, events, userTexts }
+    }
+    // The recorded `messages` array is the live conversation (replies are appended to it after the call), so
+    // find the delegate's brief by its content rather than by position.
+    const lastUserText = (req: { messages: Message[] }): string => {
+      const texts = req.messages.flatMap((m) => m.content.flatMap((c) => (c.type === 'text' && c.text.startsWith('[Orchestrator ->') ? [c.text] : [])))
+      return texts.at(-1) ?? ''
+    }
+
+    it('D2: the real rows a Data step retrieved reach the next step as a FILE named in its brief — not as a summary it can only guess from', async () => {
+      const { provider, userTexts } = await run([
+        planOf(['data', 'top 10 customers per year'], ['coding', 'chart them']),
+        { toolCalls: [{ id: 'q1', name: 'db_execute_sql', input: { sql: 'select ...' } }] }, // Data round 1: the query
+        { text: 'Retrieved the top customers for 1996-1998.', stopReason: 'end_turn' }, // Data round 2: prose summary only
+        { text: 'Charting from the file.', stopReason: 'end_turn' }, // Coding
+        { text: 'Charts are described above.', stopReason: 'end_turn' } // final synthesis
+      ])
+
+      // requests: [0] classify, [1] data r1, [2] data r2, [3] coding, [4] final
+      const codingBrief = lastUserText(provider.requests[3])
+      expect(codingBrief).toContain('[Orchestrator -> Developer]: chart them')
+      expect(codingBrief).toMatch(/Inputs from earlier in this turn/)
+      const m = /Data from data: (\.sachiv-handoff\/[^ ]+\.json) — db_execute_sql: 30 rows/.exec(codingBrief)
+      expect(m, 'the brief must name the captured data file').not.toBeNull()
+
+      // The file really holds all 30 rows the query returned — as pure, directly-parseable JSON (no
+      // "30 row(s):" chat header): found live, a later step's script had to skip that line itself
+      // before json.load() would work at all. The row count still reaches the brief above, via the
+      // handoff note/summary, never by being embedded in the file.
+      const saved = await readFile(join(root, m![1]), 'utf-8')
+      expect(saved.startsWith('30 row(s):')).toBe(false)
+      expect(JSON.parse(saved)).toHaveLength(30)
+
+      // ...and the plan-step message the final round sees also names it, past the summary.
+      expect(userTexts.find((t) => t.includes('[Plan step 1 — Data Access]'))).toContain('Data captured for later steps: .sachiv-handoff/')
+    })
+
+    it('lists the files a step actually created, derived from the workspace — including ones a script wrote, not just a tool call', async () => {
+      const registry = withSql()
+      registry.register({
+        name: 'shell_execute',
+        description: 'fake shell that runs a script which writes files',
+        inputSchema: { type: 'object', properties: {} },
+        mutates: false,
+        execute: async () => {
+          await writeFile(join(root, 'chart_1996.png'), 'png-bytes')
+          await writeFile(join(root, 'chart_1997.png'), 'png-bytes')
+          return 'exit code: 0'
+        }
+      })
+      const { userTexts } = await run(
+        [
+          planOf(['coding', 'draw the charts and run the script'], ['research', 'find the caption text']),
+          { toolCalls: [{ id: 's1', name: 'shell_execute', input: { command: 'python make.py' } }] },
+          { text: 'Ran it.', stopReason: 'end_turn' },
+          { text: 'Caption found.', stopReason: 'end_turn' },
+          { text: 'Done.', stopReason: 'end_turn' }
+        ],
+        registry
+      )
+      const step = userTexts.find((t) => t.includes('[Plan step 1 — Developer]')) ?? ''
+      expect(step).toContain('Files created or changed (verified by the app, not self-reported): chart_1996.png, chart_1997.png')
+    })
+
+    it('does not list a file the specialist merely CLAIMS to have made', async () => {
+      const { userTexts } = await run([
+        planOf(['coding', 'make the chart'], ['research', 'find a caption']),
+        { text: 'I have created chart.png and report.docx for you!', stopReason: 'end_turn' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'ok', stopReason: 'end_turn' }
+      ])
+      const step = userTexts.find((t) => t.includes('[Plan step 1 — Developer]')) ?? ''
+      expect(step).toContain('I have created chart.png')
+      expect(step).not.toContain('Files created or changed')
+    })
+
+    it('needs_input pauses the plan: later steps do not run on missing input, and the step says so', async () => {
+      const { provider, userTexts } = await run([
+        planOf(['data', 'get the sales figures'], ['coding', 'write a report']),
+        { text: 'There are two databases.\n[handoff: needs_input] Which database should I use?', stopReason: 'end_turn' },
+        { text: 'Which database should I use?', stopReason: 'end_turn' } // final round asks the user
+      ])
+      expect(provider.requests).toHaveLength(3) // classify, data, final — the coding step never ran
+      const step = userTexts.find((t) => t.includes('[Plan step 1 — Data Access]')) ?? ''
+      expect(step).toContain('(NEEDS INPUT — plan paused)')
+      expect(step).toContain('Which database should I use?')
+      expect(step).not.toContain('[handoff:') // the tag itself is stripped from what later rounds see
+      expect(userTexts.some((t) => t.includes('[Plan step 2'))).toBe(false)
+    })
+
+    it('out_of_scope redirects the step ONCE to the role the specialist named', async () => {
+      const { provider, userTexts } = await run([
+        planOf(['coding', 'total the sales by year'], ['research', 'find a caption']),
+        { text: 'That needs a database query.\n[handoff: out_of_scope -> data] SQL work', stopReason: 'end_turn' },
+        { text: 'Sales by year: 1996=5.', stopReason: 'end_turn' }, // Data Access picks it up
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'Here you go.', stopReason: 'end_turn' }
+      ])
+      expect(provider.requests).toHaveLength(5) // classify, coding, data (redirect), research, final
+      expect(lastUserText(provider.requests[2])).toContain('[Orchestrator -> Data Access]: total the sales by year')
+      const step = userTexts.find((t) => t.includes('[Plan step 1')) ?? ''
+      expect(step).toMatch(/^\[Plan step 1 — Data Access\]:/) // labelled with the role that actually did it
+      expect(userTexts.some((t) => t.includes('[Plan step 2 — Researcher]'))).toBe(true) // the plan carried on afterwards
+      expect(step).toContain('Sales by year: 1996=5.')
+    })
+
+    it('a second out_of_scope is NOT redirected again (no ping-pong) and is reported as not done', async () => {
+      const { provider, userTexts } = await run([
+        planOf(['coding', 'do the thing'], ['research', 'find a caption']),
+        { text: 'Not mine.\n[handoff: out_of_scope -> data]', stopReason: 'end_turn' },
+        { text: 'Not mine either.\n[handoff: out_of_scope -> coding]', stopReason: 'end_turn' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'Neither role could do it.', stopReason: 'end_turn' }
+      ])
+      expect(provider.requests).toHaveLength(5) // classify, coding, data, research, final — coding is NOT called a second time
+      const step = userTexts.find((t) => t.includes('[Plan step 1')) ?? ''
+      expect(step).toContain('(OUT OF SCOPE — not done)')
+    })
+
+    it('ignores a suggested role that does not exist instead of redirecting into nothing', async () => {
+      const { provider } = await run([
+        planOf(['coding', 'do the thing'], ['research', 'find a caption']),
+        { text: 'Not mine.\n[handoff: out_of_scope -> wizard]', stopReason: 'end_turn' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'ok', stopReason: 'end_turn' }
+      ])
+      expect(provider.requests).toHaveLength(4) // classify, coding, research, final — no redirect into a role that does not exist
+    })
+
+    it('ignores a suggested role that is real but not plannable (page-creator) instead of redirecting into a dead end', async () => {
+      // Found live (manual_testing.md section 4, Prompt B): document-creator declined an image-embedding
+      // step and named "page-creator" — a syntactically valid agent id, but isolated/one-slide-only and
+      // never a sane target for an arbitrary redirected task. The redirect-once safety net must reject it
+      // the same way it already rejects a hallucinated role id, not just dispatch into the dead end.
+      const { provider, userTexts } = await run([
+        planOf(['document-creator', 'embed charts into a Word document'], ['research', 'find a caption']),
+        { text: 'Not mine.\n[handoff: out_of_scope -> page-creator]', stopReason: 'end_turn' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'Document Creator could not do this part.', stopReason: 'end_turn' }
+      ])
+      expect(provider.requests).toHaveLength(4) // classify, document-creator, research, final — no redirect into page-creator
+      const step = userTexts.find((t) => t.includes('[Plan step 1')) ?? ''
+      expect(step).toContain('(OUT OF SCOPE — not done)')
+    })
+
+    it('overrides a false out_of_scope tag when the step already captured real data, instead of redirecting into wasted work (2026-10-01)', async () => {
+      // Found live (Gemini): Data Access queried successfully, wrote a complete, correct answer from
+      // real rows — then appended [handoff: out_of_scope -> document-creator] anyway, despite having
+      // fully succeeded. The redirect-once safety net trusted it, triggering a real, wasted specialist
+      // call (re-fetched the same data, built a whole document) whose output the step after it then
+      // discarded entirely by overwriting the same file. A step that captured real data cannot also be
+      // out of scope — the tag is a model slip, not a real capability boundary.
+      const { provider, userTexts } = await run([
+        planOf(['data', 'top 10 customers per year'], ['coding', 'chart them']),
+        { toolCalls: [{ id: 'q1', name: 'db_execute_sql', input: { sql: 'select ...' } }] },
+        { text: 'Here are the real top customers: Ernst Handel, QUICK-Stop.\n\n[handoff: out_of_scope -> document-creator]', stopReason: 'end_turn' },
+        { text: 'Charting from the file.', stopReason: 'end_turn' },
+        { text: 'Here you go.', stopReason: 'end_turn' }
+      ])
+      expect(provider.requests).toHaveLength(5) // classify, data (tool call + text), coding, final — no redirect into document-creator
+      const step = userTexts.find((t) => t.includes('[Plan step 1')) ?? ''
+      expect(step).toMatch(/^\[Plan step 1 — Data Access\]:/) // stays Data Access — never redirected
+      expect(step).not.toContain('OUT OF SCOPE')
+      expect(step).toContain('Here are the real top customers')
+      expect(userTexts.some((t) => t.includes('[Plan step 2 — Developer]'))).toBe(true) // the plan carried on normally
+    })
+
+    it('no_information is named plainly on the step, and does not pause the plan or trigger a redirect (design-discussion.md §13.2(b), TASKS #143)', async () => {
+      const { provider, userTexts } = await run([
+        planOf(['mcp-operator', 'look up the inverter maintenance policy'], ['research', 'find a caption']),
+        { text: 'Searched the connected wiki for inverter maintenance procedures.\n[handoff: no_information] nothing on file', stopReason: 'end_turn' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'The wiki had nothing on this.', stopReason: 'end_turn' }
+      ])
+      // Unlike needs_input, the plan continues — the next step still ran (classify, mcp-operator, research, final).
+      expect(provider.requests).toHaveLength(4)
+      const step = userTexts.find((t) => t.includes('[Plan step 1 — MCP Operator]')) ?? ''
+      expect(step).toContain('(NO INFORMATION FOUND — nothing relevant in the connected source)')
+      expect(step).toContain('Searched the connected wiki for inverter maintenance procedures.')
+      expect(step).not.toContain('[handoff:') // the tag itself is stripped from what later rounds see
+      expect(userTexts.some((t) => t.includes('[Plan step 2 — Researcher]'))).toBe(true)
+    })
+
+    it('no_information grants a web fallback with a disclosure requirement, unless the user restricted sourcing (design-discussion.md §13.2(c),(d), §13.5, TASKS #144)', async () => {
+      const { userTexts } = await run([
+        planOf(['mcp-operator', 'look up the inverter maintenance policy'], ['research', 'find a caption']),
+        { text: 'Searched the connected wiki.\n[handoff: no_information] nothing on file', stopReason: 'end_turn' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'The wiki had nothing, but the web says X.', stopReason: 'end_turn' }
+      ])
+      const step = userTexts.find((t) => t.includes('[Plan step 1 — MCP Operator]')) ?? ''
+      expect(step).toMatch(/may use web_search or delegate_to_research/)
+      expect(step).toMatch(/say so plainly in the final answer/)
+    })
+
+    it('does NOT grant the web fallback when the user\'s own request restricted sourcing to the wiki', async () => {
+      const { userTexts } = await run(
+        [
+          planOf(['mcp-operator', 'look up the inverter maintenance policy'], ['research', 'find a caption']),
+          { text: 'Searched the connected wiki.\n[handoff: no_information] nothing on file', stopReason: 'end_turn' },
+          { text: 'A caption.', stopReason: 'end_turn' },
+          { text: 'The connected wiki had nothing on this.', stopReason: 'end_turn' }
+        ],
+        withSql(),
+        'Only use the wiki for this and tell me the maintenance policy'
+      )
+      const step = userTexts.find((t) => t.includes('[Plan step 1 — MCP Operator]')) ?? ''
+      expect(step).not.toMatch(/may use web_search or delegate_to_research/)
+      expect(step).toMatch(/no web fallback should be attempted/)
+    })
+
+    it('incomplete (found something, not enough) inserts a real follow-up Research step, not just a hopeful note (TASKS #178)', async () => {
+      // Found live 2026-10-02 retesting #172/#173/#175/#176 end-to-end: an MCP search returned 2 hits
+      // from the right document, but the snippets (a table fragment, a citation) were useless — and it
+      // got reported as done, with no mechanism to say "found something, but not enough." Unlike
+      // no_information's note-only fallback, `incomplete` inserts a real plan step.
+      const { provider, userTexts } = await run([
+        planOf(['mcp-operator', 'look up the yaw misalignment definition'], ['coding', 'write a note']),
+        {
+          text: 'Found the right document, but only a table fragment and a citation.\n[handoff: incomplete] the actual methodology section was not in the snippet',
+          stopReason: 'end_turn'
+        },
+        { text: 'Found more detail on the open web.', stopReason: 'end_turn' }, // the inserted Research step
+        { text: 'A note.', stopReason: 'end_turn' }, // the originally-planned coding step
+        { text: 'Final answer.', stopReason: 'end_turn' }
+      ])
+      // classify, mcp-operator, (inserted) research, coding, final synthesis — 5, not the original 4.
+      expect(provider.requests).toHaveLength(5)
+
+      const step1 = userTexts.find((t) => t.includes('[Plan step 1 — MCP Operator]')) ?? ''
+      expect(step1).toContain('(PARTIAL INFORMATION — found something, but not enough)')
+      expect(step1).toMatch(/a follow-up step has been added to fill the gap/)
+
+      const step2 = userTexts.find((t) => t.includes('[Plan step 2 — Researcher]')) ?? ''
+      expect(step2).toContain('yaw misalignment definition') // the inserted step's own description references the original gap
+      expect(step2).toContain('Found more detail on the open web.')
+
+      // The originally-planned step is still there too, just pushed to step 3 — nothing lost.
+      expect(userTexts.some((t) => t.includes('[Plan step 3 — Developer]') && t.includes('A note.'))).toBe(true)
+    })
+
+    it('caps incomplete follow-up insertion at one per turn, so two incomplete steps cannot each insert their own (TASKS #178)', async () => {
+      const { provider, userTexts } = await run([
+        planOf(
+          ['mcp-operator', 'look up the first definition'],
+          ['mcp-operator', 'look up the second definition']
+        ),
+        { text: 'Thin result.\n[handoff: incomplete] missing detail', stopReason: 'end_turn' },
+        { text: 'Follow-up search result.', stopReason: 'end_turn' }, // the one inserted Research step
+        { text: 'Also thin.\n[handoff: incomplete] missing detail again', stopReason: 'end_turn' },
+        { text: 'Final answer.', stopReason: 'end_turn' }
+      ])
+      // classify, mcp-operator(1), inserted research, mcp-operator(2), final — exactly one insertion, not two.
+      expect(provider.requests).toHaveLength(5)
+      expect(userTexts.filter((t) => t.includes('— Researcher]')).length).toBe(1)
+      // The second incomplete step still gets its honest marker — it just didn't get its own follow-up.
+      const step3 = userTexts.find((t) => t.includes('look up the second definition')) ?? ''
+      expect(step3).toContain('(PARTIAL INFORMATION — found something, but not enough)')
+      expect(step3).toMatch(/no further source is available to fill the gap/)
+    })
+
+    it('an ordinary reply with no tag, no files and no data is passed through exactly as before', async () => {
+      const { userTexts } = await run([
+        planOf(['research', 'find X'], ['research', 'find Y']),
+        { text: 'X is 5.', stopReason: 'end_turn' },
+        { text: 'Y is 6.', stopReason: 'end_turn' },
+        { text: 'done', stopReason: 'end_turn' }
+      ])
+      expect(userTexts.find((t) => t.includes('[Plan step 1'))).toBe('[Plan step 1 — Researcher]: find X\n\nResult:\nX is 5.')
+    })
+
+    it('a failed specialist is status failed (set in code), regardless of what it wrote', async () => {
+      const { userTexts, events } = await run([
+        planOf(['data', 'get figures'], ['research', 'find a caption']),
+        { throwError: 'Unknown data connection "sales_db".' },
+        { text: 'A caption.', stopReason: 'end_turn' },
+        { text: 'Could not get the figures.', stopReason: 'end_turn' }
+      ])
+      expect(userTexts.find((t) => t.includes('[Plan step 1'))).toContain('(FAILED — no usable result)')
+      expect(events.filter((e) => e.kind === 'stream').map((e) => e.event)).toContainEqual({ type: 'plan_step_done', index: 0, isError: true })
+    })
+
+    it('the same handoff applies without a plan: a second delegate in the same turn is handed the first one\'s captured data', async () => {
+      const registry = withSql()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'd1', name: 'delegate_to_data', input: { task: 'get the rows' } }] }, // router round 1
+        { toolCalls: [{ id: 'q1', name: 'db_execute_sql', input: {} }] }, // data r1
+        { text: 'Got them.', stopReason: 'end_turn' }, // data r2
+        { toolCalls: [{ id: 'd2', name: 'delegate_to_coding', input: { task: 'chart them' } }] }, // router round 2
+        { text: 'Charted.', stopReason: 'end_turn' }, // coding
+        { text: 'All done.', stopReason: 'end_turn' } // router final
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'chart the sales' }] }])
+      const codingBrief = lastUserText(provider.requests[4])
+      expect(codingBrief).toContain('[Orchestrator -> Developer]: chart them')
+      expect(codingBrief).toMatch(/Data from data: \.sachiv-handoff\/.+\.json — db_execute_sql: 30 rows/)
+    })
+
+    it('a tool the router does not carry but a specialist owns gets a redirect to that specialist, not a dead end', async () => {
+      const registry = withSql()
+      registry.register({ name: 'shell_execute', description: 'fake', inputSchema: { type: 'object', properties: {} }, mutates: false, execute: async () => 'x' })
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'c1', name: 'shell_execute', input: {} }] },
+        { text: 'I will delegate.', stopReason: 'end_turn' }
+      ])
+      // The router's own tool list deliberately lacks shell_execute (as after the slim-router step).
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list().filter((t) => t.name !== 'shell_execute'), autoApprove(), ctx, signal)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'run it' }] }])
+      const result = events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'tool_result' ? [e.event.content] : []))[0]
+      expect(result).toContain('belongs to the Developer specialist')
+      expect(result).toContain('delegate_to_coding')
+    })
+
+    it('logs real tool calls with who made them — the router itself vs a specialist — and never an unknown tool (keeps the slim router\'s hot core honest)', async () => {
+      const registry = withSql()
+      const agents = createAgents(registry)
+      const logged: Array<{ tool: string; agentRole: string }> = []
+      const provider = new MockProvider([
+        { toolCalls: [{ id: 'r1', name: 'read_file', input: { path: 'a.txt' } }, { id: 'u1', name: 'no_such_tool', input: {} }] }, // router: one real, one unknown
+        { toolCalls: [{ id: 'd1', name: 'delegate_to_data', input: { task: 'rows' } }] }, // router delegates
+        { toolCalls: [{ id: 'q1', name: 'db_execute_sql', input: {} }] }, // specialist's own call
+        { text: 'Got them.', stopReason: 'end_turn' },
+        { text: 'Done.', stopReason: 'end_turn' }
+      ])
+      await writeFile(join(root, 'a.txt'), 'hello')
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: false,
+        logToolUse: (sample) => logged.push(sample)
+      })
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'go' }] }])
+      expect(logged).toEqual([
+        { tool: 'read_file', agentRole: 'router' },
+        { tool: 'db_execute_sql', agentRole: 'data' }
+      ])
+    })
+
+    it('a tool nobody owns is still just "Unknown tool"', async () => {
+      const registry = withSql()
+      const provider = new MockProvider([{ toolCalls: [{ id: 'c1', name: 'no_such_tool', input: {} }] }, { text: 'ok', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(provider, 'mock-model', createAgents(registry), 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal)
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'x' }] }])
+      const result = events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'tool_result' ? [e.event.content] : []))[0]
+      expect(result).toBe('Unknown tool "no_such_tool".')
+    })
+  })
+})
+
+describe('parseJsonObjectLoosely', () => {
+  it('accepts plain JSON, a fenced block, and an object surrounded by prose', () => {
+    expect(parseJsonObjectLoosely('{"a": 1}')).toEqual({ a: 1 })
+    expect(parseJsonObjectLoosely('```json\n{"a": 1}\n```')).toEqual({ a: 1 })
+    expect(parseJsonObjectLoosely('Here you go: {"a": {"b": 2}} — done.')).toEqual({ a: { b: 2 } })
+  })
+
+  it('rejects text with no object, arrays and broken JSON', () => {
+    expect(parseJsonObjectLoosely('I think this is a simple request.')).toBeUndefined()
+    expect(parseJsonObjectLoosely('[1, 2]')).toBeUndefined()
+    expect(parseJsonObjectLoosely('{"a": ')).toBeUndefined()
+    expect(parseJsonObjectLoosely('')).toBeUndefined()
+  })
+})
+
+describe('detectsSourceRestriction (design-discussion.md §13.5, TASKS #144)', () => {
+  it('fires on an unambiguous restriction phrase', () => {
+    expect(detectsSourceRestriction('Only use the wiki for this, what is the maintenance policy?')).toBe(true)
+    expect(detectsSourceRestriction("Look this up but don't search the web for it")).toBe(true)
+    expect(detectsSourceRestriction('Answer this without searching the internet')).toBe(true)
+    expect(detectsSourceRestriction('Find the policy, no web search please')).toBe(true)
+  })
+
+  it('defaults to false (fallback allowed) for an ordinary request — a false negative here is safer than a false positive', () => {
+    expect(detectsSourceRestriction('look up the maintenance policy for inverter faults and check for public advisories')).toBe(false)
+    expect(detectsSourceRestriction('only tell me about the inverter, nothing else')).toBe(false) // "only" with no wiki/web mention
+    expect(detectsSourceRestriction('')).toBe(false)
   })
 })

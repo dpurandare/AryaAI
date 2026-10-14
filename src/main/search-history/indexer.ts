@@ -179,9 +179,25 @@ async function embedAndStoreChunks(
 const pendingJobs: (() => Promise<void>)[] = []
 let draining = false
 
+/**
+ * TASKS.md #172/#171: a tool_result's text is no longer capped at ~200 rows before it reaches here
+ * (see `MAX_SAFETY_ROWS`, each `*-driver.ts`) — a real analytical query result can now be several MB.
+ * `chunkText`'s own `MAX_CHUNK_CHARS` cap (#171) keeps any individual chunk safe to embed, but a message
+ * this large would still split into hundreds or thousands of chunks, each its own `embed()` call — a
+ * real cost/latency problem, and pointless besides: a multi-MB raw structured-data dump has no
+ * meaningful prose semantics for "search my past conversations" to match against in the first place.
+ * Skipped the same way a message with no searchable text already is — this is not a failure, just
+ * nothing worth indexing.
+ */
+const MAX_INDEXABLE_CHARS = 50_000
+
+function isTooLargeToIndex(text: string): boolean {
+  return text.length > MAX_INDEXABLE_CHARS
+}
+
 export function enqueueMessage(messageId: string, sessionId: string, content: ContentBlock[]): void {
   const text = extractSearchableText(content)
-  if (!text) return
+  if (!text || isTooLargeToIndex(text)) return
   pendingJobs.push(async () => {
     const config = getEmbeddingConfig()
     try {
@@ -217,6 +233,19 @@ interface UnindexedMessageRow {
   content: string
 }
 
+/**
+ * TASKS.md #171: a message that can never successfully embed (every attempt throws) used to be
+ * retried every single backfill pass, forever — found live, this kept crashing the local Ollama
+ * embedding server in a tight loop (the oversized-chunk segfault `chunk-text.ts`'s own `MAX_CHUNK_CHARS`
+ * now prevents, but any other persistent embed failure would hit the identical infinite-retry shape).
+ * Counted in memory, not persisted — reset on every app restart, so this is a bound on retries *within
+ * one running process*, not a permanent record; a message that starts failing, stops, then starts again
+ * after a restart just gets its own fresh 3 attempts, which is fine — the goal is only to stop one bad
+ * message from looping forever in a single session, not to never look at it again.
+ */
+const MAX_EMBED_FAILURES_PER_MESSAGE = 3
+const embedFailureCounts = new Map<string, number>()
+
 export async function runBackfill(): Promise<void> {
   if (backfillRunning) return
   backfillRunning = true
@@ -246,10 +275,9 @@ export async function runBackfill(): Promise<void> {
       for (const row of rows) {
         const content = JSON.parse(row.content) as ContentBlock[]
         const text = extractSearchableText(content)
-        if (!text) {
-          // Nothing to embed (e.g. all tool_use) — mark as "indexed" with no
-          // vector so backfill doesn't retry it forever. A message with no
-          // searchable text can never usefully match a search anyway.
+        if (!text || isTooLargeToIndex(text)) {
+          // Nothing to embed (e.g. all tool_use, or too large to usefully index — see
+          // isTooLargeToIndex) — mark as "indexed" with no vector so backfill doesn't retry it forever.
           // Wrapped like the real embed path below (not left bare like it
           // used to be) — a real, live failure here (FOREIGN KEY constraint
           // failed, from a handful of orphaned messages left over from an
@@ -271,10 +299,31 @@ export async function runBackfill(): Promise<void> {
         try {
           const ok = await embedAndStoreChunks(row.id, row.session_id, text, config.providerId, config.model)
           if (!ok) return // config changed mid-backfill — stop, needs rebuild
+          embedFailureCounts.delete(row.id)
         } catch (err) {
           recordEmbedFailure(err)
           console.error(`search_history: backfill failed for message ${row.id}:`, err)
-          // Leave it un-indexed; the next backfill pass will retry it.
+          const failures = (embedFailureCounts.get(row.id) ?? 0) + 1
+          if (failures < MAX_EMBED_FAILURES_PER_MESSAGE) {
+            embedFailureCounts.set(row.id, failures)
+            // Leave it un-indexed; the next backfill pass will retry it.
+          } else {
+            // Given up on this message for the rest of this process's lifetime — same "indexed with no
+            // vector" bookkeeping the no-searchable-text case above uses, so it stops being selected by
+            // this loop's own query instead of being retried forever.
+            console.error(`search_history: giving up on message ${row.id} after ${failures} failed embed attempts`)
+            embedFailureCounts.delete(row.id)
+            try {
+              getDb()
+                .prepare(
+                  'INSERT INTO message_embeddings (message_id, session_id, model, created_at) VALUES (?, ?, ?, ?) ' +
+                    'ON CONFLICT(message_id) DO NOTHING'
+                )
+                .run(row.id, row.session_id, config.model, Date.now())
+            } catch (giveUpErr) {
+              console.error(`search_history: failed to mark message ${row.id} as given-up:`, giveUpErr)
+            }
+          }
         }
       }
 

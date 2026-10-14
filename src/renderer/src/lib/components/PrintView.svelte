@@ -1,28 +1,51 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
   import MarkdownText from './MarkdownText.svelte'
-  import { AGENT_ROLE_LABELS } from '@shared/agents'
-  import type { MessageDto } from '@shared/ipc-contract'
+  import { roleLabel } from '@shared/agents'
+  import type { MessageDto, RoleRosterEntryDto } from '@shared/ipc-contract'
 
   let title = $state('Chat export')
   let messages = $state<MessageDto[]>([])
   let error = $state('')
+  let roster = $state<RoleRosterEntryDto[]>([])
+  /** The roster's label (covers user-defined roles), else the built-in / humanized one. */
+  const label = (id: string): string => roster.find((r) => r.id === id)?.label ?? roleLabel(id)
+  /** TASKS.md #181: same three-state tool-output display the live chat view and Markdown export use — read from the same persisted setting so a PDF export matches what the other two formats would show. */
+  let toolDisplayMode = $state<'hidden' | 'partial' | 'shown'>('partial')
 
   /** A pure-tool_result message is the continuation of the tool call just shown, not a new turn — same convention as export.ts's Markdown export. */
   function isPureToolResult(message: MessageDto): boolean {
-    return message.content.length > 0 && message.content.every((b) => b.type === 'tool_result')
+    return message.content.length > 0 && message.content.every((b) => b.type === 'tool_result' || b.type === 'image')
   }
+
+  /**
+   * TASKS.md #211 finding 3: a `delegate_to_*` call's own `tool_result` is the specialist's reply
+   * formatted for the orchestrator — the specialist's own attributed `text` block right after it
+   * already carries the same words. ChatView.svelte already skips rendering it live for exactly this
+   * reason; this export (and sessionToMarkdown in export.ts) didn't, so `toolDisplayMode: 'shown'`
+   * genuinely printed the same reply twice back to back. Built once per session, same as App.svelte's
+   * toolSegmentsById: a tool_result block only carries its toolUseId, not the tool's name.
+   */
+  const delegateToolUseIds = new Set<string>()
 
   onMount(async () => {
     try {
       const sessionId = new URLSearchParams(location.search).get('sessionId')
       if (!sessionId) throw new Error('Missing sessionId in print URL')
-      const [sessions, records] = await Promise.all([
+      window.sachiv.getRoles().then((r) => (roster = r.roles)).catch(() => {})
+      const [sessions, records, storedMode] = await Promise.all([
         window.sachiv.listSessions(),
-        window.sachiv.listMessages(sessionId)
+        window.sachiv.listMessages(sessionId),
+        window.sachiv.getSetting('toolDisplayMode')
       ])
       title = sessions.find((s) => s.id === sessionId)?.title ?? title
       messages = records
+      for (const message of records) {
+        for (const block of message.content) {
+          if (block.type === 'tool_use' && block.name.startsWith('delegate_to_')) delegateToolUseIds.add(block.id)
+        }
+      }
+      if (storedMode === 'hidden' || storedMode === 'partial' || storedMode === 'shown') toolDisplayMode = storedMode
     } catch (err) {
       error = err instanceof Error ? err.message : String(err)
     } finally {
@@ -48,19 +71,28 @@
     {#each message.content as block, i (i)}
       {#if block.type === 'text'}
         {#if block.agentRole}
-          <div class="agent-chip">{AGENT_ROLE_LABELS[block.agentRole]} agent</div>
+          <div class="agent-chip">{label(block.agentRole)} agent</div>
         {/if}
         <MarkdownText text={block.text} />
-      {:else if block.type === 'tool_use'}
+      {:else if block.type === 'tool_use' && toolDisplayMode !== 'hidden'}
         <div class="tool-call">
           <div class="tool-call-head">
             <span class="tool-icon">⚙</span>
             <code>{block.name}</code>
-            <span class="tool-input">{JSON.stringify(block.input)}</span>
+            {#if toolDisplayMode === 'shown'}
+              <span class="tool-input">{JSON.stringify(block.input)}</span>
+            {/if}
           </div>
         </div>
-      {:else if block.type === 'tool_result'}
-        <div class="tool-result" class:error={block.isError}>{block.content}</div>
+      {:else if block.type === 'tool_result' && toolDisplayMode !== 'hidden' && !delegateToolUseIds.has(block.toolUseId)}
+        <div class="tool-result" class:error={block.isError}>
+          {toolDisplayMode === 'shown' ? block.content : block.isError ? 'Error' : 'Done'}
+        </div>
+      {:else if block.type === 'image'}
+        <!-- TASKS.md #82/#181 — always shown regardless of toolDisplayMode: "Hidden should show the
+             image as it is important part of the output" (explicit user decision, 2026-10-02). Also
+             fixes a real pre-existing gap: PDF export never rendered image blocks at all before this. -->
+        <img class="tool-image" src={`data:${block.mimeType};base64,${block.dataBase64}`} alt={block.path} />
       {/if}
     {/each}
   {/each}
@@ -139,5 +171,13 @@
   }
   .tool-result.error {
     color: var(--warn);
+  }
+  .tool-image {
+    display: block;
+    max-width: 100%;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    margin: 0.5rem 0;
+    object-fit: contain;
   }
 </style>

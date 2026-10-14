@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import Papa from 'papaparse'
 import type { Tool } from '../types'
-import { resolveSource } from './source'
+import { resolveSource, sourceExternalPaths } from './source'
 
 type Row = Record<string, unknown>
 type WhereOp = 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte' | 'contains'
@@ -105,6 +105,7 @@ export const parseCsvTool: Tool = {
     }
   },
   mutates: (input) => input.action === 'append',
+  externalPaths: sourceExternalPaths,
   describe(input) {
     if (input.action === 'append') return `Append a row to "${String(input.filePath ?? '')}": ${JSON.stringify(input.row)}`
     return `parse_csv ${String(input.action ?? 'summarize')} on "${String(input.filePath ?? input.url ?? '(inline)')}"`
@@ -153,7 +154,7 @@ export const parseCsvTool: Tool = {
     }
 
     if (action === 'append') {
-      if (!writeBackPath) throw new Error('append requires filePath (a url/text source has nothing to write back to).')
+      if (!writeBackPath) throw new Error('append requires a filePath inside the workspace (a url/text source, or a file outside the workspace, cannot be written back to).')
       const newRow = (input.row as Row) ?? {}
       const fullRow: Row = Object.fromEntries(columns.map((c) => [c, newRow[c] ?? '']))
       const updated = [...rows, fullRow]

@@ -1,4 +1,4 @@
-import type { ModelProvider } from './types'
+import type { ModelProvider, ProviderOptions } from './types'
 
 export interface ProviderDescriptor {
   id: string
@@ -11,7 +11,7 @@ export interface ProviderDescriptor {
    * only `getEmbeddingProvider()` (providers/setup.ts) does.
    */
   supportsEmbeddings: boolean
-  create(apiKey?: string): ModelProvider
+  create(apiKey?: string, options?: ProviderOptions): ModelProvider
 }
 
 export class ProviderRegistry {

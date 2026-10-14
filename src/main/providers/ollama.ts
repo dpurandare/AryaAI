@@ -5,19 +5,34 @@ import type { CompletionRequest, EmbeddingProvider, Message, ModelProvider, Stre
 /**
  * Ollama's `/v1/*` endpoints are OpenAI Chat Completions-wire-compatible
  * (confirmed live, including real tool-call responses), so this just points
- * the OpenAI SDK at the local server instead of api.openai.com. The API key
- * is unused by Ollama but the SDK requires a non-empty string. The same
- * compatibility extends to `/v1/embeddings`.
+ * the OpenAI SDK at the local server instead of api.openai.com. For local
+ * use the API key is unused by Ollama but the SDK requires a non-empty
+ * string, hence the `'ollama'` default. The same compatibility extends to
+ * `/v1/embeddings`.
+ *
+ * Also backs the separate "Ollama Cloud" provider (#167) — ollama.com's
+ * hosted offering exposes the identical OpenAI-compatible surface at
+ * `https://ollama.com/v1`, just with a real API key required
+ * (docs.ollama.com/api/openai-compatibility, confirmed 2026-09-29) — so
+ * this one class serves both, distinguished only by the constructor args
+ * `providers/setup.ts` passes in for each registered provider id.
  */
 export class OllamaProvider implements ModelProvider, EmbeddingProvider {
-  readonly id = 'ollama'
-  readonly displayName = 'Ollama (local)'
+  readonly id: string
+  readonly displayName: string
   private client: OpenAI
-  /** Native (non-`/v1`) API root, derived from the same configured baseURL — `/api/ps` below lives outside the OpenAI-compat surface. */
+  /** Native (non-`/v1`) API root, derived from the same configured baseURL — `/api/ps`/`/api/show` below live outside the OpenAI-compat surface. Not verified against Ollama Cloud specifically; both callers already degrade to `undefined` on any failure (unreachable/unauthorized/nonexistent), so an unsupported cloud response is silently harmless, just a wasted round-trip. */
   private rootURL: string
 
-  constructor(baseURL = 'http://localhost:11434/v1') {
-    this.client = new OpenAI({ apiKey: 'ollama', baseURL })
+  constructor(
+    baseURL = 'http://localhost:11434/v1',
+    apiKey = 'ollama',
+    id = 'ollama',
+    displayName = 'Ollama (local)'
+  ) {
+    this.id = id
+    this.displayName = displayName
+    this.client = new OpenAI({ apiKey, baseURL })
     this.rootURL = baseURL.replace(/\/v1\/?$/, '')
   }
 

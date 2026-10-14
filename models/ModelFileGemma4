@@ -1,11 +1,12 @@
 # Pull the base gpt-oss model
-FROM qwen3.8:latest
+FROM gemma4:latest
 
 # Set the context size (e.g., 32768, 65536, or 131072 for full 128k)
-PARAMETER num_ctx 262144
+PARAMETER num_ctx 131072
 
 # Optional: Set the number of parallel requests allowed (reduces max context per request)
 # PARAMETER num_parallel 2
 
 # run this afterwords.
-# ollama create qwen3.8-custom -f ./ModelFile2
+# ollama create gemma4-custom -f ./models/ModelFileGemma4
+

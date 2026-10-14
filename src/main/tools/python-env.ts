@@ -18,6 +18,8 @@ import path from 'node:path'
  */
 export const WORKSPACE_VENV_DIR = 'venv'
 
+const MAC_SYSTEM_CA_BUNDLE = '/etc/ssl/cert.pem'
+
 export interface VenvOptions {
   platform?: NodeJS.Platform
   /** Injectable so the platform branches are unit-testable on any OS. */
@@ -59,6 +61,14 @@ export function withWorkspaceVenv(
     [pathKey]: baseEnv[pathKey] ? `${bin}${p.delimiter}${baseEnv[pathKey]}` : bin
   }
   delete env.PYTHONHOME
+  // python.org's macOS Python ships no CA bundle until its "Install Certificates" step is run, so a script's own
+  // downloads (urllib, e.g. easyocr fetching its model) fail with CERTIFICATE_VERIFY_FAILED even though `pip` works.
+  // macOS always has the system bundle at /etc/ssl/cert.pem — point Python at it unless the user has set their own.
+  const platform = opts.platform ?? process.platform
+  const exists = opts.exists ?? existsSync
+  if (platform === 'darwin' && !env.SSL_CERT_FILE && !env.REQUESTS_CA_BUNDLE && exists(MAC_SYSTEM_CA_BUNDLE)) {
+    env.SSL_CERT_FILE = MAC_SYSTEM_CA_BUNDLE
+  }
   return { env, active: true }
 }
 
@@ -68,15 +78,17 @@ export function looksLikePythonNotFound(exitCode: number, stderr: string): boole
   return /\bpython3?\b/i.test(stderr) && /not found|not recognized|no such file/i.test(stderr)
 }
 
-/** Appended to a python-not-found result when there is no workspace venv to fall back on, so the model bootstraps one instead of concluding it cannot run Python at all. */
-export function pythonNotFoundHint(platform: NodeJS.Platform = process.platform): string {
-  const create =
-    platform === 'win32'
-      ? 'py -m venv venv && venv\\Scripts\\pip install <packages>'
-      : 'python3 -m venv venv && venv/bin/pip install <packages>'
+/**
+ * Appended to a python-not-found result when the workspace has no usable venv.
+ * The app creates the venv itself (`runtime/workspace-runtime.ts`), so this
+ * points at Settings > Runtime instead of asking the model to bootstrap one —
+ * that would fight the user's "continue without Python" choice and the pinned
+ * base-package list.
+ */
+export function pythonNotFoundHint(): string {
   return (
-    'hint: `python` is not on PATH here and this workspace has no usable `venv/` yet. Running Python IS possible — ' +
-    `create the workspace venv once: \`${create}\` — after that \`python\` and \`pip\` automatically use it. ` +
-    'For a stdlib-only script, `python3` may work directly.'
+    'hint: this workspace has no usable Python environment (`venv/`). Sachivji creates it automatically when Python 3.10+ ' +
+    'is installed on this computer, so either Python is missing, creation failed, or Python was turned off. ' +
+    'Tell the user to open Settings > Runtime to see the state and choose Retry — do not try to install Python or build a venv yourself.'
   )
 }

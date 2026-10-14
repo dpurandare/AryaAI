@@ -11,16 +11,22 @@ export interface ScriptedToolCall {
   input: Record<string, unknown>
   /** Overrides `input` as the literal streamed partialInput — for exercising malformed-JSON handling. */
   rawInput?: string
+  /** Opaque per-call signature Gemini 3 requires echoed back — emitted on `tool_use_start` like the real Google adapter does. */
+  thoughtSignature?: string
 }
 
 export interface ScriptedTurn {
   text?: string
+  /** TASKS.md #147 — yielded as a single thinking_delta, before `text` (matching real providers, which reason before answering). */
+  thinking?: string
   toolCalls?: ScriptedToolCall[]
   stopReason?: 'end_turn' | 'tool_use' | 'max_tokens'
   /** Yielded twice in a row before message_stop, matching real providers (Anthropic, Gemini) that repeat a cumulative usage total across chunks rather than sending it once — see orchestrator.ts's roundUsage handling. */
   usage?: { inputTokens: number; outputTokens: number }
   /** Throws instead of streaming anything — every real SDK throws its own differently-shaped error when the request's AbortSignal fires mid-call; the orchestrator is expected to tell that apart from a genuine failure via `request.signal.aborted`, not by inspecting the error itself. */
   throwError?: string
+  /** With `throwError`: gives the thrown error an HTTP-style `.status`, like every real SDK's API error (e.g. 400 for a request the provider rejects). */
+  throwStatus?: number
   /** Throws a rate-limit-shaped error (a real `.status === 429`, optionally real `.headers` for `Retry-After`) — matches the actual `APIError`/`ApiError` shape all 3 real SDK families throw (see `rate-limit.ts`'s own doc comment), for exercising `handleRateLimitError` (TASKS.md #91). */
   throwRateLimit?: { message?: string; headers?: Record<string, string> }
   /**
@@ -112,7 +118,7 @@ export class MockProvider implements ModelProvider {
     }
 
     if (turn.throwError) {
-      throw new Error(turn.throwError)
+      throw Object.assign(new Error(turn.throwError), turn.throwStatus !== undefined ? { status: turn.throwStatus } : {})
     }
 
     if (turn.throwRateLimit) {
@@ -151,12 +157,16 @@ export class MockProvider implements ModelProvider {
       return
     }
 
+    if (turn.thinking) {
+      yield { type: 'thinking_delta', text: turn.thinking }
+    }
+
     if (turn.text) {
       yield { type: 'text_delta', text: turn.text }
     }
 
     for (const call of turn.toolCalls ?? []) {
-      yield { type: 'tool_use_start', id: call.id, name: call.name }
+      yield { type: 'tool_use_start', id: call.id, name: call.name, ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {}) }
       yield { type: 'tool_use_delta', id: call.id, partialInput: call.rawInput ?? JSON.stringify(call.input) }
     }
 

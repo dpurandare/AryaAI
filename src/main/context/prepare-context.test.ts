@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { toOpenAIMessages } from '../providers/openai-compatible'
+import type { ContentBlock } from '@shared/protocol'
 import type { Message, ModelProvider } from '../providers/types'
-import { applySlidingWindow, collapseFailedTurns, prepareConversation, repairToolPairs, trimToolResults, type TurnOverhead } from './prepare-context'
+import {
+  applySlidingWindow,
+  collapseFailedTurns,
+  collapseUnavailableToolCalls,
+  setAsideOtherSpecialistsReplies,
+  migrateLegacyDelegateNames,
+  normalizeUserNotesForWire,
+  prepareConversation,
+  repairToolPairs,
+  splitIntoTurns,
+  trimToolResults,
+  type TurnOverhead
+} from './prepare-context'
 
 const OVERHEAD_MARKER = 'SYS-PROMPT-MARKER'
 
@@ -57,6 +70,80 @@ describe('trimToolResults', () => {
   it('leaves non-tool_result blocks untouched', () => {
     const messages: Message[] = [{ role: 'assistant', content: [{ type: 'text', text: 'hi' }] }]
     expect(trimToolResults(messages)).toEqual(messages)
+  })
+
+  // TASKS.md #148/#149: a listing-shaped tool (find_files/list_directory) gets a line-boundary cut and an
+  // honest count, not a blind mid-line character cut — the whole point being the model can always tell exactly
+  // how much of the listing it isn't seeing, rather than losing an arbitrarily-truncated last entry silently.
+  it('trims a find_files result at a line boundary with a listing-shaped message, not a blind character cut', () => {
+    const lines = Array.from({ length: 500 }, (_, i) => `code/file-${String(i).padStart(3, '0')}.py`)
+    const big = lines.join('\n')
+    const messages: Message[] = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'call-1', name: 'find_files', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'call-1', content: big }] }
+    ]
+    const [, trimmedMsg] = trimToolResults(messages)
+    const block = trimmedMsg.content[0]
+    expect(block.type).toBe('tool_result')
+    if (block.type !== 'tool_result') throw new Error('unreachable')
+    // Never cuts mid-line: every kept line before the marker is a complete, real entry from the original list.
+    const [kept, marker] = block.content.split('\n...[')
+    for (const line of kept.split('\n')) expect(lines).toContain(line)
+    expect(marker).toContain('500 found, showing first')
+    expect(marker).toContain('more not shown')
+    expect(marker).not.toContain('characters omitted')
+  })
+
+  it('leaves a listing-shaped result under the cap untouched', () => {
+    const messages: Message[] = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'call-1', name: 'list_directory', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'call-1', content: 'file a.txt\nfile b.txt' }] }
+    ]
+    expect(trimToolResults(messages)).toEqual(messages)
+  })
+})
+
+// TASKS.md #158: a mid-run steering comment must never fracture the turn it was injected into — these are
+// the two mechanisms that make that true (splitIntoTurns treats it as a continuation; normalizeUserNotesForWire
+// makes it read as ordinary text to the model without changing what's persisted/shown).
+describe('splitIntoTurns treats a user_note as a continuation, not a new turn (#158)', () => {
+  it('keeps a user_note-only message in the same turn as the assistant round it was injected into', () => {
+    const messages: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'original request' }] },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'c1', name: 'shell_execute', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'c1', content: 'output' }] },
+      { role: 'user', content: [{ type: 'user_note', text: 'wrong path, try the other table' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'ok, adjusting' }] }
+    ]
+    const turns = splitIntoTurns(messages)
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toHaveLength(5)
+  })
+
+  it('an ordinary role:user text message still starts a genuinely new turn (the marker is not overbroad)', () => {
+    const messages: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'first request' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'first answer' }] },
+      { role: 'user', content: [{ type: 'text', text: 'second, unrelated request' }] }
+    ]
+    const turns = splitIntoTurns(messages)
+    expect(turns).toHaveLength(2)
+  })
+})
+
+describe('normalizeUserNotesForWire (#158)', () => {
+  it('converts a user_note block to plain text, leaving everything else untouched', () => {
+    const messages: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+      { role: 'user', content: [{ type: 'user_note', text: 'wrong path, try the other table' }] },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'c1', name: 'read_file', input: { path: 'a.txt' } }] }
+    ]
+    const normalized = normalizeUserNotesForWire(messages)
+    expect(normalized[1].content[0]).toEqual({ type: 'text', text: 'wrong path, try the other table' })
+    expect(normalized[0]).toEqual(messages[0])
+    expect(normalized[2]).toEqual(messages[2])
+    // Original input untouched.
+    expect(messages[1].content[0]).toEqual({ type: 'user_note', text: 'wrong path, try the other table' })
   })
 })
 
@@ -566,5 +653,157 @@ describe('prepareConversation', () => {
     expect(summary.type).toBe('text')
     if (summary.type !== 'text') throw new Error('unreachable')
     expect(summary.text).toContain('attempted 4 times in a row')
+  })
+})
+
+describe('migrateLegacyDelegateNames', () => {
+  const call = (name: string, id = 'D1'): Message => ({
+    role: 'assistant',
+    content: [{ type: 'tool_use', id, name, input: { task: 't' }, agentRole: 'terminal-devops' }]
+  })
+
+  it('renames the delegate tools of retired roles (Terminal/DevOps, Distribution) to the Developer on replay', () => {
+    const out = migrateLegacyDelegateNames([call('delegate_to_terminal_devops', 'A'), call('delegate_to_distribution', 'B')])
+    expect(out.flatMap((m) => m.content).map((b) => (b.type === 'tool_use' ? b.name : ''))).toEqual(['delegate_to_coding', 'delegate_to_coding'])
+  })
+
+  it('keeps the tool_use id (so the paired tool_result still matches) and the agentRole tag (so the UI chip is unchanged)', () => {
+    const block = migrateLegacyDelegateNames([call('delegate_to_terminal_devops', 'KEEP')])[0].content[0]
+    expect(block).toMatchObject({ type: 'tool_use', id: 'KEEP', agentRole: 'terminal-devops', name: 'delegate_to_coding' })
+  })
+
+  it('leaves current delegates and ordinary tools alone, and returns the same array when nothing changes', () => {
+    const messages: Message[] = [call('delegate_to_data'), call('shell_execute'), call('delegate_to_coding')]
+    expect(migrateLegacyDelegateNames(messages)).toBe(messages)
+  })
+
+  it('does not mutate its input (the stored transcript must stay as recorded)', () => {
+    const messages: Message[] = [call('delegate_to_terminal_devops')]
+    migrateLegacyDelegateNames(messages)
+    expect(messages[0].content[0]).toMatchObject({ name: 'delegate_to_terminal_devops' })
+  })
+})
+
+describe('collapseUnavailableToolCalls (slim router: no provider is shown a call to a tool it was not given)', () => {
+  const call = (id: string, name: string, input: Record<string, unknown> = {}): ContentBlock => ({ type: 'tool_use', id, name, input })
+  const result = (id: string, content: string, isError = false): ContentBlock => ({ type: 'tool_result', toolUseId: id, content, isError })
+  const available = new Set(['shell_execute', 'delegate_to_data'])
+
+  it('returns the SAME array when every call is to an available tool', () => {
+    const messages: Message[] = [
+      { role: 'assistant', content: [call('a', 'shell_execute', { command: 'ls' })] },
+      { role: 'user', content: [result('a', 'ok')] }
+    ]
+    expect(collapseUnavailableToolCalls(messages, available)).toBe(messages)
+  })
+
+  it('turns a call to an unavailable tool AND its result into text, so no tool_use/tool_result for it remains', () => {
+    const out = collapseUnavailableToolCalls(
+      [
+        { role: 'assistant', content: [call('x', 'xlsx_write', { path: 'a.xlsx' })] },
+        { role: 'user', content: [result('x', 'Wrote 3 rows.')] }
+      ],
+      available
+    )
+    expect(out[0].content).toEqual([{ type: 'text', text: '[earlier: called xlsx_write({"path":"a.xlsx"})]' }])
+    expect(out[1].content).toEqual([{ type: 'text', text: '[earlier result of xlsx_write: Wrote 3 rows.]' }])
+    expect(out.flatMap((m) => m.content).some((b) => b.type === 'tool_use' || b.type === 'tool_result')).toBe(false)
+  })
+
+  it('a mixed turn keeps the available call paired and puts converted results AFTER the real tool_result (Anthropic wants tool_results first)', () => {
+    const out = collapseUnavailableToolCalls(
+      [
+        { role: 'assistant', content: [{ type: 'text', text: 'Doing two things.' }, call('gone', 'xlsx_write'), call('kept', 'shell_execute', { command: 'ls' })] },
+        { role: 'user', content: [result('gone', 'done'), result('kept', 'files')] }
+      ],
+      available
+    )
+    expect(out[0].content.map((b) => b.type)).toEqual(['text', 'text', 'tool_use']) // order preserved, only the absent call converted
+    expect(out[0].content[2]).toMatchObject({ type: 'tool_use', id: 'kept', name: 'shell_execute' })
+    expect(out[1].content.map((b) => b.type)).toEqual(['tool_result', 'text'])
+    expect(out[1].content[0]).toMatchObject({ toolUseId: 'kept' })
+  })
+
+  it('keeps the wire-format invariant the providers enforce: every remaining tool_use has its tool_result and vice versa', () => {
+    const out = collapseUnavailableToolCalls(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'go' }] },
+        { role: 'assistant', content: [call('1', 'db_execute_sql'), call('2', 'shell_execute')] },
+        { role: 'user', content: [result('1', 'rows'), result('2', 'ok')] },
+        { role: 'assistant', content: [call('3', 'delegate_to_data')] },
+        { role: 'user', content: [result('3', 'x')] }
+      ],
+      available
+    )
+    const uses = out.flatMap((m) => m.content.flatMap((b) => (b.type === 'tool_use' ? [b.id] : [])))
+    const results = out.flatMap((m) => m.content.flatMap((b) => (b.type === 'tool_result' ? [b.toolUseId] : [])))
+    expect(uses.sort()).toEqual(['2', '3'])
+    expect(results.sort()).toEqual(['2', '3'])
+  })
+
+  it('marks an errored result, truncates long ones, and shortens a long input', () => {
+    const out = collapseUnavailableToolCalls(
+      [
+        { role: 'assistant', content: [call('e', 'api_call', { body: 'x'.repeat(400) })] },
+        { role: 'user', content: [result('e', 'y'.repeat(900), true)] }
+      ],
+      available
+    )
+    const callText = (out[0].content[0] as { text: string }).text
+    const resText = (out[1].content[0] as { text: string }).text
+    expect(callText.length).toBeLessThan(220)
+    expect(callText).toContain('…')
+    expect(resText).toMatch(/^\[earlier result of api_call \(error\): y{500}…\]$/)
+  })
+
+  it('preserves the agentRole tag on a converted call (the UI chip and nested-message repair key on it) and does not mutate its input', () => {
+    const messages: Message[] = [{ role: 'assistant', content: [{ type: 'tool_use', id: 'n', name: 'xlsx_write', input: {}, agentRole: 'coding' }] }]
+    const out = collapseUnavailableToolCalls(messages, available)
+    expect(out[0].content[0]).toMatchObject({ type: 'text', agentRole: 'coding' })
+    expect(messages[0].content[0]).toMatchObject({ type: 'tool_use', name: 'xlsx_write' })
+  })
+})
+
+describe('setAsideOtherSpecialistsReplies (found live in 11.6: a pinned specialist answered as another one)', () => {
+  const label = (role: string): string => ({ planning: 'Planner', research: 'Researcher' })[role] ?? role
+  const history: Message[] = [
+    { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'Hi, I am Sachivji.' }] },
+    { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'Hi, I plan.', agentRole: 'planning' }] },
+    { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'Hi, I research.', agentRole: 'research' }] },
+    { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
+  ]
+
+  it("takes other specialists' and Auto's earlier text out of the conversation and hands it back as background, keeping the current role's own", () => {
+    const { messages, background } = setAsideOtherSpecialistsReplies(history, 'research', label)
+    const texts = messages.map((m) => (m.content[0] as { text: string }).text)
+    expect(texts).toEqual(['Hello', 'Hello', 'Hello', 'Hi, I research.', 'Hello'])
+    expect(background).toContain('- Sachivji (Auto): Hi, I am Sachivji.')
+    expect(background).toContain('- Planner: Hi, I plan.')
+    expect(background).not.toContain('Hi, I research.')
+    expect(background).toContain('you are the Researcher specialist')
+  })
+
+  it('does the same for Auto: replies written by pinned specialists become background, the router\'s own (untagged) replies stay', () => {
+    const { messages, background } = setAsideOtherSpecialistsReplies(history, undefined, label)
+    expect(messages.map((m) => (m.content[0] as { text: string }).text)).toEqual(['Hello', 'Hi, I am Sachivji.', 'Hello', 'Hello', 'Hello'])
+    expect(background).toContain('- Planner: Hi, I plan.')
+    expect(background).toContain('- Researcher: Hi, I research.')
+    expect(background).not.toContain('Hi, I am Sachivji.')
+    expect(background).toContain('you are Sachivji, the orchestrator')
+  })
+
+  it('leaves tool calls, the current turn and the stored conversation alone, and gives no background when nothing was set aside', () => {
+    const turn: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'go' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'working' }, { type: 'tool_use', id: 'c1', name: 'x', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'c1', content: 'ok' }] }
+    ]
+    const out = setAsideOtherSpecialistsReplies(turn, 'research', label)
+    expect(out.messages).toEqual(turn)
+    expect(out.background).toBe('')
+    expect((history[3].content[0] as { text: string }).text).toBe('Hi, I plan.')
   })
 })

@@ -3,7 +3,17 @@ import { quoteIdentifier } from './identifier'
 import { isMutatingSql } from './sql-classifier'
 import type { DbDriver, DbQueryResult, DbTable } from './types'
 
-const MAX_RETURNED_ROWS = 200
+/**
+ * TASKS.md #172: used to be `MAX_RETURNED_ROWS = 200` — a UX-sized cap meant to keep the *chat-visible
+ * text* readable, applied here instead at the data layer, which silently discarded everything beyond
+ * 200 rows before a later step (reading the real file this result gets captured to) ever had a chance
+ * to use it — found live, a real year-long analytical query (52,704 rows) needed for a genuine
+ * computation was silently cut to 1.4 days of it. Readability of the *chat text* is already handled
+ * downstream (`formatQueryResult`'s truncation message, `trimToolResults`'s context cap) — this number
+ * is now purely a safety backstop against a truly pathological query, high enough that a real analytical
+ * pull (a year of 10-minute-interval telemetry, the motivating case) comfortably fits under it.
+ */
+const MAX_SAFETY_ROWS = 100_000
 
 export class SqliteDriver implements DbDriver {
   readonly engine = 'sqlite' as const
@@ -62,7 +72,7 @@ export class SqliteDriver implements DbDriver {
       return { rowCount: info.changes }
     }
     const rows = this.db.prepare(trimmed).all(...params) as Record<string, unknown>[]
-    return { rows: rows.slice(0, MAX_RETURNED_ROWS), rowCount: rows.length }
+    return { rows: rows.slice(0, MAX_SAFETY_ROWS), rowCount: rows.length }
   }
 
   async close(): Promise<void> {

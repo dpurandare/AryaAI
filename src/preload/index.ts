@@ -17,17 +17,25 @@ import {
   type SaveEmailConnectionInput,
   type ContextWindowInfo,
   type ProviderDescriptor,
+  type WebSearchProviderDescriptor,
   type McpServerDto,
   type SaveMcpServerInput,
   type ToolDescriptor,
+  type RoleToolsDto,
   type SessionUsageDto,
   type SessionExportResult,
   type AppUpdateAvailablePayload,
   type SearchHistoryStatusDto,
   type SessionTitleUpdatedPayload,
   type ToolValidateResult,
-  type SecretStorageInfo
+  type SecretStorageInfo,
+  type RoleRosterDto,
+  type SettingsExportPayload,
+  type SettingsExportResult,
+  type SettingsImportPreviewResult,
+  type SettingsImportApplyResult
 } from '@shared/ipc-contract'
+import type { OllamaRuntimeState, RuntimeState } from '@shared/runtime'
 import type { AgentRole } from '@shared/agents'
 
 const api = {
@@ -57,11 +65,18 @@ const api = {
   getSessionUsage: (sessionId: string): Promise<SessionUsageDto> =>
     ipcRenderer.invoke(IpcChannel.SessionsGetUsage, sessionId),
 
+  probeEmbeddingDimension: (providerId: string, model: string): Promise<number> =>
+    ipcRenderer.invoke(IpcChannel.EmbeddingProbeDimension, providerId, model),
+
   listProviders: (): Promise<ProviderDescriptor[]> => ipcRenderer.invoke(IpcChannel.ProvidersList),
+  listWebSearchProviders: (): Promise<WebSearchProviderDescriptor[]> =>
+    ipcRenderer.invoke(IpcChannel.WebSearchProvidersList),
   setApiKey: (providerId: string, apiKey: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.ProvidersSetApiKey, providerId, apiKey),
   hasApiKey: (providerId: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannel.ProvidersHasApiKey, providerId),
+  getApiKeyPreview: (providerId: string): Promise<string | null> =>
+    ipcRenderer.invoke(IpcChannel.ProvidersGetApiKeyPreview, providerId),
   listModels: (providerId: string): Promise<string[]> =>
     ipcRenderer.invoke(IpcChannel.ProvidersListModels, providerId),
 
@@ -69,6 +84,11 @@ const api = {
     ipcRenderer.invoke(IpcChannel.SettingsGet, key),
   setSetting: (key: string, value: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.SettingsSet, key, value),
+
+  exportSettings: (): Promise<SettingsExportResult> => ipcRenderer.invoke(IpcChannel.SettingsExport),
+  previewSettingsImport: (): Promise<SettingsImportPreviewResult> => ipcRenderer.invoke(IpcChannel.SettingsImportPreview),
+  applySettingsImport: (payload: SettingsExportPayload): Promise<SettingsImportApplyResult> =>
+    ipcRenderer.invoke(IpcChannel.SettingsImportApply, payload),
 
   listDataConnections: (): Promise<DataConnectionDto[]> =>
     ipcRenderer.invoke(IpcChannel.DataConnectionsList),
@@ -103,11 +123,38 @@ const api = {
   setWorkspaceRoot: (path: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannel.WorkspaceSetRoot, path),
 
+  getRoles: (): Promise<RoleRosterDto> => ipcRenderer.invoke(IpcChannel.RolesGet),
+  setRoleEnabled: (id: string, enabled: boolean): Promise<RoleRosterDto> => ipcRenderer.invoke(IpcChannel.RolesSetEnabled, id, enabled),
+  openRolesFolder: (): Promise<void> => ipcRenderer.invoke(IpcChannel.RolesOpenFolder),
+  createExampleRole: (): Promise<string> => ipcRenderer.invoke(IpcChannel.RolesCreateExample),
+
+  getRuntimeState: (): Promise<RuntimeState | null> => ipcRenderer.invoke(IpcChannel.RuntimeGetState),
+  ensureRuntime: (): Promise<RuntimeState> => ipcRenderer.invoke(IpcChannel.RuntimeEnsure),
+  repairRuntime: (): Promise<RuntimeState> => ipcRenderer.invoke(IpcChannel.RuntimeRepair),
+  setRuntimeEnabled: (enabled: boolean): Promise<RuntimeState> =>
+    ipcRenderer.invoke(IpcChannel.RuntimeSetEnabled, enabled),
+  onRuntimeStateChanged: (callback: (state: RuntimeState) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, state: RuntimeState): void => callback(state)
+    ipcRenderer.on(IpcChannel.RuntimeStateChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannel.RuntimeStateChanged, listener)
+  },
+
+  getOllamaRuntimeState: (): Promise<OllamaRuntimeState | null> => ipcRenderer.invoke(IpcChannel.OllamaGetState),
+  ensureOllamaRuntime: (): Promise<OllamaRuntimeState> => ipcRenderer.invoke(IpcChannel.OllamaEnsure),
+  onOllamaRuntimeStateChanged: (callback: (state: OllamaRuntimeState) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, state: OllamaRuntimeState): void => callback(state)
+    ipcRenderer.on(IpcChannel.OllamaStateChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannel.OllamaStateChanged, listener)
+  },
+
   getSearchHistoryStatus: (): Promise<SearchHistoryStatusDto> =>
     ipcRenderer.invoke(IpcChannel.SearchHistoryStatus),
   rebuildSearchHistoryIndex: (): Promise<void> => ipcRenderer.invoke(IpcChannel.SearchHistoryRebuildIndex),
 
   listTools: (): Promise<ToolDescriptor[]> => ipcRenderer.invoke(IpcChannel.ToolsList),
+  listExternalFolders: (): Promise<string[]> => ipcRenderer.invoke(IpcChannel.ExternalFoldersList),
+  removeExternalFolder: (folder: string): Promise<void> => ipcRenderer.invoke(IpcChannel.ExternalFoldersRemove, folder),
+  listToolsByRole: (): Promise<RoleToolsDto[]> => ipcRenderer.invoke(IpcChannel.ToolsListByRole),
 
   getContextWindow: (): Promise<ContextWindowInfo | null> => ipcRenderer.invoke(IpcChannel.ContextWindowGet),
 
@@ -118,6 +165,8 @@ const api = {
   ): Promise<{ streamId: string }> =>
     ipcRenderer.invoke(IpcChannel.ChatSend, sessionId, text, forcedRole ?? null),
   cancelChat: (streamId: string): Promise<void> => ipcRenderer.invoke(IpcChannel.ChatCancel, streamId),
+  steerChat: (streamId: string, comment: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannel.ChatSteer, streamId, comment),
 
   onChatStreamEvent: (callback: (payload: ChatStreamEventPayload) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, payload: ChatStreamEventPayload): void =>

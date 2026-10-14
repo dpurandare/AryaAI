@@ -73,7 +73,7 @@ describe('parse_json', () => {
 
   it('rejects append when the source is not a file', async () => {
     await expect(parseJsonTool.execute({ text: SAMPLE, action: 'append', path: 'items', item: {} }, ctx)).rejects.toThrow(
-      /append requires filePath/
+      /append requires a filePath/
     )
   })
 })

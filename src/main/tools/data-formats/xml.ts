@@ -1,6 +1,6 @@
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import type { Tool } from '../types'
-import { resolveSource } from './source'
+import { resolveSource, sourceExternalPaths } from './source'
 import { queryPath, summarizeValue } from './structured-query'
 
 const MAX_RESULT_CHARS = 8_000
@@ -37,6 +37,7 @@ export const parseXmlTool: Tool = {
     }
   },
   mutates: false,
+  externalPaths: sourceExternalPaths,
   async execute(input, ctx) {
     const action = String(input.action ?? 'summarize')
     const { text } = await resolveSource(input, ctx)

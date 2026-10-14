@@ -1,17 +1,56 @@
+import { basename, dirname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
+import { KNOWLEDGE_FIRST_REFUSAL, mcpAttemptedThisTurn, wantsWebExplicitly } from './knowledge-first'
+import { emptyDelegateCalls, isInternalWorkFile, isRestatement, lastDelegateReplies, planStepReplies, stripInternalPaths } from './restatement'
 import type { AgentRole } from '@shared/agents'
-import { AGENT_ROLE_LABELS, AGENT_ROLES } from '@shared/agents'
+import { PLANNABLE_ROLES, roleLabel, type RoleMeta } from '@shared/agents'
 import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
 import { evaluateClassifyGate, shouldSampleForCalibration, type ClassifyGateVerdict } from './classify-gate'
-import { CONTEXT_BUDGET_FRACTION, overheadTokens, resolveContextWindow } from '../context/prepare-context'
+import {
+  CONTEXT_BUDGET_FRACTION,
+  LISTING_TOOL_NAMES,
+  setAsideOtherSpecialistsReplies,
+  normalizeUserNotesForWire,
+  overheadTokens,
+  resolveContextWindow,
+  splitIntoTurns
+} from '../context/prepare-context'
 import { isRateLimitError, retryAfterMsFromError } from '../providers/rate-limit'
 import type { ModelProvider, ToolDefinition } from '../providers/types'
+import { EXTERNAL_ACCESS_TOOL_NAME, isInsideWorkspace } from '../security/external-access'
+import { pruneScratchDir } from '../tools/workspace-layout'
 import { SHOW_MEDIA_MARKER, type ShowMediaPayload } from '../tools/show-media'
 import type { Tool, ToolContext } from '../tools/types'
+import { buildRoleDigest, isRoleAvailable, type ConfigurationCounts } from './capabilities'
+import { isUserDataTopic, userDataTerms } from './domain-topic'
+import {
+  diffSnapshots,
+  formatDelegateResult,
+  formatInputs,
+  isCapturableDataTool,
+  MAX_DATA_FILES_PER_DELEGATE,
+  parseHandoffTag,
+  pruneHandoffDirs,
+  saveHandoffData,
+  snapshotWorkspace,
+  type DelegateResult,
+  type HandoffDataFile,
+  type HandoffItem
+} from './handoff'
 
 export interface Agent {
   role: AgentRole
+  /**
+   * Set only on user-defined roles (design section 11); built-ins take their label and flags from the manifest. `label` is what chips and
+   * the picker show, `pickable` / `plannable` are the manifest flags, `meta` carries the description and examples for listings, and
+   * `custom` marks the role as user-defined (so, for instance, the slim router never treats it as the owner of a tool).
+   */
+  custom?: boolean
+  label?: string
+  pickable?: boolean
+  plannable?: boolean
+  meta?: RoleMeta
   /** One-line description used in the orchestrator's own system prompt to describe when to delegate here. */
   summary: string
   systemPrompt: string
@@ -31,6 +70,19 @@ export interface Agent {
   isolated?: boolean
   /** The fresh round budget this role's own delegate calls get — every delegate call has always had its own pool, isolated or not (found live: a single turn-wide shared pool let one delegate's legitimate multi-step work starve the rest of the turn). Defaults to `MAX_TOTAL_ROUNDS` if omitted. */
   maxRounds?: number
+  /**
+   * Asked when this role's run is about to end with a final answer: return a message and the run is sent back to work
+   * (a visible "[Completion check by Sachivji]" note), or undefined to let it finish. For work a weaker model likes to
+   * cut short — a research pass that read no pages — where a prompt rule alone was not followed. At most
+   * `MAX_COMPLETION_GATE_NUDGES` times per run, after which the answer stands.
+   */
+  completionGate?(info: {
+    task: string
+    calls: ReadonlyMap<string, number>
+    unreadUrls: readonly string[]
+    /** Per tool: the total characters of all `content` inputs it was given, the longest single one, and how many distinct URLs that longest one holds. */
+    content: ReadonlyMap<string, { total: number; longest: number; longestUrls: number }>
+  }): string | undefined
 }
 
 export interface ConfirmDecision {
@@ -93,7 +145,7 @@ export type OrchestratorEvent =
  * remains the real backstop against a turn actually running too long; this
  * exists mainly to catch genuine runaway loops, not to ration ordinary work.
  */
-const MAX_TOTAL_ROUNDS = 20
+const MAX_TOTAL_ROUNDS = 30
 const DELEGATE_PREFIX = 'delegate_to_'
 
 /**
@@ -158,6 +210,89 @@ const TURN_DEADLINE_MS = 15 * 60 * 1000
  */
 const TOOL_EXECUTE_TIMEOUT_MS = 5 * 60 * 1000
 
+/** How many times a role's completionGate may send one run back to work. */
+const MAX_COMPLETION_GATE_NUDGES = 6
+
+/**
+ * Rounds in a row in which every call was to the SAME tool and every one failed, after which a run stops instead of
+ * burning its whole round budget. Found live (the 3-slide roadmap deck): a model's pptx_compose_slide calls came out
+ * corrupted and it repeated the broken call 34 times over six minutes, until the user pressed Stop. A model that is
+ * correcting a call normally succeeds within a few tries; six identical-tool failures with nothing in between is a loop.
+ */
+const MAX_CONSECUTIVE_TOOL_FAILURES = 6
+
+/**
+ * TASKS.md #202 — found live with both gpt-4o-mini (4x) and gpt-4o (26x, user had to press Stop) asked to use a
+ * connected MCP server's real tools: each round called `mcp_list_connections` again with the exact same (empty)
+ * input and got the exact same result, with no new information and no error — so MAX_CONSECUTIVE_TOOL_FAILURES
+ * above never applies (every call "succeeded"). Unlike a failing call, a *successful*-but-identical repeat gets one
+ * chance to self-correct: a nudge after this many in a row, pointing at delegate_to_mcp_operator when relevant
+ * (see identicalCallNudge below) — only an outright hard stop (MAX_IDENTICAL_CALLS_AFTER_NUDGE below) if ignored.
+ */
+const MAX_IDENTICAL_CALLS_BEFORE_NUDGE = 2
+
+/** How many more identical calls are tolerated after the one nudge above before the run is stopped outright. */
+const MAX_IDENTICAL_CALLS_AFTER_NUDGE = 2
+
+/**
+ * Opt-in, not opt-out: the identical-call guard above only watches this small set of admin/status tools, which
+ * report configuration/connection state that cannot change from one identical call to the next — repeating one is
+ * never a legitimate way to make progress, only a sign the model doesn't know what else to do. Deliberately NOT a
+ * blanket rule over every tool with a few exceptions carved out: a first attempt at that (TASKS.md #202) tripped on
+ * several already-correct, already-tested repeat patterns elsewhere — a user explicitly asking to list the same
+ * directory 4 times, and the existing research completion-gate's own nudge for repeated `web_search` calls, which
+ * owns that specific case already and has its own, more specific wording. Everything outside this set (reads,
+ * writes, web_search, api_check_status polling a job, etc.) is left entirely to the mechanisms that already govern
+ * it: MAX_CONSECUTIVE_TOOL_FAILURES for failures, the completion gate for research, context-bloat capping for cost.
+ */
+const GUARDED_IDENTICAL_CALL_TOOLS: ReadonlySet<string> = new Set([
+  'mcp_list_connections',
+  'mcp_create_connection',
+  'db_list_connections',
+  'db_create_connection',
+  'api_list_connections',
+  'api_create_connection'
+])
+
+/** Key-order-independent so two calls built from the same object literal always compare equal; falls back to the raw text on malformed JSON (never throws). */
+function stableInputKey(inputJson: string): string {
+  try {
+    return JSON.stringify(canonicalizeForKey(JSON.parse(inputJson)))
+  } catch {
+    return inputJson
+  }
+}
+
+function canonicalizeForKey(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeForKey)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((k) => [k, canonicalizeForKey((value as Record<string, unknown>)[k])])
+    )
+  }
+  return value
+}
+
+/**
+ * The nudge text for MAX_IDENTICAL_CALLS_BEFORE_NUDGE: names the repeated tool plainly, and — when it's one of the
+ * Configurator's/router's own mcp_* admin tools and an MCP Operator is actually available — points at
+ * delegate_to_mcp_operator by name, since that's what TASKS.md #202 found was missing: nothing told the model this
+ * was the correct next step, so it just kept re-listing/re-creating connections instead.
+ */
+function identicalCallNudge(toolName: string, mcpOperatorAvailable: boolean): string {
+  const base = `[Repetition check by Sachivji] "${toolName}" was just called again with the exact same input and returned the same result as before — repeating it again will not produce anything new.`
+  if (toolName.startsWith('mcp_') && mcpOperatorAvailable) {
+    return (
+      `${base} If the goal is to actually use a connected MCP server's own tools (look something up, query its ` +
+      "docs, etc.), call delegate_to_mcp_operator now — mcp_list_connections/mcp_create_connection only manage " +
+      'connections, they cannot do that. Otherwise, answer with what you already have or try something genuinely different.'
+    )
+  }
+  return `${base} Answer with what you already have, try something genuinely different, or ask the user — do not call it again with the same input.`
+}
+
 /**
  * TASKS.md #91 — how many app-level rate-limit retries a single round gets
  * (separate from, and on top of, each SDK's own internal ~2-retry backoff —
@@ -210,6 +345,53 @@ function sleepAbortable(ms: number, signal: AbortSignal): Promise<number> {
 const MAX_KEPT_RESULTS_PER_TOOL = 3
 
 /**
+ * TASKS.md #149: the argument names that identify a genuinely distinct RESOURCE for a given tool, so
+ * different targets don't compete for the same recency-cap bucket — root-caused live (session `cd81e5f5`):
+ * 15 `list_directory` calls across ~5 different real paths all shared one name-only bucket, evicting each
+ * other's results regardless of which path they were actually about. Deliberately scoped to just the two
+ * tools that incident actually involved (`list_directory`/`find_files`, #148) — NOT `read_file`, which the
+ * existing test suite already uses in two places as a generic stand-in for a fuzzy-repeated-call tool like
+ * `web_search` (cheaper to script than a real web_search mock); resource-keying it too would silently change
+ * that established, deliberate test behavior without being asked to. A tool with no entry here keeps the
+ * original name-only bucketing — for a fuzzy free-text-query tool (`web_search`), many distinct-but-similar
+ * calls SHOULD still compete for the same cap as a backstop, even when `collapseDuplicateToolResults`'s
+ * URL-overlap detection above didn't catch them as near-duplicates; keying by exact query text would defeat
+ * that entirely (every reworded query would get its own never-full bucket).
+ */
+const RESOURCE_KEY_ARGS: Readonly<Record<string, readonly string[]>> = {
+  list_directory: ['path'],
+  find_files: ['path', 'pattern']
+}
+
+function bucketKey(toolName: string, input: Record<string, unknown>): string {
+  const argNames = RESOURCE_KEY_ARGS[toolName]
+  if (!argNames) return toolName
+  return `${toolName}:${argNames.map((a) => JSON.stringify(input[a] ?? null)).join(',')}`
+}
+
+/**
+ * TASKS.md #149: an older `list_directory`/`find_files` result gets collapsed to a compact-but-complete
+ * form — every entry it found, just without the per-line "dir "/"file " decoration or find_files' header
+ * line — rather than erased. This is the fix for the incident's actual failure: a collapsed listing used to
+ * lose the filenames it found entirely, which is why the model both re-issued identical calls (it could no
+ * longer tell whether an earlier call had found anything) and stated an unlisted filename as fact (pattern-
+ * completing off adjacent real context once the real one was gone). #148's own hard requirement: a "do
+ * something for each file" task must still be able to see every entry from a collapsed result. Returns
+ * `undefined` when there's nothing meaningful to compact (an empty directory / no matches) — that result is
+ * already minimal, so the caller leaves it completely untouched rather than wrapping a placeholder around
+ * essentially nothing.
+ */
+function compactListing(toolName: string, content: string): string | undefined {
+  const lines = content.split('\n')
+  const names =
+    toolName === 'list_directory'
+      ? lines.map((l) => l.replace(/^(dir|file)\s+/, '')).filter((l) => l && l !== '(empty directory)')
+      : lines.slice(1).filter(Boolean) // find_files: line 0 is always the header ("N matched"/"No files matched")
+  if (names.length === 0) return undefined
+  return `[Earlier ${toolName} result, collapsed to save context but still complete — every entry found: ${names.join(', ')}]`
+}
+
+/**
  * Repeated calls to the same read-only tool within a single turn — a
  * research agent refining a `web_search` query several times being the
  * concrete case this was built for — each stayed fully expanded in
@@ -221,14 +403,21 @@ const MAX_KEPT_RESULTS_PER_TOOL = 3
  * most refinements of a query that hadn't found what was needed yet, and
  * every one of those stayed in full for every subsequent round.
  *
- * Keeps only the most recent `MAX_KEPT_RESULTS_PER_TOOL` results for each
- * tool name in what's actually sent to the provider; older ones collapse
- * to a one-line marker (the original tool_use input block is untouched and
- * still cheap, so the model can still see *what* it already tried, just
- * not the full result again). Only applies to a tool whose `mutates` is
- * statically `false` — a completed write/mutating call represents a real
- * side effect worth remembering in full for as long as it's in context;
- * a stale read is safely re-fetchable if actually still needed. Never
+ * Keeps only the most recent `MAX_KEPT_RESULTS_PER_TOOL` results per
+ * `bucketKey` (tool name, or tool name + the resource it targeted for a
+ * path-shaped tool — see `RESOURCE_KEY_ARGS`) in what's actually sent to
+ * the provider; older ones collapse to a compact-but-complete marker for a
+ * listing tool (`compactListing`) or a plain one-line marker otherwise (the
+ * original tool_use input block is untouched either way and still cheap,
+ * so the model can always see *what* it already tried). Only applies to a
+ * tool whose `mutates` is statically `false` — a completed write/mutating
+ * call represents a real side effect worth remembering in full for as long
+ * as it's in context; a stale read is safely re-fetchable if actually
+ * still needed. **Genuinely scoped to the current turn** (`splitIntoTurns`,
+ * the one canonical turn-boundary definition in this codebase) — a call
+ * from an earlier turn is never counted or touched here, matching what
+ * this function's own doc comment always claimed but, before #149, never
+ * actually enforced (it ran against the whole session array). Never
  * mutates `conversation` itself (returns a fresh array only when there's
  * something to collapse) — this only ever affects what's sent to the
  * provider on this and later rounds, never what's persisted to SQLite or
@@ -236,19 +425,31 @@ const MAX_KEPT_RESULTS_PER_TOOL = 3
  * pass in this codebase.
  */
 function capRepeatedToolResults(conversation: Message[], toolByName: ReadonlyMap<string, Tool>): Message[] {
-  const idsByName = new Map<string, string[]>()
+  const turns = splitIntoTurns(conversation)
+  const currentTurn = turns[turns.length - 1] ?? []
+  const currentTurnUseIds = new Set<string>()
+  for (const m of currentTurn) {
+    for (const b of m.content) {
+      if (b.type === 'tool_use') currentTurnUseIds.add(b.id)
+    }
+  }
+
+  const toolNameById = new Map<string, string>()
+  const idsByBucket = new Map<string, string[]>()
   for (const m of conversation) {
     for (const b of m.content) {
-      if (b.type !== 'tool_use') continue
+      if (b.type !== 'tool_use' || !currentTurnUseIds.has(b.id)) continue
       const tool = toolByName.get(b.name)
       if (!tool || tool.mutates !== false) continue
-      const ids = idsByName.get(b.name) ?? []
+      toolNameById.set(b.id, b.name)
+      const key = bucketKey(b.name, b.input)
+      const ids = idsByBucket.get(key) ?? []
       ids.push(b.id)
-      idsByName.set(b.name, ids)
+      idsByBucket.set(key, ids)
     }
   }
   const staleIds = new Set<string>()
-  for (const ids of idsByName.values()) {
+  for (const ids of idsByBucket.values()) {
     if (ids.length <= MAX_KEPT_RESULTS_PER_TOOL) continue
     for (const id of ids.slice(0, ids.length - MAX_KEPT_RESULTS_PER_TOOL)) staleIds.add(id)
   }
@@ -258,6 +459,10 @@ function capRepeatedToolResults(conversation: Message[], toolByName: ReadonlyMap
     ...m,
     content: m.content.map((b): ContentBlock => {
       if (b.type !== 'tool_result' || !staleIds.has(b.toolUseId)) return b
+      const toolName = toolNameById.get(b.toolUseId)
+      const compact = toolName && LISTING_TOOL_NAMES.has(toolName) ? compactListing(toolName, b.content) : undefined
+      if (compact !== undefined) return { ...b, content: compact }
+      if (toolName && LISTING_TOOL_NAMES.has(toolName)) return b // nothing to compact (empty/no-match) — already minimal, leave untouched
       return {
         ...b,
         content: '[Earlier result omitted to save context — this tool was called again later in the same turn. See the tool_use input above for what was tried.]'
@@ -351,6 +556,25 @@ function latestMessageText(conversation: Message[]): string {
 }
 
 /**
+ * design-discussion.md §13.5, TASKS #144: a deliberately narrow, conservative check for the user having
+ * restricted where information may come from ("only use the wiki for this", "don't search the internet") —
+ * if a `no_information` step's fallback (executePlan below) fired anyway, that would be its own kind of
+ * unrequested action (Appendix D1's "no unrequested side effect" principle applied to sourcing, not
+ * mutation). Unlike `evaluateClassifyGate` (#95), which is conservative toward running the real check
+ * because a false "skip" there silently loses real work, this is conservative toward the OPPOSITE
+ * direction: a false negative here (missing a real restriction) lets an unwanted web fallback through,
+ * which is the worse mistake, so it only fires on an unambiguous phrase and defaults to "not restricted"
+ * — i.e. fallback allowed — whenever it isn't sure. Not a general intent classifier; a cheap, narrow,
+ * easily-extended signal, in the same spirit as the compound-request connector-word check it sits beside.
+ */
+const SOURCE_RESTRICTION_SIGNAL =
+  /\bonly\b(?:\s+\S+){0,4}\s+(?:the\s+)?(?:wiki|knowledge base)\b|\b(?:don't|do not|never)\b(?:\s+\S+){0,4}\s+(?:the\s+)?(?:web|internet|online)\b|\bwithout\b(?:\s+\S+){0,3}\s+(?:the\s+)?(?:web|internet)\b|\bno\s+(?:web|internet)\s+search\b/i
+
+export function detectsSourceRestriction(latestMessageText: string): boolean {
+  return SOURCE_RESTRICTION_SIGNAL.test(latestMessageText)
+}
+
+/**
  * A cheap, local, provider-independent stand-in for a real `countTokens`
  * call — deliberately conservative (an undercount of real tokens-per-char
  * only ever makes this *more* likely to trigger the real check below, never
@@ -427,7 +651,20 @@ function collapseOldestToolResultsToFit(
   return working
 }
 
-function delegateToolName(role: AgentRole): string {
+/** The tool the router calls to hand a step to a specialist. Shared with the roster (roles/roster.ts), which prices each role by it. */
+export function buildDelegateToolDefinition(role: AgentRole, label: string, summary: string): ToolDefinition {
+  return {
+    name: delegateToolName(role),
+    description: `Hand off to the ${label} specialist: ${summary}`,
+    inputSchema: {
+      type: 'object',
+      properties: { task: { type: 'string', description: 'What the specialist should do' } },
+      required: ['task']
+    }
+  }
+}
+
+export function delegateToolName(role: AgentRole): string {
   return DELEGATE_PREFIX + role.replace(/-/g, '_')
 }
 
@@ -441,6 +678,7 @@ function roleFromDelegateName(name: string, agents: Map<AgentRole, Agent>): Agen
 function tagEvent(event: StreamEvent, agentRole: AgentRole | undefined): StreamEvent {
   if (!agentRole) return event
   if (event.type === 'text_delta') return { ...event, agentRole }
+  if (event.type === 'thinking_delta') return { ...event, agentRole }
   if (event.type === 'tool_use_start') return { ...event, agentRole }
   if (event.type === 'status') return { ...event, agentRole }
   if (event.type === 'warning') return { ...event, agentRole }
@@ -486,6 +724,34 @@ interface RunState {
   consecutiveRoundTimeouts: number
   /** Same idea as `consecutiveRoundTimeouts` above, but for a distinct trigger (TASKS.md #91): a provider-confirmed rate-limit error (429), not a hang. Deliberately separate accounting — a rate-limit wait must never be mistaken for, or share a budget with, a genuinely stuck round. Reset to 0 the moment a round actually completes. */
   consecutiveRateLimitRetries: number
+  /** Turn-wide handoff bookkeeping, shared by reference with every nested delegate's state (see `HandoffState`). */
+  handoff: HandoffState
+  /** Top-level only: how many times an open-web lookup was held back in favour of the connected knowledge servers this turn (see knowledge-first.ts). */
+  knowledgeFirstRefusals?: number
+}
+
+/**
+ * Real outputs of earlier delegates in this turn (design-discussion.md 5.1). One object per turn,
+ * shared by reference between a run's state and its nested delegates' states, so a later step is
+ * handed the files an earlier step produced and the data it retrieved — not just its prose summary.
+ */
+interface HandoffState {
+  /** Names this turn's capture folder (`.sachiv-handoff/<turnId>/`). */
+  turnId: string
+  items: HandoffItem[]
+  /** Numbers the captured data files across the turn so names never collide. */
+  seq: number
+  /** How many times a step has been auto-redirected to another role after an `out_of_scope` answer — capped at one per turn so two roles cannot ping-pong. */
+  redirects: number
+  /** TASKS.md #178: how many times `ensureFollowUpOnIncomplete` has inserted a follow-up step after an `incomplete` answer — capped at one per turn, same reasoning as `redirects`. */
+  incompleteFollowUps: number
+}
+
+/** What `dispatchDelegate` returns: the text the caller folds into the conversation, plus the typed result behind it. */
+interface DelegateOutcome {
+  content: string
+  isError: boolean
+  result?: DelegateResult
 }
 
 const MIN_MAX_OUTPUT_TOKENS = 4096 // today's original flat value — kept as the floor, not the ceiling
@@ -498,6 +764,16 @@ export interface PlanStep {
 
 interface Plan {
   complexity: 'simple' | 'compound'
+  /** TASKS.md #173: a structured, provider-enforced answer to "does this need rules/definitions/standard
+   * practice from a wiki/MCP server (or the web)?" — enforced in code (`ensureDomainKnowledgeStep`) rather
+   * than left to the model's own `steps` choice reliably matching its own prose rule above. */
+  needsDomainKnowledge: boolean
+  /** What to look up, as a short phrase naming a rule, standard, definition, convention or process — never the user's own data. Empty when `needsDomainKnowledge` is false; a true flag with no topic inserts no step (see `shouldInsertDomainKnowledgeStep`). */
+  domainKnowledgeTopic: string
+  /** Captured for the same reason as `needsDomainKnowledge`, but not yet enforced — no demonstrated case
+   * of a data-needing plan omitting a data step the way #173 omitted a domain-knowledge one; adding
+   * enforcement here without a real incident to ground it would be speculative. */
+  needsUserData: boolean
   steps: PlanStep[]
 }
 
@@ -506,6 +782,9 @@ interface Plan {
  * context-bloat failure it exists to prevent (a large `search_history` step
  * result was what triggered the original hallucinated-tool-call bug). */
 const STEP_RESULT_CONTEXT_CAP = 2000
+
+/** Captured handoff data older than this is deleted at the start of a turn. */
+const HANDOFF_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
  * A hard ceiling on how many steps a single classify-and-plan pass can hand
@@ -517,28 +796,176 @@ const STEP_RESULT_CONTEXT_CAP = 2000
  * reasonable steps is still mostly useful with only the first 5 kept; the
  * caller surfaces a warning so this isn't silent.
  */
+/** How many times one round loop re-asks after the model returns nothing at all (no text, no tool call) before reporting it. */
+const MAX_EMPTY_RESPONSE_RETRIES = 2
+
+/** Added (never stored) to every top-level round of a plan's closing write-up: the user has read each step already. */
+const PLAN_FINAL_NUDGE =
+  "[Notice from Sachivji] The user has already read every step's reply above, in full. Write only what those replies do not already say: where sources " +
+  'conflict, what is still unconfirmed or failed, and what to do next. Do not restate findings, lists or tables, and do not mention the names of notes or working files. ' +
+  'If there is nothing to add, answer in one short line.'
+
+/** How many times, per turn, the router is told to re-run a delegate that came back with nothing. */
+const MAX_EMPTY_DELEGATE_RETRIES = 1
+
+/** Added (never stored) to the round after a delegate returned nothing: say so, then try once more. */
+function emptyDelegateNudge(toolNames: readonly string[], canRetry: boolean): string {
+  const who = toolNames.map((n) => n.replace(/^delegate_to_/, '').replace(/[-_]/g, ' ')).join(', ')
+  return canRetry
+    ? `[Notice from Sachivji] The ${who} specialist ended without any output. Tell the user in one short line that it returned nothing and that you are trying again, ` +
+        `then call ${toolNames[0]} once more with a more specific task. Do not answer from your own knowledge in its place.`
+    : `[Notice from Sachivji] The ${who} specialist returned nothing again. Tell the user plainly that it produced no output and what they could try instead. Do not call it again.`
+}
+
+/** Added (for that one retry only, never stored) after an empty round, so the model resumes instead of stopping again. */
+const EMPTY_RESPONSE_NUDGE =
+  'Your previous reply was empty. Continue with the task: use the tool results above and either call the next tool you need or give your answer in plain text.'
+
+/**
+ * Variant for an empty round that still had reasoning. Found live (gemma4 on Ollama, "regenerate the Word document"): the model
+ * wrote "I will call office_create_document again" inside its hidden reasoning, then emitted neither text nor a tool call — twice,
+ * through the generic nudge above. Say plainly that reasoning is not an action.
+ */
+const EMPTY_AFTER_REASONING_NUDGE =
+  'Your previous reply contained only reasoning, which is not shown and does not perform anything: no tool was actually called and no answer was written. ' +
+  'Do now what you decided — emit the real tool call (not a description of it), or write your answer in plain text.'
+
+/**
+ * TASKS.md #172/#173: found live — a round hit the per-round output-token limit mid-tool-call (gpt-4o-mini
+ * writing a Python script, right after being told to read captured data from its handoff file), leaving a
+ * garbage/empty tool call (`python_run` with no `code` at all) that would otherwise just end the whole step
+ * with "(no response)" — no chance to recover, even though the model usually just needs to be told its
+ * output was too long and try again shorter. Bounded the same way `MAX_EMPTY_RESPONSE_RETRIES` is: one
+ * retry only, not unlimited, so a model that keeps generating oversized output still fails the round
+ * eventually rather than looping forever.
+ */
+const MAX_TRUNCATED_TOOL_CALL_RETRIES = 1
+
+/**
+ * TASKS.md #140/#141: a local reasoning model (gpt-oss especially) can burn its whole output budget on
+ * hidden reasoning and return literally no visible text for classify-and-plan's one-shot probe — confirmed
+ * live (console: "classify-and-plan response was not valid JSON ... the model returned no text"). Before
+ * this, the very first empty reply failed open straight to "no plan," silently losing a compound request's
+ * step split with no recovery — unlike `runLoop`'s own round loop, which already retries an empty response
+ * (`MAX_EMPTY_RESPONSE_RETRIES`). One retry only (TASKS #141's own stated preference, option (a)) — cheap
+ * (one extra call, only on an empty reply) and does not depend on #140's still-open root-cause telemetry.
+ */
+const MAX_EMPTY_PLAN_RETRIES = 1
+
 const MAX_PLAN_STEPS = 5
 
-const VALID_STEP_ROLES = new Set<string>(AGENT_ROLES)
+
+/**
+ * The JSON Schema the planning reply must satisfy, handed to the provider as structured output (provider-enforced JSON: the reply is
+ * constrained to this shape rather than merely requested in the prompt). `role` is limited to the roles a plan may target — the same
+ * set `parsePlan` accepts. Kept to the portable subset (object/array/string/enum, `additionalProperties: false`, everything required) that
+ * OpenAI strict mode, Gemini, Ollama, Groq, Mistral and an Anthropic tool input schema all take.
+ */
+export function buildPlanSchema(roleIds: readonly string[]): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      complexity: { type: 'string', enum: ['simple', 'compound'] },
+      needsDomainKnowledge: {
+        type: 'boolean',
+        description:
+          'True only when a correct answer depends on KNOWLEDGE that is not in the request or the data: a rule, ' +
+          'standard, definition, convention, benchmark, coding standard or internal process used to interpret ' +
+          'or judge something — e.g. is this an anomaly, a violation, or what does a named technical term mean. ' +
+          'True even when the user does not name a document. FALSE when the request only retrieves, summarises, ' +
+          'charts, reports on or writes up the user\'s own data (listing top customers, building a chart or a ' +
+          'Word document), or asks about Sachivji itself or this machine (its workspace, folders, settings, the OS), or asks to check, debug, fix or run code or files the user already has, or only asks how to use a tool or file format — unless a connected knowledge server (named in the ' +
+          'instructions) covers that tool or library, then it is knowledge to look up. The user\'s own data is never ' +
+          'knowledge to look up.'
+      },
+      domainKnowledgeTopic: {
+        type: 'string',
+        description:
+          'When needsDomainKnowledge is true: the specific rule, standard, definition or process to look up, ' +
+          'as a short phrase (for example "CERC convention for calculating PLF"). Never the name of a ' +
+          "database, table, customer or file, and never the user's task itself. Empty string when " +
+          'needsDomainKnowledge is false.'
+      },
+      needsUserData: {
+        type: 'boolean',
+        description: "Does answering need the user's own data — a configured database/API/file — not just general knowledge?"
+      },
+      steps: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            role: { type: 'string', enum: [...roleIds] },
+            description: { type: 'string' }
+          },
+          required: ['role', 'description'],
+          additionalProperties: false
+        }
+      }
+    },
+    required: ['complexity', 'needsDomainKnowledge', 'domainKnowledgeTopic', 'needsUserData', 'steps'],
+    additionalProperties: false
+  }
+}
+
+/**
+ * Provider/model pairs that rejected the structured-output request (an HTTP error, e.g. a model without schema support). The planning call
+ * then goes out as a plain prompt-only request, and stops trying the structured form for that pair for the rest of the app session.
+ */
+const structuredOutputRejected = new Set<string>()
+
+/**
+ * The JSON object in a model's reply, tolerating what local reasoning models actually wrap around it: a ```json fence, or a sentence before
+ * and/or after the object. Tries the whole (fence-stripped) text first, then the span from the first `{` to the last `}`.
+ */
+export function parseJsonObjectLoosely(text: string): any | undefined {
+  const stripped = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/, '')
+  const candidates = [stripped]
+  const first = stripped.indexOf('{')
+  const last = stripped.lastIndexOf('}')
+  if (first >= 0 && last > first) candidates.push(stripped.slice(first, last + 1))
+  for (const candidate of candidates) {
+    try {
+      const value = JSON.parse(candidate)
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value
+    } catch {
+      // try the next candidate
+    }
+  }
+  return undefined
+}
 
 /** Fails open to `undefined` (treated as "simple" by the caller) on any parse/shape problem — a broken classifier response must never block the turn it's meant to help. */
-function parsePlan(text: string): { plan: Plan; truncated: boolean } | undefined {
+export function parsePlan(text: string, validRoles: ReadonlySet<string>): { plan: Plan; truncated: boolean } | undefined {
   try {
-    const stripped = text
-      .trim()
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/```\s*$/, '')
-    const parsed = JSON.parse(stripped)
+    const parsed = parseJsonObjectLoosely(text)
+    if (!parsed) return undefined
     if (parsed.complexity !== 'simple' && parsed.complexity !== 'compound') return undefined
     if (!Array.isArray(parsed.steps)) return undefined
     const steps: PlanStep[] = []
     for (const s of parsed.steps) {
       if (typeof s?.description !== 'string' || !s.description.trim()) return undefined
-      if (typeof s?.role !== 'string' || !VALID_STEP_ROLES.has(s.role)) return undefined
+      if (typeof s?.role !== 'string' || !validRoles.has(s.role)) return undefined
       steps.push({ role: s.role as AgentRole, description: s.description })
     }
     const truncated = steps.length > MAX_PLAN_STEPS
-    return { plan: { complexity: parsed.complexity, steps: truncated ? steps.slice(0, MAX_PLAN_STEPS) : steps }, truncated }
+    return {
+      plan: {
+        complexity: parsed.complexity,
+        // Defaults to false rather than rejecting the whole plan — the plain-prompt fallback path (a
+        // model that rejected structured output) can omit these two newer fields entirely, and a
+        // broken/partial classifier response must still fail open to "no domain step inserted," never
+        // to "no plan at all" (same reasoning as every other field here).
+        needsDomainKnowledge: parsed.needsDomainKnowledge === true,
+        domainKnowledgeTopic: typeof parsed.domainKnowledgeTopic === 'string' ? parsed.domainKnowledgeTopic.trim() : '',
+        needsUserData: parsed.needsUserData === true,
+        steps: truncated ? steps.slice(0, MAX_PLAN_STEPS) : steps
+      },
+      truncated
+    }
   } catch {
     return undefined
   }
@@ -595,6 +1022,40 @@ export class Orchestrator {
         classifierComplexity: 'simple' | 'compound' | 'unknown'
         messageLength: number
       }) => void
+      /**
+       * Live configuration counts (databases / APIs / email accounts) for the classifier's role digest, so a plan never routes
+       * "email it to X" to a role with no account to send from. Absent (tests) = assume every role's requirements are met.
+       */
+      getConfiguration?: () => ConfigurationCounts
+      /** Names of the user's own data sources (databases, APIs). A domain-knowledge topic that mentions one is not knowledge to look up in a wiki — see domain-topic.ts. */
+      getUserDataNames?: () => string[]
+      /** Connected MCP servers with the description the user gave each. The classifier is told what they cover, so a how-to question for a library one of them documents counts as needing knowledge from it. */
+      getKnowledgeServers?: () => { name: string; description?: string }[]
+      /**
+       * Called for every real tool call (`agentRole` undefined = the router itself). Local usage counts keep the slim router's hot
+       * core honest (design 3.1). Optional/no-op by default — this file stays DB-free (see this class's own doc comment).
+       */
+      logToolUse?: (sample: { tool: string; agentRole: string }) => void
+      /**
+       * TASKS.md #158: returns and clears whatever mid-run steering comments have arrived since the last
+       * drain — polled non-blockingly at the top of every TOP-LEVEL round (never a nested specialist's own
+       * rounds; delegation is structurally one level only, and routing a steering comment down through an
+       * active delegate call is real additional scope this pass doesn't cover). Optional/absent (tests,
+       * anything that doesn't care) = no-op, matching every other optional callback here. `runLoop` persists
+       * a drained comment itself via the same `yield { kind: 'message', ... }` path every other message
+       * already goes through (ipc/register.ts's generic insertMessage/enqueueMessage handling) — this file
+       * never calls a DB function directly, same as always. A comment submitted but never drained (the run
+       * ends before its next round starts) is a known, accepted gap for this first pass.
+       */
+      drainSteeringComments?: () => string[]
+      /**
+       * 0..1, forwarded unchanged to every `provider.stream()` call this turn makes (classify, every
+       * round, the wrap-up). Absent = send nothing, the provider's own default applies — unlike every
+       * other optional callback here, this isn't DB-free-file plumbing, it is itself the actual value
+       * (ipc/register.ts reads it from Settings > Model behavior once per turn and passes it straight
+       * through), so there is no separate getter to keep this file DB-free with.
+       */
+      temperature?: number
     } = { planningEnabled: false }
   ) {}
 
@@ -672,15 +1133,39 @@ export class Orchestrator {
       maxOutputTokens,
       deadlineAt: Date.now() + TURN_DEADLINE_MS,
       consecutiveRoundTimeouts: 0,
-      consecutiveRateLimitRetries: 0
+      consecutiveRateLimitRetries: 0,
+      handoff: { turnId: randomUUID().slice(0, 8), items: [], seq: 0, redirects: 0, incompleteFollowUps: 0 }
+    }
+    // Old captured-data folders are only useful within (roughly) the turn that made them.
+    const workspaceRoot = this.toolContext.workspaceGuard?.root
+    if (workspaceRoot) {
+      void pruneHandoffDirs(workspaceRoot, HANDOFF_RETENTION_MS)
+      void pruneScratchDir(workspaceRoot, HANDOFF_RETENTION_MS)
     }
 
-    if (forcedRole) {
-      const agent = this.agents.get(forcedRole)
-      if (!agent) throw new Error(`Unknown agent role "${forcedRole}".`)
-      const systemPrompt = agent.systemPrompt + this.buildForcedModeNotice(forcedRole)
-      yield* this.runLoop(systemPrompt, agent.tools, conversation, state, forcedRole, [], true)
-      return
+    // A pinned role that does not resolve — a user-defined role since deleted or disabled, or a stale pin — falls back to Auto with a
+    // visible notice instead of failing the turn (design 11.4). Roles are an open string set now, so this can genuinely happen.
+    let pinned = forcedRole
+    if (pinned && !this.agents.has(pinned)) {
+      const message = `The pinned "${this.labelOf(pinned)}" agent is not available (it may have been removed or disabled) — using Auto instead.`
+      yield { kind: 'stream', event: { type: 'warning', message } }
+      yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message }] }
+      pinned = null
+    }
+    if (pinned) {
+      const agent = this.agents.get(pinned) as Agent
+      const background = setAsideOtherSpecialistsReplies(conversation, pinned, (r) => this.labelOf(r)).background
+      const systemPrompt = agent.systemPrompt + this.buildForcedModeNotice(pinned) + background
+      const before = conversation.length
+      const outcome = yield* this.runLoop(systemPrompt, agent.tools, conversation, state, pinned, [], true)
+      // A pinned specialist that says the request is not its job hands it back to the orchestrator, which delegates it (the user
+      // pinned an agent to talk to it, not to be told to change the selector). Only when it did no work first: a request it
+      // already acted on stays with it. Its short "not mine" reply stays in the transcript; the orchestrator answers below it.
+      const handedBack = parseHandoffTag(outcome.text).status === 'out_of_scope'
+      const didWork = conversation.slice(before).some((m) => m.content.some((b) => b.type === 'tool_use'))
+      if (!handedBack || didWork || outcome.isError) return
+      conversation.length = before
+      yield { kind: 'stream', event: { type: 'status', message: `${this.labelOf(pinned)} can't handle this — passing it to the orchestrator…` } }
     }
 
     // Phase 1 of TASKS.md #95: a cheap deterministic pre-check ahead of the
@@ -692,7 +1177,7 @@ export class Orchestrator {
     // and its result can be logged against the gate's own verdict — see
     // classifyAndPlan's own logging call below.
     const gateVerdict: ClassifyGateVerdict = this.options.planningEnabled
-      ? evaluateClassifyGate(latestMessageText(conversation))
+      ? evaluateClassifyGate(latestMessageText(conversation), { knowledgeServers: (this.options.getKnowledgeServers?.() ?? []).length > 0 })
       : 'run'
     const shouldClassify = this.options.planningEnabled && (gateVerdict !== 'skip' || shouldSampleForCalibration())
     const plan = shouldClassify ? yield* this.classifyAndPlan(conversation, state, gateVerdict) : undefined
@@ -720,9 +1205,13 @@ export class Orchestrator {
       return
     }
 
-    if (!plan || plan.steps.length <= 1) {
+    // TASKS.md #173: a single-step plan normally skips executePlan entirely (the plain top-level round
+    // already covers it) — but if that one step omitted a needed domain-knowledge step, it must still go
+    // through executePlan, where ensureDomainKnowledgeStep actually inserts it; otherwise this whole fix
+    // would never fire for the common case of a model planning just one (non-mcp-operator) step.
+    if (!plan || (plan.steps.length <= 1 && !this.shouldInsertDomainKnowledgeStep(plan))) {
       yield* this.runLoop(
-        this.buildOrchestratorSystemPrompt(),
+        this.buildOrchestratorSystemPrompt() + setAsideOtherSpecialistsReplies(conversation, undefined, (r) => this.labelOf(r)).background,
         this.defaultTools,
         conversation,
         state,
@@ -877,51 +1366,99 @@ export class Orchestrator {
     let roundUsage: { inputTokens: number; outputTokens: number } | undefined
     const latestMessage = conversation[conversation.length - 1]
 
-    // Always a fresh (non-retried) budget — this is a one-shot probe that
-    // falls open on timeout rather than retrying, so the adaptive growth
-    // that a real retry loop gets doesn't apply here.
-    const roundTimer = this.startRoundTimer(state.deadlineAt, 0)
-    try {
-      for await (const event of this.provider.stream({
-        model: this.model,
-        system: this.buildClassifySystemPrompt(),
-        messages: latestMessage ? [latestMessage] : conversation,
-        // Shares the same real, scaled-when-possible budget as every other
-        // round (see resolveMaxOutputTokens) — a flat small value here
-        // starved gpt-oss's hidden reasoning into an empty response before
-        // this existed (finish_reason:"length", 0 visible chars).
-        maxTokens: state.maxOutputTokens,
-        signal: roundTimer.signal
-      })) {
-        if (event.type === 'text_delta') text += event.text
-        else if (event.type === 'usage') roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
-        else if (event.type === 'message_stop') stopReason = event.stopReason
+    // Provider-enforced JSON where the provider supports it (see StructuredOutputRequest). If the provider/model rejects the request, the same
+    // call is repeated once as a plain prompt-only request and the pair is remembered, so a model without schema support costs one failed call
+    // per app session, not one per message.
+    const structuredKey = `${this.provider.id}:${this.model}`
+    let structured = !structuredOutputRejected.has(structuredKey)
+    let emptyPlanRetries = 0
+    let parsed: ReturnType<typeof parsePlan>
+    let plan: Plan | undefined
+
+    // Outer loop: retries once on a genuinely empty reply (TASKS #140/#141) — distinct from the inner
+    // loop just below, which retries (also via `continue`, its own separate concern) when the provider
+    // rejects structured output outright and falls back to a plain prompt.
+    outer: for (;;) {
+      for (;;) {
+        text = ''
+        stopReason = 'end_turn'
+        roundUsage = undefined
+        // Always a fresh (non-retried) budget — this is a one-shot probe that
+        // falls open on timeout rather than retrying, so the adaptive growth
+        // that a real retry loop gets doesn't apply here.
+        const roundTimer = this.startRoundTimer(state.deadlineAt, 0)
+        try {
+          for await (const event of this.provider.stream({
+            model: this.model,
+            system: this.buildClassifySystemPrompt(),
+            messages: latestMessage ? [latestMessage] : conversation,
+            // Shares the same real, scaled-when-possible budget as every other
+            // round (see resolveMaxOutputTokens) — a flat small value here
+            // starved gpt-oss's hidden reasoning into an empty response before
+            // this existed (finish_reason:"length", 0 visible chars).
+            maxTokens: state.maxOutputTokens,
+            signal: roundTimer.signal,
+            temperature: this.options.temperature,
+            ...(structured ? { structuredOutput: { name: 'classify_and_plan', schema: buildPlanSchema(this.plannableRoleIds()) } } : {})
+          })) {
+            if (event.type === 'text_delta') text += event.text
+            else if (event.type === 'usage') roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
+            else if (event.type === 'message_stop') stopReason = event.stopReason
+          }
+          break
+        } catch (err) {
+          // TASKS.md #91: a rate limit here falls open the same way a timeout
+          // already does, just below — no retry loop for a one-shot probe (the
+          // real round loop right after this gets the full retry treatment via
+          // handleRateLimitError, and will hit the identical rate limit again
+          // immediately if it's still in effect, at which point it's handled
+          // properly rather than twice over in two different ways here).
+          if (isRateLimitError(err)) return undefined
+          if (!roundTimer.signal.aborted) {
+            // Only a client-error rejection (400/404/422 — the request shape or the model does not support it) counts; auth failures, rate limits,
+            // network errors and 5xx are not the schema's fault and rethrow as before.
+            const status = (err as { status?: number }).status
+            if (structured && (status === 400 || status === 404 || status === 422)) {
+              structuredOutputRejected.add(structuredKey)
+              structured = false
+              console.error(
+                `orchestrator: ${structuredKey} rejected structured output for the planning call (${err instanceof Error ? err.message : String(err)}) — retrying it as a plain prompt`
+              )
+              continue
+            }
+            throw err
+          }
+          // A timed-out classify call falls open exactly like a genuinely
+          // malformed one already does (see the no-plan branch below) — it's
+          // a probe, not the real answer, so there's nothing here worth
+          // surfacing beyond just proceeding without a plan.
+          return undefined
+        } finally {
+          roundTimer.clear()
+        }
       }
-    } catch (err) {
-      // TASKS.md #91: a rate limit here falls open the same way a timeout
-      // already does, just below — no retry loop for a one-shot probe (the
-      // real round loop right after this gets the full retry treatment via
-      // handleRateLimitError, and will hit the identical rate limit again
-      // immediately if it's still in effect, at which point it's handled
-      // properly rather than twice over in two different ways here).
-      if (isRateLimitError(err)) return undefined
-      if (!roundTimer.signal.aborted) throw err
-      // A timed-out classify call falls open exactly like a genuinely
-      // malformed one already does (see the no-plan branch below) — it's
-      // a probe, not the real answer, so there's nothing here worth
-      // surfacing beyond just proceeding without a plan.
-      return undefined
-    } finally {
-      roundTimer.clear()
+
+      if (roundUsage) {
+        state.inputTokens += roundUsage.inputTokens
+        state.outputTokens += roundUsage.outputTokens
+        yield { kind: 'stream', event: { type: 'usage', ...roundUsage } }
+      }
+
+      parsed = parsePlan(text, new Set(this.plannableRoleIds()))
+      plan = parsed?.plan
+
+      // A genuinely empty reply (no text, no tool call, not cut off by the token limit) is the specific
+      // hidden-reasoning-exhaustion symptom, not an ordinary "chose not to plan" result — worth one retry
+      // before accepting it and falling open. A non-empty-but-unparseable reply (prose, a fenced block,
+      // malformed JSON) is left alone here; that is the routine, expected case already handled below.
+      if (!plan && stopReason !== 'max_tokens' && text.trim() === '' && emptyPlanRetries < MAX_EMPTY_PLAN_RETRIES) {
+        emptyPlanRetries++
+        console.error('orchestrator: classify-and-plan returned no text at all — retrying once before falling open to no plan')
+        continue outer
+      }
+      break
     }
 
-    if (roundUsage) {
-      state.inputTokens += roundUsage.inputTokens
-      state.outputTokens += roundUsage.outputTokens
-      yield { kind: 'stream', event: { type: 'usage', ...roundUsage } }
-    }
-
-    const parsed = parsePlan(text)
     if (parsed?.truncated) {
       const message =
         `This request's plan had more steps than the ${MAX_PLAN_STEPS}-step limit — proceeding with just the ` +
@@ -929,7 +1466,6 @@ export class Orchestrator {
       yield { kind: 'stream', event: { type: 'warning', message } }
       yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message }] }
     }
-    const plan = parsed?.plan
     if (!plan) {
       if (stopReason === 'max_tokens') {
         // Surfaced to the user, not just logged — this is the one real
@@ -950,7 +1486,10 @@ export class Orchestrator {
         // not the chat transcript. Reported directly: a persisted warning
         // here had no actionable next step for the user and just read as
         // noise on every turn it happened to fire.
-        console.error('orchestrator: classify-and-plan response was not valid JSON, treating as a normal request')
+        console.error(
+          'orchestrator: classify-and-plan response was not valid JSON, treating as a normal request' +
+            (text.trim() ? ` — the model said: ${JSON.stringify(text.trim().slice(0, 300))}` : ' — the model returned no text')
+        )
       }
     }
     // Phase 2 of TASKS.md #95 — a real classifier response, whatever it was
@@ -958,12 +1497,143 @@ export class Orchestrator {
     // this turn. Only reached once the call actually completed (the
     // timeout/abort path above returns before this), so this never logs a
     // probe that never got a real answer.
+    // Console only (no transcript noise): what the classifier decided about domain knowledge, since "answered from memory when a
+    // knowledge server should have been asked" cannot be told apart afterwards from the stored session.
+    if (plan) {
+      console.error(
+        `orchestrator: classified ${plan.complexity}; needsDomainKnowledge=${plan.needsDomainKnowledge} topic=${JSON.stringify(plan.domainKnowledgeTopic)} ` +
+          `insertLookup=${this.shouldInsertDomainKnowledgeStep(plan)} servers=${(this.options.getKnowledgeServers?.() ?? []).map((x) => x.name).join(',') || 'none'}`
+      )
+    }
     this.options.logClassifyGateSample?.({
       gateVerdict,
       classifierComplexity: plan?.complexity ?? 'unknown',
       messageLength: latestMessageText(conversation).length
     })
     return plan
+  }
+
+  /**
+   * design-discussion.md §13.3, TASKS #145/#146: whether an MCP server is connected at all is a fact
+   * known before any model runs — `ConfigurationCounts.mcp === 0` — not a judgment call, so it isn't left
+   * to the classifier or the top-level model reliably noticing `buildRoleDigest`'s "UNAVAILABLE right
+   * now" note (`parsePlan` only validates role-id membership, never live availability; an unheeded note
+   * used to mean the step, or a direct `delegate_to_mcp-operator` tool call, just ran anyway and wasted
+   * itself on "no connected server fits"). A request for `mcp-operator` while none is connected is
+   * rewritten to `research` here, with a code-inserted note carrying the substitution's purpose and the
+   * same "say plainly, don't guess" honesty Researcher's prompt already uses for its no-Tavily-key case.
+   * Shared by both entry points that can route to a role — a compound plan's own step (`executePlan`,
+   * #145) and the top-level round's direct tool-call delegation (#146) — so the availability check and
+   * the note's wording live in exactly one place. Distinct from the connected-but-nothing-relevant case
+   * (TASKS #143/#144), which genuinely can only be judged by a model that looked, so it stays a
+   * self-reported handoff tag instead of a code check.
+   */
+  private substituteUnavailableMcpOperator(role: AgentRole, description: string): { role: AgentRole; description: string } {
+    const mcpAgent = this.agents.get('mcp-operator')
+    if (role !== 'mcp-operator' || !mcpAgent || !this.agents.has('research') || isRoleAvailable(mcpAgent, this.options.getConfiguration?.())) {
+      return { role, description }
+    }
+    return {
+      role: 'research',
+      description:
+        'No MCP/knowledge-base server is connected right now, so treat this as an open-web substitute for ' +
+        "domain or process knowledge that would normally come from a connected wiki. Say plainly if nothing " +
+        `genuinely relevant turns up, rather than guessing. Original task: ${description}`
+    }
+  }
+
+  private applyMcpAvailabilityFallback(steps: readonly PlanStep[]): PlanStep[] {
+    return steps.map((step) => {
+      const substituted = this.substituteUnavailableMcpOperator(step.role, step.description)
+      return substituted.role === step.role ? step : substituted
+    })
+  }
+
+  /**
+   * TASKS.md #173: found live — a real connected wiki had directly relevant content (a loss-taxonomy
+   * document covering exactly "yaw misalignment" and "power curve adjustment") for a question asking to
+   * interpret turbine telemetry against both, and the planner's own step list never included an
+   * `mcp-operator` step at all, on two different models (local and cloud), despite the planning prompt's
+   * existing prose rule saying this should always be compound. Moving the judgment into `needsDomainKnowledge`
+   * (a structured field the planner must explicitly answer, same mechanism `complexity` already uses) and
+   * enforcing it here in code closes the gap regardless of whether a given model's own step list honored
+   * the prose. Only inserts when a server is actually connected — the no-server case is
+   * `substituteUnavailableMcpOperator`'s job, not this one's, and inserting a step that can't run would
+   * just waste a round on "no connected server fits." A no-op if the planner already included its own
+   * `mcp-operator` step, so this never produces a duplicate.
+   */
+  /** Split out from `ensureDomainKnowledgeStep` so the "is this plan really just 1 step" gate (below, where
+   * `executePlan` vs. the plain single-round path is decided) can know a step is coming *before* any
+   * conversation text is needed, not just at insertion time. */
+  private shouldInsertDomainKnowledgeStep(plan: Plan): boolean {
+    const mcpAgent = this.agents.get('mcp-operator')
+    const alreadyPlanned = plan.steps.some((s) => s.role === 'mcp-operator')
+    // A true flag without a concrete topic is the model saying "probably" — found live (manual test 8.2): a plain
+    // "make a Word document with charts of the top customers in the database" request got a wiki step, and the
+    // operator then searched the wiki for the user's own database. No topic, no step.
+    return (
+      plan.needsDomainKnowledge &&
+      plan.domainKnowledgeTopic.length >= 3 &&
+      !isUserDataTopic(plan.domainKnowledgeTopic, userDataTerms(this.options.getUserDataNames?.() ?? [])) &&
+      !alreadyPlanned && !!mcpAgent && isRoleAvailable(mcpAgent, this.options.getConfiguration?.())
+    )
+  }
+
+  private ensureDomainKnowledgeStep(plan: Plan, conversation: Message[]): PlanStep[] {
+    if (!this.shouldInsertDomainKnowledgeStep(plan)) return plan.steps
+    const request = latestMessageText(conversation)
+    const inserted: PlanStep = {
+      role: 'mcp-operator',
+      description:
+        `Look up in the connected wiki/MCP server(s): ${plan.domainKnowledgeTopic}. ` +
+        'Search only for knowledge — a rule, definition, standard, convention, process, coding standard, benchmark, or the documentation of a library or API. ' +
+        "Do not search for the user's own data (databases, tables, customers, orders, records, files or past chats): " +
+        'that is another step\'s job and is not stored in these servers. If nothing about this topic is found, end with ' +
+        '[handoff: no_information]. ' +
+        `For context only, not for search terms: ${request}`
+    }
+    return [inserted, ...plan.steps]
+  }
+
+  /**
+   * TASKS.md #178: `no_information` (MCP found nothing at all relevant) already had a fallback — a note
+   * hoping a later round picks up `web_search` on its own (see the `fallbackNote` logic in `executePlan`
+   * below). `incomplete` (found *something*, but not enough — e.g. the right document, but only a table
+   * fragment or a citation, not real usable content) gets a stronger, code-enforced version: insert one
+   * real follow-up step into the plan itself, right here, rather than leaving it to a passive note —
+   * found live, a hopeful note is exactly how a partial result slips through uncorrected (the original
+   * `no_information` fallback note never actually fires for a status that was never reported as
+   * `no_information` in the first place, since the step technically found *something*). Bounded by
+   * `state.handoff.incompleteFollowUps` (capped at 1 per turn, same `redirects`-style cap this file
+   * already uses for `out_of_scope`) so an incomplete-on-the-follow-up-too case can't ping-pong forever —
+   * past that point it's the final synthesis's job (`buildOrchestratorSystemPrompt`) to disclose the
+   * remaining gap, not this mechanism's job to keep retrying. One-directional only: MCP Operator
+   * incomplete -> Research follow-up. The reverse isn't built — no live incident motivates it, and by
+   * the time a Research step runs at all, `ensureDomainKnowledgeStep` has usually already tried MCP
+   * Operator first if one was connected.
+   */
+  private ensureFollowUpOnIncomplete(
+    steps: PlanStep[],
+    afterIndex: number,
+    fromRole: AgentRole,
+    originalDescription: string,
+    state: RunState
+  ): boolean {
+    if (fromRole !== 'mcp-operator' || !this.agents.has('research') || state.handoff.incompleteFollowUps >= 1) {
+      return false
+    }
+    // A Researcher step that is already planned later will do the web work; adding another would research the same thing
+    // twice (found live: three passes over one request, the last one starting from zero).
+    if (steps.slice(afterIndex + 1).some((s) => s.role === 'research')) return false
+    state.handoff.incompleteFollowUps++
+    steps.splice(afterIndex + 1, 0, {
+      role: 'research',
+      description:
+        'The connected wiki/knowledge base had partial but incomplete information for the previous step: ' +
+        `"${originalDescription}" — search the open web to fill the specific gap, and say plainly in your ` +
+        'own result what you found versus what is still unconfirmed.'
+    })
+    return true
   }
 
   /**
@@ -977,44 +1647,111 @@ export class Orchestrator {
    * full text even though the live checklist animation doesn't replay.
    */
   private async *executePlan(plan: Plan, conversation: Message[], state: RunState): AsyncIterable<OrchestratorEvent> {
-    yield { kind: 'stream', event: { type: 'plan', steps: plan.steps } }
+    const steps = this.applyMcpAvailabilityFallback(this.ensureDomainKnowledgeStep(plan, conversation))
+    // Computed once, before any step message is pushed onto `conversation` — by the time a later step
+    // runs, its last entry would be the previous step's own message, not the user's original request.
+    const sourcingRestricted = detectsSourceRestriction(latestMessageText(conversation))
+    yield { kind: 'stream', event: { type: 'plan', steps } }
 
-    for (const [index, step] of plan.steps.entries()) {
+    for (const [index, step] of steps.entries()) {
       yield { kind: 'stream', event: { type: 'plan_step_start', index } }
-      const result = yield* this.dispatchDelegate(step.role, { task: step.description }, conversation, state)
-      yield { kind: 'stream', event: { type: 'plan_step_done', index, isError: result.isError } }
+      let role = step.role
+      const planContext = { index, total: steps.length }
+      let outcome = yield* this.dispatchDelegate(role, { task: step.description }, conversation, state, planContext)
 
-      const trimmed =
-        result.content.length > STEP_RESULT_CONTEXT_CAP
-          ? result.content.slice(0, STEP_RESULT_CONTEXT_CAP) + '\n[...truncated for context budget...]'
-          : result.content
-      // `result.isError` used to only reach the renderer (the plan_step_done
-      // event just above, for its ✓/✗ UI) — the text below, the only copy
-      // of this step's outcome any later step or the final synthesis round
-      // actually sees, formatted a failure identically to a real result.
-      // Nothing distinguished "here is your data" from "here is why I
-      // couldn't get your data" except the prose itself, which a later step
-      // has no structural reason to scrutinize — it could just as easily
-      // treat an error string as content to summarize/write into a report.
-      // The explicit (FAILED...) marker is what a step actually reacts to.
-      const stepLabel = `[Plan step ${index + 1} — ${AGENT_ROLE_LABELS[step.role]}]${
-        result.isError ? ' (FAILED — no usable result)' : ''
-      }`
+      // out_of_scope → redirect ONCE per turn to the role the specialist named (5.2). A second
+      // out_of_scope, a suggestion that is not a real role, or a real-but-not-plannable role (e.g.
+      // page-creator — isolated, fixed one-slide brief shape, never a sane target for an arbitrary
+      // step description) is left as-is for the final round to explain. Found live: Document Creator
+      // declined an image-embedding step and, despite its own prompt naming "the Developer", picked
+      // "page-creator" instead — a syntactically valid agent id but a dead end for a Word document.
+      const suggested = outcome.result?.suggestedRole
+      if (
+        outcome.result?.status === 'out_of_scope' &&
+        suggested &&
+        suggested !== role &&
+        this.plannableRoleIds().includes(suggested) &&
+        state.handoff.redirects < 1
+      ) {
+        state.handoff.redirects++
+        yield { kind: 'stream', event: { type: 'status', message: `${this.labelOf(role)} handed this to ${this.labelOf(suggested as AgentRole)}…` } }
+        role = suggested as AgentRole
+        outcome = yield* this.dispatchDelegate(role, { task: step.description }, conversation, state, planContext)
+      }
+      yield { kind: 'stream', event: { type: 'plan_step_done', index, isError: outcome.isError } }
+
+      // Truncate only the specialist's own text: the app-derived sections (files, captured data, status)
+      // are appended after it and must never be the part that gets cut.
+      const d = outcome.result
+      const trimmed = d
+        ? formatDelegateResult({ ...d, summary: d.summary.length > STEP_RESULT_CONTEXT_CAP ? d.summary.slice(0, STEP_RESULT_CONTEXT_CAP) + '\n[...truncated for context budget...]' : d.summary })
+        : outcome.content
+      // `outcome.isError` used to only reach the renderer (the plan_step_done event just above, for its
+      // ✓/✗ UI) — the text below, the only copy of this step's outcome any later step or the final
+      // synthesis round actually sees, formatted a failure identically to a real result. The explicit
+      // (FAILED...) marker is what a step actually reacts to.
+      const marker = outcome.isError
+        ? ' (FAILED — no usable result)'
+        : d?.status === 'needs_input'
+          ? ' (NEEDS INPUT — plan paused)'
+          : d?.status === 'out_of_scope'
+            ? ' (OUT OF SCOPE — not done)'
+            : d?.status === 'no_information'
+              ? ' (NO INFORMATION FOUND — nothing relevant in the connected source)'
+              : d?.status === 'incomplete'
+                ? ' (PARTIAL INFORMATION — found something, but not enough)'
+                : ''
+      // TASKS.md #178: unlike `no_information`'s fallback (a note only, below), an `incomplete` result
+      // gets a real, code-inserted follow-up step when one is available — computed here, before the
+      // note text, so the note can honestly say whether a follow-up is actually coming.
+      const insertedFollowUp =
+        d?.status === 'incomplete' && !sourcingRestricted ? this.ensureFollowUpOnIncomplete(steps, index, role, step.description, state) : false
+      // design-discussion.md §13.2(c),(d), §13.5, TASKS #144: a `no_information` step's own text is where
+      // a later step or the final round gets its ONLY view of what happened here — so the fallback
+      // permission and the provenance requirement both have to live in this same code-inserted text, not
+      // in a separate instruction hoping a later round remembers it. Deliberately silent (no note either
+      // way) for every other status, and for `no_information` itself when the user's own request already
+      // restricted sourcing — firing the fallback then would be its own kind of unrequested action.
+      const fallbackNote =
+        d?.status === 'no_information' && !sourcingRestricted && this.agents.has('research')
+          ? '\n\n(Nothing relevant was found in the connected wiki/knowledge base. A later step or your final answer may use ' +
+            'web_search or delegate_to_research to look for this on the open web instead. If that turns up something, say so ' +
+            "plainly in the final answer — state that the connected wiki had nothing on this and the information came from the " +
+            'web instead, rather than presenting it as verified from the wiki.)'
+          : d?.status === 'no_information' && sourcingRestricted
+            ? '\n\n(The user\'s own request restricts where this information may come from, so no web fallback should be attempted ' +
+              'here — report plainly that the connected source had nothing on this and stop.)'
+            : d?.status === 'incomplete' && sourcingRestricted
+              ? '\n\n(The user\'s own request restricts where this information may come from, so no follow-up to another source ' +
+                'should be attempted here — report plainly that this source only had partial information and stop.)'
+              : d?.status === 'incomplete' && insertedFollowUp
+                ? '\n\n(This source had only partial information — a follow-up step has been added to fill the gap from another ' +
+                  'source. The final answer must still say plainly what came from where if the two disagree or only partly overlap.)'
+                : d?.status === 'incomplete'
+                  ? '\n\n(This source had only partial information, and no further source is available to fill the gap — your ' +
+                    'final answer must say plainly what could and could not be confirmed, rather than presenting this partial ' +
+                    'result as a complete answer.)'
+                  : ''
+      const stepLabel = `[Plan step ${index + 1} — ${this.labelOf(role)}]${marker}`
       const stepMessage: Message = {
         role: 'user',
         content: [
           {
             type: 'text',
-            text: `${stepLabel}: ${step.description}\n\nResult:\n${trimmed}`
+            text: `${stepLabel}: ${step.description}\n\nResult:\n${trimmed}${fallbackNote}`
           }
         ]
       }
       yield { kind: 'message', role: 'user', content: stepMessage.content }
       conversation.push(stepMessage)
+
+      // A step that cannot continue without the user makes every later step meaningless (they would
+      // run on missing input). Stop the plan here; the final round below asks the user the question.
+      if (d?.status === 'needs_input') break
     }
 
     yield* this.runLoop(
-      this.buildOrchestratorSystemPrompt(),
+      this.buildOrchestratorSystemPrompt() + setAsideOtherSpecialistsReplies(conversation, undefined, (r) => this.labelOf(r)).background,
       this.defaultTools,
       conversation,
       state,
@@ -1022,6 +1759,16 @@ export class Orchestrator {
       this.buildDelegateToolDefinitions(),
       true
     )
+  }
+
+  /** The label to show for a role: the agent's own (user-defined roles), else the manifest / legacy label, else a humanized id. */
+  private labelOf(role: string): string {
+    return this.agents.get(role)?.label ?? roleLabel(role)
+  }
+
+  /** Roles a plan may target — the agents' own `plannable` flag (user-defined roles), falling back to the built-in manifest. */
+  private plannableRoleIds(): string[] {
+    return [...this.agents.values()].filter((a) => a.plannable ?? (PLANNABLE_ROLES as readonly string[]).includes(a.role)).map((a) => a.role)
   }
 
   /**
@@ -1035,20 +1782,25 @@ export class Orchestrator {
    * can actually do it.
    */
   private buildClassifySystemPrompt(): string {
-    // Filtered to AGENT_ROLES, same set VALID_STEP_ROLES validates a
-    // parsed plan's steps against (parsePlan) — `this.agents` itself has
-    // every role including page-creator, which is deliberately NOT a valid
-    // plan-step target (see shared/agents.ts's own doc comment: isolated,
-    // delegate-only, expects a specific one-slide brief). Listing it here
-    // anyway previously let the classifier believe it was a real option,
-    // even though selecting it would just make parsePlan silently reject
-    // the whole plan — wasted, confusing classify calls that were never
-    // going to produce a usable plan either way.
-    const specialists = [...this.agents.values()]
-      .filter((a) => (AGENT_ROLES as readonly string[]).includes(a.role))
-      .map((a) => `- ${a.role}: ${a.summary}${a.tools.length === 0 ? ' (no tools of its own — reasoning/text only)' : ''}`)
-      .join('\n')
+    // Role facts are GENERATED (buildRoleDigest: each role's own summary + live
+    // availability), not re-typed here as prose that drifts from the role. Only the
+    // roles a plan may target (PLANNABLE_ROLES — the same set `parsePlan` accepts;
+    // page-creator is deliberately not one) are listed. What remains below are
+    // procedural rules, none of which name a specific role's tools.
+    const specialists = buildRoleDigest(this.agents, this.plannableRoleIds(), this.options.getConfiguration?.())
+    const servers = this.options.getKnowledgeServers?.() ?? []
+    const serverNote =
+      servers.length === 0
+        ? ''
+        : 'Connected knowledge servers (the MCP Operator uses them):\n' +
+          servers.map((s) => `- ${s.name}${s.description ? `: ${s.description}` : ''}`).join('\n') +
+          '\nA question about how to use a specific library, framework, API or product that one of these covers needs knowledge from it, ' +
+          'even a plain "how do I ..." question: set needsDomainKnowledge to true and name the library and the feature as the ' +
+          'topic. Its documentation there is current; memory of it may be out of date. Writing ordinary code, or using a ' +
+          'language\'s own built-in features, does not need it, and neither does a request to check, debug, fix, run or change code or ' +
+          'files the user already has (that is work for the Developer, not a lookup).\n'
     return (
+      serverNote +
       "Before anything else, classify the user's latest request and, only if it genuinely needs more " +
       'than one distinct sub-task, build a short ordered plan for it. You have no tools available for ' +
       'this — do not attempt to call one. Respond with ONLY a single JSON object, no markdown fence, ' +
@@ -1058,28 +1810,49 @@ export class Orchestrator {
       '- "simple": answerable directly, or with at most one tool call or delegation. Use an empty steps ' +
       'array or a single entry.\n' +
       '- "compound": genuinely separate sub-tasks (e.g. two independent lookups, a lookup followed by ' +
-      'a separate calculation, or — found live, a real miss — gathering information and THEN saving/' +
-      'producing a deliverable from it, e.g. "look up X and write it into a Word document/spreadsheet/' +
-      'file") that each need a specialist\'s tools. List each as its own ordered step, tagging the role ' +
-      "whose tools can actually do it — don't route a step needing a tool to a role with no tools, and " +
-      "never fold a whole multi-part request like that into a single step for whichever role matches " +
-      "its first/dominant verb (e.g. routing \"search for X and write it to a Word doc\" entirely to " +
-      'research as one "simple" step) — research has no file-writing tools at all, so the document part ' +
-      'would just silently never happen. Any part of the request that asks for a saved file/document/' +
-      'spreadsheet output is its own step for coding (or whichever role actually has that tool), after ' +
-      "the step(s) that gather what goes into it. If a sub-part needs no tool at all (pure reasoning, or " +
-      "combining results already gathered), don't give it its own step — it belongs in the final answer " +
-      'instead.\n' +
-      'A request needing code to be written AND actually run (e.g. "generate a chart image from this ' +
-      'data") is two separate steps, never one — found live: routed as a single "coding" step, it wrote ' +
-      'a Python script, tried to run it directly, hit "Unknown tool" (coding has no shell access at all), ' +
-      "and reported success anyway without the file ever existing. coding writes the script as its step; " +
-      'a separate, later "terminal-devops" step actually runs it — never assume one role can do both just ' +
-      'because the task reads as one sentence.\n' +
-      'Building a slide deck/presentation is never a plan step for any role, "coding" included — ' +
-      'coding has no deck-building tools at all and falls back to a much worse plain-bullet-list output ' +
-      "if forced into it (found live). Deck-building only happens in the top-level's own final round, " +
-      'directly, via pptx_start_deck + delegate_to_page-creator per slide — never a delegated step. If ' +
+      'a separate calculation, or gathering information and THEN saving/producing a deliverable from it) ' +
+      "that each need a different specialist's tools. List each as its own ordered step, tagging the role " +
+      "whose summary says it can actually do it — never route a step to a role its summary excludes, to a " +
+      'role marked UNAVAILABLE, or to a role with no tools when the step needs a tool. Any part of the ' +
+      'request that asks for a saved file/document/spreadsheet is its own step for the role that creates ' +
+      'that kind of file, after the step(s) that gather what goes into it — except that the Researcher saves its own ' +
+      'findings to a text file as part of its research step, so never add a step just to save research to a text file. If a sub-part needs no tool ' +
+      "at all (pure reasoning, or combining results already gathered), don't give it its own step — it " +
+      'belongs in the final answer instead.\n' +
+      'A role whose summary says it writes AND runs code handles both in ONE step — never split writing ' +
+      'a script from running it into separate steps or roles.\n' +
+      // Found live (manual_testing.md section 4, Prompt B, 2026-10-01): the file/document rule above, applied
+      // literally, split "generate the chart" (Developer) and "put it in a Word file" (Document Creator) into
+      // two steps — but Document Creator cannot embed an image or chart at all and only ever bounces that
+      // step back. Worse, with the document part framed as a separate step for someone else, step 2's own
+      // wording asked Developer only for "the chart file paths" — never to save the document — so Developer
+      // quietly over-delivered (embedding it anyway, unasked, because its own prompt nudges it to) while
+      // Document Creator got invoked redundantly afterward for work already done.
+      'A document/file that needs a chart or image generated from data AND embedded into it ("put these ' +
+      'charts in a Word file") is ONE step for the role that writes and runs code — never split the chart ' +
+      'generation from the document creation across two steps or two roles, and never route the document ' +
+      "part to Document Creator for this: it cannot embed an image or chart at all and will only bounce the " +
+      "step back. Word that one step's own description to cover BOTH halves explicitly — generate the " +
+      'chart(s) AND save them into the requested document — so the result cannot silently omit the embedding ' +
+      'or need a second, redundant pass to finish it. Only give Document Creator a step when the deliverable ' +
+      'is genuinely text-only (headings, bullets, prose, or filling an existing template) with nothing to ' +
+      'embed.\n' +
+      'Domain knowledge (rules/constraints, or how to interpret something — from a wiki/MCP server, or the ' +
+      'web if none is connected) together with the data those rules apply to (database/API) is always ' +
+      'compound, one step per source, even in a single sentence and even without an explicit "look this up" ' +
+      "cue — see needsDomainKnowledge below, which this must agree with. This is two DIFFERENT kinds of " +
+      'source (rules vs. the data they apply to), not two sources for the same thing: never plan an MCP ' +
+      'Operator step AND a Research/web step for one domain-knowledge question up front — found live, a ' +
+      'pure definitional question with no database involved got both anyway, and web ran right after the ' +
+      'wiki had already given a complete answer. Plan the wiki/MCP step alone; add web up front only if the ' +
+      'user asked for it or for outside sources — an insufficient wiki result is handled after the fact ' +
+      '(`no_information`/`incomplete`), not by planning both "just in case."\n' +
+      "A later step only sees the written result of earlier steps: when a step needs data an earlier step " +
+      'retrieves (query rows, figures, file contents), word the earlier step so it returns the actual ' +
+      'values, not just a summary, and word the later step as working from those values — never from ' +
+      'assumed or example data.\n' +
+      'Building a slide deck/presentation is never a plan step for any role: it happens in the ' +
+      "top-level's own final round, directly, via pptx_start_deck + delegate_to_page-creator per slide. If " +
       'the request needs research before the deck can be built, plan the research as its own step; leave ' +
       'the actual deck construction out of the plan entirely so it happens in that final round.\n' +
       "Keep the step count small and don't over-decompose a genuinely simple request into multiple " +
@@ -1088,15 +1861,30 @@ export class Orchestrator {
   }
 
   private buildOrchestratorSystemPrompt(): string {
-    const specialists = [...this.agents.values()]
-      .map((a) => `- ${AGENT_ROLE_LABELS[a.role]} (${delegateToolName(a.role)}): ${a.summary}`)
-      .join('\n')
+    // No roster here: each specialist's summary is already carried once, in its delegate
+    // tool's description (buildDelegateToolDefinitions), so repeating it in the system
+    // prompt would just pay for the same text twice on every request.
     return (
       `${this.defaultSystemPrompt}\n\n` +
-      'You can also delegate a step to a specialist by calling its delegate tool when the task clearly ' +
-      'fits one of these roles — especially anything substantial involving code or files, which should ' +
-      `usually go to the Coding specialist rather than being handled directly:\n${specialists}\n\n` +
-      'For simple or general requests, just answer directly (or use your own tools) without delegating.'
+      "You can also delegate a step to a specialist by calling its delegate tool when the task clearly fits " +
+      "one — each tool's description says what that specialist does and does not do. A delegate's reply is shown to the user as written: do not restate it, add at most one short line. Anything that needs code " +
+      'written AND run, or files created or changed, should usually go to the Developer rather than being ' +
+      'handled directly. For simple or general requests, just answer directly (or use your own tools) ' +
+      "without delegating. The workspace is shared across every session, so a file you find there (e.g. " +
+      "via list_directory) may be real but may also predate this turn or belong to a different request. " +
+      "Before telling the user a document/file/deliverable was created or updated, make sure that is " +
+      "actually true of THIS turn — a step's own result text saying \"Files created or changed (verified " +
+      "by the app, not self-reported)\" is real evidence; a file simply existing on disk is not. If a plan " +
+      "step ended NEEDS INPUT, OUT OF SCOPE, or FAILED for the deliverable the user asked for, say plainly " +
+      "that it was not produced — never present an old file from a previous turn as if it were this turn's " +
+      "output. If you genuinely cannot tell whether something you see is new or pre-existing, say so and " +
+      'ask the user rather than guessing. If any step ended PARTIAL INFORMATION, your final answer must ' +
+      'say plainly what could and could not actually be confirmed — giving a confident-sounding answer ' +
+      'built on an acknowledged information gap is worse than stating the gap outright; propose how to ' +
+      'close it (what source/document/access would help) or ask the user for it, rather than quietly ' +
+      'treating the partial result as if it fully answered the question. The user already saw each step reply: ' +
+      'do not repeat their content in your final answer — say briefly what was done, where any file is, and ' +
+      'what failed or needs attention.'
     )
   }
 
@@ -1115,17 +1903,17 @@ export class Orchestrator {
   private buildForcedModeNotice(currentRole: AgentRole): string {
     const others = [...this.agents.values()]
       .filter((a) => a.role !== currentRole)
-      .map((a) => `- ${AGENT_ROLE_LABELS[a.role]}: ${a.summary}`)
+      .map((a) => `- ${this.labelOf(a.role)} (${a.role}): ${a.summary}`)
       .join('\n')
     return (
       '\n\n---\n' +
-      `You are currently pinned to the ${AGENT_ROLE_LABELS[currentRole]} specialist only (the ` +
+      `You are currently pinned to the ${this.labelOf(currentRole)} specialist only (the ` +
       'composer\'s "Agent:" selector, bottom-left, is set away from "Auto") — you cannot hand off to ' +
       'another specialist yourself right now, even when one clearly fits the request better, and you ' +
       "have no delegate tools available. If the user's request needs a capability outside your own " +
-      "tools, don't say you have no other agents or no way to do it at all — name which specialist " +
-      'would actually handle it from this list, and tell the user to switch the "Agent:" selector to ' +
-      `"Auto" (so the orchestrator can delegate automatically) or directly to that specialist:\n${others}`
+      'tools, do not attempt it and do not ask the user to change the selector: say in one short sentence that it is not ' +
+      'your job and end with the handoff tag naming the specialist from this list that fits (`[handoff: out_of_scope -> <role-id>]`). ' +
+      `The app then passes the request to the orchestrator, which delegates it:\n${others}`
     )
   }
 
@@ -1150,20 +1938,12 @@ export class Orchestrator {
     const activity = localRound === 1 ? 'thinking' : 'reviewing tool results'
     const progress = `(round ${state.roundsUsed}/${maxRounds})`
     return agentRole
-      ? `${AGENT_ROLE_LABELS[agentRole]} agent is ${activity}… ${progress}`
+      ? `${this.labelOf(agentRole)} agent is ${activity}… ${progress}`
       : `Model (${this.model}) is ${activity}… ${progress}`
   }
 
   private buildDelegateToolDefinitions(): ToolDefinition[] {
-    return [...this.agents.values()].map((a) => ({
-      name: delegateToolName(a.role),
-      description: `Hand off to the ${AGENT_ROLE_LABELS[a.role]} specialist: ${a.summary}`,
-      inputSchema: {
-        type: 'object',
-        properties: { task: { type: 'string', description: 'What the specialist should do' } },
-        required: ['task']
-      }
-    }))
+    return [...this.agents.values()].map((a) => buildDelegateToolDefinition(a.role, this.labelOf(a.role), a.summary))
   }
 
   /**
@@ -1229,7 +2009,9 @@ export class Orchestrator {
     const message =
       `The provider says you've hit its rate limit — waiting ${Math.round(waitMs / 1000)}s before retrying ` +
       `(attempt ${state.consecutiveRateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}).`
-    yield { kind: 'stream', event: tagEvent({ type: 'warning', message }, agentRole) }
+    // Transient: a status while we wait, not part of the conversation. It is only streamed (never yielded as a `message`,
+    // so never persisted) and the renderer drops it shortly after the wait ends.
+    yield { kind: 'stream', event: tagEvent({ type: 'warning', message, transientMs: waitMs + 4000 }, agentRole) }
 
     const waited = await sleepAbortable(waitMs, this.signal)
     if (this.signal.aborted) {
@@ -1269,10 +2051,49 @@ export class Orchestrator {
     // call this specialist/the top level has made" from "continuing after
     // seeing a tool result," for the status message below.
     let localRound = 0
+    // Empty-response recovery (local reasoning models sometimes end a round with no text and no tool call, typically right after a tool
+    // result): re-ask up to MAX_EMPTY_RESPONSE_RETRIES times with a one-off nudge instead of ending the turn with nothing done.
+    let emptyRetries = 0
+    let nudgeAfterEmptyRound = false
+    let emptyRoundHadThinking = false
+    let emptyDelegateRetries = 0
+    let lastEmptyDelegateMessage: Message | undefined
+    // TASKS.md #172/#173: bounded recovery for a round truncated mid-tool-call — see MAX_TRUNCATED_TOOL_CALL_RETRIES.
+    let truncatedToolCallRetries = 0
+    // See MAX_CONSECUTIVE_TOOL_FAILURES.
+    let failureStreak = 0
+    let lastFailedTool: string | undefined
+    // See MAX_IDENTICAL_CALLS_BEFORE_NUDGE/MAX_IDENTICAL_CALLS_AFTER_NUDGE — tracks a run calling the exact same
+    // tool with the exact same input round after round, success or failure, since failureStreak above only ever
+    // catches the failing case.
+    let identicalCallStreak = 0
+    let lastIdenticalCallKey: string | undefined
+    let identicalCallNudged = false
+    // See Agent.completionGate: what this run has called so far, and what it was asked to do.
+    const toolCallCounts = new Map<string, number>()
+    // URLs this run's searches returned and the ones its parse_html calls opened, so a nudge can name pages still unread.
+    const searchUrls: string[] = []
+    const readUrls = new Set<string>()
+    const contentStats = new Map<string, { total: number; longest: number; longestUrls: number }>()
+    let gateNudges = 0
+    const gateTask = latestMessageText(conversation)
 
     while (state.roundsUsed < maxRounds && Date.now() < state.deadlineAt) {
       state.roundsUsed++
       localRound++
+
+      // TASKS.md #158: between-rounds checkpoint for a mid-run steering comment — top-level only (see the
+      // drainSteeringComments option's own doc comment for why nested specialist rounds don't check this).
+      // Non-blocking: nothing pending is the overwhelmingly common case, so this never delays a round.
+      if (isTopLevel) {
+        const steeringComments = this.options.drainSteeringComments?.() ?? []
+        if (steeringComments.length > 0) {
+          const noteText = steeringComments.join('\n')
+          conversation.push({ role: 'user', content: [{ type: 'user_note', text: noteText }] })
+          yield { kind: 'stream', event: { type: 'user_note', text: noteText } }
+          yield { kind: 'message', role: 'user', content: [{ type: 'user_note', text: noteText }] }
+        }
+      }
 
       yield {
         kind: 'stream',
@@ -1283,6 +2104,9 @@ export class Orchestrator {
       }
 
       let assistantText = ''
+      // TASKS.md #147: separate from assistantText, same reasoning as why tool calls get their own array —
+      // a provider's real thinking content is a genuinely different signal from its final answer text.
+      let assistantThinking = ''
       const toolCalls: AccumulatedToolCall[] = []
       const toolCallsById = new Map<string, AccumulatedToolCall>()
       let stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'aborted' = 'end_turn'
@@ -1293,13 +2117,42 @@ export class Orchestrator {
       // double/triple-count if they summed the raw events.
       let roundUsage: { inputTokens: number; outputTokens: number } | undefined
 
-      const messagesToSend = await this.refitConversationToBudget(
-        capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
-        toolByName,
-        systemPrompt,
-        toolDefs,
-        state
+      // normalizeUserNotesForWire applied last, right before the wire — a user_note reads as ordinary text to
+      // the model; every earlier step in this pipeline only needs to know about tool_result/tool_use shapes.
+      const planReplies = isTopLevel ? planStepReplies(conversation) : []
+      let messagesToSend = normalizeUserNotesForWire(
+        await this.refitConversationToBudget(
+          capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
+          toolByName,
+          systemPrompt,
+          toolDefs,
+          state
+        )
       )
+      if (isTopLevel) messagesToSend = setAsideOtherSpecialistsReplies(messagesToSend, agentRole, (r) => this.labelOf(r)).messages
+      if (planReplies.length > 0) {
+        messagesToSend = [...messagesToSend, { role: 'user', content: [{ type: 'text', text: PLAN_FINAL_NUDGE }] }]
+      }
+      const emptyDelegates = isTopLevel ? emptyDelegateCalls(conversation) : []
+      if (emptyDelegates.length > 0) {
+        // A silent-router retry re-enters this round with the same last message: that is still one failure, not a second.
+        if (conversation.at(-1) !== lastEmptyDelegateMessage) {
+          lastEmptyDelegateMessage = conversation.at(-1)
+          emptyDelegateRetries++
+        }
+        const canRetry = emptyDelegateRetries <= MAX_EMPTY_DELEGATE_RETRIES
+        messagesToSend = [...messagesToSend, { role: 'user', content: [{ type: 'text', text: emptyDelegateNudge(emptyDelegates, canRetry) }] }]
+      }
+      if (nudgeAfterEmptyRound) {
+        messagesToSend = [...messagesToSend, { role: 'user', content: [{ type: 'text', text: emptyRoundHadThinking ? EMPTY_AFTER_REASONING_NUDGE : EMPTY_RESPONSE_NUDGE }] }]
+        nudgeAfterEmptyRound = false
+      }
+      let emptyRoundToRetry = false
+      // See restatement.ts: the round right after a direct delegation holds its stream events (kept in order) until it is known whether it
+      // only repeats what the user was just shown.
+      const shownReplies = isTopLevel ? [...lastDelegateReplies(conversation), ...planReplies] : []
+      const held: StreamEvent[] = []
+      let suppressRestatement = false
       const roundTimer = this.startRoundTimer(state.deadlineAt, state.consecutiveRoundTimeouts)
       try {
         for await (const event of this.provider.stream({
@@ -1308,10 +2161,13 @@ export class Orchestrator {
           messages: messagesToSend,
           maxTokens: state.maxOutputTokens,
           tools: toolDefs.length ? toolDefs : undefined,
-          signal: roundTimer.signal
+          signal: roundTimer.signal,
+          temperature: this.options.temperature
         })) {
           if (event.type === 'text_delta') {
             assistantText += event.text
+          } else if (event.type === 'thinking_delta') {
+            assistantThinking += event.text
           } else if (event.type === 'tool_use_start') {
             const call: AccumulatedToolCall = {
               id: event.id,
@@ -1326,15 +2182,53 @@ export class Orchestrator {
             if (call) call.inputJson += event.partialInput
           } else if (event.type === 'message_stop') {
             stopReason = event.stopReason
+            // An empty, cleanly-ended round we are about to retry: do not forward this end_turn, or the renderer would take it for the end
+            // of the whole turn (a nested specialist's stop is tagged, the top level's is not). A genuine abort/timeout is not "empty".
+            if (
+              event.stopReason === 'end_turn' &&
+              !assistantText &&
+              toolCalls.length === 0 &&
+              emptyRetries < MAX_EMPTY_RESPONSE_RETRIES &&
+              !roundTimer.signal.aborted
+            ) {
+              emptyRoundToRetry = true
+              continue
+            }
           } else if (event.type === 'usage') {
             roundUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens }
             continue
           }
           const outEvent =
             event.type === 'message_stop' ? tagMessageStop(event, agentRole, isTopLevel) : tagEvent(event, agentRole)
+          if (shownReplies.length > 0) {
+            held.push(outEvent)
+            continue
+          }
           yield { kind: 'stream', event: outEvent }
         }
+        if (held.length > 0) {
+          suppressRestatement = toolCalls.length === 0 && isRestatement(assistantText, shownReplies)
+          // Scratch-file names are not for the reader: rewrite the held text without them (one delta in place of the many).
+          const cleaned = suppressRestatement ? assistantText : stripInternalPaths(assistantText)
+          const rewrite = cleaned !== assistantText
+          if (rewrite) assistantText = cleaned
+          let rewritten = false
+          // A restated answer is dropped; the stop still goes out so the turn ends normally.
+          for (const e of held) {
+            if (e.type === 'text_delta' && (suppressRestatement || rewrite)) {
+              if (rewrite && !rewritten) {
+                rewritten = true
+                yield { kind: 'stream', event: { ...e, text: cleaned } }
+              }
+              continue
+            }
+            yield { kind: 'stream', event: e }
+          }
+          held.length = 0
+        }
       } catch (err) {
+        for (const e of held) yield { kind: 'stream', event: e }
+        held.length = 0
         // TASKS.md #91 — checked before anything else in this block: a
         // provider-confirmed rate limit (429) is a genuine thrown error
         // (roundTimer.signal.aborted is normally false for it — the
@@ -1445,11 +2339,29 @@ export class Orchestrator {
       if (roundUsage) {
         state.inputTokens += roundUsage.inputTokens
         state.outputTokens += roundUsage.outputTokens
-        yield { kind: 'stream', event: { type: 'usage', ...roundUsage } }
+        const contextTokens = isTopLevel ? roundUsage.inputTokens + roundUsage.outputTokens : undefined
+        yield { kind: 'stream', event: { type: 'usage', ...roundUsage, ...(contextTokens === undefined ? {} : { contextTokens }) } }
+      }
+
+      if (emptyRoundToRetry) {
+        emptyRetries++
+        nudgeAfterEmptyRound = true
+        emptyRoundHadThinking = assistantThinking.trim() !== ''
+        yield {
+          kind: 'stream',
+          event: tagEvent(
+            { type: 'status', message: 'The model returned an empty response — asking it to continue…' },
+            agentRole
+          )
+        }
+        continue
       }
 
       const assistantBlocks: ContentBlock[] = []
-      if (assistantText) assistantBlocks.push({ type: 'text', text: assistantText, agentRole })
+      // TASKS.md #147: pushed before the text block — reasoning precedes the final answer, both
+      // conceptually and in how it should render.
+      if (assistantThinking) assistantBlocks.push({ type: 'thinking', text: assistantThinking, agentRole })
+      if (assistantText && !suppressRestatement) assistantBlocks.push({ type: 'text', text: assistantText, agentRole })
       if (stopReason === 'max_tokens') {
         // Found live against gpt-oss (empty response) before this existed —
         // don't silently treat a truncated round as a normal, complete one.
@@ -1481,8 +2393,10 @@ export class Orchestrator {
         // silence: no persisted message, no visible error, nothing —
         // indistinguishable from the app having done nothing at all.
         const message =
-          'The model produced no visible output for this response (no text, no tool call) — a known quirk ' +
-          'with local reasoning models on longer or more complex requests. Try asking again.'
+          emptyDelegates.length > 0
+            ? `The ${emptyDelegates.map((n) => n.replace(/^delegate_to_/, '').replace(/[-_]/g, ' ')).join(', ')} specialist returned no output, and the assistant did not follow up. Try asking again.`
+            : 'The model produced no visible output for this response (no text, no tool call) — a known quirk ' +
+              'with local reasoning models on longer or more complex requests. Try asking again.'
         // Always a whole-turn failure when it's the top level (this branch
         // always returns immediately below, same reasoning as max_tokens
         // above) — TASKS.md #102.
@@ -1491,6 +2405,14 @@ export class Orchestrator {
         yield { kind: 'stream', event: tagEvent({ type: 'warning', message, failureCategory }, agentRole) }
       }
       const inputByCallId = new Map<string, Record<string, unknown>>()
+      // design-discussion.md §13.3, TASKS #146: the same MCP-availability substitution #145 applies to a
+      // *plan* step, applied here to a direct `delegate_to_mcp-operator` tool call the top-level model
+      // makes on its own (the more common shape for a plain "look this up in the wiki" request, which
+      // never goes through executePlan at all). Rewritten BEFORE the `tool_use` block is built, not after
+      // dispatch, so the persisted name and the specialist that actually ran always agree — the opposite
+      // order would leave a `delegate_to_mcp-operator` tool_use in the transcript next to a Researcher's
+      // result, which would misattribute the work in the UI and on replay.
+      const delegateRoleOverride = new Map<string, AgentRole>()
       for (const call of toolCalls) {
         let input: Record<string, unknown> = {}
         try {
@@ -1498,11 +2420,21 @@ export class Orchestrator {
         } catch {
           // Malformed tool input is surfaced back to the model as an error result below.
         }
+        let name = call.name
+        const requestedRole = roleFromDelegateName(name, this.agents)
+        if (requestedRole && typeof input.task === 'string') {
+          const substituted = this.substituteUnavailableMcpOperator(requestedRole, input.task)
+          if (substituted.role !== requestedRole) {
+            name = delegateToolName(substituted.role)
+            input = { ...input, task: substituted.description }
+            delegateRoleOverride.set(call.id, substituted.role)
+          }
+        }
         inputByCallId.set(call.id, input)
         assistantBlocks.push({
           type: 'tool_use',
           id: call.id,
-          name: call.name,
+          name,
           input,
           agentRole,
           thoughtSignature: call.thoughtSignature
@@ -1519,25 +2451,93 @@ export class Orchestrator {
       if (assistantBlocks.length) yield { kind: 'message', role: 'assistant', content: assistantBlocks }
       conversation.push({ role: 'assistant', content: assistantBlocks })
 
+      if (stopReason === 'max_tokens' && toolCalls.length > 0 && truncatedToolCallRetries < MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+        // Every dangling tool_use just pushed above still needs a matching tool_result (an unresolved
+        // tool_call followed by anything else is rejected by at least one real provider — see the
+        // conversationBeforeThisRound comment below for the identical reasoning) — so each gets a real,
+        // actionable error instead of being executed with whatever garbage input survived truncation,
+        // and the round retries once with that explanation already in context.
+        truncatedToolCallRetries++
+        const truncatedResultBlocks: ContentBlock[] = toolCalls.map((call) => ({
+          type: 'tool_result',
+          toolUseId: call.id,
+          content:
+            "This call's arguments were cut off by the output-length limit before they finished, so it " +
+            'was not run. Produce a SHORTER response this time — if you are working with captured data, ' +
+            'read it from its file (open/json.load) instead of embedding it — then try again.',
+          isError: true
+        }))
+        for (const block of truncatedResultBlocks) {
+          if (block.type === 'tool_result') {
+            yield { kind: 'stream', event: { type: 'tool_result', toolUseId: block.toolUseId, content: block.content, isError: block.isError } }
+          }
+        }
+        yield { kind: 'message', role: 'user', content: truncatedResultBlocks }
+        conversation.push({ role: 'user', content: truncatedResultBlocks })
+        continue
+      }
+
       if (stopReason !== 'tool_use' || toolCalls.length === 0) {
+        const gate = agentRole ? this.agents.get(agentRole)?.completionGate : undefined
+        if (gate && stopReason !== 'max_tokens' && gateNudges < MAX_COMPLETION_GATE_NUDGES) {
+          const unreadUrls = searchUrls.filter((u) => !readUrls.has(u)).slice(0, 6)
+          const nudge = gate({ task: gateTask, calls: toolCallCounts, unreadUrls, content: contentStats })
+          if (nudge) {
+            gateNudges++
+            const note = `[Completion check by Sachivji] ${nudge}`
+            conversation.push({ role: 'user', content: [{ type: 'user_note', text: note, source: 'app' }] })
+            yield { kind: 'stream', event: tagEvent({ type: 'user_note', text: note, source: 'app' }, agentRole) }
+            yield { kind: 'message', role: 'user', content: [{ type: 'user_note', text: note, source: 'app' }] }
+            continue
+          }
+        }
         return { text: assistantText, isError: stopReason === 'max_tokens' || !assistantText }
       }
 
       const resultBlocks: ContentBlock[] = []
       for (const call of toolCalls) {
         const input = inputByCallId.get(call.id) ?? {}
-        const delegateRole = roleFromDelegateName(call.name, this.agents)
+        const delegateRole = delegateRoleOverride.get(call.id) ?? roleFromDelegateName(call.name, this.agents)
 
+        toolCallCounts.set(call.name, (toolCallCounts.get(call.name) ?? 0) + 1)
+        if (typeof input.content === 'string') {
+          const entry = contentStats.get(call.name) ?? { total: 0, longest: 0, longestUrls: 0 }
+          entry.total += input.content.length
+          if (input.content.length >= entry.longest) {
+            entry.longest = input.content.length
+            entry.longestUrls = new Set(input.content.match(/https?:\/\/[^\s)>\]"']+/g) ?? []).size
+          }
+          contentStats.set(call.name, entry)
+        }
         let content: string
         let isError: boolean
-        if (delegateRole) {
-          const result = yield* this.dispatchDelegate(delegateRole, input, conversationBeforeThisRound, state)
-          content = result.content
-          isError = result.isError
+        const mcpAgent = this.agents.get('mcp-operator')
+        if (
+          isTopLevel &&
+          (call.name === 'web_search' || delegateRole === 'research') &&
+          (state.knowledgeFirstRefusals ?? 0) < 1 &&
+          mcpAgent &&
+          this.options.getConfiguration !== undefined &&
+          isRoleAvailable(mcpAgent, this.options.getConfiguration()) &&
+          !wantsWebExplicitly(gateTask) &&
+          !mcpAttemptedThisTurn(conversation)
+        ) {
+          state.knowledgeFirstRefusals = (state.knowledgeFirstRefusals ?? 0) + 1
+          content = KNOWLEDGE_FIRST_REFUSAL
+          isError = true
+        } else if (delegateRole) {
+          const outcome = yield* this.dispatchDelegate(delegateRole, input, conversationBeforeThisRound, state)
+          content = outcome.content
+          isError = outcome.isError
         } else {
           const result = await this.dispatchTool(call.id, call.name, input, toolByName)
+          if (toolByName.has(call.name)) this.options.logToolUse?.({ tool: call.name, agentRole: agentRole ?? 'router' })
           content = result.content
           isError = result.isError
+          if (call.name === 'web_search' && !isError) {
+            for (const u of content.match(/https?:\/\/[^\s)>\]]+/g) ?? []) if (!searchUrls.includes(u) && searchUrls.length < 40) searchUrls.push(u)
+          }
+          if (call.name === 'parse_html' && typeof input.url === 'string') readUrls.add(input.url)
           // TASKS.md #82 — a real `image` block, never sent back to the
           // model (see ContentBlock's own doc comment), alongside the
           // short tool_result text above that the model does see.
@@ -1553,6 +2553,68 @@ export class Orchestrator {
       }
       yield { kind: 'message', role: 'user', content: resultBlocks }
       conversation.push({ role: 'user', content: resultBlocks })
+
+      // Stop a run that keeps repeating one failing call (see MAX_CONSECUTIVE_TOOL_FAILURES).
+      const toolResults = resultBlocks.filter((b): b is Extract<ContentBlock, { type: 'tool_result' }> => b.type === 'tool_result')
+      const calledNames = new Set(toolCalls.map((c) => c.name))
+      const failedTool = calledNames.size === 1 ? [...calledNames][0] : undefined
+      if (failedTool && toolResults.length > 0 && toolResults.every((r) => r.isError)) {
+        failureStreak = failedTool === lastFailedTool ? failureStreak + 1 : 1
+        lastFailedTool = failedTool
+      } else {
+        failureStreak = 0
+        lastFailedTool = undefined
+      }
+      if (failureStreak >= MAX_CONSECUTIVE_TOOL_FAILURES) {
+        const lastError = toolResults[toolResults.length - 1].content.replace(/\s+/g, ' ').slice(0, 300)
+        const stopMessage = `Stopped: "${failedTool}" failed ${failureStreak} times in a row with nothing succeeding in between, so it was not retried further. Last error: ${lastError}`
+        if (isTopLevel) {
+          yield { kind: 'stream', event: tagEvent({ type: 'warning', message: stopMessage }, agentRole) }
+          yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message: stopMessage }] }
+          yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'end_turn' }, agentRole, isTopLevel) }
+        }
+        return { text: stopMessage, isError: true }
+      }
+
+      // Stop a run that keeps calling the exact same tool with the exact same input, success or failure alike
+      // (see MAX_IDENTICAL_CALLS_BEFORE_NUDGE/MAX_IDENTICAL_CALLS_AFTER_NUDGE) — failureStreak above only ever
+      // catches the failing case, so a repeated call that "succeeds" with nothing new each time sailed straight
+      // through it (found live, TASKS.md #202: mcp_list_connections called identically 4x on gpt-4o-mini and
+      // 26x on gpt-4o before the user had to press Stop).
+      const repeatedToolName = calledNames.size === 1 ? [...calledNames][0] : undefined
+      const sameInputThisRound =
+        toolCalls.length > 0 && toolCalls.every((c) => stableInputKey(c.inputJson) === stableInputKey(toolCalls[0].inputJson))
+      const identicalCallKey =
+        repeatedToolName && GUARDED_IDENTICAL_CALL_TOOLS.has(repeatedToolName) && sameInputThisRound
+          ? `${repeatedToolName}:${stableInputKey(toolCalls[0].inputJson)}`
+          : undefined
+      if (identicalCallKey && identicalCallKey === lastIdenticalCallKey) {
+        identicalCallStreak++
+      } else {
+        identicalCallStreak = identicalCallKey ? 1 : 0
+        identicalCallNudged = false
+      }
+      lastIdenticalCallKey = identicalCallKey
+
+      if (identicalCallKey && identicalCallStreak === MAX_IDENTICAL_CALLS_BEFORE_NUDGE && !identicalCallNudged) {
+        identicalCallNudged = true
+        const mcpAgentForNudge = this.agents.get('mcp-operator')
+        const mcpOperatorAvailable = !!mcpAgentForNudge && isRoleAvailable(mcpAgentForNudge, this.options.getConfiguration?.())
+        const note = identicalCallNudge(repeatedToolName!, mcpOperatorAvailable)
+        conversation.push({ role: 'user', content: [{ type: 'user_note', text: note, source: 'app' }] })
+        yield { kind: 'stream', event: tagEvent({ type: 'user_note', text: note, source: 'app' }, agentRole) }
+        yield { kind: 'message', role: 'user', content: [{ type: 'user_note', text: note, source: 'app' }] }
+      } else if (identicalCallKey && identicalCallStreak >= MAX_IDENTICAL_CALLS_BEFORE_NUDGE + MAX_IDENTICAL_CALLS_AFTER_NUDGE) {
+        const stopMessage =
+          `Stopped: "${repeatedToolName}" was called ${identicalCallStreak} times in a row with the exact same input and the same ` +
+          'result each time, including after being told so — ending the turn instead of repeating it further.'
+        if (isTopLevel) {
+          yield { kind: 'stream', event: tagEvent({ type: 'warning', message: stopMessage }, agentRole) }
+          yield { kind: 'message', role: 'assistant', content: [{ type: 'warning', message: stopMessage }] }
+          yield { kind: 'stream', event: tagMessageStop({ type: 'message_stop', stopReason: 'end_turn' }, agentRole, isTopLevel) }
+        }
+        return { text: stopMessage, isError: true }
+      }
     }
 
     const outOfTime = Date.now() >= state.deadlineAt
@@ -1609,12 +2671,14 @@ export class Orchestrator {
       'than attempting anything further.'
     // The wrap-up call is exactly the scenario #98 (see refitConversationToBudget) exists for —
     // reached after exhausting rounds/a whole plan, so `conversation` is at its largest for the turn.
-    const wrapUpMessages = await this.refitConversationToBudget(
-      capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
-      toolByName,
-      wrapUpSystem,
-      [],
-      state
+    const wrapUpMessages = normalizeUserNotesForWire(
+      await this.refitConversationToBudget(
+        capRepeatedToolResults(collapseDuplicateToolResults(conversation, toolByName), toolByName),
+        toolByName,
+        wrapUpSystem,
+        [],
+        state
+      )
     )
     // A one-shot call with no retry of its own, so no escalation applies — same as classifyAndPlan.
     const wrapUpTimer = this.startRoundTimer(state.deadlineAt, 0)
@@ -1624,7 +2688,8 @@ export class Orchestrator {
         system: wrapUpSystem,
         messages: wrapUpMessages,
         maxTokens: state.maxOutputTokens,
-        signal: wrapUpTimer.signal
+        signal: wrapUpTimer.signal,
+        temperature: this.options.temperature
         // No `tools` — forces a text-only reply, so this genuinely cannot loop further.
       })) {
         if (event.type === 'text_delta') wrapUpText += event.text
@@ -1709,6 +2774,52 @@ export class Orchestrator {
   }
 
   /** A specialist's own tool calls (e.g. Coding calling write_file) still go through normal confirmation. */
+  /** The first specialist whose tool list contains `name`, or undefined — used to turn "Unknown tool" into "that tool belongs to <role>". */
+  private roleOwningTool(name: string): AgentRole | undefined {
+    for (const agent of this.agents.values()) if (agent.tools.some((t) => t.name === name)) return agent.role
+    return undefined
+  }
+
+  /**
+   * Asks the user, before a tool runs, about every folder outside the workspace its call would read or create a file
+   * in (`Tool.externalPaths`). Read access can be remembered (this session, or always); creating a new file is asked
+   * every time. Never auto-approved — the renderer skips its blanket and per-tool auto-approve for this request.
+   * Returns an error message for the model when access is refused, otherwise undefined; `releases` collects the
+   * call-scoped grants to drop once the call has finished.
+   */
+  private async askExternalAccess(
+    toolUseId: string,
+    tool: Tool,
+    input: Record<string, unknown>,
+    releases: Array<() => void>
+  ): Promise<string | undefined> {
+    const requests = tool.externalPaths?.(input, this.toolContext) ?? []
+    const ctx = this.toolContext
+    for (const [i, request] of requests.entries()) {
+      if (isInsideWorkspace(ctx, request.path)) continue
+      const abs = resolve(ctx.workspaceGuard.root, request.path)
+      const access = ctx.externalAccess
+      if (!access) return `"${request.path}" is outside the workspace, which this tool may not access here.`
+      if (access.isBlocked(abs)) return `"${request.path}" is a protected location (credentials, keys, system or Sachivji's own data) and cannot be accessed.`
+      if (request.access === 'read' && access.isReadAllowed(ctx.currentSessionId, abs)) continue
+      const folder = request.access === 'read' ? access.folderFor(abs) : dirname(abs)
+      const decision = await this.confirmOrAbort({
+        toolUseId: `${toolUseId}:ext${i}`,
+        name: EXTERNAL_ACCESS_TOOL_NAME,
+        input: { folder, access: request.access, path: abs, tool: tool.name },
+        description:
+          request.access === 'read'
+            ? `Allow Sachivji to read files in "${folder}"? (${tool.name} wants "${basename(abs)}") — read only; nothing there is edited or deleted.`
+            : `Allow Sachivji to save a NEW file "${abs}"? It will never overwrite or edit an existing file there.`
+      })
+      if (!decision.approved) return `[Rejected by user] The user did not allow access to "${folder}".`
+      const remember = decision.input?.remember
+      if (request.access === 'read' && (remember === 'session' || remember === 'always')) access.grant(ctx.currentSessionId, folder, remember)
+      releases.push(access.grantOnce(folder))
+    }
+    return undefined
+  }
+
   private async dispatchTool(
     toolUseId: string,
     name: string,
@@ -1716,8 +2827,35 @@ export class Orchestrator {
     toolByName: Map<string, Tool>
   ): Promise<{ content: string; isError: boolean; image?: { path: string; mimeType: string; dataBase64: string } }> {
     const tool = toolByName.get(name)
+    const releases: Array<() => void> = []
+    try {
+      if (tool?.externalPaths) {
+        const refused = await this.askExternalAccess(toolUseId, tool, input, releases)
+        if (refused) return { content: refused, isError: true }
+      }
+      return await this.dispatchToolChecked(toolUseId, name, input, toolByName)
+    } finally {
+      for (const release of releases) release()
+    }
+  }
+
+  private async dispatchToolChecked(
+    toolUseId: string,
+    name: string,
+    input: Record<string, unknown>,
+    toolByName: Map<string, Tool>
+  ): Promise<{ content: string; isError: boolean; image?: { path: string; mimeType: string; dataBase64: string } }> {
+    const tool = toolByName.get(name)
     if (!tool) {
-      return { content: `Unknown tool "${name}".`, isError: true }
+      // A tool that exists but belongs to a specialist (the router no longer carries every tool, and a
+      // replayed history may contain calls to tools it doesn't have) gets a redirect, not a dead end.
+      const owner = this.roleOwningTool(name)
+      return {
+        content: owner
+          ? `Tool "${name}" is not available here — it belongs to the ${this.labelOf(owner)} specialist. Call delegate_to_${owner.replace(/-/g, '_')} with the task instead.`
+          : `Unknown tool "${name}".`,
+        isError: true
+      }
     }
 
     const mutates = typeof tool.mutates === 'function' ? tool.mutates(input) : tool.mutates
@@ -1743,8 +2881,8 @@ export class Orchestrator {
 
     try {
       const content = await this.executeWithTimeout(tool, input)
-      if (name === 'show_media') {
-        // TASKS.md #82 — show_media signals its real image payload via a
+      if (content.startsWith(`{"${SHOW_MEDIA_MARKER}"`)) {
+        // TASKS.md #82 — show_media (and download_image, which saves then shows) signal a real image payload via a
         // JSON marker (see tools/show-media.ts) rather than widening the
         // `Tool.execute(): Promise<string>` contract every other tool
         // implements, just for this one. Split here into a real `image`
@@ -1754,7 +2892,7 @@ export class Orchestrator {
           const parsed = JSON.parse(content) as Partial<ShowMediaPayload>
           if (parsed[SHOW_MEDIA_MARKER] && parsed.path && parsed.mimeType && parsed.dataBase64) {
             return {
-              content: `Displayed ${parsed.path} to the user.`,
+              content: `Displayed ${parsed.path} to the user.${parsed.note ? ` ${parsed.note}` : ''}`,
               isError: false,
               image: { path: parsed.path, mimeType: parsed.mimeType, dataBase64: parsed.dataBase64 }
             }
@@ -1845,15 +2983,29 @@ export class Orchestrator {
     role: AgentRole,
     input: Record<string, unknown>,
     conversation: Message[],
-    state: RunState
-  ): AsyncGenerator<OrchestratorEvent, { content: string; isError: boolean }> {
+    state: RunState,
+    planContext?: { index: number; total: number }
+  ): AsyncGenerator<OrchestratorEvent, DelegateOutcome> {
     const agent = this.agents.get(role)
     if (!agent) return { content: `Unknown agent role "${role}".`, isError: true }
 
     const task = String(input.task ?? '')
+    // Found live: given a plan step that was squarely within its own tools (a database query), a
+    // specialist instead looked at the whole non-isolated parent conversation — which also named a
+    // later step's own work ("...then put it in a Word document") — and called its OWN step out of
+    // scope, never attempting the query at all. The step's `[handoff: out_of_scope -> ...]` then named
+    // a role id ("document-generation") that doesn't exist, so even the redirect safety net below
+    // couldn't recover it. This note is deliberately only added for a plan-dispatched step (not every
+    // delegate call) — it is the "other steps belong elsewhere, that's not your problem" framing a plan
+    // step specifically needs that an ordinary single delegation doesn't.
+    const planScopeNote = planContext
+      ? `\n\n(This is step ${planContext.index + 1} of ${planContext.total} in a multi-step plan for the user's original request — the other step(s) are being handled by other specialists in this same turn, not by you. Do only THIS step, with your own tools. A part of the original request that belongs to a different step is not a reason to call THIS step out of scope — only call [handoff: out_of_scope -> <role-id>] if THIS step's own task genuinely needs a tool/capability you don't have. If you do, name a real role id, one of: ${this.plannableRoleIds().join(', ')}. The user sees each step's reply as it is written, so keep yours short: give figures or content only if this step is the one that produced them — never repeat what an earlier step already showed or what you just wrote into a file; name the file instead.)`
+      : ''
+    // The real outputs of earlier delegates this turn (files they produced, data they retrieved) are
+    // appended to the brief by the app — typed inputs, not something the router has to remember to pass.
     const taskMessage: Message = {
       role: 'user',
-      content: [{ type: 'text', text: `[Orchestrator -> ${AGENT_ROLE_LABELS[role]}]: ${task}` }]
+      content: [{ type: 'text', text: `[Orchestrator -> ${this.labelOf(role)}]: ${task}${formatInputs(state.handoff.items)}${planScopeNote}` }]
     }
     // `isolated` (#77) controls conversation scoping only — this brief alone
     // vs. the whole parent conversation. The round *budget* is always its
@@ -1878,27 +3030,76 @@ export class Orchestrator {
       // other delegate call in it.
       deadlineAt: state.deadlineAt,
       consecutiveRoundTimeouts: 0,
-      consecutiveRateLimitRetries: 0
+      consecutiveRateLimitRetries: 0,
+      handoff: state.handoff
     }
     const maxRounds = agent.maxRounds ?? MAX_TOTAL_ROUNDS
 
+    // Artifacts are derived, not claimed: diff the workspace around the run. Skipped for isolated
+    // single-purpose roles (slides, email) and roles with no tools, where there is nothing to find.
+    const root = this.toolContext.workspaceGuard?.root
+    const trackFiles = Boolean(root) && !agent.isolated && agent.tools.length > 0
+    const before = trackFiles ? await snapshotWorkspace(root as string) : undefined
+
+    const toolNames = new Map<string, string>()
+    const dataFiles: HandoffDataFile[] = []
+
     try {
-      const result = yield* this.runLoop(
-        agent.systemPrompt,
-        agent.tools,
-        nestedConversation,
-        nestedState,
-        role,
-        [],
-        false,
-        maxRounds
-      )
+      // Driven by hand (not `yield*`) so the nested run's tool results can be observed and the
+      // data-producing ones saved for later steps, while every event still reaches the caller unchanged.
+      const gen = this.runLoop(agent.systemPrompt, agent.tools, nestedConversation, nestedState, role, [], false, maxRounds)
+      let next = await gen.next()
+      while (!next.done) {
+        const event = next.value
+        if (event.kind === 'stream') {
+          const e = event.event
+          if (e.type === 'tool_use_start') toolNames.set(e.id, e.name)
+          else if (e.type === 'tool_result' && !e.isError && root && dataFiles.length < MAX_DATA_FILES_PER_DELEGATE) {
+            const name = toolNames.get(e.toolUseId)
+            if (name && isCapturableDataTool(name)) {
+              const saved = await saveHandoffData(root, state.handoff.turnId, ++state.handoff.seq, name, e.content)
+              if (saved) dataFiles.push(saved)
+            }
+          }
+        }
+        yield event
+        next = await gen.next()
+      }
+      const loopResult = next.value
       // The round ceiling is its own fresh pool per delegate call, but real
       // token cost never is — roll up into the parent's cumulative totals
       // so session_usage/the context meter still see the true full cost.
       state.inputTokens += nestedState.inputTokens
       state.outputTokens += nestedState.outputTokens
-      return { content: result.text || '(no response)', isError: result.isError }
+
+      const tag = parseHandoffTag(loopResult.text || '')
+      const diff = before && root ? diffSnapshots(before, await snapshotWorkspace(root)) : undefined
+      const artifacts = diff ? [...diff.created, ...diff.modified].filter((p) => !isInternalWorkFile(p)) : []
+      // status: code decides failure; the model only ever chooses the two judgment cases, and only on a clean end.
+      const rawStatus = loopResult.isError ? 'failed' : (tag.status ?? 'done')
+      // Found live: Data Access queried successfully, wrote a complete, correct answer from real data —
+      // then appended `[handoff: out_of_scope -> document-creator]` anyway. `out_of_scope` means "I lack
+      // the capability for this"; dataFiles/artifacts are proof of real tool use that already produced
+      // real output, which directly contradicts that. The redirect-once safety net trusted the tag at
+      // face value, triggering a wasted specialist call whose output the step after it then discarded
+      // entirely. A contradictory tag is a model slip, not a real capability boundary — override to
+      // `done` rather than redirect. Left untouched for `needs_input` (legitimately compatible with
+      // partial work) and `no_information` (self-consistent: it implies nothing was captured anyway).
+      const overridden = rawStatus === 'out_of_scope' && (dataFiles.length > 0 || artifacts.length > 0)
+      const status = overridden ? 'done' : rawStatus
+      const result: DelegateResult = {
+        role,
+        status,
+        summary: tag.text || (tag.detail ?? '') || '(no response)',
+        artifacts,
+        dataFiles,
+        blocker: overridden ? undefined : tag.detail,
+        suggestedRole: overridden ? undefined : tag.suggestedRole,
+        isError: status === 'failed'
+      }
+      for (const d of dataFiles) state.handoff.items.push({ fromRole: role, kind: 'data', path: d.path, note: `${d.tool}: ${d.summary}` })
+      for (const p of artifacts.slice(0, 30)) state.handoff.items.push({ fromRole: role, kind: 'file', path: p, note: 'created or changed by this step' })
+      return { content: formatDelegateResult(result), isError: result.isError, result }
     } catch (err) {
       return { content: err instanceof Error ? err.message : String(err), isError: true }
     }

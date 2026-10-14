@@ -1,0 +1,16 @@
+# Fix for TASKS.md: nomic-embed-text's own published Modelfile sets num_ctx 8192,
+# but the model's real trained context (n_ctx_train) is only 2048 — confirmed via
+# `ollama show nomic-embed-text --parameters` and the Ollama log's own warning:
+#   "requested context size too large for model" num_ctx=8192 n_ctx_train=2048
+# That overcommit crashes llama-server (segfault) on this machine's Vulkan/llvmpipe
+# software backend, on every embedding call regardless of input size.
+#
+# Pull the base model
+FROM nomic-embed-text:latest
+
+# Match the model's real trained context instead of the published (wrong) 8192 default.
+PARAMETER num_ctx 2048
+
+# run this afterwards — recreates the SAME name in place (Sachivji's default embedding
+# model is hardcoded to "nomic-embed-text", so no Settings change is needed after this):
+# ollama create nomic-embed-text -f ./models/ModelFileNomicEmbed

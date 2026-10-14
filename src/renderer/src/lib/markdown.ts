@@ -4,6 +4,25 @@ import katex from 'katex'
 
 marked.setOptions({ gfm: true, breaks: true })
 
+/**
+ * TASKS.md #206: a pinned specialist's own reply is shown verbatim, unlike a delegated run (where the
+ * orchestrator builds a fresh summary and never re-displays the raw tag) — so a pinned role's "out of
+ * scope" answer leaked the literal `[handoff: out_of_scope -> coding] ...` line straight into the chat.
+ * Duplicated from `src/main/agents/handoff.ts`'s `TAG`/`parseHandoffTag` (can't import it directly —
+ * main and renderer are separate processes) with the same semantics: only a tag within the last 1200
+ * characters counts as a real trailing tag, not an earlier in-message mention (e.g. quoting this exact
+ * instruction back) that just happens to use the same bracket syntax.
+ */
+const HANDOFF_TAG = /\[handoff:\s*(?:needs_input|out_of_scope|no_information|incomplete)(?:\s*(?:->|→)\s*[a-z][a-z0-9-]*)?\s*\]/gi
+const HANDOFF_TAG_TAIL_CHARS = 1200
+
+function stripHandoffTag(text: string): string {
+  const tailStart = Math.max(0, text.length - HANDOFF_TAG_TAIL_CHARS)
+  let last: RegExpExecArray | undefined
+  for (const m of text.matchAll(HANDOFF_TAG)) if (m.index >= tailStart) last = m
+  return last ? text.slice(0, last.index).trim() : text
+}
+
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (node.tagName === 'A') {
     node.setAttribute('target', '_blank')
@@ -45,17 +64,26 @@ const ALLOWED_TAGS = [
 ]
 
 /**
- * Math delimiters this model actually emits — `\(...\)` inline, `\[...\]`
- * and `$$...$$` block (confirmed live against real output, e.g. a physics
- * problem's worked solution). Deliberately no bare single-`$...$` support:
- * that's the classic false-positive source ("costs $5 to $10" isn't math),
- * and nothing observed from this app's providers actually emits it.
+ * Math delimiters the models emit — `\(...\)` inline, `\[...\]` and `$$...$$` block (confirmed live against real output, e.g. a physics
+ * problem's worked solution).
  */
 const MATH_PATTERNS: { regex: RegExp; displayMode: boolean }[] = [
   { regex: /\$\$([\s\S]+?)\$\$/g, displayMode: true },
   { regex: /\\\[([\s\S]+?)\\\]/g, displayMode: true },
   { regex: /\\\(([\s\S]+?)\\\)/g, displayMode: false }
 ]
+
+/**
+ * Bare single-`$...$` inline math — what several models (seen live: a Data Access answer full of `$613,898,527\text{ kWh}$`) use instead of
+ * `\(...\)`. It used to be left out because of the classic false positive ("costs $5 to $10" is not math), so it is accepted only under
+ * Pandoc's rules, which keep prices out: the opening `$` must be followed by a non-space, the closing `$` must be preceded by a non-space and
+ * must NOT be followed by a digit, and neither may be a backslash-escaped `\$`. "$5 to $10" fails (a space before the second `$`), so does
+ * "$5-$10" (a digit after it). One line only. Never applied inside code (see `extractMath`).
+ */
+const SINGLE_DOLLAR_MATH = /(?<![\\$])\$(?=[^\s$])((?:\\.|[^$\\\n])+?)(?<=[^\s\\])\$(?![\d$])/g
+
+/** Markdown code fences and inline code spans, kept out of the single-`$` pass — `awk '{print $1}' | sort $2` is shell, not math. */
+const CODE_SEGMENT = /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`)/
 
 // Private-Use-Area characters bracketing the index — not valid in any real
 // text a model would produce, so this can never collide with an ordinary
@@ -80,38 +108,63 @@ const PLACEHOLDER_RE = new RegExp(`${PH_START}(\\d+)${PH_END}`, 'g')
  * elsewhere in this file's history — this sidesteps that entirely rather
  * than widening the allowlist).
  */
+/**
+ * TASKS.md #182: a long single-`$...$` match that is really just digits/commas/etc rather than an
+ * equation (e.g. every divisor of a large number, written out) renders as one unbroken KaTeX span —
+ * `white-space:nowrap` is baked into KaTeX's own CSS for every formula, inline or display, since a
+ * real equation's layout (fractions, radicals, sub/superscripts) depends on staying one unit, so it
+ * can't be force-wrapped generically. Past this length, skip KaTeX for a *single-$* match specifically
+ * (never for an explicit `\(...\)`/`\[...\]`/`$$...$$` delimiter, which is the model deliberately
+ * asking for real math) and show the literal text instead, which wraps normally like any other text.
+ */
+const SINGLE_DOLLAR_PLAIN_TEXT_THRESHOLD = 60
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 function extractMath(text: string): { text: string; blocks: string[] } {
   const blocks: string[] = []
+  const renderToPlaceholder = (source: string, displayMode: boolean, plainFallback = false): string => {
+    if (plainFallback && !displayMode && source.length > SINGLE_DOLLAR_PLAIN_TEXT_THRESHOLD) {
+      const index = blocks.push(`$${escapeHtml(source)}$`) - 1
+      return `${PH_START}${index}${PH_END}`
+    }
+    let html: string
+    try {
+      // A bare `%` is LaTeX's comment character — it swallows everything
+      // to end-of-line, including the closing `}` of an enclosing
+      // \text{...}. Found live: gpt-oss wrote `\text{ (130 %)}` for a
+      // percentage, which KaTeX correctly rejected as "Unexpected end of
+      // input in a macro argument, expected '}'", rendering as a visible
+      // raw-LaTeX error instead of the number. Models reliably write a
+      // literal `%` for "percent" without escaping it, so repair that one
+      // specific, extremely common mistake before parsing rather than
+      // showing every percentage as a parse error — an already-escaped
+      // `\%` is left alone.
+      const escaped = source.replace(/(?<!\\)%/g, '\\%')
+      // trust: false (the default) keeps commands like \href/\includegraphics
+      // inert — this text is untrusted model output, not authored LaTeX.
+      html = katex.renderToString(escaped, { displayMode, throwOnError: false, trust: false, output: 'html' })
+    } catch {
+      // KaTeX's own parse errors are normally caught internally by
+      // throwOnError:false and rendered as a visible red error span —
+      // this is a last-resort net for anything that still throws, so a
+      // single bad equation can't break the whole message.
+      html = ''
+    }
+    const index = blocks.push(html) - 1
+    return `${PH_START}${index}${PH_END}`
+  }
   let result = text
   for (const { regex, displayMode } of MATH_PATTERNS) {
-    result = result.replace(regex, (_match, source: string) => {
-      let html: string
-      try {
-        // A bare `%` is LaTeX's comment character — it swallows everything
-        // to end-of-line, including the closing `}` of an enclosing
-        // \text{...}. Found live: gpt-oss wrote `\text{ (130 %)}` for a
-        // percentage, which KaTeX correctly rejected as "Unexpected end of
-        // input in a macro argument, expected '}'", rendering as a visible
-        // raw-LaTeX error instead of the number. Models reliably write a
-        // literal `%` for "percent" without escaping it, so repair that one
-        // specific, extremely common mistake before parsing rather than
-        // showing every percentage as a parse error — an already-escaped
-        // `\%` is left alone.
-        const escaped = source.replace(/(?<!\\)%/g, '\\%')
-        // trust: false (the default) keeps commands like \href/\includegraphics
-        // inert — this text is untrusted model output, not authored LaTeX.
-        html = katex.renderToString(escaped, { displayMode, throwOnError: false, trust: false, output: 'html' })
-      } catch {
-        // KaTeX's own parse errors are normally caught internally by
-        // throwOnError:false and rendered as a visible red error span —
-        // this is a last-resort net for anything that still throws, so a
-        // single bad equation can't break the whole message.
-        html = ''
-      }
-      const index = blocks.push(html) - 1
-      return `${PH_START}${index}${PH_END}`
-    })
+    result = result.replace(regex, (_match, source: string) => renderToPlaceholder(source, displayMode))
   }
+  // Single-$ inline math, on the parts of the text that are not code (split() with a capture group puts the code segments at odd indices).
+  result = result
+    .split(CODE_SEGMENT)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(SINGLE_DOLLAR_MATH, (_m, source: string) => renderToPlaceholder(source, false, true))))
+    .join('')
   return { text: result, blocks }
 }
 
@@ -170,7 +223,8 @@ export interface RenderedMarkdown {
   mermaidBlocks: Map<string, string>
 }
 
-export function renderMarkdown(text: string): RenderedMarkdown {
+export function renderMarkdown(rawText: string): RenderedMarkdown {
+  const text = stripHandoffTag(rawText)
   const { text: withPlaceholders, blocks: mathBlocks } = extractMath(text)
   const dirty = marked.parse(withPlaceholders, { async: false }) as string
   const { html: dirtyWithMermaidPlaceholders, blocks: mermaidBlocks } = extractMermaid(dirty)

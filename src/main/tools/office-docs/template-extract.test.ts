@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ExcelJS from 'exceljs'
+import PizZip from 'pizzip'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WorkspaceGuard } from '../../security/workspace-guard'
 import type { ToolContext } from '../types'
@@ -276,6 +277,89 @@ describe('office_extract_template', () => {
           ctx
         )
       ).rejects.toThrow(/same ".docx" extension/)
+    })
+  })
+
+  describe('text split across runs', () => {
+    async function writeSplitDocx(name: string, bodyXml: string): Promise<void> {
+      const zip = new PizZip()
+      zip.file(
+        '[Content_Types].xml',
+        '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'
+      )
+      zip.file(
+        '_rels/.rels',
+        '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'
+      )
+      zip.file(
+        'word/document.xml',
+        `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${bodyXml}</w:body></w:document>`
+      )
+      const { mkdir, writeFile } = await import('node:fs/promises')
+      await mkdir(join(root, 'documents'), { recursive: true })
+      await writeFile(join(root, 'documents', name), zip.generate({ type: 'nodebuffer' }))
+    }
+
+    it('replaces a name Word split over several runs, keeping the first run\'s formatting', async () => {
+      await writeSplitDocx(
+        'split.docx',
+        '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Jon</w:t></w:r><w:r><w:t xml:space="preserve">athan Whit</w:t></w:r><w:r><w:t>aker &amp; Co</w:t></w:r></w:p>' +
+          '<w:p><w:r><w:t>Contact Jonathan Whitaker today. Jonathan Whitaker.</w:t></w:r></w:p>'
+      )
+      const result = await officeExtractTemplateTool.execute(
+        {
+          sourcePath: 'documents/split.docx',
+          action: 'apply',
+          templateName: 'split.docx',
+          replacements: [{ text: 'Jonathan Whitaker', placeholder: 'fullName' }]
+        },
+        ctx
+      )
+      expect(result).toContain('{fullName}: 3 replacement(s)')
+      expect(result).not.toContain('Warning')
+      const xml = new PizZip(await readFile(join(root, 'templates', 'split.docx'))).file('word/document.xml')!.asText()
+      expect(xml).toContain('<w:rPr><w:b/></w:rPr><w:t>{fullName}</w:t>')
+      expect(xml).toContain('<w:t> &amp; Co</w:t>')
+      expect(xml).toContain('Contact {fullName} today. {fullName}.')
+      expect(xml).not.toContain('Whitaker')
+    })
+
+    it('honours "occurrence" in document order and does not match across paragraphs', async () => {
+      await writeSplitDocx(
+        'occ.docx',
+        '<w:p><w:r><w:t>Ann</w:t></w:r><w:r><w:t> Lee</w:t></w:r></w:p><w:p><w:r><w:t>Ann</w:t></w:r></w:p><w:p><w:r><w:t> Lee</w:t></w:r></w:p>'
+      )
+      await officeExtractTemplateTool.execute(
+        {
+          sourcePath: 'documents/occ.docx',
+          action: 'apply',
+          templateName: 'occ.docx',
+          replacements: [{ text: 'Ann Lee', placeholder: 'who', occurrence: 1 }]
+        },
+        ctx
+      )
+      const xml = new PizZip(await readFile(join(root, 'templates', 'occ.docx'))).file('word/document.xml')!.asText()
+      expect(xml.match(/\{who\}/g)).toHaveLength(1)
+      expect(xml).toContain('<w:t>Ann</w:t></w:r></w:p><w:p><w:r><w:t> Lee')
+    })
+
+    it('reports how much of the original text still has no placeholder', async () => {
+      await writeSplitDocx(
+        'left.docx',
+        '<w:p><w:r><w:t>Jane Roe</w:t></w:r></w:p><w:p><w:r><w:t>Led the migration of the billing platform to the cloud.</w:t></w:r></w:p><w:p><w:r><w:t>Skills</w:t></w:r></w:p>'
+      )
+      const result = await officeExtractTemplateTool.execute(
+        {
+          sourcePath: 'documents/left.docx',
+          action: 'apply',
+          templateName: 'left.docx',
+          replacements: [{ text: 'Jane Roe', placeholder: 'name' }]
+        },
+        ctx
+      )
+      expect(result).toContain('Still the original text: 2 of 3 paragraphs/cells have no placeholder')
+      expect(result).toContain('Led the migration of the billing platform')
+      expect(result).toContain('A template should hold none of the source')
     })
   })
 

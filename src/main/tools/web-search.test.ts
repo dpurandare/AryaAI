@@ -22,8 +22,9 @@ vi.mock('electron', () => ({
 }))
 
 const { setDbPath } = await import('../db')
+const { setSetting } = await import('../db/settings')
 const { setApiKey } = await import('../security/keychain')
-const { webSearchTool } = await import('./web-search')
+const { webSearchTool, WEB_SEARCH_PROVIDER_SETTING_KEY } = await import('./web-search')
 
 // web_search ignores ctx, but Tool.execute's signature requires one. A real
 // OS-native path, not a hand-built one — see workspace-guard.test.ts.
@@ -190,6 +191,36 @@ describe('web_search', () => {
       expect(body.topic).toBe('general')
     })
 
+    it('asks Tavily for images when images:true and lists them with their captions', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ results: [{ title: 'Bio', url: 'https://example.com/bio', content: 'text' }], images: [{ url: 'https://cdn.example.com/a.jpg', description: 'A portrait' }, 'https://cdn.example.com/b.png'] }), { status: 200 })
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      const out = await webSearchTool.execute({ query: 'someone', images: true }, ctx)
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+      expect(body.include_images).toBe(true)
+      expect(body.include_image_descriptions).toBe(true)
+      expect(out).toContain('Image results')
+      expect(out).toContain('- https://cdn.example.com/a.jpg (A portrait)')
+      expect(out).toContain('- https://cdn.example.com/b.png')
+    })
+
+    it('asks Tavily for a deeper search only when depth is "advanced"', async () => {
+      const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ results: [] }), { status: 200 }))
+      vi.stubGlobal('fetch', fetchMock)
+      await webSearchTool.execute({ query: 'x', depth: 'advanced' }, ctx)
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).search_depth).toBe('advanced')
+      await webSearchTool.execute({ query: 'x' }, ctx)
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body).search_depth).toBeUndefined()
+    })
+
+    it('does not ask for images unless told to', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [] }), { status: 200 }))
+      vi.stubGlobal('fetch', fetchMock)
+      await webSearchTool.execute({ query: 'x' }, ctx)
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).include_images).toBeUndefined()
+    })
+
     it('passes topic: news through when requested — matters for the exact "latest on X" queries that kept failing', async () => {
       const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [] }), { status: 200 }))
       vi.stubGlobal('fetch', fetchMock)
@@ -244,6 +275,43 @@ describe('web_search', () => {
     it('never falls back to DuckDuckGo when a Tavily key is present, even on Tavily failure', async () => {
       vi.mocked(fetch).mockResolvedValue(new Response('', { status: 500, statusText: 'Server Error' }))
       await expect(webSearchTool.execute({ query: 'x' }, ctx)).rejects.toThrow(/Tavily/)
+    })
+  })
+
+  // TASKS.md #161: the pluggable provider mechanism — explicit selection via the new setting, and graceful
+  // fallback when the selected provider isn't actually usable yet.
+  describe('explicit provider selection (webSearchProviderId)', () => {
+    it('honors an explicit duckduckgo selection even when a Tavily key is also configured', async () => {
+      setApiKey('tavily', 'tvly-test-key')
+      setSetting(WEB_SEARCH_PROVIDER_SETTING_KEY, 'duckduckgo')
+      vi.mocked(fetch).mockResolvedValue(
+        new Response(JSON.stringify({ Abstract: 'A DuckDuckGo answer.', RelatedTopics: [] }), { status: 200 })
+      )
+
+      const result = await webSearchTool.execute({ query: 'x' }, ctx)
+      expect(result).toContain('A DuckDuckGo answer.')
+      // Confirms it genuinely hit DuckDuckGo's endpoint, not Tavily's.
+      expect(vi.mocked(fetch).mock.calls[0][0]).toContain('duckduckgo.com')
+    })
+
+    it('honors an explicit tavily selection', async () => {
+      setApiKey('tavily', 'tvly-test-key')
+      setSetting(WEB_SEARCH_PROVIDER_SETTING_KEY, 'tavily')
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [] }), { status: 200 }))
+      vi.stubGlobal('fetch', fetchMock)
+
+      await webSearchTool.execute({ query: 'x' }, ctx)
+      expect(fetchMock).toHaveBeenCalledWith('https://api.tavily.com/search', expect.anything())
+    })
+
+    it('falls back to duckduckgo when tavily is selected but no key is configured yet, rather than erroring', async () => {
+      setSetting(WEB_SEARCH_PROVIDER_SETTING_KEY, 'tavily')
+      vi.mocked(fetch).mockResolvedValue(
+        new Response(JSON.stringify({ Abstract: 'Fallback answer.', RelatedTopics: [] }), { status: 200 })
+      )
+
+      const result = await webSearchTool.execute({ query: 'x' }, ctx)
+      expect(result).toContain('Fallback answer.')
     })
   })
 })

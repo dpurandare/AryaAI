@@ -1,8 +1,9 @@
+import { resolveReadable } from '../../security/external-access'
 import ExcelJS from 'exceljs'
 import { mkdir } from 'node:fs/promises'
-import { dirname, relative } from 'node:path'
+import { dirname } from 'node:path'
 import type { Tool } from '../types'
-import { resolveNewFilePath } from '../workspace-layout'
+import { resolveNewFilePath, workspaceRelativePath } from '../workspace-layout'
 
 const MAX_ROWS_RETURNED = 500
 
@@ -39,8 +40,9 @@ export const xlsxReadTool: Tool = {
     required: ['path']
   },
   mutates: false,
+  externalPaths: (input) => [{ path: String(input.path ?? ''), access: 'read' }],
   async execute(input, ctx) {
-    const absPath = ctx.workspaceGuard.assertWithinWorkspace(String(input.path ?? ''))
+    const absPath = resolveReadable(ctx, String(input.path ?? ''))
     const workbook = new ExcelJS.Workbook()
     await workbook.xlsx.readFile(absPath)
 
@@ -173,6 +175,6 @@ export const xlsxWriteTool: Tool = {
 
     await mkdir(dirname(absPath), { recursive: true })
     await workbook.xlsx.writeFile(absPath)
-    return `Wrote ${rows.length} row(s) to sheet "${sheetName}" in ${relative(ctx.workspaceGuard.root, absPath)}.`
+    return `Wrote ${rows.length} row(s) to sheet "${sheetName}" in ${workspaceRelativePath(ctx.workspaceGuard.root, absPath)}.`
   }
 }

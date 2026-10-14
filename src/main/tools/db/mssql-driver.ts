@@ -1,7 +1,8 @@
 import sql from 'mssql'
 import type { DbDriver, DbQueryResult, DbTable } from './types'
 
-const MAX_RETURNED_ROWS = 200
+/** TASKS.md #172: raised from a 200-row UX cap to a safety backstop — see sqlite-driver.ts's identical constant for the full reasoning. */
+const MAX_SAFETY_ROWS = 100_000
 const STATEMENT_TIMEOUT_MS = 10_000
 
 export interface MssqlConfig {
@@ -79,7 +80,7 @@ export class MssqlDriver implements DbDriver {
     params.forEach((value, i) => request.input(paramName(i), value))
     const result = await request.query(sqlText)
     if (result.recordset && result.recordset.length > 0) {
-      return { rows: result.recordset.slice(0, MAX_RETURNED_ROWS), rowCount: result.recordset.length }
+      return { rows: result.recordset.slice(0, MAX_SAFETY_ROWS), rowCount: result.recordset.length }
     }
     const affected = Array.isArray(result.rowsAffected) ? result.rowsAffected.reduce((a, b) => a + b, 0) : 0
     return { rowCount: affected }

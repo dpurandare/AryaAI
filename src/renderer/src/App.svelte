@@ -3,16 +3,20 @@
   import ChatView from './lib/components/ChatView.svelte'
   import SettingsPanel from './lib/components/SettingsPanel.svelte'
   import FirstRunSetup from './lib/components/FirstRunSetup.svelte'
+  import AccountMenu from './lib/components/AccountMenu.svelte'
+  import SplashScreen from './lib/components/SplashScreen.svelte'
   import {
     DEFAULT_SESSION_TITLE,
     type SessionDto,
     type MessageDto,
     type ToolConfirmRequestPayload,
     type LimitReachedRequestPayload,
-    type ProviderDescriptor
+    type ProviderDescriptor,
+    type AppInfo
   } from '@shared/ipc-contract'
   import type { AgentRole } from '@shared/agents'
-  import { getThemeMode, setThemeMode, type ThemeMode } from './lib/theme'
+  import type { RoleRosterEntryDto } from '@shared/ipc-contract'
+  import { getThemeMode, reloadThemeMode, setThemeMode, type ThemeMode } from './lib/theme'
 
   interface ToolCallDisplay {
     id: string
@@ -33,10 +37,12 @@
    */
   interface DisplaySegment {
     id: string
-    kind: 'text' | 'tool' | 'warning'
+    kind: 'text' | 'tool' | 'warning' | 'user_note' | 'thinking'
     agentRole?: AgentRole
-    /** Holds the plain message for both 'text' and 'warning' kinds. */
+    /** Holds the plain message for 'text', 'warning', 'user_note' and 'thinking' kinds. */
     text?: string
+    /** A 'user_note' that Sachivji wrote (a completion check), not the user. */
+    fromApp?: boolean
     toolCall?: ToolCallDisplay
   }
 
@@ -44,6 +50,10 @@
     id: string
     role: 'user' | 'assistant'
     pending?: boolean
+    /** "<providerId>:<model>" that answered — assistant messages only, shown optionally (Settings > off by default, see showAnsweringModel). */
+    model?: string
+    /** An app-generated "[Plan step N — Role]" hand-off note (stored as a user-role message so the model sees it, but it is not the user's input) — drawn left-aligned as an app note, and hidden with Tool output: hidden. */
+    stepNote?: { label: string; body: string }
     /** Live-only "what's happening" hint from the backend's `status` stream
      * event (see orchestrator.ts's `roundStatusMessage`) — never persisted,
      * just shown by ChatView while `pending` and there's no active segment
@@ -57,6 +67,13 @@
      * shows the full text even without this overlay. */
     plan?: { steps: { role: AgentRole; description: string }[]; stepStatus: ('pending' | 'running' | 'done' | 'error')[] }
     segments: DisplaySegment[]
+    /** For a **user** message: when it was sent. For an **assistant** message: when that round's content was
+        *finished* (re-stamped at completion for a live message — see the pending=false branches below —
+        matching the DB's own `createdAt`, written once a round's content is finalized, not when it began).
+        Together these let ChatView compute a real "took Xm Ys" duration per turn by diffing an assistant
+        bubble's `createdAt` against the preceding user message's. Shown optionally (Settings > off by
+        default, see showTimestamps). */
+    createdAt?: number
   }
 
   /**
@@ -78,6 +95,8 @@
     sending: boolean
     currentStreamId: string
     sessionUsage: { inputTokens: number; outputTokens: number }
+    /** The latest top-level request's size (a `usage` event's contextTokens); null until one runs in this app run - not stored, so a reloaded session shows a dash. */
+    contextTokens: number | null
     pendingConfirm: ToolConfirmRequestPayload | null
     /** A round/time budget was hit and the orchestrator is waiting to hear whether to keep going — see orchestrator.ts's askToContinue. Mutually exclusive with pendingConfirm in practice (only one can be in flight at a time per stream), kept as its own field rather than folded into one union so ChatView's prop list stays a plain, obvious `X | null` for each. */
     pendingLimit: LimitReachedRequestPayload | null
@@ -91,6 +110,7 @@
       sending: false,
       currentStreamId: '',
       sessionUsage: { inputTokens: 0, outputTokens: 0 },
+      contextTokens: null,
       pendingConfirm: null,
       pendingLimit: null,
       loaded: false
@@ -103,6 +123,20 @@
   let runtimes = $state<Record<string, SessionRuntime>>({})
   let showSettings = $state(false)
   let showFirstRunSetup = $state(false)
+
+  // Built-in and user-defined roles (design-discussion.md section 11): the Agent: picker and role labels read this. Re-read when the window
+  // regains focus (the user may have edited a role file in another editor) and when Settings closes.
+  let roleRoster = $state<RoleRosterEntryDto[]>([])
+  async function loadRoleRoster(): Promise<void> {
+    try {
+      roleRoster = (await window.sachiv.getRoles()).roles
+    } catch {
+      // The picker and labels fall back to the built-ins.
+    }
+  }
+  loadRoleRoster()
+  window.addEventListener('focus', () => void loadRoleRoster())
+  let firstRunStep = $state<'secrets' | 'python'>('secrets')
   let firstRunEnvPath = $state('')
   let providers = $state<ProviderDescriptor[]>([])
   let providerId = $state('openai')
@@ -114,10 +148,42 @@
   let sidebarWidth = $state(260)
   let isMac = $state(false)
   let userName = $state('')
+  let appInfo = $state<AppInfo | null>(null)
+  /** Shown immediately on launch, dismissed once checkFirstRun/initProvider/loadSessions below have all settled. */
+  let showSplash = $state(true)
+  /** The same screen, reopened on demand from the account menu's "About" item — see AccountMenu.svelte. */
+  let showAbout = $state(false)
   let updateAvailable = $state<{ version: string; releaseUrl: string } | null>(null)
   // initTheme() already resolved (main.ts awaits it before mount), so this
   // reflects the real persisted/resolved mode from the very first render.
   let themeMode = $state<ThemeMode>(getThemeMode())
+
+  /** Bumped after a settings import so the Settings screen is rebuilt and re-reads every list (connections, servers, roles, …). */
+  let settingsVersion = $state(0)
+
+  /** An import changes settings in the main process behind the renderer's back: re-read what App keeps in memory and rebuild the Settings screen. Zoom is applied by the main process and still needs a restart. */
+  async function refreshAfterSettingsImport(): Promise<void> {
+    const stored = async (key: string): Promise<string | undefined> => (await window.sachiv.getSetting(key)) ?? undefined
+    const rules = await stored('autoApproveToolRules')
+    if (rules) {
+      try {
+        autoApproveRules = JSON.parse(rules) as Record<string, boolean>
+      } catch {
+        // malformed stored value: keep what is there
+      }
+    }
+    const planning = await stored('planningEnabled')
+    if (planning !== undefined) planningEnabled = planning !== 'false'
+    const answering = await stored('showAnsweringModel')
+    if (answering !== undefined) showAnsweringModel = answering === 'true'
+    const timestamps = await stored('showTimestamps')
+    if (timestamps !== undefined) showTimestamps = timestamps === 'true'
+    const display = await stored('toolDisplayMode')
+    if (display === 'hidden' || display === 'partial' || display === 'shown') toolDisplayMode = display
+    themeMode = await reloadThemeMode()
+    await initProvider()
+    settingsVersion++
+  }
 
   function changeThemeMode(mode: ThemeMode): void {
     themeMode = mode
@@ -173,8 +239,33 @@
   // long per-round "thinking" phase. Mirrors this app's default-on-missing
   // settings convention (see main/ipc/register.ts's own read of this key).
   let planningEnabled = $state(true)
-  /** Global, not per-tool-call — matches Claude Code's own Cmd/Ctrl+O convention this was explicitly modeled on: one toggle for "how much tool detail is on screen," not a per-block expand state. Defaults to collapsed (false) — reported directly: full tool_result dumps in the transcript by default made the chat "look" broken/noisy even when the app was working correctly. */
-  let toolDetailsExpanded = $state(false)
+  /**
+   * TASKS.md #181: three states, uniform across every tool (no per-tool rule — deliberately rejected
+   * in favor of one global cycle, same Cmd/Ctrl+O this replaces). 'hidden' shows no tool-call row at
+   * all; 'partial' shows a name + done/error status, no input/result body (today's original
+   * collapsed-by-default behavior, kept as the default — reported directly: full tool_result dumps by
+   * default made the chat "look" broken/noisy even when the app was working correctly); 'shown' is the
+   * old last-expanded-by-default + per-block click-to-toggle behavior, unchanged. An `image` block
+   * (a chart, TASKS.md #82) is never affected by any of the three states — "Hidden should show the
+   * image as it is important part of the output" (explicit user decision, 2026-10-02): showing it *is*
+   * the point of that tool, not noise to suppress, so this stays a content-type rule, not a tool rule.
+   */
+  type ToolDisplayMode = 'hidden' | 'partial' | 'shown'
+  let toolDisplayMode = $state<ToolDisplayMode>('partial')
+  /** Off by default — a debugging/curiosity aid (which provider/model answered each message), not needed for normal use. */
+  let showAnsweringModel = $state(false)
+  /** On by default (unlike showAnsweringModel) — a time on each turn, and on an expanded tool/thinking block, matters most when something errored. A stored choice from Settings overrides this. */
+  let showTimestamps = $state(true)
+
+  /** `[Plan step 2 — Developer] (FAILED …): description\n\nResult:\n…` → a short label and the rest. See DisplayMessage.stepNote. */
+  function parseStepNote(content: MessageDto['content']): { label: string; body: string } | undefined {
+    const first = content[0]
+    if (content.length !== 1 || first?.type !== 'text') return undefined
+    const match = /^\[Plan step (\d+) — ([^\]]+)\]([^:]*):\s*([\s\S]*)$/.exec(first.text)
+    if (!match) return undefined
+    const marker = match[3].trim()
+    return { label: `Step ${match[1]} · ${match[2]}${marker ? ` ${marker}` : ''}`, body: match[4] }
+  }
 
   function mapMessagesToDisplay(records: MessageDto[]): DisplayMessage[] {
     const result: DisplayMessage[] = []
@@ -183,11 +274,19 @@
     for (const m of records) {
       // An `image` block (TASKS.md #82) rides alongside its `show_media`
       // call's own `tool_result` in the same synthetic message — still a
-      // continuation of the round that produced it, not a new turn.
+      // continuation of the round that produced it, not a new turn. A
+      // `user_note` (TASKS.md #158, a mid-run steering comment) is the same
+      // shape of continuation, appended to the message already in progress
+      // rather than starting a new bubble of its own.
       const isPureToolResult =
-        m.content.length > 0 && m.content.every((b) => b.type === 'tool_result' || b.type === 'image')
+        m.content.length > 0 && m.content.every((b) => b.type === 'tool_result' || b.type === 'image' || b.type === 'user_note')
       if (isPureToolResult) {
         for (const b of m.content) {
+          if (b.type === 'user_note') {
+            const prev = result[result.length - 1]
+            prev?.segments.push({ id: crypto.randomUUID(), kind: 'user_note', text: b.text, fromApp: b.source === 'app' })
+            continue
+          }
           if (b.type !== 'tool_result' && b.type !== 'image') continue
           const seg = toolSegmentsById.get(b.toolUseId)
           if (!seg?.toolCall) continue
@@ -201,10 +300,18 @@
         continue
       }
 
+      const stepNote = m.role === 'user' ? parseStepNote(m.content) : undefined
+      if (stepNote) {
+        result.push({ id: m.id, role: 'assistant', segments: [], stepNote, createdAt: m.createdAt })
+        continue
+      }
+
       const segments: DisplaySegment[] = []
       for (const b of m.content) {
         if (b.type === 'text') {
           segments.push({ id: crypto.randomUUID(), kind: 'text', agentRole: b.agentRole, text: b.text })
+        } else if (b.type === 'thinking') {
+          segments.push({ id: crypto.randomUUID(), kind: 'thinking', agentRole: b.agentRole, text: b.text })
         } else if (b.type === 'warning') {
           segments.push({ id: crypto.randomUUID(), kind: 'warning', agentRole: b.agentRole, text: b.message })
         } else if (b.type === 'tool_use') {
@@ -218,7 +325,7 @@
           toolSegmentsById.set(b.id, seg)
         }
       }
-      result.push({ id: m.id, role: m.role, segments })
+      result.push({ id: m.id, role: m.role, segments, model: m.model, createdAt: m.createdAt })
     }
     return result
   }
@@ -270,13 +377,13 @@
     await window.sachiv.exportSession(id)
   }
 
-  /** Appends to the trailing segment if it's the same kind+speaker, else starts a new one — keeps consecutive same-speaker text as one flowing block. */
-  function appendTextSegment(msg: DisplayMessage, text: string, agentRole?: AgentRole): void {
+  /** Appends to the trailing segment if it's the same kind+speaker, else starts a new one — keeps consecutive same-speaker text (or, #147, thinking) as one flowing block. */
+  function appendDeltaSegment(msg: DisplayMessage, kind: 'text' | 'thinking', text: string, agentRole?: AgentRole): void {
     const last = msg.segments[msg.segments.length - 1]
-    if (last && last.kind === 'text' && last.agentRole === agentRole) {
+    if (last && last.kind === kind && last.agentRole === agentRole) {
       last.text = (last.text ?? '') + text
     } else {
-      msg.segments.push({ id: crypto.randomUUID(), kind: 'text', agentRole, text })
+      msg.segments.push({ id: crypto.randomUUID(), kind, agentRole, text })
     }
   }
 
@@ -300,13 +407,19 @@
     const userMsg: DisplayMessage = {
       id: crypto.randomUUID(),
       role: 'user',
-      segments: [{ id: crypto.randomUUID(), kind: 'text', text }]
+      segments: [{ id: crypto.randomUUID(), kind: 'text', text }],
+      createdAt: Date.now()
     }
     const assistantMsg: DisplayMessage = {
       id: crypto.randomUUID(),
       role: 'assistant',
       segments: [],
-      pending: true
+      pending: true,
+      // Stamped from the same (providerId, currentModel) runChat resolves from Settings for this exact
+      // send — accurate for a live response; a stored message's own `model` (set server-side) is still
+      // the source of truth once reloaded from history, this is just so it doesn't wait for that round trip.
+      model: `${providerId}:${currentModel}`,
+      createdAt: Date.now()
     }
     runtime.messages.push(userMsg, assistantMsg)
     // runtime.messages is $state, and push() deep-proxies the pushed objects —
@@ -326,7 +439,9 @@
       if (event.type === 'status') {
         msg.statusText = event.message
       } else if (event.type === 'text_delta') {
-        appendTextSegment(msg, event.text, event.agentRole)
+        appendDeltaSegment(msg, 'text', event.text, event.agentRole)
+      } else if (event.type === 'thinking_delta') {
+        appendDeltaSegment(msg, 'thinking', event.text, event.agentRole)
       } else if (event.type === 'tool_use_start') {
         msg.segments.push({
           id: crypto.randomUUID(),
@@ -355,15 +470,46 @@
           inputTokens: runtime.sessionUsage.inputTokens + event.inputTokens,
           outputTokens: runtime.sessionUsage.outputTokens + event.outputTokens
         }
+        if (event.contextTokens !== undefined) runtime.contextTokens = event.contextTokens
       } else if (event.type === 'context_window') {
         contextWindow = { tokens: event.tokens, isEstimate: event.isEstimate }
       } else if (event.type === 'warning') {
+        const warningId = crypto.randomUUID()
         msg.segments.push({
-          id: crypto.randomUUID(),
+          id: warningId,
           kind: 'warning',
           agentRole: event.agentRole,
           text: event.message
         })
+        // A transient notice (rate-limit wait) disappears on its own. Looked up again through `runtime.messages`
+        // when the timer fires — `msg` may be a stale reference by then (see feedback on Svelte 5 runes).
+        if (event.transientMs) {
+          setTimeout(() => {
+            const current = runtime.messages[assistantIdx]
+            const at = current?.segments.findIndex((s) => s.id === warningId) ?? -1
+            if (at >= 0) current.segments.splice(at, 1)
+          }, event.transientMs)
+        }
+        // TASKS.md #174: a `warning` carrying a `failureCategory` IS the turn's only/final signal (the
+        // backend's own convention — see orchestrator.ts's `isTopLevel && !assistantText` reasoning and
+        // prepare-context.ts's `failedTurnWarning`, which uses this exact same presence check to tell a
+        // failed turn apart from a mid-turn FYI). Before this, every `warning` was treated as purely
+        // informational — only `error`/`message_stop` ever reset `sending`/`pending` and unsubscribed —
+        // so a turn that ended on a bare failure warning (e.g. "No model configured", or the user
+        // clicking Stop before any response) left the composer permanently stuck in mid-turn "steering"
+        // mode and Stop permanently inert, since there was no live stream left to cancel. A warning with
+        // no `failureCategory` (a pinned-role fallback notice, a dropped-context FYI, etc.) still leaves
+        // `sending` alone — the turn continues normally right after it.
+        if (event.failureCategory) {
+          msg.pending = false
+          msg.createdAt = Date.now()
+          runtime.sending = false
+          unsubscribe()
+        }
+      } else if (event.type === 'user_note') {
+        // TASKS.md #158: a mid-run steering comment, streamed alongside the matching persisted message —
+        // appended inline to the ongoing assistant message, same placement `warning` already uses.
+        msg.segments.push({ id: crypto.randomUUID(), kind: 'user_note', text: event.text, fromApp: event.source === 'app' })
       } else if (event.type === 'plan') {
         msg.plan = { steps: event.steps, stepStatus: event.steps.map(() => 'pending') }
       } else if (event.type === 'plan_step_start') {
@@ -371,16 +517,18 @@
       } else if (event.type === 'plan_step_done') {
         if (msg.plan) msg.plan.stepStatus[event.index] = event.isError ? 'error' : 'done'
       } else if (event.type === 'error') {
-        appendTextSegment(msg, `Error: ${event.message}`)
+        appendDeltaSegment(msg, 'text', `Error: ${event.message}`)
         msg.pending = false
+        msg.createdAt = Date.now()
         runtime.sending = false
         unsubscribe()
       } else if (event.type === 'message_stop') {
         // A tagged stop is a nested specialist's own round ending, not the whole
         // exchange — only an untagged (top-level) non-tool_use stop is truly final.
         if (event.stopReason === 'tool_use' || event.agentRole) return
-        if (event.stopReason === 'aborted') appendTextSegment(msg, '\n\n⏹ Stopped.')
+        if (event.stopReason === 'aborted') appendDeltaSegment(msg, 'text', '\n\n⏹ Stopped.')
         msg.pending = false
+        msg.createdAt = Date.now()
         runtime.sending = false
         unsubscribe()
       }
@@ -399,6 +547,15 @@
     // instead of leaving the composer replaced until that round-trips.
     runtime.pendingConfirm = null
     runtime.pendingLimit = null
+  }
+
+  /** TASKS.md #158: drops a correcting comment into the active run without cancelling it — always scoped to
+   * the currently-shown session's own stream, same reasoning as stopGeneration above. A no-op if nothing is
+   * actually running (currentStreamId unset) — the composer only offers this while `sending` is true anyway. */
+  function steerGeneration(text: string): void {
+    const runtime = runtimes[activeId]
+    if (!runtime?.currentStreamId) return
+    window.sachiv.steerChat(runtime.currentStreamId, text)
   }
 
   function approveTool(input: Record<string, unknown>): void {
@@ -432,9 +589,22 @@
     window.sachiv.setSetting('planningEnabled', String(value))
   }
 
-  function toggleToolDetails(): void {
-    toolDetailsExpanded = !toolDetailsExpanded
-    window.sachiv.setSetting('toolDetailsExpanded', String(toolDetailsExpanded))
+  function changeShowAnsweringModel(value: boolean): void {
+    showAnsweringModel = value
+    window.sachiv.setSetting('showAnsweringModel', String(value))
+  }
+
+  function changeShowTimestamps(value: boolean): void {
+    showTimestamps = value
+    window.sachiv.setSetting('showTimestamps', String(value))
+  }
+
+  const TOOL_DISPLAY_MODE_CYCLE: ToolDisplayMode[] = ['hidden', 'partial', 'shown']
+
+  function cycleToolDisplayMode(): void {
+    const next = TOOL_DISPLAY_MODE_CYCLE[(TOOL_DISPLAY_MODE_CYCLE.indexOf(toolDisplayMode) + 1) % TOOL_DISPLAY_MODE_CYCLE.length]
+    toolDisplayMode = next
+    window.sachiv.setSetting('toolDisplayMode', next)
   }
 
   /** Cmd+O on macOS, Ctrl+O elsewhere — same cross-platform split already used for the mode-picker's Ctrl+Tab (see ChatView.svelte), and the exact convention this feature was explicitly modeled on (Claude Code's own tool-output toggle). Global (window-level), not scoped to the composer, so it works regardless of what has focus — matching how a real app-wide view toggle should behave. */
@@ -442,7 +612,7 @@
     const modifierHeld = isMac ? e.metaKey : e.ctrlKey
     if (modifierHeld && e.key.toLowerCase() === 'o') {
       e.preventDefault()
-      toggleToolDetails()
+      cycleToolDisplayMode()
     }
   }
 
@@ -470,10 +640,45 @@
     await refreshContextWindow()
   }
 
-  async function saveApiKey(apiKey: string): Promise<void> {
-    await window.sachiv.setApiKey(providerId, apiKey)
-    await loadProviderState(providerId)
+  /** A provider's key was just saved in Settings (which now manages every provider's key itself) — refresh `hasKey`/model list only when it's the one currently active in chat. */
+  async function onProviderApiKeyChanged(id: string): Promise<void> {
+    if (id === providerId) await loadProviderState(id)
+  }
+
+  // --- Leaving Settings (session click, New chat, the account row, Back) ---
+  // Settings is a full-pane view, not a dialog, so picking a session from the sidebar has to close it. If something typed into Settings has
+  // not been saved (an API key, an "add …" form — see SettingsPanel's pendingChanges), ask first instead of silently dropping it.
+  type LeaveTarget = { kind: 'chat' } | { kind: 'new' } | { kind: 'session'; id: string }
+  let settingsPanel = $state<{ getPendingLabels(): string[] } | undefined>()
+  let leaveRequest = $state<LeaveTarget | null>(null)
+
+  async function completeLeave(target: LeaveTarget): Promise<void> {
+    leaveRequest = null
     showSettings = false
+    void loadRoleRoster()
+    if (target.kind === 'session') await selectSession(target.id)
+    else if (target.kind === 'new') await newSession()
+  }
+
+  async function requestLeave(target: LeaveTarget): Promise<void> {
+    if (settingsPanel && settingsPanel.getPendingLabels().length > 0) {
+      leaveRequest = target
+      return
+    }
+    await completeLeave(target)
+  }
+
+  function onSidebarSelect(id: string): Promise<void> {
+    return showSettings ? requestLeave({ kind: 'session', id }) : selectSession(id)
+  }
+
+  function onSidebarNew(): Promise<void> {
+    return showSettings ? requestLeave({ kind: 'new' }) : newSession()
+  }
+
+  function toggleSettings(): void {
+    if (showSettings) void requestLeave({ kind: 'chat' })
+    else showSettings = true
   }
 
   async function initProvider(): Promise<void> {
@@ -500,28 +705,42 @@
     const anyKeyConfigured = (await Promise.all(allProviders.map((p) => window.sachiv.hasApiKey(p.id)))).some(Boolean)
     if (existingSessions.length === 0 && !anyKeyConfigured) {
       firstRunEnvPath = (await window.sachiv.getSecretStorageInfo()).envFilePath
+      firstRunStep = (await window.sachiv.getSetting(ONBOARDING_SECRETS_KEY)) === 'true' ? 'python' : 'secrets'
       showFirstRunSetup = true
     } else {
       await window.sachiv.setSetting(ONBOARDING_SETTING_KEY, 'true')
     }
   }
 
-  async function completeFirstRun(): Promise<void> {
+  /** Set once the secret-storage choice is made, so quitting during the Python step doesn't ask (or, for "file", re-switch) again. */
+  const ONBOARDING_SECRETS_KEY = 'onboardingSecretsChosen'
+
+  async function secretsChosen(): Promise<void> {
+    await window.sachiv.setSetting(ONBOARDING_SECRETS_KEY, 'true')
+  }
+
+  async function finishOnboarding(): Promise<void> {
     await window.sachiv.setSetting(ONBOARDING_SETTING_KEY, 'true')
     showFirstRunSetup = false
+    // The startup effect skips initProvider()/loadSessions() while onboarding is showing
+    // (see its own comment) — run them now that onboarding is actually done, or `providers`
+    // and `sessions` stay at their empty initial state until the next full app restart.
+    await Promise.all([initProvider(), loadSessions()])
   }
 
   async function chooseFileStorageOnFirstRun(): Promise<void> {
     await window.sachiv.switchSecretStorageToFile()
-    await completeFirstRun()
+    await secretsChosen()
   }
 
   window.sachiv
     .getAppInfo()
     .then((info) => {
       statusLine = `Sachivji v${info.version}`
+      document.title = statusLine
       isMac = info.platform === 'darwin'
       userName = info.userName
+      appInfo = info
     })
     .catch((err: unknown) => {
       statusLine = `IPC error: ${String(err)}`
@@ -537,7 +756,8 @@
   })
 
   window.sachiv.onToolConfirmRequest((payload) => {
-    if (autoApproveTools || autoApproveRules[payload.name]) {
+    // Access to a folder outside the workspace is never auto-approved: not by the session blanket, not by a per-tool rule.
+    if (payload.name !== 'external_folder_access' && (autoApproveTools || autoApproveRules[payload.name])) {
       window.sachiv.respondToolConfirm(payload.toolUseId, true, payload.input)
       return
     }
@@ -574,8 +794,16 @@
     if (stored !== null && stored !== undefined) planningEnabled = stored !== 'false'
   })
 
-  window.sachiv.getSetting('toolDetailsExpanded').then((stored) => {
-    if (stored !== null && stored !== undefined) toolDetailsExpanded = stored === 'true'
+  window.sachiv.getSetting('showAnsweringModel').then((stored) => {
+    if (stored !== null && stored !== undefined) showAnsweringModel = stored === 'true'
+  })
+
+  window.sachiv.getSetting('showTimestamps').then((stored) => {
+    if (stored !== null && stored !== undefined) showTimestamps = stored === 'true'
+  })
+
+  window.sachiv.getSetting('toolDisplayMode').then((stored) => {
+    if (stored === 'hidden' || stored === 'partial' || stored === 'shown') toolDisplayMode = stored
   })
 
   // checkFirstRun's "is this genuinely a fresh install" check reads the
@@ -585,16 +813,34 @@
   // first-run screen silently never appeared because loadSessions' own
   // session sometimes landed first, making the fresh-check see a
   // "pre-existing" session that was actually just its own side effect.
+  /** However fast real loading finishes, the startup splash stays up at least this long — the About
+      screen (dismissible=true) has no such floor, it only ever closes on user action. */
+  const SPLASH_MIN_MS = 4000
+  const splashStartedAt = Date.now()
+  function dismissSplash(): void {
+    setTimeout(() => (showSplash = false), Math.max(0, SPLASH_MIN_MS - (Date.now() - splashStartedAt)))
+  }
+
   checkFirstRun().then(() => {
-    initProvider()
-    loadSessions()
+    if (showFirstRunSetup) {
+      // Onboarding takes over from here — no point holding the splash up behind it.
+      dismissSplash()
+      return
+    }
+    Promise.all([initProvider(), loadSessions()]).finally(dismissSplash)
   })
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
 
 {#if showFirstRunSetup}
-  <FirstRunSetup envFilePath={firstRunEnvPath} onChooseKeychain={completeFirstRun} onChooseFile={chooseFileStorageOnFirstRun} />
+  <FirstRunSetup
+    envFilePath={firstRunEnvPath}
+    initialStep={firstRunStep}
+    onChooseKeychain={secretsChosen}
+    onChooseFile={chooseFileStorageOnFirstRun}
+    onFinish={finishOnboarding}
+  />
 {/if}
 
 <div class="titlebar" class:mac={isMac}>
@@ -626,18 +872,18 @@
       {sessions}
       {activeId}
       activity={sessionActivity}
-      onSelect={selectSession}
-      onNew={newSession}
+      onSelect={onSidebarSelect}
+      onNew={onSidebarNew}
       onDelete={removeSession}
       onExport={exportSession}
     />
-    <button class="user-row" onclick={() => (showSettings = true)}>
-      <span class="avatar">{(userName || '?').charAt(0).toUpperCase()}</span>
-      <span class="user-name">{userName || 'Account'}</span>
-      <svg class="chevron" width="14" height="14" viewBox="0 0 16 16" fill="none">
-        <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-    </button>
+    <AccountMenu
+      {userName}
+      {showSettings}
+      onOpenSettings={toggleSettings}
+      onOpenAbout={() => (showAbout = true)}
+      onImported={() => void refreshAfterSettingsImport()}
+    />
   </aside>
   {#if !sidebarCollapsed}
     <div
@@ -650,27 +896,39 @@
   {/if}
   <section>
     {#if showSettings}
+     {#key settingsVersion}
       <SettingsPanel
-        providerDisplayName={providers.find((p) => p.id === providerId)?.displayName ?? providerId}
-        providerRequiresApiKey={providers.find((p) => p.id === providerId)?.requiresApiKey ?? true}
-        {hasKey}
+        bind:this={settingsPanel}
+        leaveRequested={leaveRequest !== null}
+        onBack={() => void requestLeave({ kind: 'chat' })}
+        onLeaveResolved={(leave) => {
+          const target = leaveRequest
+          if (leave && target) void completeLeave(target)
+          else leaveRequest = null
+        }}
         {autoApproveRules}
         {providers}
         {themeMode}
         {planningEnabled}
-        onSave={saveApiKey}
-        onClose={() => (showSettings = false)}
+        {showAnsweringModel}
+        {showTimestamps}
+        onApiKeyChanged={onProviderApiKeyChanged}
         onToggleAutoApproveRule={toggleAutoApproveTool}
         onChangeTheme={changeThemeMode}
         onChangePlanningEnabled={changePlanningEnabled}
+        onChangeShowAnsweringModel={changeShowAnsweringModel}
+        onChangeShowTimestamps={changeShowTimestamps}
       />
+     {/key}
     {:else}
       <ChatView
+        {roleRoster}
         messages={activeRuntime.messages}
         {statusLine}
         sending={activeRuntime.sending}
         onSend={sendMessage}
         onStop={stopGeneration}
+        onSteer={steerGeneration}
         {providers}
         {providerId}
         model={currentModel}
@@ -679,9 +937,12 @@
         onChangeModel={changeModel}
         onNeedKey={() => (showSettings = true)}
         sessionUsage={activeRuntime.sessionUsage}
+        contextTokens={activeRuntime.contextTokens}
         {contextWindow}
-        {toolDetailsExpanded}
-        onToggleToolDetails={toggleToolDetails}
+        {toolDisplayMode}
+        onCycleToolDisplayMode={cycleToolDisplayMode}
+        {showAnsweringModel}
+        {showTimestamps}
         {isMac}
         pendingConfirm={activeRuntime.pendingConfirm}
         {autoApproveTools}
@@ -697,6 +958,13 @@
     {/if}
   </section>
 </main>
+
+{#if showSplash}
+  <SplashScreen info={appInfo} />
+{/if}
+{#if showAbout}
+  <SplashScreen info={appInfo} dismissible onClose={() => (showAbout = false)} />
+{/if}
 
 <style>
   /* Base palette + font/color resets live in theme.css, shared with
@@ -812,42 +1080,6 @@
     min-height: 0;
     overflow: hidden;
   }
-  .user-row {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
-    margin: 0.5rem;
-    padding: 0.45rem 0.5rem;
-    border-radius: 10px;
-    border: none;
-    background: none;
-    color: var(--text);
-    cursor: pointer;
-    font-size: 0.85rem;
-    text-align: left;
-  }
-  .user-row:hover {
-    background: var(--panel-hover);
-  }
-  .user-name {
-    flex: 1;
-    font-weight: 500;
-  }
-  .chevron {
-    color: var(--text-muted);
-    flex-shrink: 0;
-  }
-  .avatar {
-    width: 1.6rem;
-    height: 1.6rem;
-    border-radius: 50%;
-    background: var(--accent);
-    color: #1a1a1a;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.75rem;
-    font-weight: 600;
-    flex-shrink: 0;
-  }
+  /* .user-row/.avatar/.chevron/.user-name moved into AccountMenu.svelte (TASKS.md #150) — that
+     component now owns the account row's markup and styling. */
 </style>

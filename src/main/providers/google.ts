@@ -84,6 +84,13 @@ export class GoogleProvider implements ModelProvider, EmbeddingProvider {
         systemInstruction: request.system,
         maxOutputTokens: request.maxTokens,
         abortSignal: request.signal,
+        ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+        // TASKS.md #147: opt-in — Gemini does not stream thought summaries unless explicitly asked.
+        // Whether the configured model actually returns any (gemini-3.5-flash-lite may not) is a live
+        // fact, not something knowable from this code — a model that doesn't support it simply never
+        // sends a part.thought=true part below, which the loop already handles as a no-op.
+        thinkingConfig: { includeThoughts: true },
+        ...(request.structuredOutput ? { responseMimeType: 'application/json', responseJsonSchema: request.structuredOutput.schema } : {}),
         tools: request.tools?.length
           ? [
               {
@@ -115,7 +122,9 @@ export class GoogleProvider implements ModelProvider, EmbeddingProvider {
       const parts = chunk.candidates?.[0]?.content?.parts ?? []
 
       for (const part of parts) {
-        if (part.text) {
+        if (part.text && part.thought) {
+          yield { type: 'thinking_delta', text: part.text }
+        } else if (part.text) {
           yield { type: 'text_delta', text: part.text }
         }
         // Gemini returns each call's full args in one shot, not incremental
@@ -134,10 +143,13 @@ export class GoogleProvider implements ModelProvider, EmbeddingProvider {
       }
 
       if (chunk.usageMetadata) {
+        // Gemini caches a byte-stable prefix implicitly and reports the cached share here; `promptTokenCount` already includes it.
+        const cached = chunk.usageMetadata.cachedContentTokenCount ?? 0
         yield {
           type: 'usage',
           inputTokens: chunk.usageMetadata.promptTokenCount ?? 0,
-          outputTokens: chunk.usageMetadata.candidatesTokenCount ?? 0
+          outputTokens: chunk.usageMetadata.candidatesTokenCount ?? 0,
+          ...(cached > 0 ? { cacheReadTokens: cached } : {})
         }
       }
 

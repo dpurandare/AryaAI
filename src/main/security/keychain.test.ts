@@ -69,7 +69,8 @@ describe('keychain (#75 dual-backend secret storage)', () => {
     expect(getApiKey('email:conn-2')).toBe('app-password')
 
     const info = await stat(envFilePath())
-    expect(info.mode & 0o777).toBe(0o600)
+    // Windows doesn't enforce POSIX permission bits (stat reports 0o666).
+    if (process.platform !== 'win32') expect(info.mode & 0o777).toBe(0o600)
 
     const raw = await readFile(envFilePath(), 'utf-8')
     expect(raw).toContain('PROVIDER_OPENAI=')

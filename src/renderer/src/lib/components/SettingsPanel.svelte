@@ -1,43 +1,91 @@
 <script lang="ts">
-  import type { ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor } from '@shared/ipc-contract'
+  import type { RoleRosterDto, RoleToolsDto, ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor, WebSearchProviderDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
+  import type { OllamaRuntimeState, RuntimeState } from '@shared/runtime'
 
   let {
-    providerDisplayName,
-    providerRequiresApiKey = true,
-    hasKey,
     autoApproveRules,
     providers,
     themeMode,
     planningEnabled,
-    onSave,
-    onClose,
+    showAnsweringModel = false,
+    showTimestamps = true,
+    leaveRequested = false,
+    onApiKeyChanged,
+    onBack,
+    onLeaveResolved,
     onToggleAutoApproveRule,
     onChangeTheme,
-    onChangePlanningEnabled
+    onChangePlanningEnabled,
+    onChangeShowAnsweringModel,
+    onChangeShowTimestamps
   }: {
-    providerDisplayName: string
-    providerRequiresApiKey?: boolean
-    hasKey: boolean
     autoApproveRules: Record<string, boolean>
     providers: ProviderDescriptor[]
     themeMode: ThemeMode
     planningEnabled: boolean
-    onSave: (apiKey: string) => void | Promise<void>
-    onClose: () => void
+    /** Off by default — shows which provider/model answered each message in the chat transcript. */
+    showAnsweringModel?: boolean
+    /** Off by default — shows when each message was sent/answered, both on the bubble and on an expanded tool/thinking block. */
+    showTimestamps?: boolean
+    /** The user tried to leave Settings (another session, New chat, Back) while entries are unsaved: show the Save / Discard / Cancel prompt. */
+    leaveRequested?: boolean
+    /** A provider's key was just saved — lets App.svelte refresh `hasKey`/model list when it's the currently active chat provider. */
+    onApiKeyChanged: (providerId: string) => void
+    /** Header "Back to chat": leaves Settings, asking first if anything is unsaved. */
+    onBack: () => void
+    /** Answer to the leave prompt: `true` = go ahead and leave (discarding what's left), `false` = stay in Settings. */
+    onLeaveResolved: (leave: boolean) => void
     onToggleAutoApproveRule: (name: string, value: boolean) => void
     onChangeTheme: (mode: ThemeMode) => void
     onChangePlanningEnabled: (value: boolean) => void
+    onChangeShowAnsweringModel: (value: boolean) => void
+    onChangeShowTimestamps: (value: boolean) => void
   } = $props()
 
-  let apiKey = $state('')
-  let saving = $state(false)
+  // --- Provider API keys (shows every provider's status at once, not just the currently selected chat one) ---
+  let providerKeyDrafts = $state<Record<string, string>>({})
+  let providerKeyPreviews = $state<Record<string, string | null>>({})
+  type KeyCheckStatus = 'saving' | 'checking' | 'valid' | 'invalid' | 'save-error'
+  let providerKeyStatus = $state<Record<string, KeyCheckStatus | undefined>>({})
+  let providerKeyError = $state<Record<string, string>>({})
 
-  async function save(): Promise<void> {
-    if (!apiKey.trim()) return
-    saving = true
-    await onSave(apiKey.trim())
-    saving = false
+  async function loadProviderKeyPreviews(): Promise<void> {
+    const entries = await Promise.all(
+      providers
+        .filter((p) => p.requiresApiKey)
+        .map(async (p) => [p.id, await window.sachiv.getApiKeyPreview(p.id)] as const)
+    )
+    providerKeyPreviews = Object.fromEntries(entries)
+  }
+  loadProviderKeyPreviews()
+
+  /** Saves the key, then makes a real `listModels` call against the provider — the lightest authenticated endpoint every adapter already
+      implements — so a bad key is caught immediately instead of surfacing later mid-chat. */
+  async function saveProviderApiKey(providerId: string): Promise<void> {
+    const value = (providerKeyDrafts[providerId] ?? '').trim()
+    if (!value) return
+    providerKeyError[providerId] = ''
+    providerKeyStatus[providerId] = 'saving'
+    try {
+      await window.sachiv.setApiKey(providerId, value)
+      providerKeyDrafts[providerId] = ''
+      providerKeyPreviews[providerId] = await window.sachiv.getApiKeyPreview(providerId)
+      onApiKeyChanged(providerId)
+    } catch (err) {
+      providerKeyStatus[providerId] = 'save-error'
+      providerKeyError[providerId] = err instanceof Error ? err.message : String(err)
+      return
+    }
+
+    providerKeyStatus[providerId] = 'checking'
+    try {
+      await window.sachiv.listModels(providerId)
+      providerKeyStatus[providerId] = 'valid'
+    } catch (err) {
+      providerKeyStatus[providerId] = 'invalid'
+      providerKeyError[providerId] = err instanceof Error ? err.message : String(err)
+    }
   }
 
   // --- Data sources (db_* tools' connections — TASKS.md #35) ---
@@ -53,6 +101,8 @@
   let connUsername = $state('')
   let connPassword = $state('')
   let savingConnection = $state(false)
+  /** #155: set while a row's inline edit form is open; `null` means the form below is for a brand-new connection. */
+  let editingConnectionId = $state<string | null>(null)
 
   async function loadConnections(): Promise<void> {
     connections = await window.sachiv.listDataConnections()
@@ -69,6 +119,21 @@
     connUsername = ''
     connPassword = ''
     showAddConnection = false
+    editingConnectionId = null
+  }
+
+  /** #155: prefills the shared form fields from an existing connection and switches it into edit-in-place mode. Password is left blank — saving it blank keeps the stored one unchanged. */
+  function startEditConnection(conn: DataConnectionDto): void {
+    showAddConnection = false
+    editingConnectionId = conn.id
+    connName = conn.name
+    connEngine = conn.engine
+    connFilePath = conn.filePath ?? ''
+    connHost = conn.host ?? ''
+    connPort = conn.port != null ? String(conn.port) : '5432'
+    connDatabase = conn.database ?? ''
+    connUsername = conn.username ?? ''
+    connPassword = ''
   }
 
   async function saveConnection(): Promise<void> {
@@ -77,6 +142,7 @@
     try {
       const isSqlite = connEngine === 'sqlite'
       await window.sachiv.saveDataConnection({
+        id: editingConnectionId ?? undefined,
         name: connName.trim(),
         engine: connEngine,
         filePath: isSqlite ? connFilePath.trim() : undefined,
@@ -118,6 +184,7 @@
   let mcpEnv = $state('')
   let mcpUrl = $state('')
   let mcpToken = $state('')
+  let mcpDescription = $state('')
   let savingMcpServer = $state(false)
   let mcpError = $state('')
 
@@ -125,6 +192,11 @@
     mcpServers = await window.sachiv.listMcpServers()
   }
   loadMcpServers()
+
+  /** Max length of the one-liner — mirrors MCP_SERVER_DESCRIPTION_MAX in shared/ipc-contract.ts. */
+  const MCP_DESCRIPTION_MAX = 200
+  /** #155: set while a server's inline edit form is open (replaces the old description-only inline edit — this edits every field). */
+  let editingMcpId = $state<string | null>(null)
 
   function resetMcpForm(): void {
     mcpName = ''
@@ -134,8 +206,25 @@
     mcpEnv = ''
     mcpUrl = ''
     mcpToken = ''
+    mcpDescription = ''
     mcpError = ''
     showAddMcpServer = false
+    editingMcpId = null
+  }
+
+  /** #155: prefills the shared form fields from an existing server and switches it into edit-in-place mode. Token is left blank — saving it blank keeps the stored one unchanged. */
+  function startEditMcpServer(server: McpServerDto): void {
+    showAddMcpServer = false
+    editingMcpId = server.id
+    mcpName = server.name
+    mcpTransport = server.transport
+    mcpCommand = server.command ?? ''
+    mcpArgs = (server.args ?? []).join(' ')
+    mcpEnv = server.env ? Object.entries(server.env).map(([k, v]) => `${k}=${v}`).join('\n') : ''
+    mcpUrl = server.url ?? ''
+    mcpToken = ''
+    mcpDescription = server.description ?? ''
+    mcpError = ''
   }
 
   /** One `KEY=VALUE` per line; blank/malformed lines are skipped rather than rejected. */
@@ -158,13 +247,15 @@
     mcpError = ''
     try {
       await window.sachiv.saveMcpServer({
+        id: editingMcpId ?? undefined,
         name: mcpName.trim(),
         transport: mcpTransport,
         command: mcpTransport === 'stdio' ? mcpCommand.trim() : undefined,
         args: mcpTransport === 'stdio' ? mcpArgs.trim().split(/\s+/).filter(Boolean) : undefined,
         env: mcpTransport === 'stdio' ? parseEnvLines(mcpEnv) : undefined,
         url: mcpTransport === 'http' ? mcpUrl.trim() : undefined,
-        token: mcpTransport === 'http' && mcpToken ? mcpToken : undefined
+        token: mcpTransport === 'http' && mcpToken ? mcpToken : undefined,
+        description: mcpDescription.trim() || undefined
       })
       resetMcpForm()
       await loadMcpServers()
@@ -198,10 +289,13 @@
   let apiBaseUrl = $state('')
   let apiAuthType = $state<ApiAuthType>('none')
   let apiKeyHeader = $state('X-API-Key')
+  let apiKeyIn = $state<'header' | 'query'>('header')
   let apiUsername = $state('')
   let apiSecret = $state('')
   let apiSpecUrl = $state('')
   let savingApiConnection = $state(false)
+  /** #155: set while a row's inline edit form is open; `null` means the form below is for a brand-new connection. */
+  let editingApiConnectionId = $state<string | null>(null)
 
   async function loadApiConnections(): Promise<void> {
     apiConnections = await window.sachiv.listApiConnections()
@@ -213,10 +307,26 @@
     apiBaseUrl = ''
     apiAuthType = 'none'
     apiKeyHeader = 'X-API-Key'
+    apiKeyIn = 'header'
     apiUsername = ''
     apiSecret = ''
     apiSpecUrl = ''
     showAddApiConnection = false
+    editingApiConnectionId = null
+  }
+
+  /** #155: prefills the shared form fields from an existing connection and switches it into edit-in-place mode. Secret is left blank — saving it blank keeps the stored one unchanged. */
+  function startEditApiConnection(conn: ApiConnectionDto): void {
+    showAddApiConnection = false
+    editingApiConnectionId = conn.id
+    apiName = conn.name
+    apiBaseUrl = conn.baseUrl
+    apiAuthType = conn.authType
+    apiKeyHeader = conn.apiKeyHeader ?? 'X-API-Key'
+    apiKeyIn = conn.apiKeyIn ?? 'header'
+    apiUsername = conn.username ?? ''
+    apiSecret = ''
+    apiSpecUrl = conn.specUrl ?? ''
   }
 
   async function saveApiConnection(): Promise<void> {
@@ -224,10 +334,12 @@
     savingApiConnection = true
     try {
       await window.sachiv.saveApiConnection({
+        id: editingApiConnectionId ?? undefined,
         name: apiName.trim(),
         baseUrl: apiBaseUrl.trim(),
         authType: apiAuthType,
         apiKeyHeader: apiAuthType === 'apiKey' ? apiKeyHeader.trim() : undefined,
+        apiKeyIn: apiAuthType === 'apiKey' ? apiKeyIn : undefined,
         username: apiAuthType === 'basic' ? apiUsername.trim() : undefined,
         secret: apiAuthType !== 'none' && apiSecret ? apiSecret : undefined,
         specUrl: apiSpecUrl.trim() || undefined
@@ -344,6 +456,17 @@
   }
   loadWorkspaceRoot()
 
+  // --- Folders outside the workspace that may always be read ---
+  let externalFolders = $state<string[]>([])
+  async function loadExternalFolders(): Promise<void> {
+    externalFolders = await window.sachiv.listExternalFolders()
+  }
+  loadExternalFolders()
+  async function removeExternalFolder(folder: string): Promise<void> {
+    await window.sachiv.removeExternalFolder(folder)
+    await loadExternalFolders()
+  }
+
   async function saveWorkspaceRoot(): Promise<void> {
     if (!workspaceRootInput.trim() || workspaceRootInput === workspaceRoot) return
     savingWorkspace = true
@@ -356,6 +479,221 @@
     } finally {
       savingWorkspace = false
     }
+  }
+
+  // --- Python runtime (design-discussion.md 4.3, TASKS.md #110) ---
+  let runtime = $state<RuntimeState | null>(null)
+  let runtimeBusy = $state(false)
+  let showRepairConfirm = $state(false)
+  const runtimeWorking = $derived(runtime?.status === 'creating' || runtime?.packages === 'installing')
+
+  window.sachiv.getRuntimeState().then((s) => (runtime = s))
+  $effect(() => window.sachiv.onRuntimeStateChanged((s) => (runtime = s)))
+
+  async function runtimeAction(action: () => Promise<RuntimeState>): Promise<void> {
+    runtimeBusy = true
+    try {
+      runtime = await action()
+    } finally {
+      runtimeBusy = false
+      showRepairConfirm = false
+    }
+  }
+
+  const runtimeStatusLabel: Record<RuntimeState['status'], string> = {
+    'missing-python': 'Python not found',
+    creating: 'Setting up…',
+    ready: 'Ready',
+    failed: 'Needs attention',
+    disabled: 'Turned off'
+  }
+
+  // --- Bundled Ollama runtime (Windows sponsor build, TASKS #202) — `status === 'unavailable'`
+  // on every other build/platform, including a win32 build without the bundled resource; the
+  // section below is hidden entirely in that case, same as it never existing. Shown here (not
+  // only during onboarding) so status/progress/retry stays visible after onboarding has already
+  // completed on an earlier launch — e.g. after an in-place upgrade adds this feature.
+  let ollamaRuntime = $state<OllamaRuntimeState | null>(null)
+  let ollamaBusy = $state(false)
+
+  window.sachiv.getOllamaRuntimeState().then((s) => (ollamaRuntime = s))
+  $effect(() => window.sachiv.onOllamaRuntimeStateChanged((s) => (ollamaRuntime = s)))
+
+  async function retryOllamaRuntime(): Promise<void> {
+    ollamaBusy = true
+    try {
+      ollamaRuntime = await window.sachiv.ensureOllamaRuntime()
+    } finally {
+      ollamaBusy = false
+    }
+  }
+
+  const ollamaStatusLabel: Record<OllamaRuntimeState['status'], string> = {
+    unavailable: 'Not available',
+    starting: 'Starting…',
+    'pulling-model': 'Downloading…',
+    ready: 'Ready',
+    failed: 'Needs attention'
+  }
+
+  const ollamaPullPercent = $derived(
+    ollamaRuntime?.modelPullProgress
+      ? Math.round((100 * ollamaRuntime.modelPullProgress.completed) / ollamaRuntime.modelPullProgress.total)
+      : undefined
+  )
+
+  // --- Roles (design-discussion.md section 11) ---
+  let roleRoster = $state<RoleRosterDto | null>(null)
+  let rolesError = $state('')
+  let rolesBusy = $state(false)
+
+  async function loadRoles(): Promise<void> {
+    rolesError = ''
+    try {
+      roleRoster = await window.sachiv.getRoles()
+    } catch (err) {
+      rolesError = err instanceof Error ? err.message : String(err)
+    }
+  }
+  loadRoles()
+
+  // TASKS.md #164 — full tool reference grouped by role, loaded lazily (only when the <details> is
+  // opened) since it's a reference view, not something every Settings visit needs.
+  let toolsByRole = $state<RoleToolsDto[] | null>(null)
+  let toolsByRoleError = $state('')
+
+  async function loadToolsByRole(): Promise<void> {
+    if (toolsByRole) return
+    toolsByRoleError = ''
+    try {
+      toolsByRole = await window.sachiv.listToolsByRole()
+    } catch (err) {
+      toolsByRoleError = err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  async function toggleRole(id: string, enabled: boolean): Promise<void> {
+    rolesBusy = true
+    try {
+      roleRoster = await window.sachiv.setRoleEnabled(id, enabled)
+    } finally {
+      rolesBusy = false
+    }
+  }
+
+  async function openRolesFolder(): Promise<void> {
+    rolesError = ''
+    try {
+      await window.sachiv.openRolesFolder()
+    } catch (err) {
+      rolesError = err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  async function createExampleRole(): Promise<void> {
+    rolesError = ''
+    try {
+      const path = await window.sachiv.createExampleRole()
+      rolesError = `Example written to ${path} — rename it (remove the leading underscore) to load it, then choose Reload.`
+    } catch (err) {
+      rolesError = err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  // --- Unsaved entries -------------------------------------------------------------------------------------------------
+  // Most settings apply the moment they change (theme, toggles, selects, roles, the embedding model on blur). The exceptions are text
+  // entries with their own Save button — API keys, the "add …"/edit-in-place (#155) forms for data sources, MCP servers and API
+  // connections, and the workspace folder. Those are what "unsaved" means here: leaving Settings while any is filled in asks first
+  // (App.svelte -> `leaveRequested`).
+  type PendingChange = { label: string; save: () => Promise<void> }
+
+  function pendingChanges(): PendingChange[] {
+    const list: PendingChange[] = []
+    for (const provider of providers) {
+      if ((providerKeyDrafts[provider.id] ?? '').trim()) {
+        list.push({ label: `${provider.displayName} API key`, save: () => saveProviderApiKey(provider.id) })
+      }
+    }
+    if (embeddingApiKey.trim()) list.push({ label: 'Search-history embedding API key', save: saveEmbeddingKey })
+    if (embeddingModelDraft.trim() && embeddingModelDraft !== embeddingModel) {
+      list.push({ label: `Search-history embedding model "${embeddingModelDraft.trim()}"`, save: saveEmbeddingModelChoice })
+    }
+    if (webSearchApiKey.trim()) list.push({ label: 'Web Search Provider API key', save: saveWebSearchKey })
+    if (workspaceRootInput.trim() && workspaceRootInput !== workspaceRoot) list.push({ label: 'Workspace folder', save: saveWorkspaceRoot })
+    if ((showAddConnection || editingConnectionId) && connName.trim()) {
+      const label = editingConnectionId ? `Edits to data source "${connName.trim()}"` : `Data source "${connName.trim()}"`
+      list.push({ label, save: saveConnection })
+    }
+    if ((showAddMcpServer || editingMcpId) && mcpName.trim()) {
+      const label = editingMcpId ? `Edits to MCP server "${mcpName.trim()}"` : `MCP server "${mcpName.trim()}"`
+      list.push({ label, save: saveMcpServer })
+    }
+    if ((showAddApiConnection || editingApiConnectionId) && apiName.trim()) {
+      const label = editingApiConnectionId ? `Edits to API connection "${apiName.trim()}"` : `API connection "${apiName.trim()}"`
+      list.push({ label, save: saveApiConnection })
+    }
+    if (showAddEmailConnection && emailName.trim()) list.push({ label: `Email account "${emailName.trim()}"`, save: saveEmailConnectionWithValidation })
+    return list
+  }
+
+  /** Labels of the unsaved entries (empty = nothing to lose). Called by App.svelte before it navigates away from Settings. */
+  export function getPendingLabels(): string[] {
+    return pendingChanges().map((c) => c.label)
+  }
+
+  let leaveBusy = $state(false)
+  let leaveSaveError = $state('')
+
+  /** Saves every unsaved entry. Whatever cannot be saved (a validation error, a missing field) stays on screen and is named in a banner. */
+  async function saveAllPending(): Promise<void> {
+    leaveBusy = true
+    leaveSaveError = ''
+    try {
+      for (const change of pendingChanges()) {
+        try {
+          await change.save()
+        } catch (err) {
+          leaveSaveError = `${change.label}: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+      const left = pendingChanges().map((c) => c.label)
+      if (left.length > 0 && !leaveSaveError) leaveSaveError = `Could not save: ${left.join(', ')}. Complete or fix ${left.length === 1 ? 'it' : 'them'} below.`
+    } finally {
+      leaveBusy = false
+    }
+    onLeaveResolved(false) // saving keeps you in Settings (as asked); anything left over is still there, with its own error
+  }
+
+  // --- Slim router (design-discussion.md step 4; experimental, off by default) ---
+  const SLIM_ROUTER_SETTING_KEY = 'slimRouter'
+  let slimRouter = $state(false)
+  window.sachiv.getSetting(SLIM_ROUTER_SETTING_KEY).then((v) => (slimRouter = v === 'true'))
+  async function setSlimRouter(on: boolean): Promise<void> {
+    slimRouter = on
+    await window.sachiv.setSetting(SLIM_ROUTER_SETTING_KEY, on ? 'true' : 'false')
+  }
+
+  // --- Prompt caching (Anthropic; TASKS #121/#137) --- on unless explicitly set to 'false'
+  const PROMPT_CACHING_SETTING_KEY = 'promptCaching'
+  let promptCaching = $state(true)
+  window.sachiv.getSetting(PROMPT_CACHING_SETTING_KEY).then((v) => (promptCaching = v !== 'false'))
+  async function setPromptCaching(on: boolean): Promise<void> {
+    promptCaching = on
+    await window.sachiv.setSetting(PROMPT_CACHING_SETTING_KEY, on ? 'true' : 'false')
+  }
+
+  // --- Temperature (2026-10-01) --- 0..1, default 0.2; most work here is business-operations work
+  // (data, code, documents, routing), not creative writing, so low-and-precise is the right default.
+  const TEMPERATURE_SETTING_KEY = 'temperature'
+  const DEFAULT_TEMPERATURE = 0.2
+  let temperature = $state(DEFAULT_TEMPERATURE)
+  window.sachiv.getSetting(TEMPERATURE_SETTING_KEY).then((v) => {
+    const n = Number(v)
+    temperature = Number.isFinite(n) && n >= 0 && n <= 1 ? n : DEFAULT_TEMPERATURE
+  })
+  async function setTemperature(value: number): Promise<void> {
+    temperature = value
+    await window.sachiv.setSetting(TEMPERATURE_SETTING_KEY, String(value))
   }
 
   // --- Secret storage backend (TASKS.md #75) ---
@@ -399,10 +737,24 @@
   let searchHistoryStatus = $state<SearchHistoryStatusDto | null>(null)
   let rebuildingIndex = $state(false)
 
+  // --- Model picker + live dimension probe (TASKS.md #162) ---
+  // Mirrors ModelPicker.svelte's own listModels-with-manual-fallback pattern exactly, for every
+  // embedding-capable provider (not just the default) — see this item's own decided scope.
+  let embeddingModelDraft = $state(DEFAULT_EMBEDDING_MODEL) // what's selected/typed, not yet saved
+  let embeddingModels = $state<string[]>([])
+  let embeddingModelsLoading = $state(false)
+  let embeddingModelsError = $state('')
+  let embeddingDimension = $state<number | null>(null)
+  let embeddingDimensionError = $state('')
+  let probingDimension = $state(false)
+  let savingEmbeddingModel = $state(false)
+
   async function loadEmbeddingConfig(): Promise<void> {
     embeddingProviderId = (await window.sachiv.getSetting(EMBEDDING_PROVIDER_SETTING_KEY)) ?? DEFAULT_EMBEDDING_PROVIDER_ID
     embeddingModel = (await window.sachiv.getSetting(EMBEDDING_MODEL_SETTING_KEY)) ?? DEFAULT_EMBEDDING_MODEL
+    embeddingModelDraft = embeddingModel
     await refreshEmbeddingHasKey()
+    await loadEmbeddingModels()
   }
   loadEmbeddingConfig()
 
@@ -416,44 +768,113 @@
   }
   loadSearchHistoryStatus()
 
+  async function loadEmbeddingModels(): Promise<void> {
+    embeddingModels = []
+    embeddingModelsError = ''
+    if (!embeddingHasKey) return
+    embeddingModelsLoading = true
+    try {
+      embeddingModels = await window.sachiv.listModels(embeddingProviderId)
+    } catch (err) {
+      embeddingModelsError = err instanceof Error ? err.message : String(err)
+    } finally {
+      embeddingModelsLoading = false
+    }
+  }
+
+  /** Decided 2026-09-29: a real probe call, not a hardcoded dimension table — fires once the user picks a
+   * model (before Save), showing the real returned vector length rather than a guess that could be wrong
+   * or missing for a newer/uncommon model. */
+  async function probeDimension(model: string): Promise<void> {
+    if (!model.trim()) return
+    embeddingDimension = null
+    embeddingDimensionError = ''
+    probingDimension = true
+    try {
+      embeddingDimension = await window.sachiv.probeEmbeddingDimension(embeddingProviderId, model.trim())
+    } catch (err) {
+      embeddingDimensionError = err instanceof Error ? err.message : String(err)
+    } finally {
+      probingDimension = false
+    }
+  }
+
+  function selectEmbeddingModel(model: string): void {
+    embeddingModelDraft = model
+    void probeDimension(model)
+  }
+
+  async function saveEmbeddingModelChoice(): Promise<void> {
+    if (!embeddingModelDraft.trim()) return
+    savingEmbeddingModel = true
+    try {
+      await window.sachiv.setSetting(EMBEDDING_MODEL_SETTING_KEY, embeddingModelDraft.trim())
+      embeddingModel = embeddingModelDraft.trim()
+      await loadSearchHistoryStatus()
+    } finally {
+      savingEmbeddingModel = false
+    }
+  }
+
   async function changeEmbeddingProvider(id: string): Promise<void> {
     embeddingProviderId = id
     embeddingApiKey = ''
+    embeddingDimension = null
+    embeddingDimensionError = ''
     await window.sachiv.setSetting(EMBEDDING_PROVIDER_SETTING_KEY, id)
     await refreshEmbeddingHasKey()
     await loadSearchHistoryStatus()
+    await loadEmbeddingModels()
   }
 
-  async function changeEmbeddingModel(): Promise<void> {
-    if (!embeddingModel.trim()) return
-    await window.sachiv.setSetting(EMBEDDING_MODEL_SETTING_KEY, embeddingModel.trim())
-    await loadSearchHistoryStatus()
-  }
-
-  // --- Web search (Tavily — TASKS.md #32 follow-up) ---
+  // --- Web Search Provider (TASKS.md #161 — pluggable, mirrors the embedding-provider picker above) ---
   // Reuses the generic setApiKey/hasApiKey IPC channels exactly like every
   // provider/embedding key above — they're not restricted to registered
   // LLM providers, just a plain keychain-backed key-value store, so a
-  // second, unrelated credential ("tavily") needs no new IPC surface.
-  const TAVILY_KEY_ID = 'tavily'
-  let tavilyHasKey = $state(false)
-  let tavilyApiKey = $state('')
-  let savingTavilyKey = $state(false)
+  // per-provider credential (e.g. "tavily") needs no new IPC surface for
+  // storage, only for listing which providers exist (listWebSearchProviders).
+  const WEB_SEARCH_PROVIDER_SETTING_KEY = 'webSearchProviderId'
+  // Matches web-search.ts's own pre-#161 implicit preference (Tavily if a key already exists, else
+  // DuckDuckGo) — this default only ever shows before loadWebSearchConfig()'s real read resolves.
+  const DEFAULT_WEB_SEARCH_PROVIDER_ID = 'tavily'
 
-  async function loadTavilyHasKey(): Promise<void> {
-    tavilyHasKey = await window.sachiv.hasApiKey(TAVILY_KEY_ID)
+  let webSearchProviders = $state<WebSearchProviderDescriptor[]>([])
+  let webSearchProviderId = $state(DEFAULT_WEB_SEARCH_PROVIDER_ID)
+  let webSearchHasKey = $state(false)
+  let webSearchApiKey = $state('')
+  let savingWebSearchKey = $state(false)
+
+  async function loadWebSearchProviders(): Promise<void> {
+    webSearchProviders = await window.sachiv.listWebSearchProviders()
   }
-  loadTavilyHasKey()
+  loadWebSearchProviders()
 
-  async function saveTavilyKey(): Promise<void> {
-    if (!tavilyApiKey.trim()) return
-    savingTavilyKey = true
+  async function loadWebSearchConfig(): Promise<void> {
+    webSearchProviderId = (await window.sachiv.getSetting(WEB_SEARCH_PROVIDER_SETTING_KEY)) ?? DEFAULT_WEB_SEARCH_PROVIDER_ID
+    await refreshWebSearchHasKey()
+  }
+  loadWebSearchConfig()
+
+  async function refreshWebSearchHasKey(): Promise<void> {
+    webSearchHasKey = await window.sachiv.hasApiKey(webSearchProviderId)
+  }
+
+  async function changeWebSearchProvider(id: string): Promise<void> {
+    webSearchProviderId = id
+    webSearchApiKey = ''
+    await window.sachiv.setSetting(WEB_SEARCH_PROVIDER_SETTING_KEY, id)
+    await refreshWebSearchHasKey()
+  }
+
+  async function saveWebSearchKey(): Promise<void> {
+    if (!webSearchApiKey.trim()) return
+    savingWebSearchKey = true
     try {
-      await window.sachiv.setApiKey(TAVILY_KEY_ID, tavilyApiKey.trim())
-      tavilyApiKey = ''
-      await loadTavilyHasKey()
+      await window.sachiv.setApiKey(webSearchProviderId, webSearchApiKey.trim())
+      webSearchApiKey = ''
+      await refreshWebSearchHasKey()
     } finally {
-      savingTavilyKey = false
+      savingWebSearchKey = false
     }
   }
 
@@ -505,7 +926,7 @@
 
 <div class="settings-view">
   <div class="settings-header">
-    <button class="back-btn" onclick={onClose}>
+    <button class="back-btn" onclick={onBack}>
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
         <path
           d="M10 3L5 8l5 5"
@@ -518,7 +939,27 @@
       Back to chat
     </button>
   </div>
+  {#if leaveRequested}
+    <div class="leave-prompt" role="alertdialog" aria-label="Unsaved settings">
+      <p>
+        <strong>You have unsaved entries:</strong>
+        {getPendingLabels().join(' · ')}. Save them before leaving?
+      </p>
+      <div class="actions">
+        <button class="primary" disabled={leaveBusy} onclick={saveAllPending}>{leaveBusy ? 'Saving…' : 'Save and stay here'}</button>
+        <button disabled={leaveBusy} onclick={() => onLeaveResolved(true)}>Discard and leave</button>
+        <button disabled={leaveBusy} onclick={() => onLeaveResolved(false)}>Cancel</button>
+      </div>
+    </div>
+  {/if}
+  {#if leaveSaveError && !leaveRequested}
+    <div class="leave-prompt error" role="alert">
+      <p>{leaveSaveError}</p>
+      <div class="actions"><button onclick={() => (leaveSaveError = '')}>Dismiss</button></div>
+    </div>
+  {/if}
   <div class="settings-body">
+    <div class="settings-content">
     <h2>Appearance</h2>
     <p class="status">Choose a light or dark look, or follow your system setting.</p>
     <div class="theme-toggle" role="radiogroup" aria-label="Theme">
@@ -553,33 +994,88 @@
       <span class="conn-name">Plan complex requests before acting</span>
     </label>
 
+    <h2>Transcript</h2>
+    <p class="status">
+      Show which provider/model answered each message in the chat transcript — useful when you switch
+      models mid-investigation and want to know which one produced a given reply. Off by default.
+    </p>
+    <label class="tool-rule">
+      <input
+        type="checkbox"
+        checked={showAnsweringModel}
+        onchange={(e) => onChangeShowAnsweringModel((e.target as HTMLInputElement).checked)}
+      />
+      <span class="conn-name">Show which model answered each message</span>
+    </label>
+    <p class="status">
+      Show how long each reply took and when it finished ("Took 1m 20s · done 4:05 PM"), called out in red if
+      anything in that turn errored — plus a plain timestamp next to a tool or thinking block once you expand
+      it. On by default. Errors always show their time, even with this off.
+    </p>
+    <label class="tool-rule">
+      <input
+        type="checkbox"
+        checked={showTimestamps}
+        onchange={(e) => onChangeShowTimestamps((e.target as HTMLInputElement).checked)}
+      />
+      <span class="conn-name">Show message timestamps</span>
+    </label>
+
     <hr />
 
-    <h2>{providerDisplayName} API key</h2>
-    {#if providerRequiresApiKey}
-      <p class="status">
-        {hasKey ? 'A key is currently configured.' : 'No key configured yet.'} Pick a different provider
-        from the model picker in the chat footer.
-      </p>
-      <input
-        id="anthropic-key"
-        type="password"
-        placeholder="Paste your API key"
-        bind:value={apiKey}
-        onkeydown={(e) => e.key === 'Enter' && save()}
-      />
-      <div class="actions">
-        <button onclick={onClose}>Cancel</button>
-        <button class="primary" disabled={saving || !apiKey.trim()} onclick={save}>
-          {saving ? 'Saving...' : 'Save'}
-        </button>
-      </div>
-    {:else}
-      <p class="status">This provider runs locally — no API key needed.</p>
-      <div class="actions">
-        <button onclick={onClose}>Close</button>
-      </div>
-    {/if}
+    <h2>Provider API keys</h2>
+    <p class="status">Every connected provider, and whether a key is already configured for it.</p>
+    <ul class="connection-list">
+      {#each providers as provider (provider.id)}
+        <li class="edit-row">
+          <div class="role-head">
+            <span class="conn-name">{provider.displayName}</span>
+          </div>
+          <p class="status">
+            {#if !provider.requiresApiKey}
+              Runs locally — no API key needed
+            {:else if providerKeyPreviews[provider.id]}
+              Key configured: <code>{providerKeyPreviews[provider.id]}</code>
+            {:else}
+              No key configured yet
+            {/if}
+          </p>
+          {#if provider.requiresApiKey && providerKeyStatus[provider.id]}
+            <p class="status key-check" class:key-ok={providerKeyStatus[provider.id] === 'valid'} class:key-bad={providerKeyStatus[provider.id] === 'invalid' || providerKeyStatus[provider.id] === 'save-error'}>
+              {#if providerKeyStatus[provider.id] === 'saving'}
+                Saving…
+              {:else if providerKeyStatus[provider.id] === 'checking'}
+                Checking the key against {provider.displayName}…
+              {:else if providerKeyStatus[provider.id] === 'valid'}
+                ✓ Key verified — {provider.displayName} accepted it.
+              {:else if providerKeyStatus[provider.id] === 'invalid'}
+                ✗ Key rejected{providerKeyError[provider.id] ? `: ${providerKeyError[provider.id]}` : ''}
+              {:else if providerKeyStatus[provider.id] === 'save-error'}
+                ✗ Could not save the key{providerKeyError[provider.id] ? `: ${providerKeyError[provider.id]}` : ''}
+              {/if}
+            </p>
+          {/if}
+          {#if provider.requiresApiKey}
+            <input
+              type="password"
+              placeholder="Paste your API key"
+              value={providerKeyDrafts[provider.id] ?? ''}
+              oninput={(e) => (providerKeyDrafts[provider.id] = (e.target as HTMLInputElement).value)}
+              onkeydown={(e) => e.key === 'Enter' && saveProviderApiKey(provider.id)}
+            />
+            <div class="actions">
+              <button
+                class="primary"
+                disabled={providerKeyStatus[provider.id] === 'saving' || providerKeyStatus[provider.id] === 'checking' || !(providerKeyDrafts[provider.id] ?? '').trim()}
+                onclick={() => saveProviderApiKey(provider.id)}
+              >
+                {providerKeyStatus[provider.id] === 'saving' ? 'Saving...' : providerKeyStatus[provider.id] === 'checking' ? 'Checking...' : 'Save'}
+              </button>
+            </div>
+          {/if}
+        </li>
+      {/each}
+    </ul>
 
     <hr />
 
@@ -589,11 +1085,45 @@
     {#if connections.length}
       <ul class="connection-list">
         {#each connections as conn (conn.id)}
-          <li>
-            <span class="conn-name">{conn.name}</span>
-            <span class="conn-engine">{conn.engine}</span>
-            <button class="link-danger" onclick={() => removeConnection(conn.id)}>Remove</button>
-          </li>
+          {#if editingConnectionId === conn.id}
+            <li class="edit-row">
+              <input placeholder="Connection name" bind:value={connName} />
+              <select
+                value={connEngine}
+                onchange={(e) => {
+                  connEngine = e.currentTarget.value as typeof connEngine
+                  if (connEngine !== 'sqlite') connPort = DEFAULT_PORT[connEngine]
+                }}
+              >
+                <option value="sqlite">SQLite</option>
+                <option value="postgres">Postgres</option>
+                <option value="mssql">SQL Server</option>
+                <option value="mysql">MySQL</option>
+              </select>
+              {#if connEngine === 'sqlite'}
+                <input placeholder="Path to .db file" bind:value={connFilePath} />
+              {:else}
+                <input placeholder="Host" bind:value={connHost} />
+                <input placeholder="Port" bind:value={connPort} />
+                <input placeholder="Database" bind:value={connDatabase} />
+                <input placeholder="Username" bind:value={connUsername} />
+                <input placeholder="New password (leave blank to keep unchanged)" type="password" bind:value={connPassword} />
+              {/if}
+              <div class="actions">
+                <button onclick={resetConnectionForm}>Cancel</button>
+                <button class="primary" disabled={savingConnection || !connName.trim()} onclick={saveConnection}>
+                  {savingConnection ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </li>
+          {:else}
+            <li>
+              <span class="conn-name">{conn.name}</span>
+              <span class="conn-engine">{conn.engine}</span>
+              <button class="link-danger" onclick={() => startEditConnection(conn)}>Edit</button>
+              <button class="link-danger" onclick={() => removeConnection(conn.id)}>Remove</button>
+            </li>
+          {/if}
         {/each}
       </ul>
     {:else}
@@ -632,12 +1162,12 @@
         </div>
       </div>
     {:else}
-      <button onclick={() => (showAddConnection = true)}>+ Add connection</button>
+      <button onclick={() => { editingConnectionId = null; showAddConnection = true }}>+ Add connection</button>
     {/if}
 
     <hr />
 
-    <h2>Search history</h2>
+    <h2>Search History Embedding: Provider and Model</h2>
     <p class="status">
       Lets the agent search your own past conversations (search_history tool). Uses a separate,
       independently-configured embedding model — not whatever provider you picked for chat above.
@@ -649,7 +1179,6 @@
         <option value={provider.id}>{provider.displayName}</option>
       {/each}
     </select>
-    <input placeholder="Model (e.g. nomic-embed-text)" bind:value={embeddingModel} onblur={changeEmbeddingModel} />
 
     {#if embeddingCapableProviders.find((p) => p.id === embeddingProviderId)?.requiresApiKey}
       <p class="status">
@@ -670,6 +1199,43 @@
       <p class="status">This provider runs locally — no API key needed.</p>
     {/if}
 
+    {#if embeddingCapableProviders.find((p) => p.id === embeddingProviderId)?.requiresApiKey && !embeddingHasKey}
+      <p class="status">Add a key above to list this provider's models.</p>
+    {:else if embeddingModelsLoading}
+      <p class="status">Loading models...</p>
+    {:else if embeddingModels.length > 0}
+      <select value={embeddingModelDraft} onchange={(e) => selectEmbeddingModel(e.currentTarget.value)}>
+        {#each embeddingModels as m (m)}
+          <option value={m}>{m}</option>
+        {/each}
+      </select>
+    {:else}
+      {#if embeddingModelsError}<p class="status error">Couldn't list models — enter one manually.</p>{/if}
+      <input
+        placeholder="Model (e.g. nomic-embed-text)"
+        bind:value={embeddingModelDraft}
+        onblur={() => probeDimension(embeddingModelDraft)}
+      />
+    {/if}
+
+    {#if probingDimension}
+      <p class="status">Checking embedding dimension...</p>
+    {:else if embeddingDimension !== null}
+      <p class="status">Embedding dimension: <strong>{embeddingDimension}</strong></p>
+    {:else if embeddingDimensionError}
+      <p class="status error">Couldn't determine dimension: {embeddingDimensionError}</p>
+    {/if}
+
+    <div class="actions">
+      <button
+        class="primary"
+        disabled={savingEmbeddingModel || !embeddingModelDraft.trim() || embeddingModelDraft === embeddingModel}
+        onclick={saveEmbeddingModelChoice}
+      >
+        {savingEmbeddingModel ? 'Saving...' : 'Save model'}
+      </button>
+    </div>
+
     <p class="status">{searchHistoryStatusLabel()}</p>
     <div class="actions">
       <button disabled={rebuildingIndex} onclick={rebuildSearchHistoryIndex}>
@@ -679,46 +1245,92 @@
 
     <hr />
 
-    <h2>Web search</h2>
+    <h2>Web Search Provider</h2>
     <p class="status">
-      web_search uses Tavily (a real search API built for AI agents) when a key is set here — real
-      ranked results with real URLs, not just DuckDuckGo's narrow Instant Answer API. Falls back to
-      DuckDuckGo automatically when no key is configured.
+      web_search uses whichever provider is selected here. Tavily gives real ranked results with real,
+      independently fetchable URLs; DuckDuckGo is free and needs no key, but only covers well-known
+      topics with an existing summary/infobox, not general search.
     </p>
-    <p class="status">
-      {tavilyHasKey ? 'A Tavily key is currently configured.' : 'No Tavily key configured — falling back to DuckDuckGo.'}
-    </p>
-    <input
-      type="password"
-      placeholder="Paste your Tavily API key"
-      bind:value={tavilyApiKey}
-      onkeydown={(e) => e.key === 'Enter' && saveTavilyKey()}
-    />
-    <div class="actions">
-      <button class="primary" disabled={savingTavilyKey || !tavilyApiKey.trim()} onclick={saveTavilyKey}>
-        {savingTavilyKey ? 'Saving...' : 'Save key'}
-      </button>
-    </div>
+
+    <select value={webSearchProviderId} onchange={(e) => changeWebSearchProvider(e.currentTarget.value)}>
+      {#each webSearchProviders as provider (provider.id)}
+        <option value={provider.id}>{provider.displayName}</option>
+      {/each}
+    </select>
+
+    {#if webSearchProviders.find((p) => p.id === webSearchProviderId)?.requiresApiKey}
+      <p class="status">
+        {webSearchHasKey ? 'A key is currently configured.' : 'No key configured yet — falling back to DuckDuckGo until one is set.'}
+      </p>
+      <input
+        type="password"
+        placeholder="Paste your API key"
+        bind:value={webSearchApiKey}
+        onkeydown={(e) => e.key === 'Enter' && saveWebSearchKey()}
+      />
+      <div class="actions">
+        <button class="primary" disabled={savingWebSearchKey || !webSearchApiKey.trim()} onclick={saveWebSearchKey}>
+          {savingWebSearchKey ? 'Saving...' : 'Save key'}
+        </button>
+      </div>
+    {:else}
+      <p class="status">This provider needs no API key.</p>
+    {/if}
 
     <hr />
 
     <h2>MCP servers</h2>
     <p class="status">
-      Servers whose tools get merged into the agent tool registry automatically once connected.
+      Servers whose tools become available through the MCP Operator specialist once connected. Write a short line about what each
+      one is for — that line (not the server's own text) is what the assistant uses to pick the right server.
     </p>
 
     {#if mcpServers.length}
       <ul class="connection-list">
         {#each mcpServers as server (server.id)}
-          <li>
-            <span class="conn-name">
-              {server.name}
-              <span class="mcp-status" class:error={server.status === 'error'}>{mcpStatusLabel(server)}</span>
-            </span>
-            <span class="conn-engine">{server.transport}</span>
-            <button class="link-danger" onclick={() => reconnectMcpServer(server.id)}>Reconnect</button>
-            <button class="link-danger" onclick={() => removeMcpServer(server.id)}>Remove</button>
-          </li>
+          {#if editingMcpId === server.id}
+            <li class="edit-row">
+              <input placeholder="Server name" bind:value={mcpName} />
+              <input
+                placeholder="What is this server for? (optional, max {MCP_DESCRIPTION_MAX} characters)"
+                maxlength={MCP_DESCRIPTION_MAX}
+                bind:value={mcpDescription}
+              />
+              <select bind:value={mcpTransport}>
+                <option value="stdio">Local (stdio)</option>
+                <option value="http">Remote (HTTP)</option>
+              </select>
+              {#if mcpTransport === 'stdio'}
+                <input placeholder="Command, e.g. npx" bind:value={mcpCommand} />
+                <input placeholder="Args (space-separated)" bind:value={mcpArgs} />
+                <textarea placeholder={'Env vars, one per line: KEY=value'} bind:value={mcpEnv}></textarea>
+              {:else}
+                <input placeholder="Server URL" bind:value={mcpUrl} />
+                <input placeholder="New bearer token (leave blank to keep unchanged)" type="password" bind:value={mcpToken} />
+              {/if}
+              {#if mcpError}<p class="status error">{mcpError}</p>{/if}
+              <div class="actions">
+                <button onclick={resetMcpForm}>Cancel</button>
+                <button class="primary" disabled={savingMcpServer || !mcpName.trim()} onclick={saveMcpServer}>
+                  {savingMcpServer ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </li>
+          {:else}
+            <li>
+              <span class="conn-name">
+                {server.name}
+                <span class="mcp-status" class:error={server.status === 'error'}>{mcpStatusLabel(server)}</span>
+              </span>
+              <span class="conn-engine">{server.transport}</span>
+              <button class="link-danger" onclick={() => startEditMcpServer(server)}>Edit</button>
+              <button class="link-danger" onclick={() => reconnectMcpServer(server.id)}>Reconnect</button>
+              <button class="link-danger" onclick={() => removeMcpServer(server.id)}>Remove</button>
+            </li>
+            <li class="mcp-description-row">
+              <span class="status">{server.description || 'No description — the assistant only sees tool names.'}</span>
+            </li>
+          {/if}
         {/each}
       </ul>
     {:else}
@@ -728,6 +1340,7 @@
     {#if showAddMcpServer}
       <div class="add-connection-form">
         <input placeholder="Server name" bind:value={mcpName} />
+        <input placeholder="What is this server for? (optional, max {MCP_DESCRIPTION_MAX} characters)" maxlength={MCP_DESCRIPTION_MAX} bind:value={mcpDescription} />
         <select bind:value={mcpTransport}>
           <option value="stdio">Local (stdio)</option>
           <option value="http">Remote (HTTP)</option>
@@ -749,7 +1362,7 @@
         </div>
       </div>
     {:else}
-      <button onclick={() => (showAddMcpServer = true)}>+ Add MCP server</button>
+      <button onclick={() => { editingMcpId = null; showAddMcpServer = true }}>+ Add MCP server</button>
     {/if}
 
     <hr />
@@ -764,11 +1377,49 @@
     {#if apiConnections.length}
       <ul class="connection-list">
         {#each apiConnections as conn (conn.id)}
-          <li>
-            <span class="conn-name">{conn.name}</span>
-            <span class="conn-engine">{conn.authType}</span>
-            <button class="link-danger" onclick={() => removeApiConnection(conn.id)}>Remove</button>
-          </li>
+          {#if editingApiConnectionId === conn.id}
+            <li class="edit-row">
+              <input placeholder="Connection name" bind:value={apiName} />
+              <input placeholder="Base URL, e.g. https://api.example.com/v1" bind:value={apiBaseUrl} />
+              <select bind:value={apiAuthType}>
+                <option value="none">No auth</option>
+                <option value="apiKey">API key</option>
+                <option value="bearer">Bearer token</option>
+                <option value="basic">Basic auth</option>
+              </select>
+              {#if apiAuthType === 'apiKey'}
+                <select bind:value={apiKeyIn} aria-label="Where the API key is sent">
+                  <option value="header">Send the key in a header</option>
+                  <option value="query">Send the key as a query parameter</option>
+                </select>
+                <input placeholder={apiKeyIn === 'query' ? 'Parameter name, e.g. apiKey' : 'Header name, e.g. X-API-Key'} bind:value={apiKeyHeader} />
+                <input placeholder="New API key (leave blank to keep unchanged)" type="password" bind:value={apiSecret} />
+              {:else if apiAuthType === 'bearer'}
+                <input placeholder="New bearer token (leave blank to keep unchanged)" type="password" bind:value={apiSecret} />
+              {:else if apiAuthType === 'basic'}
+                <input placeholder="Username" bind:value={apiUsername} />
+                <input placeholder="New password (leave blank to keep unchanged)" type="password" bind:value={apiSecret} />
+              {/if}
+              <input placeholder="OpenAPI/Swagger spec URL (optional)" bind:value={apiSpecUrl} />
+              <div class="actions">
+                <button onclick={resetApiConnectionForm}>Cancel</button>
+                <button
+                  class="primary"
+                  disabled={savingApiConnection || !apiName.trim() || !apiBaseUrl.trim()}
+                  onclick={saveApiConnection}
+                >
+                  {savingApiConnection ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </li>
+          {:else}
+            <li>
+              <span class="conn-name">{conn.name}</span>
+              <span class="conn-engine">{conn.authType}</span>
+              <button class="link-danger" onclick={() => startEditApiConnection(conn)}>Edit</button>
+              <button class="link-danger" onclick={() => removeApiConnection(conn.id)}>Remove</button>
+            </li>
+          {/if}
         {/each}
       </ul>
     {:else}
@@ -781,12 +1432,16 @@
         <input placeholder="Base URL, e.g. https://api.example.com/v1" bind:value={apiBaseUrl} />
         <select bind:value={apiAuthType}>
           <option value="none">No auth</option>
-          <option value="apiKey">API key header</option>
+          <option value="apiKey">API key</option>
           <option value="bearer">Bearer token</option>
           <option value="basic">Basic auth</option>
         </select>
         {#if apiAuthType === 'apiKey'}
-          <input placeholder="Header name, e.g. X-API-Key" bind:value={apiKeyHeader} />
+          <select bind:value={apiKeyIn} aria-label="Where the API key is sent">
+            <option value="header">Send the key in a header</option>
+            <option value="query">Send the key as a query parameter</option>
+          </select>
+          <input placeholder={apiKeyIn === 'query' ? 'Parameter name, e.g. apiKey' : 'Header name, e.g. X-API-Key'} bind:value={apiKeyHeader} />
           <input placeholder="API key" type="password" bind:value={apiSecret} />
         {:else if apiAuthType === 'bearer'}
           <input placeholder="Bearer token" type="password" bind:value={apiSecret} />
@@ -807,7 +1462,7 @@
         </div>
       </div>
     {:else}
-      <button onclick={() => (showAddApiConnection = true)}>+ Add API connection</button>
+      <button onclick={() => { editingApiConnectionId = null; showAddApiConnection = true }}>+ Add API connection</button>
     {/if}
 
     <hr />
@@ -897,8 +1552,279 @@
       </button>
     </div>
 
+    <h3>Folders outside the workspace</h3>
+    <p class="status">
+      File tools can read a folder outside the workspace only after you allow it in a prompt — read only; Sachivji
+      never edits or deletes files there, and saving a new file there asks every time. Folders you chose
+      &ldquo;Always&rdquo; for are listed here; remove one to be asked again.
+    </p>
+    {#if externalFolders.length === 0}
+      <p class="status">None.</p>
+    {:else}
+      {#each externalFolders as folder (folder)}
+        <div class="tool-rule">
+          <span class="conn-name"><code>{folder}</code></span>
+          <button class="link-danger" onclick={() => removeExternalFolder(folder)}>Remove</button>
+        </div>
+      {/each}
+    {/if}
+
     <hr />
 
+    <h2>Python runtime</h2>
+    <p class="status">
+      Agents run scripts (charts, Word/Excel files) in a Python environment stored in the
+      workspace's <code>venv</code> folder. It is created automatically when Python 3.10 or newer is
+      installed. It keeps packages separate but is <strong>not a sandbox</strong> — scripts can still
+      read and write anywhere you can.
+    </p>
+    {#if runtime}
+      <p class="status" class:error={runtime.status === 'failed' || runtime.status === 'missing-python'}>
+        <strong>{runtimeStatusLabel[runtime.status]}</strong>{runtime.pythonVersion ? ` · Python ${runtime.pythonVersion}` : ''}
+        — {runtime.message}
+      </p>
+      {#if runtime.packages === 'adopted'}
+        <p class="status">Packages in an existing environment are yours to manage; Sachivji did not install any.</p>
+      {/if}
+      {#if !showRepairConfirm}
+        <div class="actions">
+          {#if runtime.status === 'disabled'}
+            <button class="primary" disabled={runtimeBusy} onclick={() => runtimeAction(() => window.sachiv.setRuntimeEnabled(true))}>
+              Turn Python on
+            </button>
+          {:else}
+            <button disabled={runtimeBusy || runtimeWorking} onclick={() => runtimeAction(() => window.sachiv.ensureRuntime())}>
+              Retry
+            </button>
+            <button disabled={runtimeBusy || runtimeWorking} onclick={() => (showRepairConfirm = true)}>Repair…</button>
+            <button disabled={runtimeBusy || runtimeWorking} onclick={() => runtimeAction(() => window.sachiv.setRuntimeEnabled(false))}>
+              Turn Python off
+            </button>
+          {/if}
+        </div>
+      {:else}
+        <p class="status">
+          Repair deletes the workspace's <code>venv</code> folder — including any packages you
+          installed into it — and builds a fresh one. Your own files are not touched. Continue?
+        </p>
+        <div class="actions">
+          <button onclick={() => (showRepairConfirm = false)}>Cancel</button>
+          <button class="primary" disabled={runtimeBusy} onclick={() => runtimeAction(() => window.sachiv.repairRuntime())}>
+            Delete and rebuild
+          </button>
+        </div>
+      {/if}
+    {:else}
+      <p class="status">Checking…</p>
+    {/if}
+
+    {#if ollamaRuntime && ollamaRuntime.status !== 'unavailable'}
+      <hr />
+
+      <h2>Local embeddings (bundled Ollama)</h2>
+      <p class="status">
+        A CPU-only Ollama server bundled with this install, used for local search-history embeddings with no
+        separate Ollama setup. Downloads the <code>nomic-embed-text</code> model (about 274MB) once, over the
+        network.
+      </p>
+      <p class="status" class:error={ollamaRuntime.status === 'failed'}>
+        <strong>{ollamaStatusLabel[ollamaRuntime.status]}</strong>
+        — {ollamaRuntime.message}
+        {#if ollamaRuntime.status === 'pulling-model' && ollamaPullPercent !== undefined}({ollamaPullPercent}%){/if}
+      </p>
+      {#if ollamaRuntime.status === 'failed'}
+        <div class="actions">
+          <button disabled={ollamaBusy} onclick={retryOllamaRuntime}>Retry</button>
+        </div>
+      {/if}
+    {/if}
+
+    <hr />
+
+    <h2>Roles</h2>
+    <p class="status">
+      The specialists the assistant can hand work to. Add your own by putting a Markdown file (frontmatter + the role's prompt) in the roles
+      folder; it loads enabled and applies to your next message. A role only chooses among existing tools — confirmation and the workspace
+      boundary still apply to everything it does. Every enabled role's summary is sent with every request, so keep the list short.
+    </p>
+    {#if roleRoster}
+      <p class="status"><code>{roleRoster.folder}</code></p>
+      <div class="actions">
+        <button onclick={openRolesFolder}>Open roles folder</button>
+        <button onclick={createExampleRole}>Create example file</button>
+        <button onclick={loadRoles}>Reload</button>
+      </div>
+      {#if rolesError}<p class="status">{rolesError}</p>{/if}
+      {#if roleRoster.budgetWarning}<p class="status error">{roleRoster.budgetWarning}</p>{/if}
+
+      {@const yours = roleRoster.roles.filter((r) => !r.builtin)}
+      {#if yours.length}
+        <ul class="connection-list">
+          {#each yours as r (r.id)}
+            <li class="role-row">
+              <div class="role-head">
+                <label class="checkbox-row">
+                  <input type="checkbox" checked={r.enabled} disabled={rolesBusy} onchange={(e) => toggleRole(r.id, e.currentTarget.checked)} />
+                  <span class="conn-name">{r.label} <span class="mcp-status">{r.id}</span></span>
+                </label>
+                <span class="conn-engine">~{r.tokenCost} tokens per request</span>
+              </div>
+              <span class="status">{r.summary}</span>
+              {#if r.stale}<span class="status error">The latest edit of {r.file} has errors — using the last working version.</span>{/if}
+              {#each r.warnings as w}<span class="status">⚠ {w}</span>{/each}
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="status">No roles of your own yet.</p>
+      {/if}
+
+      {#each roleRoster.problems.filter((p) => p.level === 'error') as p}
+        <p class="status error"><strong>{p.file}</strong> — {p.message}</p>
+      {/each}
+      {#each roleRoster.problems.filter((p) => p.level === 'warning') as p}
+        <p class="status"><strong>{p.file}</strong> — {p.message}</p>
+      {/each}
+
+      <details>
+        <summary class="status">Built-in roles ({roleRoster.roles.filter((r) => r.builtin).length}, read-only)</summary>
+        <ul class="connection-list">
+          {#each roleRoster.roles.filter((r) => r.builtin) as r (r.id)}
+            <li class="role-row">
+              <div class="role-head">
+                <span class="conn-name">{r.label} <span class="mcp-status">{r.id}</span></span>
+                <span class="conn-engine">~{r.tokenCost} tokens per request</span>
+              </div>
+              <span class="status">{r.summary}</span>
+            </li>
+          {/each}
+        </ul>
+      </details>
+    {:else}
+      <p class="status">Loading…</p>
+    {/if}
+
+    <hr />
+
+    <h2>Tools by role</h2>
+    <p class="status">
+      Every tool each specialist actually has, with its full description — a reference for deciding what a new custom role above should
+      be able to do. "Mutates" means the tool changes something (a file, a database row, a sent message); "sometimes" means it only
+      mutates for certain inputs (e.g. a SQL tool run with a SELECT vs. an UPDATE).
+    </p>
+    <details ontoggle={(e) => e.currentTarget.open && loadToolsByRole()}>
+      <summary class="status">Show tools by role</summary>
+      {#if toolsByRoleError}
+        <p class="status error">{toolsByRoleError}</p>
+      {:else if toolsByRole}
+        {#each toolsByRole as r (r.role)}
+          <details class="role-tools-group">
+            <summary class="status"><strong>{r.roleLabel}</strong> — {r.tools.length} tool{r.tools.length === 1 ? '' : 's'}</summary>
+            <p class="status">{r.summary}</p>
+            {#if r.tools.length}
+              <ul class="connection-list">
+                {#each r.tools as t (t.name)}
+                  <li class="role-row">
+                    <div class="role-head">
+                      <span class="conn-name">{t.name}</span>
+                      <span class="conn-engine">mutates: {t.mutates}</span>
+                    </div>
+                    <span class="status">{t.description}</span>
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="status">No tools of its own (delegates or plans only).</p>
+            {/if}
+          </details>
+        {/each}
+      {:else}
+        <p class="status">Loading…</p>
+      {/if}
+    </details>
+
+    <hr />
+
+    <h2>Slim router <span class="status">(experimental)</span></h2>
+    <p class="status">
+      Sends the assistant a much smaller request each time (about 2,800 tokens instead of about 10,800) by keeping only a few
+      everyday tools directly and reaching everything else through the specialists. Applies to your next message. Routing quality
+      has not yet been evaluated across models, so leave this off unless you are testing it.
+    </p>
+    <label class="checkbox-row">
+      <input type="checkbox" checked={slimRouter} onchange={(e) => setSlimRouter(e.currentTarget.checked)} />
+      Use the slim router
+    </label>
+
+    <hr />
+
+    <h2>Prompt caching <span class="status">(Anthropic)</span></h2>
+    <p class="status">
+      Lets Anthropic reuse the unchanged start of each request (the tool list, the instructions and earlier messages) at a fraction
+      of the normal input price, which mainly lowers the cost of long tool-using turns. Leave this on. If Anthropic chat ever fails
+      with an error that mentions <code>cache_control</code>, turn it off — the next message is then sent without it. Applies to
+      your next message; other providers are unaffected.
+    </p>
+    <label class="checkbox-row">
+      <input type="checkbox" checked={promptCaching} onchange={(e) => setPromptCaching(e.currentTarget.checked)} />
+      Use prompt caching
+    </label>
+
+    <hr />
+
+    <h2>Model behavior</h2>
+    <p class="status">
+      How deterministic the model should be, from 0 (always the most likely answer) to 1 (more variety). Applies to every
+      request — routing, planning, specialists, everything. Lower is better for business-operations work (data, code,
+      documents); raise it only if you want more varied/creative text. Applies to your next message.
+    </p>
+    <label class="checkbox-row">
+      Temperature: {temperature.toFixed(1)}
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.1"
+        value={temperature}
+        oninput={(e) => setTemperature(Number(e.currentTarget.value))}
+      />
+    </label>
+
+    <hr />
+
+    <h2>Auto-approve rules</h2>
+    <p class="status">Tools checked here skip the confirmation dialog, persisted across restarts.</p>
+
+    {#if tools.length}
+      <ul class="connection-list auto-approve-list">
+        {#each tools as tool (tool.name)}
+          <li>
+            <label class="tool-rule">
+              <input
+                type="checkbox"
+                checked={Boolean(autoApproveRules[tool.name])}
+                onchange={(e) =>
+                  onToggleAutoApproveRule(tool.name, (e.target as HTMLInputElement).checked)}
+              />
+              <span class="conn-name">
+                {tool.name}
+                {#if tool.mutates === 'sometimes'}
+                  <span class="mcp-status error">
+                    Only some calls of this tool mutate — enabling skips confirmation for all of them, writes included
+                  </span>
+                {/if}
+              </span>
+            </label>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="status">No tools need confirmation yet.</p>
+    {/if}
+
+    <hr />
+
+    <!-- #166: Secret storage is deliberately the LAST section in the panel — Deepak's own ordering preference, 2026-09-29. -->
     <h2>Secret storage</h2>
     <p class="status">
       Where provider API keys and DB/API/MCP connection secrets are kept.
@@ -925,38 +1851,7 @@
         Secret storage: <strong>File</strong> (<code>{secretStorageEnvPath}</code>).
       </p>
     {/if}
-
-    <hr />
-
-    <h2>Auto-approve rules</h2>
-    <p class="status">Tools checked here skip the confirmation dialog, persisted across restarts.</p>
-
-    {#if tools.length}
-      <ul class="connection-list">
-        {#each tools as tool (tool.name)}
-          <li>
-            <label class="tool-rule">
-              <input
-                type="checkbox"
-                checked={Boolean(autoApproveRules[tool.name])}
-                onchange={(e) =>
-                  onToggleAutoApproveRule(tool.name, (e.target as HTMLInputElement).checked)}
-              />
-              <span class="conn-name">
-                {tool.name}
-                {#if tool.mutates === 'sometimes'}
-                  <span class="mcp-status error">
-                    Only some calls of this tool mutate — enabling skips confirmation for all of them, writes included
-                  </span>
-                {/if}
-              </span>
-            </label>
-          </li>
-        {/each}
-      </ul>
-    {:else}
-      <p class="status">No tools need confirmation yet.</p>
-    {/if}
+    </div>
   </div>
 </div>
 
@@ -990,17 +1885,40 @@
   .back-btn:hover {
     background: var(--panel-hover);
   }
+  /* The scroll container is the whole pane below the header, so its scrollbar sits at the panel's right edge; the content column inside
+     is centred, at most 900px wide and never wider than the panel (it shrinks with the window). */
   .settings-body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     padding: 1.5rem 2rem 3rem;
+    box-sizing: border-box;
+  }
+  .settings-content {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    max-width: 640px;
-    width: 100%;
-    box-sizing: border-box;
+    width: min(900px, 100%);
+    margin: 0 auto;
+  }
+  .leave-prompt {
+    flex-shrink: 0;
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel-hover);
+    font-size: 0.85rem;
+  }
+  .leave-prompt p {
+    margin: 0 0 0.5rem;
+    overflow-wrap: anywhere;
+  }
+  .leave-prompt.error {
+    color: var(--danger, #e5484d);
+  }
+  .leave-prompt .actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
   }
   h2 {
     margin: 0 0 0.25rem;
@@ -1013,8 +1931,10 @@
   }
   hr {
     border: none;
-    border-top: 1px solid var(--border);
-    margin: 0.5rem 0;
+    /* Thick enough that each settings group reads as its own configuration item. */
+    border-top: 3px solid var(--border);
+    border-radius: 2px;
+    margin: 0.9rem 0;
     width: 100%;
   }
   input,
@@ -1066,6 +1986,37 @@
     flex-direction: column;
     gap: 0.3rem;
   }
+  .connection-list li.role-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.25rem;
+  }
+  /* #155: an inline edit-in-place row (data source / MCP server / API connection) — same stacked-form
+     shape as .add-connection-form, just inside a .connection-list li instead of a standalone div. */
+  .connection-list li.edit-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.4rem;
+  }
+  /* #165: caps the auto-approve list to ~15 visible rows with its own scroll, rather than growing
+     unbounded with the full tool registry. Scoped to this one list (not .connection-list itself,
+     shared by the data-source/MCP/API-connection lists, which must stay unbounded — #155). 36.5rem
+     measured live against a real 23-tool registry (897px / 23 rows ≈ 39px/row * 15 ≈ 585px), not
+     estimated from the CSS box model alone — an earlier 31rem estimate undershot to ~12-13 rows. */
+  .connection-list.auto-approve-list {
+    max-height: 36.5rem;
+    overflow-y: auto;
+  }
+  .role-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  /* #164 — one nested <details> per role inside the outer "Show tools by role" <details>. */
+  .role-tools-group {
+    margin: 0.4rem 0 0.4rem 0.75rem;
+  }
   .connection-list li {
     display: flex;
     align-items: center;
@@ -1083,6 +2034,15 @@
     color: var(--text-muted);
     font-size: 0.75rem;
     text-transform: uppercase;
+  }
+  .key-check {
+    font-weight: 500;
+  }
+  .key-check.key-ok {
+    color: var(--success);
+  }
+  .key-check.key-bad {
+    color: var(--danger);
   }
   .tool-rule {
     display: flex;

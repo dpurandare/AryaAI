@@ -115,4 +115,78 @@ describe('streamOpenAICompatible', () => {
     const events = await collect(streamOpenAICompatible(client, baseRequest))
     expect(events).toEqual([{ type: 'message_stop', stopReason: 'end_turn' }])
   })
+
+  // TASKS.md #147: Ollama and Groq stream real reasoning content on this shared path, under different
+  // field names not in the official OpenAI Chat Completions type — both are checked, not just one.
+  it('emits thinking_delta for delta.reasoning (one real observed field name)', async () => {
+    const client = fakeClient([{ choices: [{ delta: { reasoning: 'let me think' } }] }])
+    const events = await collect(streamOpenAICompatible(client, baseRequest))
+    expect(events).toEqual([
+      { type: 'thinking_delta', text: 'let me think' },
+      { type: 'message_stop', stopReason: 'end_turn' }
+    ])
+  })
+
+  it('emits thinking_delta for delta.reasoning_content (the other real observed field name)', async () => {
+    const client = fakeClient([{ choices: [{ delta: { reasoning_content: 'considering options' } }] }])
+    const events = await collect(streamOpenAICompatible(client, baseRequest))
+    expect(events).toEqual([
+      { type: 'thinking_delta', text: 'considering options' },
+      { type: 'message_stop', stopReason: 'end_turn' }
+    ])
+  })
+
+  it('keeps thinking_delta and text_delta as genuinely separate events, in the order the server sent them', async () => {
+    const client = fakeClient([
+      { choices: [{ delta: { reasoning: 'thinking first' } }] },
+      { choices: [{ delta: { content: 'then the real answer' } }] }
+    ])
+    const events = await collect(streamOpenAICompatible(client, baseRequest))
+    expect(events).toEqual([
+      { type: 'thinking_delta', text: 'thinking first' },
+      { type: 'text_delta', text: 'then the real answer' },
+      { type: 'message_stop', stopReason: 'end_turn' }
+    ])
+  })
+})
+
+describe('streamOpenAICompatible structured output', () => {
+  it('sends a json_schema response_format only when structuredOutput is requested', async () => {
+    const seen: Record<string, unknown>[] = []
+    const client = {
+      chat: {
+        completions: {
+          create: async (params: Record<string, unknown>) => {
+            seen.push(params)
+            return { [Symbol.asyncIterator]: async function* () { yield { choices: [{ delta: { content: '{}' }, finish_reason: 'stop' }] } } }
+          }
+        }
+      }
+    } as unknown as OpenAI
+    const planSchema = { type: 'object', properties: { complexity: { type: 'string', enum: ['simple', 'compound'] } }, required: ['complexity'], additionalProperties: false }
+    const base = { model: 'm', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }], maxTokens: 10 }
+    await collect(streamOpenAICompatible(client, base))
+    await collect(streamOpenAICompatible(client, { ...base, structuredOutput: { name: 'classify_and_plan', schema: planSchema } }))
+    expect(seen[0]).not.toHaveProperty('response_format')
+    expect(seen[1].response_format).toEqual({ type: 'json_schema', json_schema: { name: 'classify_and_plan', strict: true, schema: planSchema } })
+  })
+
+  it('sends temperature when the request sets it, and omits it entirely when it does not', async () => {
+    const seen: Record<string, unknown>[] = []
+    const client = {
+      chat: {
+        completions: {
+          create: async (params: Record<string, unknown>) => {
+            seen.push(params)
+            return { [Symbol.asyncIterator]: async function* () { yield { choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] } } }
+          }
+        }
+      }
+    } as unknown as OpenAI
+    const base = { model: 'm', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }], maxTokens: 10 }
+    await collect(streamOpenAICompatible(client, base))
+    await collect(streamOpenAICompatible(client, { ...base, temperature: 0.2 }))
+    expect(seen[0]).not.toHaveProperty('temperature')
+    expect(seen[1].temperature).toBe(0.2)
+  })
 })

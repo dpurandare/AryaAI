@@ -8,6 +8,17 @@ import type { AgentRole } from './agents'
 export type ContentBlock =
   /** `agentRole` set means a specialist (not the orchestrator itself) produced this block — see main/agents/orchestrator.ts. */
   | { type: 'text'; text: string; agentRole?: AgentRole }
+  /**
+   * TASKS.md #147: the model's own real reasoning/chain-of-thought, when the provider streams it as a
+   * distinct signal — Ollama/Groq (`delta.reasoning`/`delta.reasoning_content`, whichever a given
+   * OpenAI-compatible-shaped provider uses) and Gemini (`part.thought`, opt-in via `thinkingConfig.
+   * includeThoughts`). Persisted like `text` so it survives a reload; the renderer collapses it by
+   * default, reusing #72/#88's existing tool-output collapse toggle rather than a new convention.
+   * OpenAI/Anthropic are explicitly out of scope here — OpenAI's reasoning models don't stream raw CoT via
+   * the Chat Completions API this app uses (policy-level), and Anthropic extended thinking is tracked
+   * separately as #159 (needs its own request-shape opt-in and redacted-thinking-block replay rules).
+   */
+  | { type: 'thinking'; text: string; agentRole?: AgentRole }
   | {
       type: 'tool_use'
       id: string
@@ -22,6 +33,20 @@ export type ContentBlock =
       thoughtSignature?: string
     }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
+  /**
+   * TASKS.md #158: a user comment injected mid-run, between rounds — the user spotted the model heading
+   * down a wrong path and dropped in a correction without waiting for the whole turn or hitting Stop. A
+   * distinct type purely for turn-boundary and UI-rendering purposes: the MODEL sees it as ordinary text
+   * (`normalizeUserNotesForWire`, context/prepare-context.ts, converts it right before the request is sent),
+   * and it never starts a new turn boundary the way an ordinary `role: 'user'` message would (`splitIntoTurns`,
+   * same file, treats a message made only of these — like `tool_result`/`image` — as a continuation of the
+   * turn already running) — inserting it as a plain `text` block would have fractured `search_history`'s
+   * embedding (#52) and every turn-scoped mechanism (the sliding window, #149's own per-turn cap) into
+   * thinking a second, unrelated top-level request had started mid-turn.
+   *
+   * `source: 'app'` means Sachivji wrote the note itself (a completion check sent to a specialist), not the user - the chat labels it differently.
+   */
+  | { type: 'user_note'; text: string; source?: 'app' }
   /**
    * A non-fatal problem worth surfacing rather than silently absorbing —
    * e.g. a round truncated by hitting its output-token limit before
@@ -77,19 +102,25 @@ export interface Message {
 
 export type StreamEvent =
   | { type: 'text_delta'; text: string; agentRole?: AgentRole }
+  /** Live counterpart of `ContentBlock`'s `thinking` — see its own doc comment (TASKS.md #147). Providers emit this incrementally, same as `text_delta`. */
+  | { type: 'thinking_delta'; text: string; agentRole?: AgentRole }
   | { type: 'tool_use_start'; id: string; name: string; agentRole?: AgentRole; thoughtSignature?: string }
   | { type: 'tool_use_delta'; id: string; partialInput: string }
   /** Synthesized by the main process once a tool call finishes running — not emitted by providers. */
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
   /** Live counterpart of `ContentBlock`'s `image` — see its own doc comment. Streamed once, alongside the `show_media` call's own `tool_result`. */
   | { type: 'image'; toolUseId: string; path: string; mimeType: string; dataBase64: string; agentRole?: AgentRole }
+  /** Live counterpart of `ContentBlock`'s `user_note` — see its own doc comment (TASKS.md #158). Streamed once, alongside the matching persisted message. `source: 'app'`: Sachivji wrote it (a completion check), not the user. */
+  | { type: 'user_note'; text: string; source?: 'app' }
   /** `agentRole` set means this is a nested specialist's own round ending, not the whole exchange — the renderer must not treat it as final. */
   | {
       type: 'message_stop'
       stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'aborted'
       agentRole?: AgentRole
     }
-  | { type: 'usage'; inputTokens: number; outputTokens: number }
+  /** `cacheReadTokens` (Anthropic prompt caching): the part of `inputTokens` served from the cache; present only when non-zero. */
+  /** `contextTokens` (top-level rounds only): what that request held - its input plus its reply, which the next one must carry. The meter shows the latest as the context in use; the per-round counts are summed for the session total. */
+  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; contextTokens?: number }
   /**
    * Emitted once per user turn (not per round), right after context prep
    * resolves the model's real context window for this turn — see
@@ -106,7 +137,14 @@ export type StreamEvent =
   | { type: 'context_window'; tokens: number; isEstimate: boolean }
   | { type: 'error'; message: string }
   /** Live counterpart of `ContentBlock`'s `warning` — see its doc comment, including `failureCategory`. Streamed immediately and also included in the `kind: 'message'` event that gets persisted, exactly like `tool_use`/`text`. */
-  | { type: 'warning'; message: string; agentRole?: AgentRole; failureCategory?: 'communication_failure' | 'stopped_by_user' | 'no_answer' }
+  | {
+      type: 'warning'
+      message: string
+      agentRole?: AgentRole
+      failureCategory?: 'communication_failure' | 'stopped_by_user' | 'no_answer'
+      /** Live-only notice (a rate-limit wait): the renderer removes it after this many ms. Never persisted, so a reload never shows it. */
+      transientMs?: number
+    }
   /**
    * A human-readable "what's happening right now" hint, sent once per round
    * right before the provider call that produces it — not persisted, purely

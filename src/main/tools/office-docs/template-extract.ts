@@ -1,9 +1,10 @@
 import ExcelJS from 'exceljs'
 import JSZip from 'jszip'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { basename, extname, join, relative } from 'node:path'
+import { basename, extname, join } from 'node:path'
 import PizZip from 'pizzip'
 import type { Tool } from '../types'
+import { workspaceRelativePath } from '../workspace-layout'
 import { extractDocxRuns, extractPptxRuns } from './extract'
 import { detectPlaceholderCandidates, type PlaceholderCandidate } from './placeholder-detect'
 
@@ -51,6 +52,31 @@ function formatCandidates(candidates: PlaceholderCandidate[]): string {
   )
 }
 
+/**
+ * What an `apply` left untouched. A template is meant to hold no one's own data, so
+ * the paragraphs that still have no {placeholder} are listed (longest first) for the
+ * model and the user to confirm as fixed wording or turn into placeholders.
+ */
+function leftoverReport(texts: string[]): string {
+  const total = texts.length
+  const plain = texts.filter((t) => !/\{[#/^]?[A-Za-z_][A-Za-z0-9_]*\}/.test(t))
+  if (total === 0) return ''
+  const sample = [...plain]
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 5)
+    .map((t) => `\n  - "${t.length > 80 ? `${t.slice(0, 80)}…` : t}"`)
+    .join('')
+  const mostly = plain.length / total > 0.5
+  return (
+    `\n\nStill the original text: ${plain.length} of ${total} paragraphs/cells have no placeholder${plain.length ? '. Longest:' + sample : '.'}` +
+    (plain.length
+      ? `\nA template should hold none of the source's own content. ${mostly ? 'Most of this document is still the original — ' : ''}` +
+        'Tell the user which of these you kept as fixed wording (headings, labels, standard text) and which you propose to make placeholders, ' +
+        'and apply again with the additions if they want them replaced.'
+      : '')
+  )
+}
+
 function decodeXmlEntities(s: string): string {
   return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
 }
@@ -60,41 +86,84 @@ function encodeXmlEntities(s: string): string {
 }
 
 /**
- * Substitutes one replacement's `text` with `{placeholder}` inside every
- * `<tag ...>...</tag>` text-run element found in `xmlStr` (`<w:t>` for docx,
- * `<a:t>` for pptx) — never touching anything outside a run's own text
- * content, so surrounding formatting/structure is untouched. `counterRef` is
- * shared across every XML part this replacement is applied to (docx has
- * one; pptx has one per slide, applied in slide order) so `occurrence`
- * counts in real document order, not per-part. Occurrence counting is at
- * run granularity — if the *same* literal text appears twice within one
- * single run's content (rare in practice: runs are usually short label/
- * value fragments), both count as one occurrence together, a deliberate,
- * documented simplification rather than a full per-substring N-th-match
- * engine.
+ * Substitutes one replacement's `text` with `{placeholder}` in every paragraph
+ * (`paraRegex`) of `xmlStr`, matching against the paragraph's text as a whole
+ * so a name or phrase that Word split over several runs (`<w:t>` for docx,
+ * `<a:t>` for pptx) is still found. The placeholder goes into the run the
+ * match starts in, and the rest of the matched characters are removed from
+ * the runs they were in, so each run keeps its own formatting and nothing
+ * outside run text is touched. `counterRef` is shared across every XML part
+ * this replacement is applied to (docx has one; pptx has one per slide, applied
+ * in slide order) so `occurrence` counts matches in real document order.
  */
-function replaceInXmlPart(
+function replaceInParagraphs(
   xmlStr: string,
-  tagRegex: RegExp,
+  paraRegex: RegExp,
+  runRegex: RegExp,
   targetText: string,
   placeholder: string,
   occurrence: number | undefined,
   counterRef: { count: number }
 ): { result: string; matchedCount: number } {
   let matchedCount = 0
-  const result = xmlStr.replace(tagRegex, (match, open: string, content: string, close: string) => {
-    const decoded = decodeXmlEntities(content)
-    if (!decoded.includes(targetText)) return match
-    if (occurrence !== undefined) {
-      counterRef.count++
-      if (counterRef.count !== occurrence) return match
+  const result = xmlStr.replace(paraRegex, (paragraph: string) => {
+    const runs: { start: number; end: number; text: string }[] = []
+    for (const m of paragraph.matchAll(runRegex)) {
+      const start = (m.index ?? 0) + m[1].length
+      runs.push({ start, end: start + m[2].length, text: decodeXmlEntities(m[2]) })
     }
-    matchedCount++
-    const replaced = decoded.split(targetText).join(`{${placeholder}}`)
-    return `${open}${encodeXmlEntities(replaced)}${close}`
+    if (runs.length === 0) return paragraph
+    const full = runs.map((r) => r.text).join('')
+    // Non-overlapping matches, in order, each flagged selected or skipped by `occurrence`.
+    const selected: number[] = []
+    for (let at = full.indexOf(targetText); at !== -1; at = full.indexOf(targetText, at + targetText.length)) {
+      if (occurrence !== undefined) {
+        counterRef.count++
+        if (counterRef.count !== occurrence) continue
+      }
+      selected.push(at)
+    }
+    if (selected.length === 0) return paragraph
+    matchedCount += selected.length
+
+    const consumed = new Array<boolean>(full.length).fill(false)
+    for (const at of selected) consumed.fill(true, at, at + targetText.length)
+    const starts = new Set(selected)
+    const out = runs.map(() => '')
+    let pos = 0
+    runs.forEach((r, i) => {
+      for (const ch of r.text) {
+        if (starts.has(pos)) out[i] += `{${placeholder}}`
+        else if (!consumed[pos]) out[i] += ch
+        pos += ch.length
+      }
+    })
+
+    let rebuilt = ''
+    let last = 0
+    runs.forEach((r, i) => {
+      rebuilt += paragraph.slice(last, r.start) + encodeXmlEntities(out[i])
+      last = r.end
+    })
+    return rebuilt + paragraph.slice(last)
   })
   return { result, matchedCount }
 }
+
+/** Visible text of each paragraph (runs joined), empty paragraphs dropped. */
+function paragraphTexts(xmlStr: string, paraRegex: RegExp, runRegex: RegExp): string[] {
+  const texts: string[] = []
+  for (const paragraph of xmlStr.match(paraRegex) ?? []) {
+    const text = [...paragraph.matchAll(runRegex)].map((m) => decodeXmlEntities(m[2])).join('')
+    if (text.trim()) texts.push(text.trim())
+  }
+  return texts
+}
+
+const DOCX_PARAGRAPH = /<w:p[ >][\s\S]*?<\/w:p>/g
+const DOCX_RUN = /(<w:t(?:\s[^>]*)?>)([^<]*)(<\/w:t>)/g
+const PPTX_PARAGRAPH = /<a:p[ >][\s\S]*?<\/a:p>/g
+const PPTX_RUN = /(<a:t(?:\s[^>]*)?>)([^<]*)(<\/a:t>)/g
 
 /** See the comment at applyToXlsx's own call to this — isolates the one-off Buffer-generic type mismatch to a single place instead of scattering `as unknown as ...` casts across every load() call site. */
 async function loadExcelBuffer(workbook: ExcelJS.Workbook, buffer: Buffer): Promise<void> {
@@ -119,48 +188,56 @@ function validateReplacements(replacements: unknown): Replacement[] {
   })
 }
 
-async function applyToDocx(buffer: Buffer, replacements: Replacement[]): Promise<{ buffer: Buffer; counts: number[] }> {
+interface Applied {
+  counts: number[]
+  /** Text of every non-empty paragraph / cell after the replacements, for the leftover report. */
+  texts: string[]
+}
+
+async function applyToDocx(buffer: Buffer, replacements: Replacement[]): Promise<Applied & { buffer: Buffer }> {
   const zip = new PizZip(buffer)
   const file = zip.file('word/document.xml')
   if (!file) throw new Error('This .docx has no word/document.xml part — it may be corrupt.')
   let xml = file.asText()
-  const tagRegex = /(<w:t[^>]*>)([^<]*)(<\/w:t>)/g
   const counts: number[] = []
   for (const r of replacements) {
-    const { result, matchedCount } = replaceInXmlPart(xml, tagRegex, r.text, r.placeholder, r.occurrence, { count: 0 })
+    const { result, matchedCount } = replaceInParagraphs(xml, DOCX_PARAGRAPH, DOCX_RUN, r.text, r.placeholder, r.occurrence, { count: 0 })
     xml = result
     counts.push(matchedCount)
   }
   zip.file('word/document.xml', xml)
-  return { buffer: zip.generate({ type: 'nodebuffer' }), counts }
+  return { buffer: zip.generate({ type: 'nodebuffer' }), counts, texts: paragraphTexts(xml, DOCX_PARAGRAPH, DOCX_RUN) }
 }
 
 const SLIDE_PATH = /^ppt\/slides\/slide(\d+)\.xml$/
 
-async function applyToPptx(buffer: Buffer, replacements: Replacement[]): Promise<{ buffer: Buffer; counts: number[] }> {
+async function applyToPptx(buffer: Buffer, replacements: Replacement[]): Promise<Applied & { buffer: Buffer }> {
   const zip = await JSZip.loadAsync(buffer)
   const slideEntries = Object.keys(zip.files)
     .map((name) => ({ name, match: name.match(SLIDE_PATH) }))
     .filter((e): e is { name: string; match: RegExpMatchArray } => e.match !== null)
     .sort((a, b) => Number(a.match[1]) - Number(b.match[1]))
 
-  const tagRegex = /(<a:t>)([^<]*)(<\/a:t>)/g
   const counts: number[] = []
   for (const r of replacements) {
     const counterRef = { count: 0 }
     let matchedCount = 0
     for (const { name } of slideEntries) {
       const xml = await zip.files[name].async('string')
-      const result = replaceInXmlPart(xml, tagRegex, r.text, r.placeholder, r.occurrence, counterRef)
+      const result = replaceInParagraphs(xml, PPTX_PARAGRAPH, PPTX_RUN, r.text, r.placeholder, r.occurrence, counterRef)
       matchedCount += result.matchedCount
       zip.file(name, result.result)
     }
     counts.push(matchedCount)
   }
-  return { buffer: await zip.generateAsync({ type: 'nodebuffer' }), counts }
+  const texts: string[] = []
+  for (const { name } of slideEntries) {
+    texts.push(...paragraphTexts(await zip.files[name].async('string'), PPTX_PARAGRAPH, PPTX_RUN))
+  }
+  return { buffer: await zip.generateAsync({ type: 'nodebuffer' }), counts, texts }
 }
 
-async function applyToXlsx(buffer: Buffer, replacements: Replacement[]): Promise<{ workbook: ExcelJS.Workbook; counts: number[] }> {
+async function applyToXlsx(buffer: Buffer, replacements: Replacement[]): Promise<Applied & { workbook: ExcelJS.Workbook }> {
   const workbook = new ExcelJS.Workbook()
   // exceljs's own .d.ts (built against an older @types/node) expects the
   // non-generic ambient `Buffer`, while node:fs/promises's readFile() now
@@ -184,27 +261,29 @@ async function applyToXlsx(buffer: Buffer, replacements: Replacement[]): Promise
     }
     counts.push(matchedCount)
   }
-  return { workbook, counts }
+  const texts: string[] = []
+  for (const worksheet of workbook.worksheets) {
+    worksheet.eachRow({ includeEmpty: false }, (row) => {
+      row.eachCell({ includeEmpty: false }, (cell) => {
+        const text = cellValueToText(cell.value).trim()
+        if (text) texts.push(text)
+      })
+    })
+  }
+  return { workbook, counts, texts }
 }
 
 export const officeExtractTemplateTool: Tool = {
   name: 'office_extract_template',
   description:
-    'Turn an existing .docx/.pptx/.xlsx document into a reusable template in the workspace templates/ ' +
-    'folder, for later use with office_fill_template. action "detect" (default, read-only) scans the ' +
-    'document for variable-looking content (dates, money amounts, percentages, emails, phone numbers, ' +
-    'URLs) and lists candidates with a suggested {placeholder} name — a mechanical first pass only; use ' +
-    "your own judgment to also propose names/addresses/other free-text fields it can't reliably detect, " +
-    'and always confirm the final list with the user before applying (their call which fields are truly ' +
-    'variable vs. fixed content — a naive whole-document echo is not a template). action "apply" (mutates) ' +
-    'takes a confirmed list of exact-text → placeholder replacements and writes templates/<templateName>, ' +
-    'preserving the original formatting/branding exactly (only the matched text runs/cells change) — this ' +
-    'is expected to be iterative: apply, show the user the result, refine the replacement list based on ' +
-    'their feedback, and apply again (each call regenerates fresh from the original source document, ' +
-    'never from a previous template attempt) until they confirm it looks right. Only text within a single ' +
-    'text run can be matched — if Word/PowerPoint split a phrase across multiple runs (can happen after ' +
-    'real editing history), that phrase may not be detected or replaceable; same known limitation as ' +
-    'office_fill_template\'s own underlying docxtemplater engine.',
+    'Turn an existing .docx/.pptx/.xlsx into a reusable template under templates/, for office_fill_template. ' +
+    'A template holds NONE of the source\'s own content: every name, employer, date, number and piece of free text ' +
+    '(summary, descriptions, bullets) specific to this document becomes a {placeholder}; only headings, labels and standard ' +
+    'wording stay. action "detect" (default, read-only) lists dates, amounts, emails, phones, URLs — a first pass; read the ' +
+    'document section by section and propose the rest, and show the user the FULL list (and what stays fixed) before applying. ' +
+    'action "apply" (mutates) takes the confirmed exact-text → placeholder replacements (text may span formatting runs, not ' +
+    'paragraphs) and writes templates/<templateName>, keeping the formatting; the result lists paragraphs still holding original ' +
+    'text. Iterative: each apply starts fresh from the source.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -213,8 +292,7 @@ export const officeExtractTemplateTool: Tool = {
       templateName: {
         type: 'string',
         description:
-          'apply only: filename to save under templates/ (same extension as sourcePath). Any directory ' +
-          'component is ignored — templates always save directly under templates/, never a subfolder.'
+          'apply only: filename under templates/ (same extension as sourcePath); any directory part is ignored.'
       },
       replacements: {
         type: 'array',
@@ -289,18 +367,22 @@ export const officeExtractTemplateTool: Tool = {
     const outputAbsPath = ctx.workspaceGuard.assertWithinWorkspace(join('templates', templateName))
 
     let counts: number[]
+    let texts: string[]
     await mkdir(join(ctx.workspaceGuard.root, 'templates'), { recursive: true })
     if (extension === 'docx') {
       const result = await applyToDocx(buffer, replacements)
       counts = result.counts
+      texts = result.texts
       await writeFile(outputAbsPath, result.buffer)
     } else if (extension === 'pptx') {
       const result = await applyToPptx(buffer, replacements)
       counts = result.counts
+      texts = result.texts
       await writeFile(outputAbsPath, result.buffer)
     } else {
       const result = await applyToXlsx(buffer, replacements)
       counts = result.counts
+      texts = result.texts
       await result.workbook.xlsx.writeFile(outputAbsPath)
     }
 
@@ -309,8 +391,8 @@ export const officeExtractTemplateTool: Tool = {
       .join('\n')
     const unmatched = replacements.filter((_, i) => counts[i] === 0)
     const warning = unmatched.length
-      ? `\n\nWarning: ${unmatched.length} replacement(s) matched nothing (text not found verbatim in a single run/cell — check for typos or a phrase split across multiple runs): ${unmatched.map((r) => `"${r.text}"`).join(', ')}`
+      ? `\n\nWarning: ${unmatched.length} replacement(s) matched nothing (text not found verbatim in one paragraph/cell — check for typos or line breaks; text across paragraphs needs one replacement per paragraph): ${unmatched.map((r) => `"${r.text}"`).join(', ')}`
       : ''
-    return `Template written to ${relative(ctx.workspaceGuard.root, outputAbsPath)}.\n${summary}${warning}`
+    return `Template written to ${workspaceRelativePath(ctx.workspaceGuard.root, outputAbsPath)}.\n${summary}${warning}${leftoverReport(texts)}`
   }
 }

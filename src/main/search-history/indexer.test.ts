@@ -92,6 +92,30 @@ describe('search-history indexer', () => {
     expect(getIndexState()).toEqual({ kind: 'empty' })
   })
 
+  it('skips indexing a message whose text is too large to usefully embed, without ever calling the embedding provider (TASKS #172)', async () => {
+    // Found live-adjacent to #171/#172: a DB query result is no longer capped at ~200 rows before
+    // reaching here, so a real analytical result can be several MB — splitting that into
+    // MAX_CHUNK_CHARS-sized chunks (#171) would still mean hundreds or thousands of embed() calls for
+    // one message, which is both expensive and pointless (a raw structured-data dump has no real prose
+    // semantics to search against). Asserts against `getEmbeddingProvider` itself (never overriding its
+    // mocked return value) so this test can't leak a stale embed mock into any test that runs after it.
+    const { getEmbeddingProvider } = await import('../providers/setup')
+    vi.mocked(getEmbeddingProvider).mockClear()
+
+    const session = createSession('S1')
+    const huge = insertMessage(session.id, 'assistant', [{ type: 'text', text: 'x'.repeat(60_000) }])
+    enqueueMessage(huge.id, session.id, huge.content)
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(getEmbeddingProvider).not.toHaveBeenCalled()
+    expect(getIndexState()).toEqual({ kind: 'empty' }) // nothing indexable has ever been enqueued
+
+    // runBackfill treats it the same way — marks it handled, never embeds it.
+    await runBackfill()
+    expect(getEmbeddingProvider).not.toHaveBeenCalled()
+    expect(getDb().prepare('SELECT 1 FROM message_embeddings WHERE message_id = ?').get(huge.id)).toBeDefined()
+  })
+
   it('runBackfill indexes pre-existing messages missing from the index, idempotently', async () => {
     const session = createSession('S1')
     insertMessage(session.id, 'user', [{ type: 'text', text: 'revenue was 4.2 million' }])
@@ -102,6 +126,36 @@ describe('search-history indexer', () => {
 
     await runBackfill() // second pass must not duplicate
     expect(getIndexState()).toEqual({ kind: 'ready', indexed: 2, total: 2 })
+  })
+
+  it('gives up on a message after repeated embed failures instead of retrying it forever (TASKS #171)', async () => {
+    // Found live: a message whose embed call can never succeed (an oversized chunk crashing the local
+    // embedding server, in the real incident) was retried every single backfill pass, forever — looping
+    // the crash indefinitely. This caps that at a few attempts per message, per app run.
+    const { getEmbeddingProvider } = await import('../providers/setup')
+    const embedMock = vi.fn(async () => {
+      throw new Error('boom')
+    })
+    const failingProvider = { id: 'fake', embed: embedMock }
+    // mockReturnValueOnce (not a persistent mockReturnValue) so this override is fully consumed by this
+    // test's own 3 attempts and never leaks into a later test in this file.
+    vi.mocked(getEmbeddingProvider)
+      .mockReturnValueOnce(failingProvider)
+      .mockReturnValueOnce(failingProvider)
+      .mockReturnValueOnce(failingProvider)
+
+    const session = createSession('S1')
+    const message = insertMessage(session.id, 'user', [{ type: 'text', text: 'a message that will never embed' }])
+
+    await runBackfill() // internally retries this same message across its own batch passes until it gives up
+
+    expect(embedMock).toHaveBeenCalledTimes(3)
+    // Given up — marked as "indexed" with no vector, so it stops being selected by the backfill query.
+    expect(getDb().prepare('SELECT 1 FROM message_embeddings WHERE message_id = ?').get(message.id)).toBeDefined()
+
+    // A later pass must not try again.
+    await runBackfill()
+    expect(embedMock).toHaveBeenCalledTimes(3)
   })
 
   it("runBackfill skips a message whose session no longer exists, instead of crashing the whole pass — a real live bug: an orphaned message (session deleted without its FK cascade having applied, e.g. a cross-process race) crashed runBackfill on every single app start with a FOREIGN KEY constraint error, since nothing caught it before it propagated out", async () => {

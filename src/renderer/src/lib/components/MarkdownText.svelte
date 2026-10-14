@@ -106,6 +106,30 @@
     color: var(--accent);
     text-decoration: underline;
   }
+  /* KaTeX lays out a formula with `white-space: nowrap` internally (it has
+     to — glyph positions are relative, not reflowable) and ships no
+     container of its own to cap it — same overflow problem `pre`/`table`
+     above already solve, just missing for math. Hit live: a single inline
+     `$...$` spanning a long comma list of numbers pushed the whole chat
+     panel wider instead of scrolling in place. `inline-block` is needed
+     for standalone inline math since plain `overflow-x` is a no-op on an
+     inline box; the display-mode override after it re-asserts KaTeX's own
+     `.katex-display > .katex { display: block }` at matching specificity
+     so block/centered equations aren't affected. */
+  .markdown-body :global(.katex) {
+    display: inline-block;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .markdown-body :global(.katex-display) {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .markdown-body :global(.katex-display > .katex) {
+    display: block;
+  }
   .markdown-body :global(table) {
     border-collapse: collapse;
     margin: 0.5em 0;

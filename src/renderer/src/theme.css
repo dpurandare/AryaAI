@@ -15,6 +15,7 @@
   --user-bubble: #2b2b29;
   --warn: #e0a24a;
   --danger: #e0654a;
+  --success: #5fbd79;
 }
 /* Light palette — not a dark-mode invert, tuned separately (e.g. --accent,
    --warn, --danger are darkened from their dark-mode values so text set in
@@ -31,6 +32,7 @@
   --user-bubble: #f0efe9;
   --warn: #9c6b1f;
   --danger: #b3402a;
+  --success: #2f7d44;
 }
 html,
 body {
@@ -41,4 +43,27 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--bg);
   color: var(--text);
+}
+
+/* TASKS.md #152: one shared thin scrollbar style for every scrollable pane in the app, defined
+   once here rather than per-component, so a newly added pane can't drift back to the unstyled
+   OS/browser default the way session list / chat / input did before this. Firefox reads
+   scrollbar-width/scrollbar-color; Electron (Chromium) reads the ::-webkit-scrollbar rules below. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--panel-hover);
 }

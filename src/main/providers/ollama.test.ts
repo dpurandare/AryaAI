@@ -46,6 +46,19 @@ describe('OllamaProvider', () => {
     })
   })
 
+  it('defaults to reporting itself as local Ollama (#167 backward compat)', () => {
+    const provider = new OllamaProvider()
+    expect(provider.id).toBe('ollama')
+    expect(provider.displayName).toBe('Ollama (local)')
+  })
+
+  it('serves Ollama Cloud with a real key and its own id/displayName (#167)', () => {
+    const provider = new OllamaProvider('https://ollama.com/v1', 'real-cloud-key', 'ollama-cloud', 'Ollama Cloud')
+    expect(FakeOpenAI).toHaveBeenCalledWith({ apiKey: 'real-cloud-key', baseURL: 'https://ollama.com/v1' })
+    expect(provider.id).toBe('ollama-cloud')
+    expect(provider.displayName).toBe('Ollama Cloud')
+  })
+
   it('streams via the same OpenAI-compatible translation as OpenAIProvider', async () => {
     mockCreate.mockResolvedValue(
       fakeStream([

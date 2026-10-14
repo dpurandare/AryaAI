@@ -1,0 +1,86 @@
+import { existsSync } from 'node:fs'
+import { arch, homedir, release } from 'node:os'
+import { join } from 'node:path'
+import type { RuntimeState } from '@shared/runtime'
+import type { Tool, ToolContext } from './types'
+
+/** The facts about this machine and the workspace that agents kept guessing or searching for (found live: a lookup in the MCP wiki for "the workspace location"). */
+const OS_NAMES: Record<string, string> = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' }
+
+export interface EnvironmentInput {
+  appVersion?: string
+  platform?: NodeJS.Platform
+  osRelease?: string
+  architecture?: string
+  home?: string
+  /** Whether a home sub-folder exists (the tests pass a fake). */
+  exists?: (path: string) => boolean
+  now?: Date
+  timeZone?: string
+  workspaceRoot: string
+  runtime?: RuntimeState | null
+  /** Folders outside the workspace the user allowed for good (Settings > Workspace). */
+  allowedFolders?: string[]
+}
+
+export function buildEnvironment(input: EnvironmentInput): string {
+  const platform = input.platform ?? process.platform
+  const home = input.home ?? homedir()
+  const exists = input.exists ?? existsSync
+  const now = input.now ?? new Date()
+  const out: string[] = ['# This machine and the workspace']
+
+  out.push(`App: Sachivji${input.appVersion ? ` ${input.appVersion}` : ''}`)
+  out.push(`OS: ${OS_NAMES[platform] ?? platform} ${input.osRelease ?? release()} (${input.architecture ?? arch()})`)
+  out.push(`Shell: ${platform === 'win32' ? 'PowerShell' : 'bash'} (shell_execute runs it with the workspace as the working directory)`)
+  const timeZone = input.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+  out.push(`Now: ${now.toLocaleString('en-GB', { timeZone, dateStyle: 'full', timeStyle: 'short' })} (${timeZone})`)
+
+  out.push(`Home folder: ${home}`)
+  const known = ['Desktop', 'Documents', 'Downloads'].map((n) => join(home, n)).filter((p) => exists(p))
+  if (known.length) out.push(`Common folders: ${known.join(', ')}`)
+
+  const root = input.workspaceRoot
+  out.push(`\nWorkspace: ${root}`)
+  out.push(
+    'Everything the user asks you to create or save goes in the workspace, not in the folder of a file you were just reading. ' +
+      'Relative paths resolve against it, and the shell and Python run inside it, so prefer relative paths.'
+  )
+  out.push('- code/ : scripts and source you write')
+  out.push('- documents/ : Word, Excel, PowerPoint and PDF files you produce')
+  out.push('- resources/ : pictures, charts and other media')
+  out.push('- tmp/ : scratch files (the SACHIV_TMP environment variable in scripts), cleaned up after a few days')
+  out.push('- templates/ : the user\'s own templates, read as input')
+  out.push('A new file of a known type is filed in the matching folder even when only a bare name is given.')
+
+  out.push('\nOutside the workspace: reading a file in another folder needs the user\'s permission, asked per folder; creating a new file there asks every time; credentials and system folders are never reachable.')
+  if (input.allowedFolders?.length) out.push(`Folders the user allowed for good: ${input.allowedFolders.join(', ')}`)
+
+  const r = input.runtime
+  out.push(
+    '\n' +
+      (!r
+        ? 'Python: status not reported.'
+        : r.status === 'ready'
+          ? `Python: available${r.pythonVersion ? ` ${r.pythonVersion}` : ''}, in the workspace's venv/.`
+          : `Python: ${r.status} — ${r.message}`)
+  )
+  return out.join('\n')
+}
+
+export function createEnvironmentTool(deps: { appVersion?: () => string | undefined } = {}): Tool {
+  return {
+    name: 'get_environment',
+    description: 'Workspace path and its folders, OS, shell, home/Desktop/Downloads, today\'s date, Python status. Use it instead of guessing or searching.',
+    inputSchema: { type: 'object', properties: {} },
+    mutates: false,
+    async execute(_input, ctx: ToolContext) {
+      return buildEnvironment({
+        appVersion: deps.appVersion?.(),
+        workspaceRoot: ctx.workspaceGuard.root,
+        runtime: ctx.runtimeState?.(),
+        allowedFolders: ctx.externalAccess?.listAlways()
+      })
+    }
+  }
+}
