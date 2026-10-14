@@ -1,10 +1,8 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-  # Manual runs stay available (e.g. to check a branch without a PR).
+  # Manual only (2026-10-14, explicit request): pushes to main must not start CI.
+  # Run it when wanted: gh workflow run CI --ref <branch>  (or Actions > CI > Run workflow).
   workflow_dispatch:
 
 jobs:
