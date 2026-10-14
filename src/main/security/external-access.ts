@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, win32 } from 'node:path'
 
 /**
  * Access to files OUTSIDE the workspace, which the file tools used to refuse outright: a file the user downloaded
@@ -38,7 +38,22 @@ const BLOCKED_UNDER_HOME = [
 ]
 const BLOCKED_ABSOLUTE = ['/etc', '/private/etc', '/var/db', '/System', '/Library/Keychains']
 
+/** A `BLOCKED_ABSOLUTE` entry (e.g. `/etc`) has no drive letter — a cross-platform literal
+ *  that was never meant to be Windows-specific. `abs`, in contrast, picked up a real drive
+ *  letter from wherever it was resolved (the workspace root, `homedir()`, ...). On win32,
+ *  `path.relative`/`path.resolve` fill in a MISSING drive from `process.cwd()`'s own drive —
+ *  not from the other path being compared against — so a driveless pattern and a
+ *  drive-qualified path can silently resolve onto different drives and never match, even
+ *  when they're obviously "the same place" (confirmed live via Windows CI: `isBlocked('/etc/hosts')`
+ *  returned false because the workspace root's temp dir and `/etc`'s implicit cwd-derived
+ *  drive differed). Fix: strip `abs`'s drive letter before comparing against a driveless
+ *  pattern, so both sides are driveless and `path.win32.relative` compares them directly. */
 function isUnder(abs: string, folder: string): boolean {
+  if (process.platform === 'win32' && win32.isAbsolute(folder) && !/^[A-Za-z]:/.test(folder)) {
+    const driveless = abs.replace(/^[A-Za-z]:/, '')
+    const rel = win32.relative(folder, driveless)
+    return rel === '' || (!rel.startsWith('..') && !win32.isAbsolute(rel))
+  }
   const rel = relative(folder, abs)
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }

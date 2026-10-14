@@ -57,7 +57,11 @@ describe('shell_execute', () => {
   it('captures a nonzero exit code and stderr', async () => {
     // TASKS.md #156/#167: `&` as a statement separator is cmd.exe syntax — PowerShell uses `;`, same as
     // the POSIX branch, now that Windows commands run through PowerShell rather than cmd.exe directly.
-    const command = 'echo oops 1>&2; exit 3'
+    // Confirmed live on Windows CI (first real run after the design_change -> main merge, since this
+    // workflow never triggers on design_change itself): `1>&2` is bash/cmd redirection syntax, not valid
+    // PowerShell ("the '1>&2' operator is reserved for future use") — PowerShell writes directly to the
+    // real stderr stream instead, via [Console]::Error.
+    const command = isWindows ? "[Console]::Error.WriteLine('oops'); exit 3" : 'echo oops 1>&2; exit 3'
     const result = await shellExecuteTool.execute({ command }, ctx)
     expect(result).toContain('exit code: 3')
     expect(result).toContain('stderr:\noops')
@@ -65,9 +69,13 @@ describe('shell_execute', () => {
 
   it('can actually write a file into the workspace', async () => {
     await shellExecuteTool.execute({ command: 'echo written > out.txt' }, ctx)
-    const content = await readFile(join(root, 'out.txt'), 'utf-8')
-    // cmd.exe's `echo` keeps the trailing CRLF; bash's adds a single LF.
-    expect(content.trim()).toBe('written')
+    // Confirmed live on Windows CI: PowerShell's `>` redirect (unlike cmd.exe's) writes UTF-16LE with a
+    // BOM by default — a real platform quirk of Windows PowerShell 5.1 (`powershell.exe`, not pwsh.exe),
+    // not something this tool controls (see TASKS #210/#211's Windows-CI-gap note for the decision not
+    // to blind-fix PowerShell's own encoding default without a way to verify it beyond CI iteration).
+    const content = await readFile(join(root, 'out.txt'), isWindows ? 'utf16le' : 'utf-8')
+    // cmd.exe's `echo` keeps the trailing CRLF; bash's adds a single LF; strip a possible UTF-16 BOM.
+    expect(content.replace(/^﻿/, '').trim()).toBe('written')
   })
 
   it('rejects an empty command', async () => {

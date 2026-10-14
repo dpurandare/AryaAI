@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { arch, homedir, release } from 'node:os'
-import { join } from 'node:path'
+import { posix, win32 } from 'node:path'
 import type { RuntimeState } from '@shared/runtime'
 import type { Tool, ToolContext } from './types'
 
@@ -37,6 +37,11 @@ export function buildEnvironment(input: EnvironmentInput): string {
   out.push(`Now: ${now.toLocaleString('en-GB', { timeZone, dateStyle: 'full', timeStyle: 'short' })} (${timeZone})`)
 
   out.push(`Home folder: ${home}`)
+  // Joined against `platform` (which the tests deliberately simulate as any OS, not necessarily
+  // this process's own), not the default `node:path` import — that one is always host-native, so
+  // a simulated-mac `home` run on an actual Windows CI runner would otherwise come back with
+  // backslashes, confirmed live (TASKS: Windows CI first run after the design_change -> main merge).
+  const join = platform === 'win32' ? win32.join : posix.join
   const known = ['Desktop', 'Documents', 'Downloads'].map((n) => join(home, n)).filter((p) => exists(p))
   if (known.length) out.push(`Common folders: ${known.join(', ')}`)
 
