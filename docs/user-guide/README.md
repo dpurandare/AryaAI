@@ -12,9 +12,11 @@ Run `node scripts/export-docs.mjs user --format pdf` (or `--format md`) from the
 | [05 Agents and roles](05-agents-and-roles.md) | The specialists, how work is shared, choosing one |
 | [06 Your own roles](06-your-own-roles.md) | Defining your own specialist roles and using them |
 | [07 Memory across chats](07-memory-across-chats.md) | Searching and comparing your past conversations |
+| [08 Files and documents](08-working-with-files-and-documents.md) | The workspace, Word, Excel, templates, charts, decks |
+| [09 Connecting data and services](09-connecting-data-and-services.md) | Databases, web APIs, MCP servers, email, web search |
 | [Appendix: Tool catalog](appendix-tool-catalog.md) | Every tool, who holds it, and whether it asks first (generated) |
 
-Planned (see `docs/docs-outline.md`; the numbers are fixed): 08 files and documents, 09 connecting data and services, 10 the Settings reference, 11 security and privacy, 12 troubleshooting, 13 tips, and a glossary appendix. The tool catalog is generated: `node scripts/gen-tool-catalog.mjs --app <Sachivji executable>`.
+Planned (see `docs/docs-outline.md`; the numbers are fixed): 10 the Settings reference, 11 security and privacy, 12 troubleshooting, 13 tips, and a glossary appendix. The tool catalog is generated: `node scripts/gen-tool-catalog.mjs --app <Sachivji executable>`.
 
 ## Screenshots (for maintainers)
 
