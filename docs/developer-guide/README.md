@@ -10,5 +10,7 @@ Run `node scripts/export-docs.mjs developer --format pdf` (or `--format md`, or 
 | [02 Getting started](02-getting-started.md) | Setting up, running, checking and the helper scripts |
 | [03 Architecture](03-architecture.md) | Processes, IPC, storage, and one chat turn end to end |
 | [04 Orchestrator and agents](04-orchestrator-and-agents.md) | Roles, the round loop, delegation, handoff and the safeguards |
+| [05 Providers](05-providers.md) | The provider interface, adapters, registry and model metadata |
+| [06 Tools](06-tools.md) | The tool interface, safety in code, registry and writing a tool |
 
-Planned (see `docs/docs-outline.md`; numbers are fixed): 05 providers, 06 tools, 07 data, API, MCP and email, 08 runtime and bundling, 09 UI, 10 testing, 11 build, release and CI, 12 conventions, and an appendix of extension checklists.
+Planned (see `docs/docs-outline.md`; numbers are fixed): 07 data, API, MCP and email, 08 runtime and bundling, 09 UI, 10 testing, 11 build, release and CI, 12 conventions, and an appendix of extension checklists.
