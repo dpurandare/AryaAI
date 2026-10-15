@@ -14,9 +14,10 @@ Run `node scripts/export-docs.mjs user --format pdf` (or `--format md`) from the
 | [07 Memory across chats](07-memory-across-chats.md) | Searching and comparing your past conversations |
 | [08 Files and documents](08-working-with-files-and-documents.md) | The workspace, Word, Excel, templates, charts, decks |
 | [09 Connecting data and services](09-connecting-data-and-services.md) | Databases, web APIs, MCP servers, email, web search |
+| [10 Settings reference](10-settings-reference.md) | Every Settings section, defaults, export and import |
 | [Appendix: Tool catalog](appendix-tool-catalog.md) | Every tool, who holds it, and whether it asks first (generated) |
 
-Planned (see `docs/docs-outline.md`; the numbers are fixed): 10 the Settings reference, 11 security and privacy, 12 troubleshooting, 13 tips, and a glossary appendix. The tool catalog is generated: `node scripts/gen-tool-catalog.mjs --app <Sachivji executable>`.
+Planned (see `docs/docs-outline.md`; the numbers are fixed): 11 security and privacy, 12 troubleshooting, 13 tips, and a glossary appendix. The tool catalog is generated: `node scripts/gen-tool-catalog.mjs --app <Sachivji executable>`.
 
 ## Screenshots (for maintainers)
 
