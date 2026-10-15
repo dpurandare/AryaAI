@@ -12,5 +12,10 @@ Run `node scripts/export-docs.mjs developer --format pdf` (or `--format md`, or 
 | [04 Orchestrator and agents](04-orchestrator-and-agents.md) | Roles, the round loop, delegation, handoff and the safeguards |
 | [05 Providers](05-providers.md) | The provider interface, adapters, registry and model metadata |
 | [06 Tools](06-tools.md) | The tool interface, safety in code, registry and writing a tool |
+| [07 Data, APIs, MCP and email](07-data-api-mcp-email.md) | Connection stores, database drivers, REST, MCP and email |
+| [08 Runtime and bundling](08-runtime-and-bundling.md) | Managed Python, bundled Ollama and Node, fetch scripts |
+| [09 The user interface](09-ui.md) | Svelte state, rendering safely, themes, verifying UI |
+| [10 Testing](10-testing.md) | The test layers, the mock provider, evals, manual plan |
+| [11 Build, release and CI](11-build-release-ci.md) | Packaging, workflows, versioning and releasing |
 
-Planned (see `docs/docs-outline.md`; numbers are fixed): 07 data, API, MCP and email, 08 runtime and bundling, 09 UI, 10 testing, 11 build, release and CI, 12 conventions, and an appendix of extension checklists.
+Planned (see `docs/docs-outline.md`; numbers are fixed): 12 conventions and an appendix of extension checklists.
