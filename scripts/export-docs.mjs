@@ -4,6 +4,10 @@
 //
 //   node scripts/export-docs.mjs user|developer [--format md|pdf] [--out <file>] [--allow-missing-images]
 //
+// The PDF opens with a cover page (the app icon from build/icons, the guide name, version and date), then the
+// contents, the chapters, and a closing "Index" chapter that is a placeholder for now. The Markdown output has a
+// plain title block, the contents, the chapters and the same Index placeholder.
+//
 // Pages are docs/<guide>-guide/*.md in file-name order (01-..., 02-..., then appendix-*), README.md
 // (the index) excluded. Each page starts with one "# Title" line; the title page and table of contents
 // are generated here. Screenshots are plain Markdown images with a path relative to the page
@@ -105,7 +109,18 @@ export function rewriteImageTargets(markdown, rewrite) {
     .join('\n')
 }
 
-export function buildMarkdown(pages, title, version, date) {
+/** The closing "Index" chapter. A placeholder for now: the real index of terms comes later. */
+export const INDEX_PAGE = {
+  file: 'index',
+  text: '# Index\n\n*The index of terms and page numbers will be added here in a later version of this guide.*\n'
+}
+
+/**
+ * `titleBlock: false` leaves out the plain title and version lines (the PDF has a designed cover page instead).
+ * `indexPlaceholder: false` leaves out the closing Index chapter.
+ */
+export function buildMarkdown(pages, title, version, date, { titleBlock = true, indexPlaceholder = true } = {}) {
+  if (indexPlaceholder) pages = [...pages, INDEX_PAGE]
   const toc = []
   const seen = new Map()
   const anchor = (text) => {
@@ -120,10 +135,11 @@ export function buildMarkdown(pages, title, version, date) {
     }
   }
   const body = pages.map((p) => p.text.trim()).join('\n\n---\n\n')
-  return [`# ${title}`, '', `Version ${version} · generated ${date}`, '', '## Contents', '', ...toc, '', '---', '', body, ''].join('\n')
+  const head = titleBlock ? [`# ${title}`, '', `Version ${version} · generated ${date}`, ''] : []
+  return [...head, '## Contents', '', ...toc, '', '---', '', body, ''].join('\n')
 }
 
-async function toHtml(markdown, title) {
+async function toHtml(markdown, title, coverHtml = '') {
   const { Marked } = await import('marked')
   const seen = new Map()
   const marked = new Marked({
@@ -140,7 +156,13 @@ async function toHtml(markdown, title) {
   const css = `
     body { font: 11pt/1.5 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color: #1c1c1c; max-width: 46rem; margin: 0 auto; }
     h1 { font-size: 22pt; margin-top: 2.2em; page-break-before: always; border-bottom: 1px solid #ccc; padding-bottom: .2em; }
-    h1:first-of-type { page-break-before: avoid; margin-top: 0; }
+    .cover { page-break-after: always; text-align: center; padding-top: 20vh; }
+    .cover img { width: 230px; height: 230px; border-radius: 40px; box-shadow: 0 6px 24px rgba(0,0,0,.18); }
+    .cover .product { font-size: 40pt; font-weight: 700; margin: 1.2rem 0 .2rem; letter-spacing: -.5px; }
+    .cover .guide { font-size: 20pt; color: #444; margin: 0 0 .4rem; }
+    .cover .tagline { font-size: 12pt; color: #666; margin: 0 0 2.4rem; }
+    .cover .version { font-size: 14pt; font-weight: 600; margin: 0; }
+    .cover .date { font-size: 10pt; color: #777; margin: .3rem 0 0; }
     h2 { font-size: 15pt; margin-top: 1.6em; } h3 { font-size: 12.5pt; }
     code { font: 9.5pt ui-monospace, Menlo, Consolas, monospace; background: #f1f1ee; padding: .05em .3em; border-radius: 3px; }
     pre { background: #f1f1ee; padding: .7em .9em; border-radius: 6px; overflow-wrap: anywhere; white-space: pre-wrap; page-break-inside: avoid; }
@@ -150,7 +172,14 @@ async function toHtml(markdown, title) {
     tr { page-break-inside: avoid; } th { background: #f1f1ee; }
     blockquote { border-left: 3px solid #bbb; margin-left: 0; padding-left: 1em; color: #444; }
     img { max-width: 100%; } a { color: #1a55b3; text-decoration: none; }`
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${css}</style></head><body>${marked.parse(markdown)}</body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${css}</style></head><body>${coverHtml}${marked.parse(markdown)}</body></html>`
+}
+
+/** The PDF's front page: the app icon, the product and guide name, the tagline, the version and the date. */
+export function coverHtml({ productName, guideName, tagline, version, date, iconDataUri }) {
+  return `<section class="cover">${iconDataUri ? `<img src="${iconDataUri}" alt="${productName} icon">` : ''}
+<p class="product">${productName}</p><p class="guide">${guideName}</p><p class="tagline">${tagline}</p>
+<p class="version">Version ${version}</p><p class="date">${date}</p></section>`
 }
 
 async function main() {
@@ -208,11 +237,20 @@ async function main() {
     console.log(`Wrote ${out} (${pages.length} pages)`)
     return
   }
-  const markdown = buildMarkdown(pages, guide.title, version, date)
+  const markdown = buildMarkdown(pages, guide.title, version, date, { titleBlock: false })
+  const iconPath = join(root, 'build', 'icons', '512x512.png')
+  const cover = coverHtml({
+    productName: 'Sachivji',
+    guideName: guide.title.replace(/^Sachivji\s+/, ''),
+    tagline: 'Your local-first, multi-agent AI companion.',
+    version,
+    date,
+    iconDataUri: existsSync(iconPath) ? `data:image/png;base64,${readFileSync(iconPath).toString('base64')}` : ''
+  })
   const work = mkdtempSync(join(tmpdir(), 'sachiv-docs-'))
   const html = join(work, 'guide.html')
   // <base> lets relative image links in the pages resolve against the guide folder.
-  writeFileSync(html, (await toHtml(markdown, guide.title)).replace('<head>', `<head><base href="${pathToFileURL(dir + '/').href}">`))
+  writeFileSync(html, (await toHtml(markdown, guide.title, cover)).replace('<head>', `<head><base href="${pathToFileURL(dir + '/').href}">`))
   const electron = require('electron')
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
