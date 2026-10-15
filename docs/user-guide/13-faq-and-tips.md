@@ -9,10 +9,10 @@ No. The installers include a Python environment, Node.js and a small Ollama for 
 Start with a small, inexpensive model from OpenAI or Anthropic. Move up for hard, multi-step work. See [Providers and keys](03-providers-and-keys.md).
 
 **Does it work offline?**
-Memory search and local Ollama models can. Hosted providers, web search and downloads need a network connection.
+Memory search can (after the one-time model download). Hosted providers, web search and downloads need a network connection.
 
 **Can I use it without any cloud service?**
-Yes, with a local Ollama model, at the cost of speed and quality. Your messages then stay on your computer.
+Only partly today. Memory search works fully on your computer, but chatting with your own local Ollama models is not available from the installers yet (see the known limitation in [Providers and keys](03-providers-and-keys.md)). When run from source, a local Ollama model works, at the cost of speed and quality, and your messages stay on your computer.
 
 **Where are my files?**
 In the workspace folder (by default `Sachivji Workspace` in Documents), in `code/`, `documents/` and `resources/`. See [Working with files and documents](08-working-with-files-and-documents.md).

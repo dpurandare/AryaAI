@@ -12,7 +12,7 @@ Sachivji does not include an AI model of its own. You connect it to a provider, 
 | **Groq** | Yes | Hosted open models; free tiers have strict rate limits. |
 | **Mistral** | Yes | Mistral models. |
 | **Ollama Cloud** | Yes | Models hosted by Ollama. |
-| **Ollama (local)** | No | Models running on your own computer. Install [Ollama](https://ollama.com) and pull a model first. |
+| **Ollama (local)** | No | Models running on your own computer through Ollama. **Known limitation:** in the installers, this provider currently talks to the small Ollama server that comes with Sachivji, which only holds the embedding model, so models you installed with your own Ollama are not reachable from the installers yet. It works as described when Sachivji is run from source. |
 
 For hosted providers, create an API key on the provider's own website (in the account's API keys section). Usage is billed by the provider, not by Sachivji.
 
@@ -34,7 +34,7 @@ Which model should you use?
 
 - **Start small.** The smallest commercial models (for example `gpt-4o-mini` or `claude-haiku-5-5`) are usually good enough for everyday tasks and cost little.
 - **Step up for hard work.** Larger models (Sonnet, Opus and similar) reason better and handle long, multi-step jobs more reliably, at a higher price.
-- **Local models** (Ollama) cost nothing per message and keep everything on your machine, but they are usually weaker and slower, and small ones may ignore instructions or loop. Try a larger local model if results are poor.
+- **Local models** (Ollama) cost nothing per message and keep everything on your machine, but they are usually weaker and slower, and small ones may ignore instructions or loop. Try a larger local model if results are poor. (See the known limitation in the provider table above for the installers.)
 
 You can try the same task on two models to compare. Changing the model does not lose your conversation.
 
@@ -62,6 +62,6 @@ All of these are in **Settings** and apply to your next message.
 - **"Key rejected":** check that you pasted the whole key, with no spaces, and that it belongs to the selected provider.
 - **A rate-limit or quota error:** the provider is refusing more requests for now. Wait, switch to another model or provider, or check your plan with the provider. Free tiers are the usual cause.
 - **No model is listed:** the provider may need a key first, or your network may be blocking it. You can still type a model name by hand.
-- **Ollama (local) is not responding:** make sure Ollama is running and the model has been pulled.
+- **Ollama (local) is not responding or shows no models:** see the known limitation in the provider table above. In a build run from source, make sure Ollama is running and the model has been pulled.
 
 See also [Settings reference](10-settings-reference.md) (planned) for every option.
