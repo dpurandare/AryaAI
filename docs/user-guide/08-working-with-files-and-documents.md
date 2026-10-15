@@ -155,6 +155,8 @@ Good to know: the assistant can **add** a row but cannot edit or delete existing
 | "What is the role of the first member?" | A query along `members[0].role`. |
 | "Add a member Sam, role Intern, to `data/team.json`." | Adds one item to the `members` list. It asks for your approval. |
 
+Appending rewrites the whole file in standard indented form, so a hand-formatted file may change its layout (the content is kept).
+
 The same works for a web address: "Summarise the JSON at https://example.com/data.json". XML files can be summarised and queried the same way, but only read, never changed.
 
 ### Excel workbooks
