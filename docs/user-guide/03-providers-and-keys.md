@@ -60,4 +60,4 @@ All of these are in **Settings** and apply to your next message.
 - **No model is listed:** the provider may need a key first, or your network may be blocking it. You can still type a model name by hand.
 - **Ollama (local) is not responding:** make sure Ollama is running and the model has been pulled.
 
-See also [Settings reference](08-settings-reference.md) (planned) for every option.
+See also [Settings reference](10-settings-reference.md) (planned) for every option.
