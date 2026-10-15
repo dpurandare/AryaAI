@@ -89,4 +89,4 @@ Before a turn, `prepareConversation` trims oversized tool results and drops the 
 
 ## Testing the orchestrator
 
-`orchestrator.test.ts` drives the real orchestrator with a **scripted mock provider** (`test/support/mock-provider.ts`): each round returns canned events, so tool loops, confirmations, plans, handoffs, gates and limits are all tested without a model. `routing-eval.ts` and the scripts in `scripts/` measure routing against real models (see [Testing](10-testing.md) when written).
+`orchestrator.test.ts` drives the real orchestrator with a **scripted mock provider** (`test/support/mock-provider.ts`): each round returns canned events, so tool loops, confirmations, plans, handoffs, gates and limits are all tested without a model. `routing-eval.ts` and the scripts in `scripts/` measure routing against real models (see [Testing](10-testing.md)).

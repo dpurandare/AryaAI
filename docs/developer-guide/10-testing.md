@@ -56,4 +56,4 @@ For renderer or runtime work, run a **throwaway copy** (a new `--user-data-dir`,
 
 ## Continuous integration
 
-CI is **manual**: `gh workflow run CI --ref <branch>` runs typecheck, build and tests on macOS, Windows and Ubuntu. Run it before a release and after anything platform-sensitive. A Windows-only failure has twice exposed real bugs (path and file-lock behaviour) that the Mac and Linux runs do not show. See [Build, release and CI](11-build-release-ci.md).
+CI is **manual**: `gh workflow run CI --ref <branch>` runs typecheck, build and tests on macOS, Windows and Ubuntu. Run it before a release and after anything platform-sensitive. A Windows-only failure has exposed real bugs (path and file-lock behaviour) that the Mac and Linux runs do not show. See [Build, release and CI](11-build-release-ci.md).

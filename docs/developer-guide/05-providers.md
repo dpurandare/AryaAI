@@ -55,7 +55,7 @@ OpenAI, Ollama, Groq and Mistral speak the OpenAI Chat Completions format, so `t
 
 **Google.** Uses `@google/genai`; structured output through `responseJsonSchema`. Gemini returns a **thought signature** with tool calls that must be echoed back on the next request, which is why `tool_use` blocks carry an optional `thoughtSignature`.
 
-**Ollama.** A local model's loaded context is set at load time by the server and is often much smaller (commonly 4096) than the model advertises. `loadedContextWindow` reads `/api/ps` (what is *actually loaded*) and `configuredContextWindow` reads the model's Modelfile `num_ctx`, so context trimming budgets against the real number. `prepare-context.ts` prefers a live reading, then the configured one, then the static table. The bundled Ollama (see [Runtime and bundling](08-runtime-and-bundling.md) when written) is reached through the same class by changing its base URL.
+**Ollama.** A local model's loaded context is set at load time by the server and is often much smaller (commonly 4096) than the model advertises. `loadedContextWindow` reads `/api/ps` (what is *actually loaded*) and `configuredContextWindow` reads the model's Modelfile `num_ctx`, so context trimming budgets against the real number. `prepare-context.ts` prefers a live reading, then the configured one, then the static table. The bundled Ollama (see [Runtime and bundling](08-runtime-and-bundling.md)) is reached through the same class by changing its base URL.
 
 **Rate limits (`rate-limit.ts`).** `isRateLimitError` and `retryAfterMsFromError` recognise 429s and the wait the provider asks for; the orchestrator's `handleRateLimitError` uses them to wait and retry. `agents/paced-provider.ts` wraps a provider for the eval scripts to respect per-minute and daily limits on free tiers.
 
@@ -73,4 +73,4 @@ When the bundled Ollama server is running (all installers), `ipc/register.ts` ca
 
 ## Adding a provider
 
-See the checklist in the [extension checklists](appendix-extension-checklists.md) when written. In short: write an adapter implementing `ModelProvider` (and `EmbeddingProvider` if it has an embeddings API), reusing `openai-compatible.ts` if it speaks the OpenAI format; register it in `createDefaultProviderRegistry()` (and `getEmbeddingProvider` if it embeds); add its models to `model-metadata.ts`; write adapter tests with a mocked SDK; and, if it differs from the others, say so in this page.
+See the checklist in the [extension checklists](appendix-extension-checklists.md). In short: write an adapter implementing `ModelProvider` (and `EmbeddingProvider` if it has an embeddings API), reusing `openai-compatible.ts` if it speaks the OpenAI format; register it in `createDefaultProviderRegistry()` (and `getEmbeddingProvider` if it embeds); add its models to `model-metadata.ts`; write adapter tests with a mocked SDK; and, if it differs from the others, say so in this page.

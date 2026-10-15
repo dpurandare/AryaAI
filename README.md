@@ -138,6 +138,12 @@ npm run dist:linux  # package a Linux installer
 
 Sachivji follows [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`). While the major version is `0`, any release may include breaking changes. From `1.0.0` onward: `MAJOR` is reserved for breaking changes to stored data, config, or IPC contracts; `MINOR` for backward-compatible features; `PATCH` for fixes. See `docs/CHANGELOG.md` for release notes.
 
+## Documentation
+
+- **[User Guide](docs/user-guide/README.md)** — installing, using and configuring Sachivji (for people who use it).
+- **[Developer Guide](docs/developer-guide/README.md)** — architecture, extending and releasing (for people who change it).
+- Each guide can be exported as one Markdown file or PDF: `npm run docs:user`, `npm run docs:developer` (output in `release/`).
+
 ## Where things live
 
 - `src/main` — Electron main process: agents, providers, tools, db, security, IPC handlers

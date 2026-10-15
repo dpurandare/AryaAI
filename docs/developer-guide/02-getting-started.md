@@ -33,7 +33,7 @@ npm run build       # electron-vite production build into out/
 
 Run one test file with `npx vitest run src/main/tools/file-ops.test.ts`. The suite is about 1,600 tests and runs in seconds.
 
-CI does not run on every push (it is manual-only, see [Build, release and CI](11-build-release-ci.md) when written). Run these three commands yourself.
+CI does not run on every push (it is manual-only, see [Build, release and CI](11-build-release-ci.md)). Run these three commands yourself.
 
 ## Running with a throwaway profile
 
@@ -46,7 +46,7 @@ SACHIV_WORKSPACE_DIR=/tmp/sachiv-ws npm run dev -- --user-data-dir=/tmp/sachiv-f
 
 (`manual_testing.md` section 10 has the exact command for a built copy.) A workspace that already contains a `venv/` is adopted as it is and skips Python setup, which is why a throwaway workspace matters when testing first run.
 
-For UI work, verify changes in a **running** copy rather than relying on type checks and unit tests: a throwaway Electron copy driven over the Chrome DevTools Protocol (`--remote-debugging-port`) is how the screenshot scripts work (see [Testing](10-testing.md) when written).
+For UI work, verify changes in a **running** copy rather than relying on type checks and unit tests: a throwaway Electron copy driven over the Chrome DevTools Protocol (`--remote-debugging-port`) is how the screenshot scripts work (see [Testing](10-testing.md)).
 
 ## Useful environment variables and flags
 
@@ -67,10 +67,10 @@ For UI work, verify changes in a **running** copy rather than relying on type ch
 | `role-probe.mts` | Checks that each specialist, pinned in a conversation other roles answered in, answers as itself. |
 | `manual-test-mcp-server.mjs` | A tiny stdio MCP server with a hostile, over-long tool description, for the manual test of untrusted text handling. |
 | `generate_sample_db.py`, `validate_db.py` | Build and verify a sample wind and solar database for testing the data tools. |
-| `fetch-bundled-{python,ollama,node}-{mac,win,linux}.mjs` | Download the per-platform runtimes that the installers bundle (see [Runtime and bundling](08-runtime-and-bundling.md) when written). |
+| `fetch-bundled-{python,ollama,node}-{mac,win,linux}.mjs` | Download the per-platform runtimes that the installers bundle (see [Runtime and bundling](08-runtime-and-bundling.md)). |
 | `windows-test-*.cmd`, `install-prerequisites.*` | Windows QA helpers (run the app from source in a VM; install prerequisites). |
 | `fix-native-modules.sh` | Rebuilds `better-sqlite3` against this machine's Electron ABI (a Linux old-glibc workaround). |
-| `export-docs.mjs`, `gen-tool-catalog.mjs`, `docs-screenshots.mjs` | Documentation tooling (see [Conventions](12-conventions.md) when written). |
+| `export-docs.mjs`, `gen-tool-catalog.mjs`, `docs-screenshots.mjs` | Documentation tooling (see [Conventions](12-conventions.md)). |
 
 The eval and probe scripts are run with `npx vite-node --config vitest.config.ts scripts/<name>.mts -- <provider> <model>`. They call real models and spend quota: ration them.
 

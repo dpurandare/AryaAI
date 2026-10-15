@@ -17,5 +17,6 @@ Run `node scripts/export-docs.mjs developer --format pdf` (or `--format md`, or 
 | [09 The user interface](09-ui.md) | Svelte state, rendering safely, themes, verifying UI |
 | [10 Testing](10-testing.md) | The test layers, the mock provider, evals, manual plan |
 | [11 Build, release and CI](11-build-release-ci.md) | Packaging, workflows, versioning and releasing |
+| [12 Conventions](12-conventions.md) | Principles, comments, security, commits, TASKS.md, docs |
+| [Appendix: Extension checklists](appendix-extension-checklists.md) | Step lists for providers, tools, roles, engines, settings, IPC |
 
-Planned (see `docs/docs-outline.md`; numbers are fixed): 12 conventions and an appendix of extension checklists.

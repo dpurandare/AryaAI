@@ -59,13 +59,13 @@ Two build-time aliases exist: `@shared` (`src/shared`) in all three Vite targets
 
 1. `src/shared/ipc-contract.ts` and `src/shared/protocol.ts`: the vocabulary (channels, DTOs, stream events, content blocks).
 2. `src/main/ipc/register.ts`: how requests reach the main process, and `runChat`, which runs one turn.
-3. `src/main/agents/orchestrator.ts`: the heart of the app (large; see [Orchestrator and agents](04-orchestrator-and-agents.md) when written).
+3. `src/main/agents/orchestrator.ts`: the heart of the app (large; see [Orchestrator and agents](04-orchestrator-and-agents.md)).
 4. `src/main/tools/types.ts` and `src/main/providers/types.ts`: the two extension interfaces.
 5. `src/renderer/src/App.svelte`: the single top-level UI component that owns the chat state.
 
 ## Principles the code follows
 
-- **Enforce in code, not in prompts.** Cheap and local models ignore prompt rules, so important behaviour (validation, refusals, completion gates, loop breakers, file placement) is implemented in code, with the prompt only explaining it. See [Conventions](12-conventions.md) when written.
+- **Enforce in code, not in prompts.** Cheap and local models ignore prompt rules, so important behaviour (validation, refusals, completion gates, loop breakers, file placement) is implemented in code, with the prompt only explaining it. See [Conventions](12-conventions.md).
 - **The user is the safety gate.** A tool that mutates declares it, and the orchestrator routes the call through a confirmation before it runs.
 - **Local first.** Chats, settings and the memory index are local; secrets are in the OS secure store.
 - **Everything is tested without a model.** The orchestrator is tested with a scripted mock provider; nothing in `npm test` calls a real API.

@@ -35,7 +35,7 @@ Four kinds of **connection** let the agents reach outside the app: databases, ex
 
 ## MCP servers
 
-- **Config** (`mcp/config.ts`): metadata `{ id, name, transport, command?, args?, env?, url?, description? }`. The bearer token (HTTP only) is in the secret store as `mcp:<id>`. The user-written one-line `description` is capped when written (`MCP_SERVER_DESCRIPTION_MAX`, 200 in the UI).
+- **Config** (`mcp/config.ts`): metadata `{ id, name, transport, command?, args?, env?, url?, description? }`. The bearer token (HTTP only) is in the secret store as `mcp:<id>`. The user-written one-line `description` is capped (`MCP_SERVER_DESCRIPTION_MAX`, 200 in the UI).
 - **Client** (`mcp/client.ts`): built on `@modelcontextprotocol/sdk`. `buildTransport` creates a `StdioClientTransport` (a local program) or a `StreamableHTTPClientTransport` (a remote server). For stdio, the bundled Node directory is **prepended to `PATH`**, so a bare `npx`, `npm` or `node` command resolves to the Node that ships with the installer (a clean machine has none; most MCP servers launch through `npx`).
 - **Manager** (`mcp/manager.ts`): owns live state. `connectAll`, `reconnect`, `disconnect`, `disconnectAll` and `getStatus`. It registers each discovered tool in the **same `ToolRegistry`** as the built-ins, named `mcp__<server>__<tool>`, with `tool.mcp = { server, serverDescription }`, and remembers which registry entries belong to which server so they can be removed on reconnect or delete. `connectAll` runs at start-up without blocking; `before-quit` disconnects every server so stdio children are not orphaned.
 - **Ownership:** MCP tools belong to the **MCP Operator** role alone; the role's prompt is a live getter that lists the connected servers with the user's descriptions, so a server with many tools costs nothing for other requests.
@@ -51,4 +51,4 @@ Four kinds of **connection** let the agents reach outside the app: databases, ex
 
 ## Adding another connection type
 
-Follow the pattern: a store with metadata in one settings key and a prefixed secret; Settings IPC handlers and a Settings section; tools (reads free, writes `mutates`); a Configurator tool if it should be creatable from chat; a role owner; an entry in `describe_capabilities` and the configuration counts; and settings export/import support. See the [extension checklists](appendix-extension-checklists.md) when written.
+Follow the pattern: a store with metadata in one settings key and a prefixed secret; Settings IPC handlers and a Settings section; tools (reads free, writes `mutates`); a Configurator tool if it should be creatable from chat; a role owner; an entry in `describe_capabilities` and the configuration counts; and settings export/import support. See the [extension checklists](appendix-extension-checklists.md).

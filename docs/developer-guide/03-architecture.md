@@ -28,7 +28,7 @@ Every call across the process boundary goes through three files kept in step:
 2. **`src/preload/index.ts`**: a typed function per channel on `window.sachiv`, using `ipcRenderer.invoke` (request and response) or `ipcRenderer.on` (events pushed from main).
 3. **`src/main/ipc/register.ts`**: `ipcMain.handle(IpcChannel.X, ...)` for each channel.
 
-The renderer never touches Node or the filesystem. To add a channel, see the [extension checklists](appendix-extension-checklists.md) when written.
+The renderer never touches Node or the filesystem. To add a channel, see the [extension checklists](appendix-extension-checklists.md).
 
 ### Streaming a chat turn
 
@@ -71,7 +71,7 @@ Foreign keys cascade from `sessions`, so deleting a chat deletes its messages, u
 5. **Run it** and consume its async stream (`orchestrator.run(conversation, forcedRole)`). `stream` events are forwarded to the renderer (and `usage` events are added to the session totals); `message` events are persisted as they complete and queued for the index.
 6. **Clean up.** The turn's final stop is held until the run ends, because the renderer stops listening at it. Any unsaved in-progress presentation is saved automatically so composed work is never lost.
 
-The orchestrator itself is described in [Orchestrator and agents](04-orchestrator-and-agents.md) when written.
+The orchestrator itself is described in [Orchestrator and agents](04-orchestrator-and-agents.md).
 
 ## Other cross-cutting pieces
 

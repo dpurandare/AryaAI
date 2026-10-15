@@ -1,6 +1,6 @@
 # Reference documentation — outline (TASKS #92)
 
-**Status (2026-10-15): outline agreed; export script built; the whole User Guide text is written (pages 01-13, tool catalog and glossary) with 20 generated screenshots.** Still open for the User Guide: the hand-taken screenshots (TASKS #213) and your review. The Developer Guide is not started. The numbering was changed on 2026-10-15 (06 your own roles, 07 memory across chats). Every claim was checked against the code as it was written.
+**Status (2026-10-15): outline agreed; export script built; the whole User Guide text is written (pages 01-13, tool catalog, glossary, 20 generated screenshots) and the whole Developer Guide text is written (pages 01-12 and the extension checklists).** Still open: the hand-taken screenshots (TASKS #213) and your review of both guides. The numbering of the User Guide was changed on 2026-10-15 (06 your own roles, 07 memory across chats). Every claim was checked against the code as it was written; the guides were not yet used by anyone but their author.
 
 ## Decisions (2026-10-15)
 
