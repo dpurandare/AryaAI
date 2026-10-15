@@ -11,6 +11,7 @@ import type { SessionRecord } from '../db/sessions'
 // tests below, without a real Chromium renderer.
 const mockShowSaveDialog = vi.fn()
 const mockWriteFile = vi.fn()
+const mockMkdir = vi.fn()
 const mockPrintToPDF = vi.fn()
 const mockLoadFile = vi.fn()
 const mockDestroy = vi.fn()
@@ -43,7 +44,7 @@ vi.mock('electron', () => ({
   BrowserWindow: MockBrowserWindow
 }))
 vi.mock('@electron-toolkit/utils', () => ({ is: { dev: false } }))
-vi.mock('node:fs/promises', () => ({ writeFile: mockWriteFile }))
+vi.mock('node:fs/promises', () => ({ writeFile: mockWriteFile, mkdir: mockMkdir }))
 
 const mockListSessions = vi.fn()
 const mockListMessages = vi.fn()
@@ -55,7 +56,7 @@ vi.mock('../db/messages', () => ({ listMessages: mockListMessages }))
 vi.mock('../db/settings', () => ({ getSetting: mockGetSetting }))
 
 const { IpcChannel } = await import('@shared/ipc-contract')
-const { exportSession, sessionToJson, sessionToMarkdown } = await import('./export')
+const { collectImages, exportSession, sessionToJson, sessionToMarkdown } = await import('./export')
 
 /** Simulates the print page's own `notifyPrintReady()` call for the most recently created hidden window. */
 function firePrintReady(): void {
@@ -241,9 +242,10 @@ describe('sessionToMarkdown', () => {
 
       await exportSession('s1', null)
 
-      const written = mockWriteFile.mock.calls[0][1] as string
+      // The image file is written first (TASKS.md #212), the Markdown last.
+      const written = mockWriteFile.mock.calls.at(-1)![1] as string
       expect(written).not.toContain('find_files')
-      expect(written).toContain('🖼️ Displayed image: chart.png')
+      expect(written).toContain('Displayed image: chart.png')
     })
   })
 })
@@ -267,6 +269,7 @@ describe('exportSession', () => {
   beforeEach(() => {
     mockShowSaveDialog.mockReset()
     mockWriteFile.mockReset()
+    mockMkdir.mockReset()
     mockListSessions.mockReset().mockReturnValue([session])
     mockListMessages.mockReset().mockReturnValue(messages)
     mockPrintToPDF.mockReset().mockResolvedValue(Buffer.from('%PDF-fake'))
@@ -347,5 +350,99 @@ describe('exportSession', () => {
     const fakeWindow = { id: 'fake-window' } as never
     await exportSession('s1', fakeWindow)
     expect(mockShowSaveDialog).toHaveBeenCalledWith(fakeWindow, expect.any(Object))
+  })
+})
+
+describe('image export (TASKS.md #212)', () => {
+  const png = Buffer.from('fake-png-bytes').toString('base64')
+  const other = Buffer.from('another-picture').toString('base64')
+  const imageMessages: MessageRecord[] = [
+    { id: 'm1', sessionId: 's1', role: 'user', content: [{ type: 'text', text: 'draw it' }], createdAt: 1 },
+    {
+      id: 'm2',
+      sessionId: 's1',
+      role: 'assistant',
+      content: [
+        { type: 'image', toolUseId: 'c1', path: 'resources/a.png', mimeType: 'image/png', dataBase64: png },
+        { type: 'image', toolUseId: 'c2', path: 'resources/b.jpg', mimeType: 'image/jpeg', dataBase64: other },
+        { type: 'image', toolUseId: 'c3', path: 'resources/a-again.png', mimeType: 'image/png', dataBase64: png }
+      ],
+      createdAt: 2
+    }
+  ]
+
+  beforeEach(() => {
+    mockShowSaveDialog.mockReset()
+    mockWriteFile.mockReset()
+    mockMkdir.mockReset()
+    mockListSessions.mockReset().mockReturnValue([session])
+    mockListMessages.mockReset().mockReturnValue(imageMessages)
+  })
+
+  it('collectImages numbers files in transcript order, picks the extension from the mime type and shares one file between identical pictures', () => {
+    const { names, files } = collectImages(imageMessages)
+    expect(files.map((f) => f.fileName)).toEqual(['image-1.png', 'image-2.jpg'])
+    expect(files[0].bytes.toString()).toBe('fake-png-bytes')
+    const blocks = imageMessages[1].content
+    expect([...names.values()]).toEqual(['image-1.png', 'image-2.jpg', 'image-1.png'])
+    expect(names.get(blocks[2])).toBe('image-1.png')
+  })
+
+  it('collectImages skips an image block that has no payload', () => {
+    const empty: MessageRecord[] = [
+      { id: 'm1', sessionId: 's1', role: 'assistant', content: [{ type: 'image', toolUseId: 'c', path: 'x.png', mimeType: 'image/png', dataBase64: '' }], createdAt: 1 }
+    ]
+    expect(collectImages(empty).files).toEqual([])
+  })
+
+  it('Markdown links each image by relative path', () => {
+    const { names } = collectImages(imageMessages)
+    const hrefs = new Map([...names].map(([b, n]) => [b, `chat/${n}`]))
+    const md = sessionToMarkdown(session, imageMessages, 'partial', hrefs)
+    expect(md).toContain('![Displayed image: resources/a.png](chat/image-1.png)')
+    expect(md).toContain('![Displayed image: resources/b.jpg](chat/image-2.jpg)')
+    expect(md).not.toContain(png)
+  })
+
+  it('Markdown export writes the images to a same-named folder next to the file and percent-encodes the folder in the link', async () => {
+    mockShowSaveDialog.mockResolvedValue({ canceled: false, filePath: '/tmp/out dir/My Chat.md' })
+    await exportSession('s1', null)
+    expect(mockMkdir).toHaveBeenCalledWith('/tmp/out dir/My Chat', { recursive: true })
+    const written = mockWriteFile.mock.calls.map((c) => c[0])
+    expect(written).toEqual(['/tmp/out dir/My Chat/image-1.png', '/tmp/out dir/My Chat/image-2.jpg', '/tmp/out dir/My Chat.md'])
+    expect(mockWriteFile.mock.calls[0][1]).toEqual(Buffer.from('fake-png-bytes'))
+    const md = mockWriteFile.mock.calls[2][1] as string
+    expect(md).toContain('(My%20Chat/image-1.png)')
+  })
+
+  it('JSON export replaces the payload with a relative file path and keeps the rest of the block', async () => {
+    mockShowSaveDialog.mockResolvedValue({ canceled: false, filePath: '/tmp/chat.json' })
+    await exportSession('s1', null)
+    expect(mockMkdir).toHaveBeenCalledWith('/tmp/chat', { recursive: true })
+    const json = JSON.parse(mockWriteFile.mock.calls[2][1] as string)
+    expect(json.messages[1].content[0]).toEqual({
+      type: 'image',
+      toolUseId: 'c1',
+      path: 'resources/a.png',
+      mimeType: 'image/png',
+      file: 'chat/image-1.png'
+    })
+    expect(JSON.stringify(json)).not.toContain(png)
+  })
+
+  it('creates no folder when the session has no images', async () => {
+    mockListMessages.mockReturnValue([imageMessages[0]])
+    mockShowSaveDialog.mockResolvedValue({ canceled: false, filePath: '/tmp/chat.md' })
+    await exportSession('s1', null)
+    expect(mockMkdir).not.toHaveBeenCalled()
+    expect(mockWriteFile).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('print page (TASKS.md #212)', () => {
+  it('lets the print page load data: images, otherwise every picture in a PDF export is a broken-image box', async () => {
+    const { readFileSync } = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const html = readFileSync(new URL('../../renderer/print.html', import.meta.url), 'utf-8')
+    expect(html).toMatch(/img-src[^;"]*\bdata:/)
   })
 })

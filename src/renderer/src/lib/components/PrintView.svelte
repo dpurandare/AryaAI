@@ -54,6 +54,8 @@
       // can fire mid-layout or with fallback tofu glyphs in math.
       await tick()
       await document.fonts.ready
+      // TASKS.md #212: printToPDF can fire before a data-URI <img> has decoded, leaving it out of the PDF.
+      await Promise.all([...document.images].map((img) => img.decode().catch(() => {})))
       window.sachiv.notifyPrintReady()
     }
   })
