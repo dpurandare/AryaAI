@@ -15,9 +15,13 @@ Run `node scripts/export-docs.mjs user --format pdf` (or `--format md`) from the
 | [08 Files and documents](08-working-with-files-and-documents.md) | The workspace, Word, Excel, templates, charts, decks |
 | [09 Connecting data and services](09-connecting-data-and-services.md) | Databases, web APIs, MCP servers, email, web search |
 | [10 Settings reference](10-settings-reference.md) | Every Settings section, defaults, export and import |
+| [11 Security and privacy](11-security-and-privacy.md) | What it can do, what leaves your computer |
+| [12 Troubleshooting](12-troubleshooting.md) | Symptoms and fixes |
+| [13 FAQ and tips](13-faq-and-tips.md) | Questions, tips and recipes |
 | [Appendix: Tool catalog](appendix-tool-catalog.md) | Every tool, who holds it, and whether it asks first (generated) |
+| [Appendix: Glossary](appendix-glossary.md) | Terms used in this guide |
 
-Planned (see `docs/docs-outline.md`; the numbers are fixed): 11 security and privacy, 12 troubleshooting, 13 tips, and a glossary appendix. The tool catalog is generated: `node scripts/gen-tool-catalog.mjs --app <Sachivji executable>`.
+The tool catalog is generated: `node scripts/gen-tool-catalog.mjs --app <Sachivji executable>`.
 
 ## Screenshots (for maintainers)
 
