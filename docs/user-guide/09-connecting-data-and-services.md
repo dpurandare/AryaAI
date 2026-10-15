@@ -35,7 +35,7 @@ Name the connection and ask in plain words:
 
 The assistant lists the connection, reads its tables and columns, and writes the query. **SQL that only reads runs freely. SQL that changes data asks for your approval first**, and you can edit it before approving. When a question works well, the assistant can **save the query** as a reusable tool, so a similar question next time is answered directly.
 
-For simple lookups it can list rows, count them or find rows where a column has a value, without writing SQL.
+For simple lookups it can list rows, count them or find rows where a column has a value, without writing SQL. A worked example (creating and connecting a SQLite database) is below.
 
 ## External web services (REST APIs)
 
@@ -50,7 +50,7 @@ For simple lookups it can list rows, count them or find rows where a column has 
 
 What the assistant can do with a connected API: discover its endpoints, make authenticated calls (a call that changes something asks first), follow paginated results when asked, and check on a long-running job started by an earlier call.
 
-A good way to start is to ask: "Search for a free weather information API and configure it in our app." Then: "Show me the weekly weather for Pune this week."
+A worked example (Open-Meteo weather) is below.
 
 ## MCP servers
 
@@ -71,7 +71,7 @@ Things to know:
 - Text that comes from a server (its tool descriptions) is treated as untrusted third-party text and is shortened.
 - A server that stops working shows its error; use **Reconnect** to try again.
 
-A good first example is the Context7 documentation server. Ask: "Search for how to set up the Context7 MCP server and configure it in our app." Then ask it for documentation on a library.
+A worked example (the Context7 documentation server) is below.
 
 ## Email accounts
 
@@ -93,6 +93,91 @@ You can set one account as the **default**. **Sending always asks for your appro
 ## Searching your past chats
 
 The embedding model that powers memory across chats is set in **Settings > Search History Embedding**. See [Memory across chats](07-memory-across-chats.md).
+
+## Worked examples
+
+Three examples, one for each kind, that you can follow exactly. Each shows the quick way (ask the assistant) and what to enter in Settings if you prefer the form.
+
+### Example 1: a database (create a SQLite file and connect to it)
+
+SQLite needs no server: a database is a single file. This example makes a small shop database and connects to it.
+
+**Step 1. Create the database by asking.** Type:
+
+> Create a small SQLite database at `data/shop.db` using Python. Add a `customers` table with 10 made-up customers (name, city) and an `orders` table with 30 made-up orders (customer, order date, amount). Tell me when it is done.
+
+The assistant (the Developer) writes a short Python script and asks to run it. Read it, then click **Approve**. The file appears in `data/shop.db` inside your workspace (the full path is shown in **Settings > Workspace**).
+
+**Step 2. Connect to it.** Either ask:
+
+> Connect Sachivji to the database at `data/shop.db` and call the connection `shop`.
+
+The Configurator tests the connection and shows a confirmation; click **Approve**. Or use **Settings > Data sources > + Add connection**: name `shop`, engine **SQLite**, and the **full path** of `shop.db` in *Path to .db file* (a relative path is not reliable here), then **Save**.
+
+**Step 3. Ask questions.**
+
+> Which customers placed the most orders?
+> Show the total order value for each month.
+> Save that last query so I can ask it again later.
+
+Reading questions run without asking. The assistant shows what it ran. If you ask it to change data (for example "add a new customer"), it asks for your approval first and shows the SQL.
+
+If you later want a larger sample to try, the project's `scripts/generate_sample_db.py` builds a wind and solar database of about 1 GB; you do not need it for this example.
+
+### Example 2: a web API (Open-Meteo weather)
+
+Open-Meteo is a free weather service that needs no account or key (free for non-commercial use; check their terms for anything else).
+
+**Connect it.** Either ask:
+
+> Search for a free weather information API and configure it in our app.
+
+or use **Settings > External APIs > + Add connection**:
+
+| Field | Value |
+|---|---|
+| Connection name | `open-meteo` |
+| Base URL | `https://api.open-meteo.com` |
+| Authentication | **No auth** |
+| OpenAPI/Swagger spec URL | leave empty |
+
+**Use it.**
+
+> Show me the weekly weather for Pune for this week.
+> What can the Open-Meteo API do?
+> Create a chart of Pune's weekly weather.
+
+The first question makes the assistant call the API (it works out the place's coordinates itself). The second makes it read the API's own description. The third needs the Developer to draw a chart, so you will be asked to approve a script run.
+
+Tip: in a **new** chat, a request such as "weather in Pune" may be answered with a web search instead of your connection. Say "using the open-meteo connection" to make it use the API.
+
+### Example 3: an MCP server (Context7 documentation)
+
+Context7 is an MCP server that fetches up-to-date documentation for programming libraries. It connected without any key or account when we tested it.
+
+**Connect it.** Either ask:
+
+> Search for how to set up the Context7 MCP server and configure it in our app.
+
+or use **Settings > MCP servers > + Add MCP server** with one of these two setups:
+
+| | Local (stdio) | Remote (HTTP) |
+|---|---|---|
+| Server name | `context7` | `context7` |
+| What is it for? | `Up-to-date documentation and code examples for programming libraries` | the same |
+| Type | **Local (stdio)** | **Remote (HTTP)** |
+| Command, Args | `npx` and `-y @upstash/context7-mcp` | not used |
+| Server URL | not used | `https://mcp.context7.com/mcp` |
+
+The local setup needs a network connection the first time (it downloads the server with the Node that comes with Sachivji). Either way, the server shows as connected in the list. If it shows an error, click **Reconnect**.
+
+**Use it.**
+
+> Using Context7, show me how to read a CSV file with the pandas library.
+> What can the Context7 server do? List its tools.
+> Using Context7, find documentation on AppleScript.
+
+Name the server in your request ("using Context7") so the assistant knows to use it instead of searching the web. The **MCP Operator** specialist does the work. Because you wrote a clear one-line description, the assistant also picks the server by itself when a question is about library documentation.
 
 ## Tips and safety
 
