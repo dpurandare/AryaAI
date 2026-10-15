@@ -43,6 +43,6 @@ try {
   }
 } finally {
   await session.shutdown()
-  if (!args.keep) rmSync(work, { recursive: true, force: true })
+  if (!args.keep) rmSync(work, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 })
   else console.log(`Kept ${work}`)
 }

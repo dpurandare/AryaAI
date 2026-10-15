@@ -1,6 +1,6 @@
 # Reference documentation — outline (TASKS #92)
 
-**Status (2026-10-15): outline agreed; export script built; User Guide pages 01-04 written** (`docs/user-guide/`). The numbering was changed on 2026-10-15 (new 06 your own roles, 07 memory across chats). Next: pages 05-10, then 09-11 and the appendices, then the Developer Guide. Every claim is checked against the code as it is written.
+**Status (2026-10-15): outline agreed; export script built; User Guide pages 01-07 and the generated tool catalog written** (`docs/user-guide/`). The numbering was changed on 2026-10-15 (new 06 your own roles, 07 memory across chats). Next: pages 08-10, then 09-11 and the appendices, then the Developer Guide. Every claim is checked against the code as it is written.
 
 ## Decisions (2026-10-15)
 

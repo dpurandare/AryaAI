@@ -9,9 +9,12 @@ Run `node scripts/export-docs.mjs user --format pdf` (or `--format md`) from the
 | [02 Install and first run](02-install-and-first-run.md) | Installing on Windows, macOS and Linux, and the first-run screens |
 | [03 Providers and keys](03-providers-and-keys.md) | Choosing an AI provider and model, keys, cost and context |
 | [04 Using the chat](04-using-the-chat.md) | Sessions, the composer, confirmations, steering, exporting |
+| [05 Agents and roles](05-agents-and-roles.md) | The specialists, how work is shared, choosing one |
 | [06 Your own roles](06-your-own-roles.md) | Defining your own specialist roles and using them |
+| [07 Memory across chats](07-memory-across-chats.md) | Searching and comparing your past conversations |
+| [Appendix: Tool catalog](appendix-tool-catalog.md) | Every tool, who holds it, and whether it asks first (generated) |
 
-Planned (see `docs/docs-outline.md`; the numbers are fixed): 05 agents and roles, 07 memory across chats, 08 files and documents, 09 connecting data and services, 10 the Settings reference, 11 security and privacy, 12 troubleshooting, 13 tips, and appendices (tool catalog, glossary).
+Planned (see `docs/docs-outline.md`; the numbers are fixed): 08 files and documents, 09 connecting data and services, 10 the Settings reference, 11 security and privacy, 12 troubleshooting, 13 tips, and a glossary appendix. The tool catalog is generated: `node scripts/gen-tool-catalog.mjs --app <Sachivji executable>`.
 
 ## Screenshots (for maintainers)
 
