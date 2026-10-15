@@ -22,6 +22,8 @@ For hosted providers, create an API key on the provider's own website (in the ac
 2. Under **Provider API keys**, find the provider, paste the key and click **Save**.
 3. Sachivji checks the key with the provider and shows **✓ Key verified**, or **✗ Key rejected** with the reason.
 
+![Settings: Provider API keys](images/settings-providers.png)
+
 Once a key is saved, only its last few characters are shown, so you can confirm which key is in use. Keys are kept in your operating system's secure storage (or in the plain file, if you chose that at first run). They are never shown again in full.
 
 ## Choosing a model
@@ -52,6 +54,8 @@ All of these are in **Settings** and apply to your next message.
 - **Plan complex requests before acting** (Orchestrator): for a genuinely multi-part request, Sachivji first builds a step list and then runs it. This adds one extra round-trip per message. Turn it off if your model is slow.
 - **Show which model answered each message** (Transcript): useful when you switch models during a conversation. Off by default.
 - **Prompt caching (Anthropic):** lets Anthropic reuse the unchanged start of each request at a fraction of the normal price, which lowers the cost of long tool-using turns. Leave it on. If Anthropic chat ever fails with an error mentioning `cache_control`, turn it off.
+
+![Settings: Prompt caching, Model behavior and related options](images/settings-model-behavior.png)
 
 ## Troubleshooting provider problems
 

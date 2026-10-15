@@ -24,6 +24,7 @@
     "fetch:bundled-python:mac": "node scripts/fetch-bundled-python-mac.mjs",
     "fetch:bundled-ollama:mac": "node scripts/fetch-bundled-ollama-mac.mjs",
     "fetch:bundled-node:mac": "node scripts/fetch-bundled-node-mac.mjs",
+    "docs:screenshots": "node scripts/docs-screenshots.mjs --app release/mac-arm64/Sachivji.app/Contents/MacOS/Sachivji",
     "docs:user": "node scripts/export-docs.mjs user --format pdf",
     "docs:developer": "node scripts/export-docs.mjs developer --format pdf",
     "predist:mac": "npm run fetch:bundled-python:mac && npm run fetch:bundled-ollama:mac && npm run fetch:bundled-node:mac",

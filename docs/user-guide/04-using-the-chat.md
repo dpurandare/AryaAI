@@ -2,10 +2,14 @@
 
 ## The window
 
+![The main window: chat list, a conversation, and the status bar](images/main-window.png)
+
 - **Left:** the list of your chats, with a **+ New chat** button on top. The list can be resized.
 - **Centre:** the conversation, with the message box below it.
 - **Status bar** (under the message box), from left to right: a status line, the **Agent** selector, the context and cost meter, then at the right the **Tool output** switch and the provider and model selector.
 - **Your name, lower left:** opens a menu with **Settings**, **Export Settings…**, **Import Settings…** and **About**.
+
+![The account menu](images/account-menu.png)
 
 ## Chats (sessions)
 
@@ -24,6 +28,8 @@ By default the agent selector shows **Auto**: the main assistant decides whether
 
 To make one specialist answer, click the **Agent** button in the status bar, or press **Ctrl+Tab** in the message box (**Ctrl+Shift+Tab** goes backwards). Pressing it cycles through Auto and the specialists. A pinned specialist answers alone and does not hand off to others; if you ask it for something that is not its job, it passes the request back to the main assistant. This is covered in [Agents and roles](05-agents-and-roles.md) (planned).
 
+![The Agent selector pinned to a specialist](images/agent-picker.png)
+
 > On a Mac the shortcut is still **Ctrl+Tab**, not Cmd+Tab. Cmd+Tab belongs to the system's app switcher.
 
 ## Approving actions
@@ -37,17 +43,29 @@ Whenever the assistant wants to do something that changes things, such as writin
 | **Talk about it** | Lets you write a comment first. Then choose **Deny & send comment** (do not run it, and tell the assistant why) or **Approve & send comment** (run it, and tell the assistant something extra). |
 | **Stop turn** | Ends the whole turn now, not only this action. |
 
+![The confirmation panel, with the plan checklist above it](images/confirm-dialog.png)
+
+After **Talk about it** you write your comment and choose how to send it:
+
+![Writing a comment on a confirmation](images/confirm-comment.png)
+
 You can edit the details of the request (shown as editable text) before approving. If you change it, Sachivji checks it before it runs.
 
 To skip the questions you can tick **Auto-approve tool calls for this session**, or **Always auto-approve** for one particular action. The second choice is also listed in Settings under **Auto-approve rules**, where you can switch it off again. Use it with care: an auto-approved action that writes or changes something will run without asking.
 
 When the assistant wants to read or write a file **outside your workspace folder**, the panel asks **Allow access outside the workspace?** For reading you can choose to remember the folder: *Just this once*, *For this session*, or *Always* (always-allowed folders are listed in Settings, where you can remove them). The default is *Just this once*, so the next file in the same folder asks again unless you choose a longer option.
 
+![Asking to allow access to a folder outside the workspace](images/outside-workspace.png)
+
 ## Steering a running task
 
 While the assistant is working, the message box turns into a **note box**: "Add a note while this is running". Type a correction or extra instruction and press Enter. The assistant reads it at its next step and adjusts. Press the stop button (⏹) to cancel the whole task instead.
 
+![The note box while a task is running](images/steering-note.png)
+
 If a task runs long without finishing, Sachivji asks whether to **Continue** or **Stop here**. Continue allows more time or steps.
+
+![The continue-or-stop question](images/limit-reached.png)
 
 ## Plans
 
@@ -60,6 +78,8 @@ Under **Tool output** in the status bar you can choose how much of the behind-th
 - **hidden:** only the replies. Pictures the assistant shows you still appear.
 - **partial:** each tool call as a one-line marker that it was called and whether it finished. This is the default.
 - **shown:** the full request and result of every tool call, and the model's reasoning where the model provides it.
+
+![Tool output set to shown](images/tool-output-shown.png)
 
 You can also click an individual tool block to expand or collapse just that one. The choice is remembered between sessions. Under **Settings > Transcript** you can switch on the answering model's name and each reply's timestamp and duration ("Took 1m 20s · done 4:05 PM"; errors are marked in red).
 
@@ -89,4 +109,6 @@ For Markdown and JSON, pictures from the chat are saved in a folder next to the 
 
 ## Appearance
 
-Under **Settings > Appearance** choose Light, Dark, or System (follows your computer). The window remembers its size and position.
+Under **Settings > Appearance** choose Light, Dark, or System (follows your computer).
+
+![Settings: Appearance, Orchestrator and Transcript](images/settings-appearance.png) The window remembers its size and position.

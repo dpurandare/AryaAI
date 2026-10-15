@@ -12,3 +12,11 @@ Run `node scripts/export-docs.mjs user --format pdf` (or `--format md`) from the
 | [06 Your own roles](06-your-own-roles.md) | Defining your own specialist roles and using them |
 
 Planned (see `docs/docs-outline.md`; the numbers are fixed): 05 agents and roles, 07 memory across chats, 08 files and documents, 09 connecting data and services, 10 the Settings reference, 11 security and privacy, 12 troubleshooting, 13 tips, and appendices (tool catalog, glossary).
+
+## Screenshots (for maintainers)
+
+Screenshots live in `images/` and are plain Markdown images (`![caption](images/name.png)`). The export fails if a page refers to an image that does not exist (`--allow-missing-images` only warns).
+
+Most of them are generated, not hand-made: `npm run docs:screenshots` (or `node scripts/docs-screenshots.mjs --app <Sachivji executable> [--only name,name] [--theme light|dark]`) launches a **packaged build** on a throwaway profile with a fake home folder and demo conversations, drives it over the Chrome DevTools Protocol, and captures only the app window. No model is called, no real keys, paths or user name appear (they are replaced in the page before each capture), and the throwaway folders are deleted afterwards. Build one first, for example `npx electron-builder --mac --arm64 --dir --publish never`. The first-run screens need a network connection once. Steps live in `scripts/docs-screenshots/*.mjs` (one named step per screenshot). Re-run it after a UI change, then look at every image before committing.
+
+Screens that cannot be generated this way (the OS installer, SmartScreen and Gatekeeper dialogs, native Save dialogs) are taken by hand and dropped into `images/` with these names: `installer-windows-smartscreen.png`, `installer-windows-wizard.png`, `installer-windows-finish.png`, `mac-gatekeeper-open.png`, `mac-dmg-drag.png`, `export-save-dialog.png`.

@@ -21,6 +21,8 @@ Do not make a role just to ask a question once; ask the assistant directly. Keep
 4. Edit the new file (see below), save it, and click **Reload** in Settings (or simply send your next message: roles are re-read each time, so edits apply to your next message with no restart).
 5. The role appears under **Settings > Roles** with a checkbox, and in the **Agent** selector.
 
+![Settings: Roles, with one role of your own loaded](images/settings-roles.png)
+
 ## The file format
 
 A role file has two parts: a block of settings between two lines of `---` at the top, and below it the role's instructions in plain language.

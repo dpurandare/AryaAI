@@ -2,16 +2,19 @@
 // Joins a documentation folder into ONE file: Markdown, or a PDF printed by Electron (the same
 // printToPDF route the chat export uses, so no extra dependency).
 //
-//   node scripts/export-docs.mjs user|developer [--format md|pdf] [--out <file>]
+//   node scripts/export-docs.mjs user|developer [--format md|pdf] [--out <file>] [--allow-missing-images]
 //
 // Pages are docs/<guide>-guide/*.md in file-name order (01-..., 02-..., then appendix-*), README.md
 // (the index) excluded. Each page starts with one "# Title" line; the title page and table of contents
-// are generated here. Images referenced by relative path are resolved against the guide folder
-// for the PDF; in the Markdown output keep the combined file inside that folder if the pages use images.
+// are generated here. Screenshots are plain Markdown images with a path relative to the page
+// (`![alt](images/name.png)`). The export fails when a referenced image file does not exist (so a
+// missing screenshot cannot slip into a shared document); --allow-missing-images only warns.
+// PDF: images are embedded. Markdown: the images are copied to `<output name>-images/` next to the
+// output file and the links rewritten, unless the output file sits in the guide folder itself.
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 
@@ -24,15 +27,16 @@ const GUIDES = {
 }
 
 function parseArgs(argv) {
-  const args = { guide: undefined, format: 'md', out: undefined }
+  const args = { guide: undefined, format: 'md', out: undefined, allowMissingImages: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--format') args.format = argv[++i]
     else if (a === '--out') args.out = argv[++i]
+    else if (a === '--allow-missing-images') args.allowMissingImages = true
     else if (!a.startsWith('--') && !args.guide) args.guide = a
     else fail(`Unknown argument "${a}".`)
   }
-  if (!GUIDES[args.guide]) fail('Usage: node scripts/export-docs.mjs user|developer [--format md|pdf] [--out <file>]')
+  if (!GUIDES[args.guide]) fail('Usage: node scripts/export-docs.mjs user|developer [--format md|pdf] [--out <file>] [--allow-missing-images]')
   if (args.format !== 'md' && args.format !== 'pdf') fail('--format must be md or pdf.')
   return args
 }
@@ -64,6 +68,41 @@ export function headingsOf(markdown) {
     if (m) out.push({ level: m[1].length, text: m[2] })
   }
   return out
+}
+
+
+const IMAGE_REF = /!\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^)\s]+))(\s+"[^"]*")?\s*\)/g
+const isRemote = (target) => /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(target)
+
+/** Local image references in one page, outside fenced code: `{ alt, target }` with the target as written. */
+export function imageRefs(markdown) {
+  const refs = []
+  let fenced = false
+  for (const line of markdown.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced
+    if (fenced) continue
+    for (const m of line.matchAll(IMAGE_REF)) {
+      const target = m[2] ?? m[3]
+      if (!isRemote(target)) refs.push({ alt: m[1], target: decodeURI(target) })
+    }
+  }
+  return refs
+}
+
+/** Rewrites each local image target through `rewrite(target)`; fenced code is left alone. */
+export function rewriteImageTargets(markdown, rewrite) {
+  let fenced = false
+  return markdown
+    .split('\n')
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) fenced = !fenced
+      if (fenced) return line
+      return line.replace(IMAGE_REF, (whole, alt, angled, bare, title = '') => {
+        const target = angled ?? bare
+        return isRemote(target) ? whole : `![${alt}](${encodeURI(rewrite(decodeURI(target)))}${title})`
+      })
+    })
+    .join('\n')
 }
 
 export function buildMarkdown(pages, title, version, date) {
@@ -122,17 +161,54 @@ async function main() {
   const files = readdirSync(dir).filter((f) => f.endsWith('.md') && f !== 'README.md').sort()
   if (files.length === 0) fail(`No pages in ${guide.dir} yet.`)
   const pages = files.map((f) => ({ file: f, text: readFileSync(join(dir, f), 'utf-8') }))
+
+  // Every referenced screenshot must exist, so a missing one cannot slip into a shared document.
+  const missing = []
+  for (const page of pages) {
+    for (const { target } of imageRefs(page.text)) {
+      if (!existsSync(resolve(dir, target))) missing.push(`${page.file}: ${target}`)
+    }
+  }
+  if (missing.length > 0) {
+    const report = `Missing image file${missing.length === 1 ? '' : 's'}:\n  ${missing.join('\n  ')}`
+    if (args.allowMissingImages) console.warn(`Warning: ${report}`)
+    else fail(`${report}\n(Add the files, or pass --allow-missing-images to export anyway.)`)
+  }
+
   const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8')).version
   const date = new Date().toISOString().slice(0, 10)
-  const markdown = buildMarkdown(pages, guide.title, version, date)
   const base = guide.title.replace(/\s+/g, '-')
   const out = resolve(args.out ?? join(root, 'release', `${base}-${version}.${args.format}`))
+  mkdirSync(dirname(out), { recursive: true })
 
   if (args.format === 'md') {
-    writeFileSync(out, markdown)
+    let imagePages = pages
+    if (dirname(out) !== dir) {
+      // The joined file lives elsewhere: copy the screenshots next to it and point the links there.
+      const folderName = `${basename(out).replace(/\.[^.]+$/, '')}-images`
+      const target = join(dirname(out), folderName)
+      const used = new Map()
+      imagePages = pages.map((page) => ({
+        ...page,
+        text: rewriteImageTargets(page.text, (t) => {
+          const source = resolve(dir, t)
+          if (!existsSync(source)) return t
+          if (!used.has(source)) {
+            let name = basename(source)
+            while ([...used.values()].includes(name)) name = `${used.size}-${basename(source)}`
+            mkdirSync(target, { recursive: true })
+            copyFileSync(source, join(target, name))
+            used.set(source, name)
+          }
+          return `${folderName}/${used.get(source)}`
+        })
+      }))
+    }
+    writeFileSync(out, buildMarkdown(imagePages, guide.title, version, date))
     console.log(`Wrote ${out} (${pages.length} pages)`)
     return
   }
+  const markdown = buildMarkdown(pages, guide.title, version, date)
   const work = mkdtempSync(join(tmpdir(), 'sachiv-docs-'))
   const html = join(work, 'guide.html')
   // <base> lets relative image links in the pages resolve against the guide folder.

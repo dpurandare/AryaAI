@@ -43,11 +43,17 @@ The installers are **not code-signed yet**, so your system shows a warning the f
 
 The first time you start Sachivji, a short setup runs.
 
+![First-run screen: choose where to keep secrets](images/first-run-secrets.png)
+
 1. **Where to keep secrets.** This chooses where API keys and connection passwords (databases, web services, MCP servers, email accounts) are stored.
    - **OS Keychain (recommended):** your operating system's own encrypted storage. Click **Continue with OS Keychain**.
    - **File instead:** a plain file on disk. Use it only when secure storage is not available on your machine. It is less secure, and the choice is permanent: you cannot switch back to the Keychain later.
 2. **Python.** Sachivji sets up a Python environment inside your workspace for the scripts it writes (charts, Word and Excel files). If this step shows an error the first time, click **Retry**. If you do not want scripts at all, click **Continue without Python**. The assistant then works without running code, and you can turn Python on later in Settings.
+![First-run Python step, ready to continue](images/first-run-python.png)
+
 3. **Local embeddings.** Sachivji starts its bundled Ollama server and downloads the `nomic-embed-text` model once. It powers the search over your past conversations. If the download fails, click **Retry** or **Continue anyway** and fix it later in Settings.
+
+![First-run local embeddings step, ready](images/first-run-embeddings.png)
 
 After these screens the main window opens. If a screen says it is still working, wait for it to finish before continuing.
 
@@ -60,7 +66,9 @@ Sachivji keeps the files it creates in a **workspace** folder. The default is `S
 - `resources` for images and other assets
 - `venv`, the Python environment (do not edit it)
 
-You can change the workspace in Settings.
+You can change the workspace in **Settings > Workspace**. The same screen shows the state of the Python environment and the local embeddings.
+
+![Settings: Workspace, Python runtime and Local embeddings](images/settings-workspace.png)
 
 ## Next steps
 
