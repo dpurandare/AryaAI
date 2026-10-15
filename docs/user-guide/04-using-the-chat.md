@@ -97,6 +97,21 @@ Click **⇩** next to a chat in the list. Choose a file name and the format by i
 
 For Markdown and JSON, pictures from the chat are saved in a folder next to the file with the same name (for example `My Chat.md` and a folder `My Chat`), and the file refers to them. Keep the file and the folder together when you move or share them.
 
+### Example: export a chat as Markdown, PDF and JSON
+
+Suppose you have a chat called *Weekly weather for Pune* that contains a chart.
+
+1. In the chat list, click **⇩** next to *Weekly weather for Pune*. A Save dialog opens, suggesting `Weekly weather for Pune.md`.
+2. **Markdown:** keep the name and click **Save**. You get two things next to each other in the folder you chose: `Weekly weather for Pune.md` and a folder `Weekly weather for Pune` holding the chart as `image-1.png`. Open the `.md` file in any Markdown viewer or editor; the chart shows in place because the file links to the image in the folder. **Keep the file and its folder together** when you copy or email them (zip them if you send them).
+3. **PDF:** click **⇩** again and change the file name to `Weekly weather for Pune.pdf`. The chart is inside the PDF, so it is a single file you can send as it is.
+4. **JSON:** click **⇩** again and use `Weekly weather for Pune.json`. You get the complete record of the chat, plus a folder with the images. The JSON does not contain the picture data itself: each image entry has a `file` field with its relative path (for example `Weekly weather for Pune/image-1.png`).
+
+What the export contains depends on your **Tool output** setting at that moment: *hidden* leaves the tool calls out, *partial* shows a short line for each, *shown* includes their full details. Pictures are always included. Change the setting first (Cmd+O or Ctrl+O) if you want a different level of detail.
+
+If you export the same chat twice to the same name, the second export replaces the first file and its images.
+
+Sachivji does not convert a Word document to PDF. To get a PDF of a document it created, open the `.docx` in Word (or another word processor) and save it as PDF there.
+
 ## Keyboard shortcuts
 
 | Keys | Action |
