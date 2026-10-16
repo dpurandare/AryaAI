@@ -69,7 +69,8 @@ export function headingsOf(markdown) {
     if (/^\s*(```|~~~)/.test(line)) fenced = !fenced
     if (fenced) continue
     const m = /^(#{1,2})\s+(.+?)\s*#*\s*$/.exec(line)
-    if (m) out.push({ level: m[1].length, text: m[2] })
+    // A heading may contain links; the contents list (and the anchor, which is built from the rendered text) need the plain label.
+    if (m) out.push({ level: m[1].length, text: m[2].replace(/\[([^\]]+)\]\([^)]*\)/g, '$1') })
   }
   return out
 }

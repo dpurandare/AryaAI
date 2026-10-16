@@ -52,4 +52,11 @@ describe('export-docs', () => {
     expect(coverHtml({ productName: 'S', guideName: 'G', tagline: 'T', version: '1', date: 'd', iconDataUri: '', illustrationDataUri: 'data:image/png;base64,BB' })).toContain('<img class="illustration" src="data:image/png;base64,BB"')
     expect(coverHtml({ productName: 'S', guideName: 'G', tagline: 'T', version: '1', date: 'd', iconDataUri: '' })).not.toContain('<img')
   })
+
+  it('uses the plain label for a heading that contains a link', () => {
+    const [h] = headingsOf('## Add a tool ([Tools](06-tools.md))\n')
+    expect(h.text).toBe('Add a tool (Tools)')
+    const md = buildMarkdown([{ text: '# A\n\n## Add a tool ([Tools](06-tools.md))\n' }], 'T', '1', 'd', { indexPlaceholder: false })
+    expect(md).toContain('[Add a tool (Tools)](#add-a-tool-tools)')
+  })
 })
