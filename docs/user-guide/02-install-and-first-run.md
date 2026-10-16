@@ -19,13 +19,22 @@ You need a network connection for your chosen AI provider. The first start also 
 The installers of this release are **not code-signed yet**, so your system shows a warning the first time. Nothing is wrong with the app. This is specific to this release: signed installers are planned, and the warning will go away in a future version.
 
 - **Windows:** "Windows protected your PC" appears. Click **More info**, then **Run anyway**.
+
+![Windows SmartScreen warning, with Run anyway visible after clicking More info](images/installer-windows-smartscreen.png)
+
 - **macOS:** the app is called "unidentified", or, for this release, macOS may say **"Sachivji" is damaged and can't be opened**. Nothing is actually damaged: the app is simply not signed. For "unidentified", right-click (or Control-click) the app and choose **Open**, then confirm. The warning appears on the first launch only. For "damaged", right-click → Open does not help; see [If macOS says the app is damaged](#if-macos-says-the-app-is-damaged) below.
 - **Linux:** no warning. For the `.deb`, install with your package manager (for example `sudo apt install ./sachivji_<version>_amd64.deb`).
 
 ## Installing on Windows
 
 1. Run the installer and approve the Windows prompt that asks to allow the change.
+
+![Windows User Account Control prompt for the Sachivji installer](images/installer-windows-uac.png)
+
 2. When asked who the app is for, **Anyone who uses this computer** installs it under `Program Files\Sachivji`. This is the option tested most.
+
+![Installer: Choose Installation Options, Anyone who uses this computer selected](images/installer-windows-wizard.png)
+
 3. Finish the wizard. Leave **Run Sachivji** ticked to start it straight away, or open it later from the Start menu or the desktop shortcut.
 
 ## Installing on macOS
