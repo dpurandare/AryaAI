@@ -129,7 +129,7 @@ export async function connectMcpServer(
   token: string | undefined,
   bundledNodeDir: string | undefined = defaultBundledNodeDir()
 ): Promise<{ client: Client; tools: Tool[] }> {
-  const client = new Client({ name: 'sachiv', version: '0.3.0' })
+  const client = new Client({ name: 'sachiv', version: '0.3.1' })
   const transport = buildTransport(config, token, bundledNodeDir)
   await client.connect(transport)
 

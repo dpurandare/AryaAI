@@ -8,6 +8,8 @@ version is still `0`.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-16
+
 ### Fixed
 
 - The Windows release asset on the GitHub Releases page is now a `.zip` of the installer instead of a bare `.exe` — browser download-reputation checks were blocking/warning on the raw unsigned `.exe` (TASKS #219).
