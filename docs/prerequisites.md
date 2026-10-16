@@ -57,7 +57,7 @@ An admin can distribute provider and MCP settings to users with **Account menu >
 
 ## 5. Only if you build or run from source (not needed for the installer)
 
-- **Node.js 22 or newer** (developed against Node 24 / npm 11). **Not Node 20**: `better-sqlite3` segfaults on load under Node 20.
+- **Node.js 24 recommended, 22 also works, 20 does not.** CI and releases use 24; 22 was checked (typecheck clean, all tests pass). On Node 20 `better-sqlite3` segfaults as soon as a database is opened.
 - **Git for Windows**.
 - **Visual Studio Build Tools** (the "Desktop development with C++" workload) and Python 3, but only if `better-sqlite3` has no prebuilt binary and must compile. This is rare.
 - Then: `npm install`, `npm run dev` (development) or `npm run dist:win` (builds the NSIS installer into `release\`).

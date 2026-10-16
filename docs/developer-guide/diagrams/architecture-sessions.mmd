@@ -1,0 +1,16 @@
+flowchart LR
+  subgraph RN["Renderer: one SessionRuntime per session"]
+    A["Session A<br/>messages, sending, streamId,<br/>pending confirmation"]
+    B["Session B<br/>messages, sending, streamId,<br/>pending confirmation"]
+    ACT{{"activeId<br/>(what is shown)"}}
+  end
+  subgraph MN["Main process: state keyed by streamId"]
+    OA["Orchestrator, turn 1<br/>AbortController, steering queue,<br/>active decks"]
+    OB["Orchestrator, turn 2<br/>AbortController, steering queue,<br/>active decks"]
+  end
+  DB[("SQLite<br/>history by sessionId")]
+  A <-->|"streamId + sessionId on every event"| OA
+  B <-->|"streamId + sessionId on every event"| OB
+  OA --> DB
+  OB --> DB
+  ACT -.-> A

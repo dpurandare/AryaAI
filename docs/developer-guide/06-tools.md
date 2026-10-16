@@ -66,17 +66,127 @@ The live, per-role list with descriptions is the generated [tool catalog](../use
 
 ## Writing a tool
 
-1. Create the tool object in the right file (or a new file in the matching folder): a unique `name`, a **short, specific** `description` (tell the model what it returns and when *not* to use it), an `inputSchema`, and the correct `mutates`.
-2. Implement `execute` against `ctx`: resolve every path through the guard or the external-access helpers, return a string, throw helpful errors, honour `signal` if you can (and set `cancellable`).
-3. If it touches paths outside the workspace, implement `externalPaths`. If it takes secrets, set `secretFields`. If a pre-flight makes sense, add `validate`.
-4. Register it in `createDefaultRegistry()`.
-5. **Give it an owner:** add its name to the right role's `pickTools` list in `roles.ts` (and to `ROUTER_CORE_TOOLS` only if it must be in the slim router; the slim core is usage-backed and budget-limited).
-6. Write tests (below), and check the prompt budgets still pass.
-7. Add a plain-language description in `scripts/gen-tool-catalog.mjs`, then regenerate the User Guide's tool catalog.
+Follow these steps in order. The example is a small read-only tool, `count_lines`, that counts the lines in a text file. It was built and run while writing this page, so the code compiles and the test passes.
 
-## Testing a tool
+### Step 1. Create the file
 
-Tools are plain objects, so tests call `tool.execute(input, ctx)` directly. The usual pattern (`file-ops.test.ts`): make a temporary workspace with `mkdtemp`, build a `ToolContext` with `new WorkspaceGuard(root)` and a test session id, run the tool, assert on the result and on the files, and remove the temp folder in `afterEach`. Test the refusals (outside the workspace, bad input) as well as the happy path. Tools that call the network, a database or a CLI are tested against fakes (fake drivers, scripted runners); nothing in the suite needs a real service.
+Put it in `src/main/tools/count-lines.ts` (or in the folder for its family, such as `db/` or `office-docs/`).
+
+```ts
+import { readFile, stat } from 'node:fs/promises'
+import { resolveReadable } from '../security/external-access'
+import type { Tool } from './types'
+
+const MAX_BYTES = 5 * 1024 * 1024
+
+export const countLinesTool: Tool = {
+  name: 'count_lines',
+  description: 'Count the lines in a text file. Returns the number only; use read_file to see the content.',
+  inputSchema: {
+    type: 'object',
+    properties: { path: { type: 'string', description: 'Path relative to the workspace root, or an absolute path' } },
+    required: ['path']
+  },
+  mutates: false,
+  externalPaths: (input) => [{ path: String(input.path ?? ''), access: 'read' }],
+  async execute(input, ctx) {
+    const path = resolveReadable(ctx, String(input.path ?? ''))
+    const info = await stat(path)
+    if (info.size > MAX_BYTES) {
+      throw new Error(`File is ${info.size} bytes, over the ${MAX_BYTES}-byte limit. Use shell_execute with wc -l instead.`)
+    }
+    const text = await readFile(path, 'utf-8')
+    return String(text === '' ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0))
+  }
+}
+```
+
+What each part does:
+
+| Part | What to write |
+|---|---|
+| `name` | Unique, snake_case. The model calls the tool by this name. |
+| `description` | One or two short sentences. Say what it returns and when **not** to use it. The model reads this on every request that includes the tool, so each word costs tokens. |
+| `inputSchema` | JSON Schema of the arguments. Mark what is required. A wrong argument becomes an error the model can read. |
+| `mutates` | `false` if the call only reads. `true` if it changes anything (a file, a database, an email, a command). A `true` call asks the user before it runs. If it depends on the input, give a function, for example one that checks whether the SQL is a `SELECT`. |
+| `externalPaths` | Needed only if the tool reads or creates a path that may be outside the workspace. List each path and whether you read or write it. The app asks the user before your code runs. Leave it out if the tool never touches paths. |
+| `execute` | The work. Returns a **string**. To fail, `throw new Error(...)`. |
+
+Rules for `execute`:
+- **Resolve every path through the guard.** Use `resolveReadable(ctx, path)` to read, `resolveNewFilePath(ctx.workspaceGuard, path)` to create a file in the workspace, and `resolveWritableNewOutside` for a new file outside it. Never use `join(root, input.path)` yourself.
+- **Write error messages for the model.** Say what was wrong and what to do instead, as the file-size error above does.
+- **Return a string.** Return only what the model needs. A long result costs context.
+- Optional: `describe(input)` for a clearer confirmation dialog, `secretFields` for password inputs, `validate` to check input before the dialog is confirmed, and `cancellable: true` if `execute` really stops when the `signal` argument fires.
+
+### Step 2. Register it
+
+In `src/main/tools/setup.ts`, import the tool and add `registry.register(countLinesTool)` inside `createDefaultRegistry()`. A tool that needs live state (an open connection, a running server) is registered later by the code that owns that state instead.
+
+### Step 3. Give it an owner role
+
+A tool no role lists is invisible the moment a request is delegated to a specialist. In `src/main/agents/roles.ts`, add its name to the `pickTools(registry, [...])` list of the role that should use it. For `count_lines`, that is the Data Processor, next to `read_file`.
+
+Do not add it to `ROUTER_CORE_TOOLS` unless the top-level assistant must have it without delegating. That list is small on purpose.
+
+If you skip this step, `roles-coverage.test.ts` fails with `tools no specialist can use: count_lines`.
+
+### Step 4. Write the test
+
+Create `src/main/tools/count-lines.test.ts`. The pattern is always the same: make a temporary workspace, build a context, call `execute`, check the result, delete the folder.
+
+```ts
+describe('count_lines', () => {
+  let root: string
+  let ctx: ToolContext
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'sachiv-countlines-'))
+    ctx = { workspaceGuard: new WorkspaceGuard(root), currentSessionId: 'test-session' }
+  })
+  afterEach(async () => { await rm(root, { recursive: true, force: true }) })
+
+  it('counts the lines of a file in the workspace', async () => {
+    await writeFile(join(root, 'a.txt'), 'one\ntwo\nthree\n')
+    expect(await countLinesTool.execute({ path: 'a.txt' }, ctx)).toBe('3')
+  })
+  it('returns 0 for an empty file', async () => {
+    await writeFile(join(root, 'empty.txt'), '')
+    expect(await countLinesTool.execute({ path: 'empty.txt' }, ctx)).toBe('0')
+  })
+  it('refuses a path outside the workspace that has not been allowed', async () => {
+    await expect(countLinesTool.execute({ path: '/etc/hostname' }, ctx)).rejects.toThrow()
+  })
+})
+```
+
+Test the refusals (outside the workspace, bad input) as well as the normal case. A tool that calls the network, a database or a CLI is tested against a fake (a fake driver, a scripted runner). No test in the suite needs a real service.
+
+### Step 5. Fix the prompt budget
+
+Adding a tool makes the model's prompt longer, and `agents/prompt-budget.test.ts` fails when that happens. With `count_lines` in the Data Processor it fails two checks:
+
+```
+role:data-processor grew past its ceiling (2230) ... expected 2268 to be less than or equal to 2230
+the whole built-in registry stays under its total ceiling
+```
+
+That is expected. Do this:
+1. Shorten the tool's `description` and schema first.
+2. If the growth is justified, raise the ceilings in `prompt-budget.test.ts`: the role's ceiling (`'role:data-processor'`), the total in "the whole built-in registry stays under its total ceiling", and a `TOOL_CEILINGS` entry only if this tool is over the default of 320 tokens per tool.
+3. Add a one-line comment with the date and the reason, like the existing ones.
+
+### Step 6. Add the plain-language description
+
+In `scripts/gen-tool-catalog.mjs`, add one line to `DESCRIPTIONS`, written for a user, not the model: `count_lines: 'Counts the lines in a text file.'`. Then regenerate the User Guide's tool catalog (`node scripts/gen-tool-catalog.mjs --app <Sachivji executable>`). If you forget, the catalog shows "(description to be written)" for the tool and the script prints a warning.
+
+### Step 7. Run the checks
+
+```bash
+npm run typecheck
+npm test
+```
+
+Both must pass. For a tool that talks to something real, also try it once in a running copy of the app, as in [Getting started](02-getting-started.md).
 
 ## Prompt budget
 

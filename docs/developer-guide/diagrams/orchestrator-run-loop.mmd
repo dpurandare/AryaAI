@@ -1,0 +1,17 @@
+%%{init: {'flowchart': {'nodeSpacing': 20, 'rankSpacing': 26, 'padding': 6}}}%%
+flowchart TB
+  START(["next round"]) --> LIM{{"within the round and<br/>time budget?"}}
+  LIM -- "no: ask the user,<br/>who declines" --> PARTIAL(["stop, keep what<br/>was gathered"])
+  LIM -- "yes, or the user<br/>chooses to continue" --> CALL["apply steering notes, trim old tool results,<br/>provider.stream(): text, thinking, tool calls"]
+  CALL --> OK{{"usable reply?"}}
+  OK -- "rate limit: wait" --> CALL
+  OK -- "empty or cut off:<br/>retry, bounded" --> START
+  OK -- "Stop pressed" --> ABORT(["stopped"])
+  OK -- yes --> TC{{"tool calls?"}}
+  TC -- no --> GATE{{"completion gate:<br/>not done yet?"}}
+  GATE -- "yes, bounded" --> START
+  GATE -- no --> DONE(["final answer"])
+  TC -- yes --> DISP["dispatchTool per call: folder access,<br/>owner role, confirm if mutating, timeout"]
+  DISP --> BRK{{"failure or repeat<br/>limit hit?"}}
+  BRK -- yes --> HALT(["stopped by the safeguard"])
+  BRK -- "no: append results" --> START

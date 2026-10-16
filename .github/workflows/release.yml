@@ -78,7 +78,7 @@ jobs:
       # downloaded at all from the published Release). Re-zip the already-published
       # installer and swap it in as the asset so the download link is a .zip; the NSIS
       # wizard inside is unchanged — same install experience documented in
-      # windows_install.md, just one extra extract step before running Setup.exe.
+      # docs/windows_install.md, just one extra extract step before running Setup.exe.
       - name: Re-package the Windows installer as a zip
         if: matrix.os == 'windows-latest'
         shell: pwsh

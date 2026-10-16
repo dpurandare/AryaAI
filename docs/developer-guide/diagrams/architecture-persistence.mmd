@@ -1,0 +1,14 @@
+flowchart LR
+  subgraph DBF["sachiv.db (SQLite + sqlite-vec)"]
+    S["sessions"] --> MSG["messages<br/>JSON content blocks"]
+    S --> U["session_usage"]
+    S --> E["embeddings<br/>(search_history index)"]
+    SET["app_settings<br/>key/value, incl. connection lists"]
+    LOG["classify_gate_log<br/>tool_usage_log"]
+  end
+  subgraph SECR["Secrets (never in the database)"]
+    KC["OS keychain via safeStorage<br/>(credentials file)"]
+    ENV["or plaintext ~/.sachivji/.env<br/>(file mode)"]
+  end
+  SET -. "id only" .-> KC
+  SET -. "id only" .-> ENV

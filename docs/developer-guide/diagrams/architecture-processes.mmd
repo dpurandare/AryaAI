@@ -1,0 +1,22 @@
+flowchart TB
+  UI["<b>Renderer</b> (src/renderer)<br/>Svelte UI, sandboxed"]
+  API["<b>Preload</b> (src/preload)<br/>window.sachiv: calls in, events out"]
+  subgraph M["Main process (src/main): Node.js, every side effect"]
+    IPC["ipc/register.ts<br/>handlers and turn runner"]
+    DB[("db/ SQLite")]
+    ORCH["agents/<br/>orchestrator, roles"]
+    PROV["providers/"]
+    TOOLS["tools/"]
+    MCP["mcp/"]
+    SEC["security/<br/>workspace guard, secrets"]
+    RT["runtime/<br/>Python venv, Ollama"]
+  end
+  UI <--> API
+  API <--> IPC
+  IPC --> DB
+  IPC --> ORCH
+  ORCH --> PROV
+  ORCH --> TOOLS
+  ORCH --> MCP
+  TOOLS --> SEC
+  TOOLS --> RT

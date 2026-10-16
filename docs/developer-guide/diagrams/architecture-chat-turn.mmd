@@ -1,0 +1,21 @@
+sequenceDiagram
+  participant UI as Renderer
+  participant IPC as runChat (main)
+  participant DB as SQLite
+  participant O as Orchestrator
+  participant AI as Provider
+  participant T as Tools
+  UI->>IPC: chat:send
+  IPC->>IPC: resolve provider, model, key
+  IPC->>DB: load history, save user message
+  IPC->>IPC: prepareConversation (trim to context window)
+  IPC->>O: run(conversation)
+  loop until the answer is complete
+    O->>AI: request (system prompt + tools)
+    AI-->>O: text / tool calls
+    O->>T: execute tool (ask the user first if it mutates)
+    T-->>O: tool result
+  end
+  O-->>IPC: stream events, finished messages
+  IPC-->>UI: chat:stream-event (text, tools, usage, stop)
+  IPC->>DB: save messages, queue for memory index

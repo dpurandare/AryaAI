@@ -172,7 +172,7 @@ async function toHtml(markdown, title, coverHtml = '') {
     th, td { border: 1px solid #ccc; padding: .3em .5em; vertical-align: top; text-align: left; }
     tr { page-break-inside: avoid; } th { background: #f1f1ee; }
     blockquote { border-left: 3px solid #bbb; margin-left: 0; padding-left: 1em; color: #444; }
-    img { max-width: 100%; } a { color: #1a55b3; text-decoration: none; }`
+    h2, h3, h4 { break-after: avoid; } img { max-width: 100%; max-height: 23cm; break-inside: avoid; } a { color: #1a55b3; text-decoration: none; }`
   return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${css}</style></head><body>${coverHtml}${marked.parse(markdown)}</body></html>`
 }
 

@@ -46,10 +46,11 @@ src/
   shared/      types and contracts shared across the IPC boundary
 test/support/  shared test helpers (the mock provider)
 scripts/       build helpers, runtime fetchers, probes and evals, docs tooling
-docs/          user guide, developer guide, design notes, manual test plan, changelog
+docs/          user guide, developer guide, design notes, manual test plan, changelog, Windows install steps (windows_install.md)
 models/        example Ollama Modelfiles
 build/         icons and packaging resources
 .github/workflows/   CI and release workflows
+README.md      project overview, quickstart and the feature list
 TASKS.md       the work log and backlog
 ```
 

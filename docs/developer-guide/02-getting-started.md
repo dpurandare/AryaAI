@@ -2,7 +2,11 @@
 
 ## Prerequisites
 
-- **Node.js 22 or newer** (developed and tested on Node 24 with npm 11; **not Node 20**: the prebuilt `better-sqlite3` binary crashes the process on Node 20).
+- **Node.js 24 recommended; 22 also works; 20 does not.**
+  - **Node 24:** what CI and the release builds use, and what the project is developed on (with npm 11).
+  - **Node 22:** checked on 2026-10-16: `typecheck` is clean and the whole suite passes (125 files, 1,650 tests). It is the lowest supported version.
+  - **Node 20 (and older): do not use.** `npm install` only warns (`EBADENGINE`) and the app builds, but the process **segfaults** as soon as a database is opened (`new Database(...)` in `better-sqlite3`), so the tests under `src/main/db` and anything that touches sessions crash, with no JavaScript error to catch.
+  - The installed app does not need Node at all (it ships its own).
 - macOS, Windows 11 or Linux. On Linux, Ubuntu 22.04 or newer (glibc 2.34 or newer) is needed by the published `better-sqlite3` native addon.
 - A C++ toolchain only if a native module has to be built from source (Xcode Command Line Tools, `build-essential`, or Visual Studio Build Tools).
 - Python 3.10 to 3.13 with `venv` is used by the managed Python runtime during development (the packaged app bundles its own).

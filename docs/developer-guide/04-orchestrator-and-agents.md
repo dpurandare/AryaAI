@@ -2,6 +2,8 @@
 
 The orchestrator (`src/main/agents/orchestrator.ts`, about 3,100 lines) is the heart of the app. This page describes its structure, the role system around it, and the safeguards in code. Many behaviours were added after a failure was found live; the file's comments record each one with its reason and TASKS number, and `docs/design-discussion.md` holds the design.
 
+The orchestrator is built fresh for every turn and knows nothing about sessions; how several sessions generate at once and what switching does is in [Architecture](03-architecture.md#switching-sessions-and-concurrent-turns).
+
 ## The model
 
 - A **role** (`Agent`) has a `role` id, a one-line `summary`, a `systemPrompt`, a `tools` list, and optional flags: `isolated` (brief-only context), `maxRounds`, `completionGate`, and `custom`/`label`/`pickable`/`plannable`/`meta` for user-defined roles.
@@ -31,6 +33,8 @@ User-defined roles (`src/main/roles`, `src/shared/role-file.ts`, `role-lint.ts`)
 `classifyAndPlan` also inserts a **domain-knowledge step** (look it up in a connected MCP server first) when the planner flags it and the topic is not the user's own data (`domain-topic.ts`), substitutes the MCP Operator when none is connected, and follows up an incomplete step.
 
 ## The round loop (`runLoop`)
+
+![One round of runLoop and where it ends or repeats](images/orchestrator-run-loop.png)
 
 One loop serves the orchestrator, a pinned specialist and every delegate. Each round:
 
