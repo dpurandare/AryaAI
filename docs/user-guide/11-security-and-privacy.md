@@ -8,6 +8,8 @@ Sachivji can read files, run code and send messages on your behalf, so it is bui
 - **Reading is free**, inside the workspace. Reading outside the workspace asks first.
 - You can switch on **auto-approve** for a session or for a particular tool. Treat that as lending the assistant your hands: an auto-approved tool acts without asking. Folder access outside the workspace is never auto-approved. See [Settings reference](10-settings-reference.md).
 
+> **A general note on permissions.** The confirmations exist to let you control what the assistant does. Whenever you allow something, whether once, for a session, with **Always auto-approve** or with a remembered folder, you are giving the assistant that permission, so watch what it does with it. Read what each action does before you approve it, and check the results. You can take any permission back at any time, whenever you feel it is needed: remove an auto-approve rule under **Settings > Auto-approve rules**, remove a folder under **Settings > Workspace > Folders outside the workspace**, or just deny the next request.
+
 ## The workspace boundary
 
 File, shell, git and cloud-CLI tools work inside your **workspace folder**. File tools check every path in code, so a file tool cannot reach outside it. Outside the workspace, the assistant can only **read**, and only a folder you allowed (just once, for the session, or always). It never edits or deletes files there.

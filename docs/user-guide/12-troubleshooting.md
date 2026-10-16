@@ -60,7 +60,7 @@ Find the symptom, then try the fix. Sachivji does not keep a log file yet, so wh
 | **A database or API connection fails its test** | Check the host, port, database name, credentials and that the server is reachable from this computer. Use a read-only account. |
 | **An MCP server shows an error or "Connection closed"** | Click **Reconnect**. For a local server, check the command and arguments (for example `npx` and the package name). A server needs a network connection if it downloads its package. |
 | **The assistant never uses an MCP server** | Write a clear one-line description in the server's settings and name the server in your request. |
-| **Email will not send** | For Gmail use an **app password**, not your normal password. For other servers check the host and port (587 STARTTLS, 465 TLS). |
+| **Email will not send** | For Gmail use an **app password**, not your normal password. For other servers check the host and port (587 STARTTLS, 465 TLS). For now Gmail is the supported choice; providers that need OAuth 2 are handled case by case (see [Connecting data and services](09-connecting-data-and-services.md#email-accounts)). |
 
 ## Memory across chats
 

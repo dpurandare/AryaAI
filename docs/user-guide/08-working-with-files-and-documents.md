@@ -19,12 +19,17 @@ When the assistant creates a file, Sachivji decides the folder from the file typ
 | `code/` | Scripts and source files | `.py`, `.js`, `.ts`, `.sh`, `.sql`, `.html`, `.css`, `.yaml` and other code or configuration files |
 | `documents/` | Office and document files | `.docx`, `.xlsx`, `.pptx`, `.pdf`, `.odt`, `.rtf` and similar |
 | `resources/` | Images, audio and video | `.png`, `.jpg`, `.gif`, `.svg`, `.mp4`, `.mp3` and similar |
-| the workspace root | Everything else | other file types |
+| the workspace root | Everything else you ask it to save | other file types |
 
-Two more folders have special roles and are left alone:
+Other folders have special roles and are left alone:
 
 - `templates/` holds your own Word and PowerPoint templates (see below).
-- `venv/` is the Python environment (do not edit it). A hidden folder holds repositories the assistant downloads to inspect.
+- `venv/` is the Python environment (do not edit it).
+- `tmp/` is scratch space for temporary files that scripts and the assistant produce along the way (page images, crops, research notes, intermediate data). **Files in `tmp/` are deleted automatically after about 7 days**, so never keep anything you need there. Take what you want to keep and move it to `documents/` or `resources/`. Also, when a script leaves four or more loose files in the workspace root, Sachivji files them under `documents/`, `code/` or `resources/` by type, and anything else goes to `tmp/`. One or two files stay where the script wrote them, because they are usually what you asked for.
+- `.sachiv-handoff/` is a hidden folder where the assistant saves the data that one step found (database rows, parsed files, search results), so the next step or a script can read it from a file instead of retyping it. Folders in it older than about 7 days are deleted automatically.
+- `.sachiv-clones/` is a hidden folder that holds git repositories the assistant downloads to inspect (see the git tools). Each clone has its own folder. Nothing deletes them for you, so you can delete the folder when you are done, and it is safe to delete.
+
+You do not need to open the hidden `.sachiv-` folders. They are working files, and the assistant is told never to quote them in a document or reply.
 
 If a file already exists at a path, the assistant writes back to that existing location instead of creating a second copy.
 
@@ -60,6 +65,8 @@ What it cannot do:
 
 ## Templates
 
+> **Still being improved.** Templates are still being updated and enhanced, and we plan to make them better. What is described here works today, but expect changes in later versions, such as how templates are made and filled.
+
 If you have a Word or PowerPoint file with your own styling, you can turn it into a template and have the assistant fill it, keeping the styling.
 
 - Put your template in the workspace `templates/` folder, with markers where content goes: `{customer}`, `{amount}`, `{date}`. For a repeating section use `{#items} ... {/items}` around the part that repeats.
@@ -74,8 +81,9 @@ The **Data Processor** works with structured files:
 - Summarise and query a CSV, JSON or XML file without pulling the whole file into the chat: "Summarise the columns in `sales_2024.csv`", "Show the rows where region is North."
 - Append a record to a CSV or JSON file.
 - Read an Excel workbook, and create or change one: "Add these three rows to the Summary sheet."
+- **Change the format, with the model's help.** The assistant can convert data from one of these formats to another and reshape it on the way, for example CSV to JSON, JSON to Excel, XML to CSV or Excel to CSV: "Convert `data/sales.csv` to JSON", "Turn `orders.xml` into an Excel sheet with one row per order", "Flatten this nested JSON into a CSV with one column per field." The model works out the structure, often by writing and running a short script. The result goes to a new file, and the original is left alone.
 
-Changes to files ask for your approval.
+Changes to files ask for your approval. Because the model decides how the data maps from one format to the other, **check the converted file** (row counts, column names, dates and numbers) before you rely on it, especially for large or deeply nested data.
 
 ## Charts, scripts and data analysis
 
@@ -91,11 +99,41 @@ A picture the assistant creates is shown in the chat, and is saved under `resour
 
 If the Python environment is not working, open **Settings > Workspace**: the **Python runtime** section shows its status with **Retry**, **Repair…** and **Turn Python off** buttons. See [Troubleshooting](12-troubleshooting.md) (planned).
 
+## Diagrams
+
+For a **diagram or schematic**, Sachivji draws with **Mermaid**, a small text language for diagrams. The assistant writes the diagram as Mermaid text in its reply, and the chat turns it into a picture on the spot. You do not install anything. For a simple diagram no tool or specialist is needed, and nothing is saved as a file.
+
+- "Draw a diagram of how a web browser loads a page: URL, DNS lookup, TCP/TLS connection, HTTP request, response, HTML parsing, rendering."
+- "Show the approval process for a purchase order as a flowchart."
+- "Draw the relationships between customers, orders and products as a diagram."
+- "Show the steps of our release process as a sequence between the developer, the build server and the store."
+
+Mermaid covers flowcharts, sequence diagrams, class and entity-relationship diagrams, state diagrams, timelines, Gantt charts, pie charts and simple line and bar charts (`xychart-beta`), so name the kind of diagram if you have one in mind. Ask for changes the way you ask for anything else ("add a step for legal review", "make it left to right", "use fewer boxes"), and the assistant redraws it.
+
+Things to know:
+
+- **Diagrams and charts of data are different jobs.** Mermaid is best for boxes and arrows. For a chart of real numbers, such as sales per month, the assistant normally uses the Developer and Python, which makes a picture file saved under `resources/` (see [Charts, scripts and data analysis](#charts-scripts-and-data-analysis)). If you ask for the chart **in Mermaid**, the assistant can do that too: for example "get this week's weather for Pune and draw the temperature and rain charts using Mermaid." It first collects the data (by the Researcher or the Data specialists), and then the Developer writes the Mermaid chart, often with a short script that also saves it as a Markdown file (`.md`) in `documents/` that holds the Mermaid text. Plan on small data sets (a week of values, a few categories).
+- **Mermaid charts are simple.** They have no legend, so the assistant puts what each line or bar means in the title or the caption. Colours are not automatic: ask for specific colours, and check that they appear. Mermaid's chart type is still marked beta, so a chart may look different, or not draw at all, in other programs that read Mermaid. If you need a polished chart, ask for a normal chart (a picture made with Python) instead.
+- **Usually the diagram lives in the chat.** It appears in the reply, and you do not get a picture file. The Mermaid text behind it is part of the reply, so you can copy it. In a Markdown export of the chat, the diagram is kept as its Mermaid text, which tools that understand Mermaid can draw again. If you want the text in a file, ask the assistant to save it.
+- **If the drawing fails.** The model sometimes writes Mermaid text with a mistake. The chat then shows "Could not render this diagram" with the reason in place of the picture, and the rest of the reply is unaffected. Tell the assistant "the diagram did not render, please fix it" and it writes a corrected version.
+- **Large diagrams get crowded.** A diagram with dozens of boxes is hard to read. Ask for a high-level version first, or one diagram per part.
+- **Not for presentations or Word files.** The Mermaid picture shows in the chat only. Putting a diagram on a slide or in a Word document is not supported yet.
+
 ## Presentations
 
 Ask for a presentation in plain words: "Build a five-slide deck on our Q3 results with a chart of revenue by month." The assistant plans the deck and builds it **one slide at a time**, using the Page Creator to design each slide, and then saves it as a `.pptx` file in `documents/`. Slides can contain text, images, shapes, charts and tables.
 
-Stock photos can be found for you: ask for a free photo on a topic and the assistant finds images with their creator and licence, then downloads the ones you choose into `resources/`.
+### Pictures from stock photo searches
+
+You can ask the assistant to **search for suitable stock images and use them in the deck**, in the same request: "Build a six-slide deck on renewable energy in India, with a suitable free stock photo on each content slide." It searches for free photos on each slide's topic, picks ones that fit, downloads them into `resources/` and places them on the slides.
+
+- **Good models do a fair job of choosing.** With a strong model, the pictures it picks usually fit the slide. Smaller models pick less well, so it is worth looking at every slide.
+- **Say what you want in the picture.** "A wind farm at sunset" finds better pictures than "something about energy". Say so if you want people, landscapes, or no people at all.
+- **You can choose yourself.** Ask first: "Find five free photos of wind turbines and show me their creators and licences." Then say which to use.
+- **Check relevance and licence.** The search covers openly licensed pictures (through Openverse), and each result carries its creator and licence. Some licences require you to credit the creator. Each result comes with a credit line, and the assistant is told to put it, small, on the slide that uses the picture and to use a different picture on every slide. Check that the credits are there before you share the deck. A picture can still be a loose match for the topic, so look before you present.
+- **Replace what you do not like.** "Use a different picture on slide 3" works. Treat the pictures as part of the first draft.
+
+The same search works outside decks: ask for a free photo on a topic and the assistant finds images with their creator and licence, then downloads the ones you choose into `resources/`.
 
 Tips for better decks:
 
@@ -205,7 +243,9 @@ You will see which specialist did each part, and you approve each file that gets
 ## What is not supported yet
 
 - **Reading PDF files and scanned documents or images** (extracting their text) is not supported yet; it is planned.
-- **Editing an existing Word or PowerPoint file in place** is not supported; use a template instead.
+- **Editing an existing Word or PowerPoint file in place** is not supported. There are two alternatives:
+  - **Read it and create a modified copy.** The assistant can read a `.docx` or `.pptx`, and then create a new file with your changes: "Read `documents/proposal.docx` and create `documents/proposal-v2.docx` with the pricing section rewritten and a new section on risks." The original is left untouched, and you can compare the two. The new file is built from the content (headings, text, lists, tables), so complex layout, fonts and images of the original may not carry over. Check the copy.
+  - **Use a template.** If the look matters, put your styled file in `templates/` and have the assistant fill it (see [Templates](#templates)).
 
 ## Tips
 

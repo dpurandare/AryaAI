@@ -105,6 +105,34 @@ The warnings you may see mean exactly this:
 | Needs at least 2 examples / at least 1 non-example | Add them. |
 | No tools | The role can only answer in text. Add tools if it should act. |
 
+## The summaries of the built-in roles
+
+Read these before you write your own. They are the exact texts the assistant reads, in the order it sees them. Your summary must be clearly different from every one of them.
+
+| Role | Summary |
+|---|---|
+| **Planner** | Turns a complex or ambiguous request into ordered steps. Has no tools and executes nothing — hands each step to Researcher, Developer, Data Access or the other specialists. |
+| **Researcher** | Researches the web deeply: reads many pages, keeps notes, finds stock photos, saves findings to a file. Does not recall past chats (History Analyst) or call configured APIs (Data Access). |
+| **History Analyst** | Recalls and compares things from earlier conversations, including how a detail changed over time. Does not search the web (Researcher). |
+| **Developer** | Writes AND runs code (Python in the workspace venv), edits files, uses git, cloud CLIs and GitHub. Not for plain Word documents (Text Document Creator) or database queries (Data Access). |
+| **Data Access** | Queries configured databases and calls configured external APIs. Not for local files (Data Processor) or for creating connections (Configurator). |
+| **Data Processor** | Reads, queries and transforms local CSV, JSON, XML and Excel files. Not for databases (Data Access) or general programming (Developer). |
+| **Text Document Creator** | Creates, fills from templates and reads Word and other Office documents. Cannot run code or draw charts from data (Developer) and cannot edit an existing file in place. |
+| **Configurator** | Sets up connections to databases, external APIs and MCP servers. Does not query them (Data Access); secrets go through the confirmation dialog, never chat. |
+| **MCP Operator** | Uses the tools of connected MCP servers (wikis, knowledge bases, integrations). Not for the open web (Researcher), databases (Data Access) or past chats (History Analyst). |
+| **Page Creator** | Designs one slide of a presentation from a brief. Not conversational and never a plan step — the top-level assistant calls it once per slide. |
+| **Email** | Drafts and sends an email from a brief (recipients, what to say). Does not write documents (Text Document Creator) or look up addresses (Data Access). |
+
+Check your own summary against this table:
+
+- If your role's job is close to one of these, ask whether you need a new role at all. Often a clearer request to the built-in role does the same job.
+- If you do need it, say what is different: a particular file type, a particular system, a particular output. Name the built-in role it must not be confused with in its "does not" sentence.
+- Your role may not reuse a built-in role's id; a built-in role is never replaced.
+
+### Does the order of the roles matter?
+
+Sachivji does not rank roles. The assistant gets all the summaries and picks the one that fits best. The order only controls how they are listed: the built-in roles first, in the order of the table above, then your own roles, sorted by file name. Models tend to favor options near the start of a list a little, so when your summary is close to a built-in one, the built-in one is slightly more likely to be chosen. The remedy is not to rename your file. Make the summary clearly different, so that the order does not matter. Naming your files so that they sort in a particular way does not give you a reliable advantage.
+
 ## Using your role
 
 - **Let the assistant choose.** With the Agent selector on **Auto**, the assistant reads all summaries and examples and may hand a matching request to your role. The reply shows your role's name.

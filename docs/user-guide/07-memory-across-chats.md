@@ -2,7 +2,18 @@
 
 Sachivji remembers what happened in your earlier chats and can search it for you. You can ask it to recall a decision, find something you discussed weeks ago, or compare how a number or plan changed from one conversation to the next.
 
-This memory is a **search over your own past messages**, kept on your computer. It is not a copy of a whole session that you can restore, and it only knows what was actually said or found in your chats.
+This memory is built on **embeddings and a vector database**, the same technology behind semantic search. Each piece of a conversation is turned into a list of numbers that captures its meaning (an *embedding*), by an embedding model. The numbers are stored in a **vector database** that sits inside the same local database file as your chats (SQLite with the `sqlite-vec` extension), and a question is answered by finding the stored pieces whose meaning is closest to it. Nothing needs to be installed or run separately. The details are in [How it works](#how-it-works).
+
+The memory is a **search over your own past messages**, kept on your computer, and it only knows what was actually said or found in your chats.
+
+## A chat and its context
+
+Two things are easy to confuse:
+
+- **What a chat has.** Every chat keeps its complete history: all messages, results and pictures stay stored for as long as the chat is in the app. Open it at any time, even months later, and carry on. Nothing needs to be restored or reloaded.
+- **What the assistant is given for one question.** For each new message, Sachivji builds the context from that history and sends it to the model. The model can read only a limited amount at once (its *context window*), so when a chat is very long, the oldest parts and bulky tool results are trimmed from what is sent. They are still stored and still shown on screen, but the model may not see them for that question. See [Watching cost and context](03-providers-and-keys.md#watching-cost-and-context).
+
+The cross-chat search below fills this gap. It lets the assistant reach into other chats, and into the parts of the current chat that no longer fit in the context. Deleting a chat removes it for good, including from the search.
 
 ## What you can ask
 
@@ -44,7 +55,7 @@ Open **Settings > Search History Embedding** to see and change it:
 
 - **Provider and model:** the embedding model that creates the fingerprints. The default is Ollama (local) with `nomic-embed-text`. You can pick another provider (it needs its own key) and model, then click **Save model**.
 - **Status line:** shows how many messages are indexed, for example "22 / 22 messages indexed". If search is unavailable it says why (for example, the embedding model has not been downloaded yet).
-- **Rebuild index:** indexes everything again from scratch. Use it after changing the model, or if the status shows a problem that you have fixed.
+- **Rebuild index:** indexes everything again from scratch. Use it after changing the model, or if the status shows a problem that you have fixed. **It takes some time.** How long depends on the embedding model you chose (a cloud provider or a larger model can be faster or slower than the small local default, depending on your connection and your computer) and on how much chat history you have: a few chats finish in moments, but years of long chats can take many minutes. The button reads **Rebuilding...** while it works. Keep Sachivji open and wait until it finishes and the status line shows all messages indexed. Search may be incomplete until then.
 
 **Changing the model needs a rebuild.** Fingerprints from different models cannot be compared, so after you change the provider or model, Settings shows that the index needs a rebuild, and search is off until you click **Rebuild index**.
 

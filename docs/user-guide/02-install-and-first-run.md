@@ -16,10 +16,10 @@ You need a network connection for your chosen AI provider. The first start also 
 
 ## The "unsigned app" warning
 
-The installers are **not code-signed yet**, so your system shows a warning the first time. Nothing is wrong with the app.
+The installers of this release are **not code-signed yet**, so your system shows a warning the first time. Nothing is wrong with the app. This is specific to this release: signed installers are planned, and the warning will go away in a future version.
 
 - **Windows:** "Windows protected your PC" appears. Click **More info**, then **Run anyway**.
-- **macOS:** the app is called "unidentified". Right-click (or Control-click) the app and choose **Open**, then confirm. The warning appears on the first launch only.
+- **macOS:** the app is called "unidentified", or, for this release, macOS may say **"Sachivji" is damaged and can't be opened**. Nothing is actually damaged: the app is simply not signed. For "unidentified", right-click (or Control-click) the app and choose **Open**, then confirm. The warning appears on the first launch only. For "damaged", right-click → Open does not help; see [If macOS says the app is damaged](#if-macos-says-the-app-is-damaged) below.
 - **Linux:** no warning. For the `.deb`, install with your package manager (for example `sudo apt install ./sachivji_<version>_amd64.deb`).
 
 ## Installing on Windows
@@ -31,7 +31,28 @@ The installers are **not code-signed yet**, so your system shows a warning the f
 ## Installing on macOS
 
 1. Open the `.dmg` and drag **Sachivji** to **Applications**.
+
+![The Sachivji disk image: drag Sachivji onto the Applications folder](images/mac-dmg-drag.png)
+
 2. Open it from Applications, using right-click, then **Open** the first time.
+
+### If macOS says the app is damaged
+
+An app downloaded in a browser is marked as "quarantined", and macOS refuses to open an unsigned app that carries that mark. Remove the mark in Terminal, after you have dragged Sachivji to **Applications**:
+
+```
+xattr -cr /Applications/Sachivji.app
+open /Applications/Sachivji.app
+```
+
+The first command removes the quarantine mark from the app. The second opens it. The app then starts normally, and you only need to do this once per download.
+
+If it still says the app is damaged, run these two commands and send their output to the development team, with your macOS version: *[Support contact to be added when the support system is in place.]*
+
+```
+xattr -l /Applications/Sachivji.app
+codesign --verify --deep --strict /Applications/Sachivji.app
+```
 
 ## Installing on Linux
 
@@ -59,11 +80,20 @@ After these screens the main window opens. If a screen says it is still working,
 
 ## Your workspace
 
-Sachivji keeps the files it creates in a **workspace** folder. The default is `Sachivji Workspace` inside your Documents folder. It contains these folders, created for you:
+Sachivji keeps the files it creates in a **workspace** folder. The default is a folder named `Sachivji Workspace` inside your Documents folder:
+
+| System | Default workspace |
+|---|---|
+| Windows | `C:\Users\<you>\Documents\Sachivji Workspace` |
+| macOS | `/Users/<you>/Documents/Sachivji Workspace` |
+| Linux | `~/Documents/Sachivji Workspace` (or `Documents` under your own language or XDG setting) |
+
+On Windows the path is always under your plain user profile, even when OneDrive moves your Documents folder. The workspace contains these folders, created for you:
 
 - `code` for scripts and source files
 - `documents` for Word, Excel, PowerPoint, PDF and text files
 - `resources` for images and other assets
+- `tmp` for temporary scratch files, deleted automatically after about 7 days
 - `venv`, the Python environment (do not edit it)
 
 You can change the workspace in **Settings > Workspace**. The same screen shows the state of the Python environment and the local embeddings.
@@ -80,4 +110,18 @@ The app checks for a newer version when it starts and shows a banner when one ex
 
 ## Uninstalling
 
-Uninstall Sachivji from your system's normal list of apps. To also remove all of your data, delete the app's data folder as well (on Windows `%APPDATA%\Sachivji`, on macOS `~/Library/Application Support/Sachivji`, on Linux `~/.config/Sachivji`), and the workspace folder if you no longer need the files. Deleting the data folder removes your chats, keys and settings, and the first-run screens appear again on the next start.
+Uninstall Sachivji from your system's normal list of apps (Windows: **Settings > Apps**; macOS: drag **Sachivji** from Applications to the Bin; Linux: delete the AppImage, or remove the package with `sudo apt remove sachivji`). This removes the program only. Your chats, keys, settings and files stay on disk.
+
+For a clean uninstall, also delete these folders yourself:
+
+| What | Windows | macOS | Linux |
+|---|---|---|---|
+| **App data folder**: chats, settings, saved keys, your own roles, and the bundled embedding model (about 274 MB) | `%APPDATA%\Sachivji` | `~/Library/Application Support/Sachivji` | `~/.config/Sachivji` |
+| **Workspace**: the files Sachivji created, plus the Python environment (see [Your workspace](#your-workspace)) | `Documents\Sachivji Workspace` | `~/Documents/Sachivji Workspace` | `~/Documents/Sachivji Workspace` |
+
+Notes:
+
+- Delete the workspace only if you no longer need the Word, Excel, PowerPoint and other files in it. If you changed the workspace in **Settings > Workspace**, delete the folder you chose instead.
+- Deleting the app data folder removes your chats, keys and settings. The first-run screens appear again if you reinstall.
+- If you chose **OS Keychain** for secrets, the key that protects your saved passwords is held by the system's secure storage, in an entry named after Sachivji (on macOS, open **Keychain Access** and search for "Sachivji"). It is tiny and harmless, and you can delete it too if you wish.
+- Close Sachivji completely before deleting the folders.

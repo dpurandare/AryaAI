@@ -57,6 +57,8 @@ When the assistant wants to read or write a file **outside your workspace folder
 
 ![Asking to allow access to a folder outside the workspace](images/outside-workspace.png)
 
+> **Remember why this exists.** The confirmations are there so that you control what the assistant does. When you allow something, watch how the assistant uses it, and take the permission back whenever you feel you should. See [Security and privacy](11-security-and-privacy.md).
+
 ## Steering a running task
 
 While the assistant is working, the message box turns into a **note box**: "Add a note while this is running". Type a correction or extra instruction and press Enter. The assistant reads it at its next step and adjusts. Press the stop button (⏹) to cancel the whole task instead.
@@ -85,11 +87,34 @@ You can also click an individual tool block to expand or collapse just that one.
 
 ## Stopping
 
-The **⏹ Stop** button cancels a running task, including one that is waiting for your approval.
+The **⏹ Stop** button cancels a running task, including one that is waiting for your approval. Whatever the assistant had already written or done stays in the chat. Files it already created or changed are not undone.
+
+### When to stop
+
+Stop a task when it is clearly not going to give you what you want, rather than waiting for it to finish:
+
+- it is going in the wrong direction, for example working on the wrong file, the wrong data or the wrong question;
+- it repeats the same step or the same error again and again (a loop);
+- it has run for a long time with no visible progress;
+- you realise your request was wrong or incomplete;
+- it is about to do something you did not intend (you can also answer **Deny** or **Stop turn** to an approval question, see [Approving actions](#approving-actions)).
+
+For a small correction, a note is often better than stopping: see [Steering a running task](#steering-a-running-task).
+
+### What to do after stopping
+
+1. **Look at what happened.** Set **Tool output** to *shown* (click it in the status bar, or press Cmd+O or Ctrl+O) to see every step, the arguments and the results. This usually shows where it went wrong, such as a missing file, a wrong sheet name or an error message from a tool.
+2. **Try once more.** Send the same request again. Results vary from run to run, so a second attempt sometimes succeeds, especially after a temporary error such as a rate limit.
+3. **Change the prompt.** Add the details that were missing: the exact file name or path, the sheet or table, the format you want, the steps in order, what to leave alone. A short, specific request works better than a vague one. If the task is large, break it into smaller requests and check each result.
+4. **Start a new chat.** If the chat has become long or confused, or the assistant keeps following an earlier wrong turn, open a new chat and give a fresh, specific request. A new chat does not carry the old conversation along.
+5. **Switch the model or the agent.** A larger model handles long, multi-step work more reliably (see [Providers and keys](03-providers-and-keys.md)). You can also pick a different agent for the job (see [Choosing which agent answers](#choosing-which-agent-answers)).
+6. **Report it to the developer** if it looks like a fault in Sachivji and not just a hard request. Set **Tool output** to *shown*, then export the chat (see below) and send the file with a short note of what you asked, what you expected, what happened, your operating system and the app version (shown in **About**). The *shown* setting puts the full details of every step in the export, which is what the developer needs. The **.json** export is the complete record. **Where to send it:** *[Support contact to be added when the support system is in place.]* The files can contain your messages, file names and tool results, so read them and remove anything private before you share them.
 
 ## Exporting a chat
 
-Click **⇩** next to a chat in the list. Choose a file name and the format by its ending:
+Click **⇩** next to a chat in the list. A save dialog opens. Choose a file name and the format (the **Format** list, or the ending of the name):
+
+![The save dialog for a chat export, with the Format list set to Markdown](images/export-save-dialog.png)
 
 - **.md (Markdown):** a readable transcript. It follows your Tool output setting.
 - **.json:** the complete, unfiltered record of the chat.

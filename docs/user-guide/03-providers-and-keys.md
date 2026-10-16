@@ -18,7 +18,7 @@ For hosted providers, create an API key on the provider's own website (in the ac
 
 ## Adding a key
 
-1. Open **Settings** (click your name at the lower left, then **Settings**). Or click the provider name in the status bar under the message box if it says a key is missing.
+1. Open **Settings** (click your name at the lower left, then **Settings**). Or click the provider and model name in the status bar under the message box, then choose **Add an API key** in the popup.
 2. Under **Provider API keys**, find the provider, paste the key and click **Save**.
 3. Sachivji checks the key with the provider and shows **✓ Key verified**, or **✗ Key rejected** with the reason.
 
@@ -28,7 +28,14 @@ Once a key is saved, only its last few characters are shown, so you can confirm 
 
 ## Choosing a model
 
-In the chat window, the provider and model name at the right end of the status bar (for example "OpenAI · gpt-4o-mini") opens a small panel. Pick the provider, then pick a model from the list that the provider returns. If a model is not listed, you can type its name.
+In the chat window, the provider and model name at the right end of the status bar (for example "OpenAI · gpt-4o-mini") opens a small popup. It lets you choose the provider and the model:
+
+1. Pick the provider from the **Provider** list.
+2. What you see next depends on whether a key is saved for that provider:
+   - **No key saved:** the popup shows **Add an API key for \<provider\>...**. Click it and Sachivji takes you to the Settings page, where you can paste the key (see [Adding a key](#adding-a-key)). It cannot list models until a key is saved.
+   - **Key saved:** the popup shows a **Model** list with the models that provider offers. Pick one. If the list cannot be loaded, or a model you want is not in it, type the model name by hand instead.
+
+The provider's list gives only model names. To learn what each model can do, how large its context window is and what it costs, read the model pages on the provider's own website, or search the internet. Capabilities and prices change often, so check there before you choose.
 
 Which model should you use?
 

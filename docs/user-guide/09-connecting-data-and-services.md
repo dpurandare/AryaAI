@@ -13,6 +13,8 @@ After a connection exists, the matching specialist can use it: **Data Access** f
 
 **Settings > Data sources.** Supported engines: **SQLite**, **Postgres**, **SQL Server** and **MySQL**.
 
+> **More databases are planned.** Support for more database engines is planned for the next version. If you need a specific database, reach out to the development team and tell them which one. *[Support contact to be added when the support system is in place.]*
+
 ![Settings: Data sources](images/settings-data-sources.png)
 
 | Field | Meaning |
@@ -50,7 +52,36 @@ For simple lookups it can list rows, count them or find rows where a column has 
 
 What the assistant can do with a connected API: discover its endpoints, make authenticated calls (a call that changes something asks first), follow paginated results when asked, and check on a long-running job started by an earlier call.
 
-A worked example (Open-Meteo weather) is below.
+**Limit today:** a connection holds one fixed credential (a key, a token or a user name and password) that is sent with every call. Some services need more than that, for example an API key to log in, which returns a **session token** that must then be used for the following calls and may expire. These are not set up automatically yet. We plan to enhance this part so that Sachivji inspects the service itself and configures the connection, including its authentication steps. Until then, such a service may need a long-lived token if the provider offers one, or help from the development team. *[Support contact to be added when the support system is in place.]*
+
+### Example: Open-Meteo weather
+
+Open-Meteo is a free weather service that needs no account or key, so it is a good first API to try. Connect it in **Settings > External APIs > + Add connection**:
+
+| Field | Value |
+|---|---|
+| Connection name | `open-meteo` |
+| Base URL | `https://api.open-meteo.com` |
+| Authentication | **No auth** |
+| OpenAPI/Swagger spec URL | leave empty |
+
+Then ask in the chat, for example:
+
+> Using the open-meteo connection, show me the weather forecast for Pune for this week.
+
+The assistant works out the coordinates of Pune, makes the API call and answers with a table like this (the values are a real Open-Meteo forecast fetched on 15 October 2026; yours will differ):
+
+| Date | High (°C) | Low (°C) | Rain (mm) |
+|---|---|---|---|
+| 2026-10-15 | 33.0 | 22.5 | 0.00 |
+| 2026-10-16 | 33.4 | 21.9 | 0.00 |
+| 2026-10-17 | 33.7 | 22.0 | 0.00 |
+| 2026-10-18 | 33.6 | 22.7 | 0.00 |
+| 2026-10-19 | 33.8 | 23.5 | 0.00 |
+| 2026-10-20 | 34.2 | 23.8 | 0.00 |
+| 2026-10-21 | 33.9 | 23.3 | 0.00 |
+
+You can go on from there: "Draw these as a chart" (see [Charts, scripts and data analysis](08-working-with-files-and-documents.md#charts-scripts-and-data-analysis)) or "Draw these as Mermaid charts" (see [Diagrams](08-working-with-files-and-documents.md#diagrams)). The full walk-through, with the other questions to try, is in [Example 2](#example-2-a-web-api-open-meteo-weather) at the end of this page.
 
 ## MCP servers
 
@@ -85,6 +116,8 @@ A worked example (the Context7 documentation server) is below.
 | SMTP host, Port, TLS | Custom servers only: for example port 587 uses STARTTLS and port 465 uses TLS on connect. |
 
 You can set one account as the **default**. **Sending always asks for your approval**, and shows the message first.
+
+> **For now, use Gmail.** Gmail is the account type we recommend and support at this time, because it is the easiest to set up: you create an *app password* in your Google account (Google offers app passwords once 2-Step Verification is switched on), and paste it into Sachivji. Other providers, such as Outlook or Microsoft 365, usually need **OAuth 2** sign-in and other settings that are specific to each provider, and we will handle those case by case. A **Custom SMTP server** can work for a provider that accepts a plain user name and password, but it is not part of the tested set. If you need a specific provider, reach out to the development team. *[Support contact to be added when the support system is in place.]*
 
 ## Web search
 
