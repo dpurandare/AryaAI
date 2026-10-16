@@ -6,7 +6,7 @@ Installers are published on the project's **GitHub Releases** page:
 
 | System | File | Notes |
 |---|---|---|
-| Windows 11 (64-bit) | `Sachivji-Setup-<version>.exe` | Standard installer wizard |
+| Windows 11 (64-bit) | `Sachivji-Setup-<version>.zip` | A zip holding the installer; extract it first. Standard installer wizard |
 | macOS (Apple Silicon) | `Sachivji-<version>-arm64.dmg` | Intel Macs are not supported yet |
 | Linux (x64) | `Sachivji-<version>.AppImage` or `sachivji_<version>_amd64.deb` | Ubuntu 22.04 or newer (glibc 2.34 or newer) |
 
@@ -27,7 +27,7 @@ The installers of this release are **not code-signed yet**, so your system shows
 
 ## Installing on Windows
 
-1. Run the installer and approve the Windows prompt that asks to allow the change.
+1. Extract the downloaded `.zip` (some browsers block or warn about a bare unsigned `.exe`, so the installer is published zipped), then run the `Sachivji Setup <version>.exe` inside it and approve the Windows prompt that asks to allow the change.
 
 ![Windows User Account Control prompt for the Sachivji installer](images/installer-windows-uac.png)
 

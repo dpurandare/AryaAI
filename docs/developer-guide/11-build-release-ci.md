@@ -19,7 +19,7 @@ Packaging details that have bitten before: native modules and `sqlite-vec` are u
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `ci.yml` | **manual** (`workflow_dispatch`) | `npm ci`, typecheck, build, tests on macOS, Windows and Ubuntu. It no longer runs on push or pull request (a decision made so routine pushes do not start CI). |
-| `release.yml` | push of a `v*` tag | Builds all three platforms and publishes with `--publish always` as a **draft** GitHub release (`releaseType: draft`). |
+| `release.yml` | push of a `v*` tag | First creates one empty **draft** release (so the three platform jobs share it), then builds all three platforms. Each job runs its `predist:<os>` script first, because `release.yml` calls `electron-builder` directly and `predist` only runs automatically for `npm run dist:*`; without it the bundled runtimes are silently missing. Publishes with `--publish always`. The Windows job then re-zips the installer, uploads the `.zip` and deletes the bare `.exe` and its blockmap, because browsers block unsigned `.exe` downloads. |
 | `windows-dist.yml`, `linux-dist.yml`, `macos-dist.yml` | manual | Build one platform's installer and upload it as an **artifact** (kept 14 days) for testing on a clean machine, without a tag or release. |
 
 Artifact storage counts against the repository's quota, so delete old installer artifacts and run records when they pile up.
@@ -34,7 +34,7 @@ Semantic Versioning. While the major version is `0`, any release may include bre
 2. Run the relevant checks from `docs/manual_testing.md` on the platforms you can (and, for the bundled runtimes, a clean profile).
 3. Bump the version in `package.json`, `package-lock.json` and `src/main/mcp/client.ts`.
 4. Move the `docs/CHANGELOG.md` `[Unreleased]` entries under the new version heading, with the date.
-5. Commit, then tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. The tag triggers `release.yml`, which builds every platform and creates a **draft** release with the installers and the update metadata (`latest*.yml`).
+5. Commit, then tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. The tag triggers `release.yml`, which builds every platform and fills a **draft** release with the installers (Windows as a `.zip`) and the update metadata (`latest*.yml`).
 6. Test a downloaded installer, then publish the draft by hand. The update check reads the published release, so a draft never reaches users.
 
 Old unpublished draft releases from earlier versions may remain; do not publish them.
