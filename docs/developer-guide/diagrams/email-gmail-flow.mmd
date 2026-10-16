@@ -1,0 +1,21 @@
+sequenceDiagram
+  participant U as You
+  participant S as Settings form
+  participant M as Main process
+  participant G as Gmail (SMTP)
+  participant D as Stores
+  Note over U,D: Adding the account
+  U->>S: name, Gmail, address, app password
+  S->>M: email-connections:validate
+  M->>G: login only, no message sent
+  G-->>M: ok, or an error
+  M-->>S: ok, or the error text
+  S->>M: email-connections:save (only if ok)
+  M->>D: metadata to emailConnections setting, password to email:id
+  Note over U,D: Sending a message
+  U->>M: "email the report to ..."
+  M->>M: Email role calls send_email
+  M->>U: confirmation: account, recipients, subject, attachments
+  U->>M: approve
+  M->>D: read the password for email:id
+  M->>G: send (attachments read from the workspace)

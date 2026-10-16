@@ -64,7 +64,7 @@ Limits: main does not check whether a session already has a turn running (the re
 
 ![What lives in the database and what does not](images/architecture-persistence.png)
 
-One SQLite file opened with `better-sqlite3` plus `sqlite-vec` (`db/index.ts`). `db/schema.sql` is applied idempotently at start-up, with small in-code migrations for added columns. Foreign keys cascade from `sessions`, so deleting a chat deletes its messages, usage and embeddings.
+One SQLite file opened with `better-sqlite3` plus `sqlite-vec` (`db/index.ts`). `db/schema.sql` is applied idempotently at start-up, with small in-code migrations for added columns. Foreign keys cascade from `sessions`, so deleting a chat deletes its messages, usage and embedding bookkeeping. The vector table is a virtual table and is not reached by cascades, so `deleteSession` removes its rows explicitly. The memory design is in [Memory and search history](13-memory-and-search-history.md).
 
 - `messages.content` is a JSON `ContentBlock[]` (`text`, `thinking`, `tool_use`, `tool_result`, `image`, `warning`, `user_note`). A tool result that continues a turn is stored as a `user` message holding only `tool_result`/`image` blocks; transcript rendering and export treat it as a continuation, not a new turn.
 - `app_settings` is a key/value store for every setting, including the JSON lists of data, API, email and MCP connections.

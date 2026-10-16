@@ -17,7 +17,7 @@ Python is a prerequisite, and the workspace `venv` is created together with the 
 
 ## The bundled Ollama (`runtime/ollama-runtime.ts`)
 
-For local embeddings without a manual Ollama install.
+For local embeddings without a manual Ollama install (what the embeddings are used for: [Memory and search history](13-memory-and-search-history.md)).
 
 - **`OllamaRuntime.ensure()`** picks a free port (11434 first, then 11435 to 11438), spawns the bundled `ollama serve` with `OLLAMA_HOST=127.0.0.1:<port>` and `OLLAMA_MODELS=<userData>/ollama-models`, waits for it to be healthy, **pulls `nomic-embed-text`** (the model is not bundled; about 274 MB over the network once), and recreates it from `models/ModelFileNomicEmbed` (shipped as a resource) to set the model's real trained context (`num_ctx 2048`). Status is `unavailable`, `starting`, `pulling-model` (with progress), `ready` or `failed`, pushed as `OllamaStateChanged`.
 - It resolves to `unavailable` immediately when no bundled executable exists (a development run), so nothing changes there.

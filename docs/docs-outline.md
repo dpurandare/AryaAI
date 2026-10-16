@@ -45,6 +45,7 @@
 | `10-testing.md` | Unit tests (vitest), mocks for Electron, the manual test plan, routing eval, cache probe, role probe, verifying UI changes live (throwaway profile + CDP) | `test/`, `docs/manual_testing.md`, `scripts/*.mts` |
 | `11-build-release-ci.md` | `dist:*` scripts, per-platform bundles, `release.yml` and the on-demand dist workflows, manual-only CI, versioning (0.3.x patches / 0.4.0 features), changelog, signing status | `electron-builder.yml`, `.github/workflows/*`, `docs/CHANGELOG.md` |
 | `12-conventions.md` | Commit and TASKS conventions, enforce-in-code-not-prompts principle, cross-platform rules, security rules | `TASKS.md`, project memory notes |
+| `13-memory-and-search-history.md` | Added 2026-10-16 (Developer Guide review): how every message is chunked, embedded and stored in the vector index, backfill and failure handling, embedding-model changes and Rebuild index, `search_history` and its distance floor | `src/main/search-history`, `db/schema.sql`, `db/sessions.ts` |
 | `appendix-extension-checklists.md` | Step lists: add a provider, a tool, a role, a DB engine, a setting, an IPC channel | derived from the pages above |
 
 ## 3. Work plan

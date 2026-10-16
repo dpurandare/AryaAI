@@ -1,0 +1,12 @@
+%%{init: {'flowchart': {'nodeSpacing': 20, 'rankSpacing': 28, 'padding': 6}}}%%
+flowchart TB
+  Q["History Analyst calls<br/>search_history(query, limit)"] --> ST{{"getIndexState()"}}
+  ST -- "needs-rebuild" --> M1(["tell the user: click Rebuild index"])
+  ST -- "unavailable" --> M2(["tell the user: embedding provider<br/>not reachable, with the error"])
+  ST -- "empty" --> PROBE{{"can the query be embedded?"}}
+  PROBE -- no --> M2
+  PROBE -- yes --> M3(["index still building, try again"])
+  ST -- "ready" --> EMBQ["embed the query with the<br/>configured provider and model"]
+  EMBQ --> KNN["sqlite-vec: nearest chunks by cosine distance<br/>(fetch up to 4x limit, max 40)"]
+  KNN --> CUT["keep distance 0.5 or less<br/>(relevance 0.5 or more), best first, limit 5 (max 10)"]
+  CUT --> OUT(["excerpts of 800 chars at most,<br/>each tagged with session title,<br/>date and relevance, plus a<br/>'these are past statements' note"])

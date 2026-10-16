@@ -1,0 +1,10 @@
+%%{init: {'flowchart': {'nodeSpacing': 20, 'rankSpacing': 28, 'padding': 6}}}%%
+flowchart TB
+  CALL["db_execute_sql<br/>(connection, sql, params)"] --> CLS{{"sql-classifier:<br/>a mutation?<br/>(unsure counts as yes)"}}
+  CLS -- "no: read" --> RUN
+  CLS -- yes --> ASK{{"user confirms?"}}
+  ASK -- no --> DENY(["rejected, returned<br/>to the model"])
+  ASK -- yes --> RUN["driver (sqlite, postgres, mssql, mysql)<br/>params bound, never interpolated"]
+  RUN --> FMT{{"more than 200 rows?"}}
+  FMT -- no --> INLINE(["rows returned inline"])
+  FMT -- yes --> FILE(["file in the workspace; model gets<br/>count, 5-row sample and path"])

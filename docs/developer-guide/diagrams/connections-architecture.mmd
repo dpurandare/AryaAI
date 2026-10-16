@@ -1,0 +1,22 @@
+%%{init: {'flowchart': {'nodeSpacing': 22, 'rankSpacing': 36, 'padding': 6}}}%%
+flowchart LR
+  subgraph CREATE["Two ways to create a connection"]
+    FORM["Settings forms<br/>(IPC handlers)"]
+    CONF["Configurator role tools<br/>secrets typed in the confirm dialog,<br/>tested in validate()"]
+  end
+  subgraph STORE["Where it is kept"]
+    SEC[("secret store<br/>db:id  api:id<br/>mcp:id  email:id")]
+    META[("app_settings<br/>one JSON array per kind<br/>everything except the secret")]
+  end
+  subgraph USE["How it is used"]
+    TOOLS["Tools: db_*, api_*, send_email,<br/>mcp__server__tool<br/>read the secret at call time"]
+    CAP["Live counts of connections<br/>describe_capabilities,<br/>role availability"]
+  end
+  EXT["Databases, REST APIs,<br/>MCP servers, mail servers"]
+  FORM --> STORE
+  CONF --> STORE
+  META --> TOOLS
+  SEC --> TOOLS
+  META --> CAP
+  TOOLS --> EXT
+  META -. "export / import:<br/>metadata only, never secrets" .-> FILE["settings export file"]

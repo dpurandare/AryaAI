@@ -60,7 +60,7 @@ Passed to every call. The important members:
 | `deck/` | `pptx_start_deck`, `pptx_add_slide`, `pptx_compose_slide`, `pptx_save_deck` |
 | `web-search.ts`, `web-search-providers.ts`, `stock-images.ts`, `download-image.ts`, `research-notes.ts` | `web_search`, `parse_html`, `find_stock_images`, `download_image`, `save_research_note`, `read_research_notes` |
 | `show-media.ts`, `environment.ts` | `show_media`, `get_environment` |
-| `../search-history/tool.ts` | `search_history` |
+| `../search-history/tool.ts` | `search_history` (design: [Memory and search history](13-memory-and-search-history.md)) |
 
 The live, per-role list with descriptions is the generated [tool catalog](../user-guide/appendix-tool-catalog.md) in the User Guide.
 

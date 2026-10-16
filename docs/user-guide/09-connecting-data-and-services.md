@@ -119,6 +119,8 @@ You can set one account as the **default**. **Sending always asks for your appro
 
 > **For now, use Gmail.** Gmail is the account type we recommend and support at this time, because it is the easiest to set up: you create an *app password* in your Google account (Google offers app passwords once 2-Step Verification is switched on), and paste it into Sachivji. Other providers, such as Outlook or Microsoft 365, usually need **OAuth 2** sign-in and other settings that are specific to each provider, and we will handle those case by case. A **Custom SMTP server** can work for a provider that accepts a plain user name and password, but it is not part of the tested set. If you need a specific provider, reach out to the development team. *[Support contact to be added when the support system is in place.]*
 
+A worked example (a Gmail account) is below.
+
 ## Web search
 
 **Settings > Web Search Provider.** The Researcher's web search uses **Tavily** when you give it a key (real ranked results; a free account is enough to start) and otherwise falls back to **DuckDuckGo**, which only covers well-known topics. The Settings screen says which one is in use.
@@ -129,7 +131,7 @@ The embedding model that powers memory across chats is set in **Settings > Searc
 
 ## Worked examples
 
-Three examples, one for each kind, that you can follow exactly. Each shows the quick way (ask the assistant) and what to enter in Settings if you prefer the form.
+Four examples, one for each kind, that you can follow exactly. The first three show the quick way (ask the assistant) and what to enter in Settings if you prefer the form. Email accounts are added in Settings only.
 
 ### Example 1: a database (create a SQLite file and connect to it)
 
@@ -211,6 +213,50 @@ The local setup needs a network connection the first time (it downloads the serv
 > Using Context7, find documentation on AppleScript.
 
 Name the server in your request ("using Context7") so the assistant knows to use it instead of searching the web. The **MCP Operator** specialist does the work. Because you wrote a clear one-line description, the assistant also picks the server by itself when a question is about library documentation.
+
+### Example 4: an email account (Gmail)
+
+You will add a Gmail account, then ask the assistant to send a test message to yourself. Unlike a database or a web API, the assistant cannot create an email account for you. You add it in **Settings**.
+
+**1. Create an app password in Google.** An app password is a 16-character password that Google makes for one app, so Sachivji never sees your real Gmail password. You need your Google account open in a browser.
+
+1. **Switch on 2-Step Verification** if it is not on yet: <https://myaccount.google.com/signinoptions/two-step-verification> (Google's instructions: <https://support.google.com/accounts/answer/185839>).
+2. **Create the app password** at <https://myaccount.google.com/apppasswords> (Google's instructions: <https://support.google.com/accounts/answer/185833>). Sign in if asked, name it "Sachivji" and create it.
+3. **Copy the password** Google shows. It appears as four groups of four letters, and you see it only once.
+
+Google says you may not see the app password option if 2-Step Verification is set up with security keys only, if you are signed in to a **work, school or other organisation account**, or if the account uses Google's **Advanced Protection**. Such an account cannot be used with Sachivji. Also, **when you change your Google account password, Google revokes your app passwords**, so Sachivji's sign-in will start failing and you must create a new one.
+
+> **These links can change.** They were checked on 2026-10-16. Google owns these pages and may move, rename or remove them whenever it likes, so they are not permanent. If a link does not work, search the Google Account Help for "app passwords" or "2-Step Verification".
+
+**2. Add the account in Sachivji.** Open **Settings > Email accounts**, click **+ Add email account** and fill in:
+
+| Field | What to enter |
+|---|---|
+| Display name | `My Gmail` (any name you will recognise) |
+| Provider | **Gmail** |
+| Email address | Your full Gmail address |
+| Password / app password | The app password from step 1 |
+
+Click **Add account**. The button says "Signing in..." for a moment while Sachivji checks the password with Gmail. **No message is sent during this check.** If the sign-in works, the account appears in the list. If it fails, the form shows Google's message and nothing is saved.
+
+If you add only one account, it is the default automatically. With more than one, click **Set as default** next to the one to use when you do not name an account.
+
+**3. Send a test message.** In a chat, ask:
+
+> Send an email to my own address saying "Hello from Sachivji", with the subject "Test".
+
+The **Email** specialist prepares the message and Sachivji shows a confirmation with the account it will send from, the recipients, the subject and any attachments. **Nothing is sent until you approve.** After you approve, check your inbox.
+
+To send a file, name it in your request, for example "email report.docx to ..." The file must be in your workspace.
+
+**If something goes wrong**
+
+- **A sign-in error mentioning an "application-specific password":** you entered your normal Gmail password, or 2-Step Verification is off. Create an app password and use that.
+- **It worked before and now fails:** you probably changed your Google password, which revokes every app password. Create a new one and edit the account in Settings.
+- **"Username and Password not accepted":** check the address, and create a fresh app password. If you pasted it with spaces, try it without them.
+- **The assistant says the message was sent but it did not arrive:** look in the recipient's spam folder, and in the **Sent** folder of your Gmail account.
+
+**To remove access.** Click **Remove** next to the account in Settings. That deletes the stored password from your computer. To make the app password useless everywhere, also remove it in your Google account's app password list (<https://myaccount.google.com/apppasswords>, then **Remove** next to the app).
 
 ## Tips and safety
 

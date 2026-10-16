@@ -1,0 +1,15 @@
+%%{init: {'flowchart': {'nodeSpacing': 30, 'rankSpacing': 36, 'padding': 6}}}%%
+flowchart TB
+  CFG[("config + secret<br/>mcp/config.ts, mcp:id")]
+  MGR["manager.ts<br/>connectAll at start-up, reconnect,<br/>disconnect (all of them on quit)"]
+  CLI["client.ts<br/>stdio (bundled Node on PATH) or HTTP"]
+  REG[("ToolRegistry<br/>mcp__server__tool")]
+  SRV["MCP server"]
+  OP["MCP Operator role<br/>the only owner of MCP tools"]
+  CFG --> MGR
+  MGR -- connects --> CLI
+  MGR -- "registers / removes" --> REG
+  CLI <--> SRV
+  REG --> OP
+  OP -- "calls: ask first unless readOnlyHint" --> CLI
+  SRV -. "tool list: descriptions capped,<br/>labelled third-party" .-> MGR

@@ -4,6 +4,8 @@ Four kinds of **connection** let the agents reach outside the app: databases, ex
 
 ## The common pattern
 
+![How a connection is created, stored and used](images/connections-architecture.png)
+
 - **Metadata** (everything except the secret) is one **JSON array under a single settings key** in the `app_settings` table, read and written through the stores: `data/connections.ts` (databases), `data/api-connections.ts`, `data/email-connections.ts`, `mcp/config.ts`.
 - The **secret** (a database password, an API key, a bearer token, an app password) goes through the secret store (`security/keychain.ts`) under a prefixed key: `db:<id>`, `api:<id>`, `mcp:<id>`, `email:<id>`. It is looked up fresh when needed and **never persisted together with the metadata**.
 - A connection has a generated `id`, a user-chosen `name` (what the user and the model call it), and engine- or type-specific fields.
@@ -16,6 +18,8 @@ Four kinds of **connection** let the agents reach outside the app: databases, ex
 **Drivers** (`tools/db/`). A driver implements `DbDriver`: `engine`, `introspectSchema()`, `execute(sql, params?)` and `close()`. `driver-factory.ts` builds one from a saved connection: `sqlite-driver.ts` (`better-sqlite3`), `postgres-driver.ts` (`pg`), `mssql-driver.ts` (`mssql`), `mysql-driver.ts` (`mysql2`). Parameters are always bound positionally (`?` or `$1..$n`), never interpolated into the SQL.
 
 **Tools:** `db_list_connections`, `db_introspect_schema`, `db_execute_sql`, `db_list_rows`, `db_count_rows`, `db_find_rows` (`crud.ts`: mechanical lookups with validated identifiers, `identifier.ts`), and `db_save_query`.
+
+![The path of one db_execute_sql call](images/db-query-path.png)
 
 **Is this SQL a mutation?** `db_execute_sql` declares `mutates` as a function of the SQL, using `sql-classifier.ts`. It is deliberately conservative and defaults to "mutating" when unsure. It catches writable CTEs (`WITH x AS (DELETE ... RETURNING *)`) and statement stacking (`SELECT 1; DROP TABLE users`), which a leading-keyword check would miss. A read runs freely; anything else asks for confirmation.
 
@@ -35,6 +39,8 @@ Four kinds of **connection** let the agents reach outside the app: databases, ex
 
 ## MCP servers
 
+![MCP server lifecycle: config, manager, client, registry and the MCP Operator](images/mcp-lifecycle.png)
+
 - **Config** (`mcp/config.ts`): metadata `{ id, name, transport, command?, args?, env?, url?, description? }`. The bearer token (HTTP only) is in the secret store as `mcp:<id>`. The user-written one-line `description` is capped (`MCP_SERVER_DESCRIPTION_MAX`, 200 in the UI).
 - **Client** (`mcp/client.ts`): built on `@modelcontextprotocol/sdk`. `buildTransport` creates a `StdioClientTransport` (a local program) or a `StreamableHTTPClientTransport` (a remote server). For stdio, the bundled Node directory is **prepended to `PATH`**, so a bare `npx`, `npm` or `node` command resolves to the Node that ships with the installer (a clean machine has none; most MCP servers launch through `npx`).
 - **Manager** (`mcp/manager.ts`): owns live state. `connectAll`, `reconnect`, `disconnect`, `disconnectAll` and `getStatus`. It registers each discovered tool in the **same `ToolRegistry`** as the built-ins, named `mcp__<server>__<tool>`, with `tool.mcp = { server, serverDescription }`, and remembers which registry entries belong to which server so they can be removed on reconnect or delete. `connectAll` runs at start-up without blocking; `before-quit` disconnects every server so stdio children are not orphaned.
@@ -48,6 +54,54 @@ Four kinds of **connection** let the agents reach outside the app: databases, ex
 - **Transport** (`tools/email/transport.ts`): builds the nodemailer transporter.
 - **Tools:** `list_email_connections` and `send_email` (`mutates: true`: the confirmation names the actual sending account, recipients, subject and attachments). Attachments are workspace-relative paths.
 - **Role:** the Email specialist is `isolated` with a small round budget: a fully specified send needs only the brief it is given.
+
+### Worked example: configuring Gmail
+
+![Adding a Gmail account, then sending with it](images/email-gmail-flow.png)
+
+Gmail is the supported account type. The app signs in with an **app password** (a 16-character password Google generates for one app), not the account's normal password.
+
+**1. Prepare the Google account.**
+- Turn on 2-Step Verification: <https://myaccount.google.com/signinoptions/two-step-verification> (help: <https://support.google.com/accounts/answer/185839>).
+- Create the app password: <https://myaccount.google.com/apppasswords> (help: <https://support.google.com/accounts/answer/185833>). Google shows it once, in four groups of four letters.
+- Per Google's help page, the option may be missing when 2-Step Verification uses security keys only, for a work, school or other organisation account, or under Advanced Protection; those accounts cannot be used. Changing the Google account password revokes every app password. Google also calls app passwords "not recommended" where "Sign in with Google" (OAuth) is available, which this app does not implement.
+- The links were checked on 2026-10-16. They belong to Google, who can change or remove them at any time, so treat them as pointers, not permanent addresses.
+
+**2. Add the account in the app.** Open **Settings > Email accounts** and click **+ Add email account**:
+
+| Field | What to enter |
+|---|---|
+| Display name | Any name you will recognise, for example `Work Gmail`. The assistant addresses the account by this name. |
+| Provider | **Gmail** |
+| Email address | The full Gmail address. |
+| Password / app password | The app password from step 1. |
+
+Click **Add account**. The button reads "Signing in..." while the app makes a **real login to Gmail without sending a message** (`verifyEmailConnection`, nodemailer's `transport.verify()`). If the login fails, the form shows Google's own error text and **nothing is saved**. If it works, the account is saved.
+
+**3. What gets stored.** The metadata goes into the `emailConnections` setting. The password goes into the secret store under `email:<id>`, never into the database:
+
+```json
+{ "id": "7f0c…", "name": "Work Gmail", "emailAddress": "you@gmail.com", "provider": "gmail", "hasSecret": true }
+```
+
+`host`, `port` and `secure` are stored only for a `custom` account. For Gmail the transport is just `nodemailer.createTransport({ service: 'gmail', auth })`; nodemailer supplies the host, port and TLS.
+
+**4. Default account.** With exactly one account, it is the default automatically. With two or more, click **Set as default** next to one in the list, otherwise `send_email` needs the account named (the assistant then calls `list_email_connections` and asks).
+
+**5. Try it.** In a chat, ask: "Send a test email to myself saying hello." The Email specialist calls `send_email`. A confirmation panel shows the sending account, the recipients, the subject and any attachments before anything is sent. Approve it, and the message goes out through Gmail. Attachments must be files inside the workspace.
+
+**If it fails**
+
+| What you see | Likely cause |
+|---|---|
+| A login error mentioning an *application-specific password* | The normal account password was entered, or 2-Step Verification is off. Create an app password. |
+| It worked, then every send fails with a login error | The Google account password was changed, which revokes all app passwords. Create a new one and edit the account. |
+| "Username and Password not accepted" | A typo, a revoked app password, or an account where app passwords are disabled. Create a new app password and try pasting it without the spaces. |
+| The send works but nothing arrives | Check the recipient's spam folder and the account's Sent folder. The app only confirms that Gmail accepted the message. |
+
+These error texts are Google's, passed through by nodemailer, so the exact wording can change.
+
+**Not Gmail.** There is deliberately no Outlook or Microsoft 365 option: Microsoft has retired SMTP password sign-in for those accounts (`tools/email/transport.ts` records the live test), and a real option needs OAuth sign-in, which is not built yet (TASKS #79). A **Custom SMTP server** (host, port, "TLS on connect") works for a provider that accepts a plain user name and password, but only Gmail is in the tested set.
 
 ## Adding another connection type
 

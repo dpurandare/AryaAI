@@ -37,7 +37,7 @@ Two rules adapters follow:
 |---|---|
 | `id`, `displayName` | The stable id stored in settings, and the name shown in the UI. |
 | `requiresApiKey` | Whether the provider needs a key stored for it before it can be used. Only local Ollama does not. |
-| `supportsEmbeddings` | Whether the provider can **also** produce *embeddings* (a vector of numbers for a piece of text), besides answering chat requests. Embeddings power the memory index behind `search_history`; Settings > Search history only offers providers where this is true. It has nothing to do with chat quality. |
+| `supportsEmbeddings` | Whether the provider can **also** produce *embeddings* (a vector of numbers for a piece of text), besides answering chat requests. Embeddings power the memory index behind `search_history` (see [Memory and search history](13-memory-and-search-history.md)); Settings > Search history only offers providers where this is true. It has nothing to do with chat quality. |
 | `create(apiKey?, options?)` | Builds the adapter. `ProviderOptions` (today only `promptCaching`) is read from Settings by the caller. |
 
 `createDefaultProviderRegistry()` in `setup.ts` registers the built-ins:

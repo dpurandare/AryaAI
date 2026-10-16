@@ -1,0 +1,14 @@
+%%{init: {'flowchart': {'nodeSpacing': 18, 'rankSpacing': 24, 'padding': 6}}}%%
+flowchart TB
+  NEW(["message saved"]) --> ENQ["enqueueMessage<br/>(in-process queue)"]
+  START(["app start, or<br/>Rebuild index"]) --> BF["runBackfill: 20 at a time,<br/>500 ms apart, oldest first"]
+  ENQ --> EXT["extract text: text blocks and<br/>tool_result text only"]
+  BF --> EXT
+  EXT --> SKIP{{"empty, or over<br/>50,000 chars?"}}
+  SKIP -- yes --> MARK(["marked handled,<br/>no vector"])
+  SKIP -- no --> CHUNK["chunkText: split on blank lines,<br/>no chunk over 4,000 chars"]
+  CHUNK --> CFG{{"same provider + model<br/>as the index?"}}
+  CFG -- no --> WAIT(["left until<br/>Rebuild index"])
+  CFG -- yes --> EMB["embed(chunks, model)"]
+  EMB -- ok --> STORE(["store: message_embeddings,<br/>message_chunks,<br/>message_chunk_vectors"])
+  EMB -- error --> FAIL(["error remembered for Settings;<br/>backfill retries, gives up after 3"])

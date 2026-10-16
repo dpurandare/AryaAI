@@ -18,5 +18,6 @@ Run `node scripts/export-docs.mjs developer --format pdf` (or `--format md`, or 
 | [10 Testing](10-testing.md) | The test layers, the mock provider, evals, manual plan |
 | [11 Build, release and CI](11-build-release-ci.md) | Packaging, workflows, versioning and releasing |
 | [12 Conventions](12-conventions.md) | Principles, comments, security, commits, TASKS.md, docs |
+| [13 Memory and search history](13-memory-and-search-history.md) | Embedding every message, the vector index, backfill, `search_history`, model changes |
 | [Appendix: Extension checklists](appendix-extension-checklists.md) | Step lists for providers, tools, roles, engines, settings, IPC |
 
