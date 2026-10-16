@@ -9,7 +9,28 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    name: create release
+    runs-on: ubuntu-latest
+    steps:
+      # electron-builder's GitHub publisher looks for an existing release matching the
+      # tag and only creates one itself if it finds none. Fine with a single publisher,
+      # but the three platform jobs below run `--publish always` in parallel — found
+      # live on a real tag push (v0.3.1): two of them hit the "no release yet" branch
+      # within the same second and each created their own release, splitting the 9
+      # expected assets across two separate drafts instead of one. Creating the (empty)
+      # draft here first, before any platform job starts, means every platform job's
+      # lookup finds it already exists and just uploads its assets to it.
+      - name: Ensure the release exists for this tag
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --title "${GITHUB_REF_NAME#v}"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   release:
+    needs: create-release
     name: release (${{ matrix.os }})
     strategy:
       fail-fast: false
