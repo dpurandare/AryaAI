@@ -4,7 +4,7 @@
 //
 //   node scripts/export-docs.mjs user|developer [--format md|pdf] [--out <file>] [--allow-missing-images]
 //
-// The PDF opens with a cover page (the app icon from build/icons, the guide name, version and date), then the
+// The PDF opens with a cover page (the splash illustration from docs/assets and the app icon from build/icons, the guide name, version and date), then the
 // contents, the chapters, and a closing "Index" chapter that is a placeholder for now. The Markdown output has a
 // plain title block, the contents, the chapters and the same Index placeholder.
 //
@@ -157,7 +157,8 @@ async function toHtml(markdown, title, coverHtml = '') {
     body { font: 11pt/1.5 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color: #1c1c1c; max-width: 46rem; margin: 0 auto; }
     h1 { font-size: 22pt; margin-top: 2.2em; page-break-before: always; border-bottom: 1px solid #ccc; padding-bottom: .2em; }
     .cover { page-break-after: always; text-align: center; padding-top: 20vh; }
-    .cover img { width: 230px; height: 230px; border-radius: 40px; box-shadow: 0 6px 24px rgba(0,0,0,.18); }
+    .cover img.illustration { width: 260px; height: 260px; border-radius: 28px; box-shadow: 0 6px 24px rgba(0,0,0,.18); }
+    .cover img.icon { width: 44px; height: 44px; border-radius: 10px; vertical-align: middle; margin-right: .6rem; }
     .cover .product { font-size: 40pt; font-weight: 700; margin: 1.2rem 0 .2rem; letter-spacing: -.5px; }
     .cover .guide { font-size: 20pt; color: #444; margin: 0 0 .4rem; }
     .cover .tagline { font-size: 12pt; color: #666; margin: 0 0 2.4rem; }
@@ -175,10 +176,10 @@ async function toHtml(markdown, title, coverHtml = '') {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${css}</style></head><body>${coverHtml}${marked.parse(markdown)}</body></html>`
 }
 
-/** The PDF's front page: the app icon, the product and guide name, the tagline, the version and the date. */
-export function coverHtml({ productName, guideName, tagline, version, date, iconDataUri }) {
-  return `<section class="cover">${iconDataUri ? `<img src="${iconDataUri}" alt="${productName} icon">` : ''}
-<p class="product">${productName}</p><p class="guide">${guideName}</p><p class="tagline">${tagline}</p>
+/** The PDF's front page: the splash illustration, then the small app icon beside the product name, the guide name, the tagline, the version and the date. */
+export function coverHtml({ productName, guideName, tagline, version, date, iconDataUri, illustrationDataUri = '' }) {
+  return `<section class="cover">${illustrationDataUri ? `<img class="illustration" src="${illustrationDataUri}" alt="${productName}">` : ''}
+<p class="product">${iconDataUri ? `<img class="icon" src="${iconDataUri}" alt="${productName} icon">` : ''}${productName}</p><p class="guide">${guideName}</p><p class="tagline">${tagline}</p>
 <p class="version">Version ${version}</p><p class="date">${date}</p></section>`
 }
 
@@ -239,13 +240,16 @@ async function main() {
   }
   const markdown = buildMarkdown(pages, guide.title, version, date, { titleBlock: false })
   const iconPath = join(root, 'build', 'icons', '512x512.png')
+  const illustrationPath = join(root, 'docs', 'assets', 'cover-illustration.png')
+  const dataUri = (path) => (existsSync(path) ? `data:image/png;base64,${readFileSync(path).toString('base64')}` : '')
   const cover = coverHtml({
     productName: 'Sachivji',
     guideName: guide.title.replace(/^Sachivji\s+/, ''),
     tagline: 'Your local-first, multi-agent AI companion.',
     version,
     date,
-    iconDataUri: existsSync(iconPath) ? `data:image/png;base64,${readFileSync(iconPath).toString('base64')}` : ''
+    iconDataUri: dataUri(iconPath),
+    illustrationDataUri: dataUri(illustrationPath)
   })
   const work = mkdtempSync(join(tmpdir(), 'sachiv-docs-'))
   const html = join(work, 'guide.html')
