@@ -4,17 +4,15 @@ Repo: https://github.com/dpurandare/AryaAI
 
 ## **1. Download the installer**
 
-Download from this Actions run:
+Download from the latest release:
 
-https://github.com/dpurandare/AryaAI/actions/runs/38258915721
+https://github.com/dpurandare/AryaAI/releases/latest
 
-You need to be logged in to github.com to download anything — register/log in before you click the link.
-
-> **Note:** build artifacts expire 14 days after the run finishes. If this link stops working, ask for a fresh build link rather than reusing an old one.
+Under **Assets**, download the `Sachivji-Setup-<version>.zip` file (not a bare `.exe` — GitHub Releases ships the installer zipped since some browsers block/warn on a raw unsigned `.exe` download).
 
 ## **2. Extract and run**
 
-Extract the `sachivji-windows-installer` zip and run **"Sachivji Setup 0.2.2"**.
+Extract the zip and run the `Sachivji Setup <version>.exe` inside it.
 
 You'll see a **"Windows protected your PC"** warning — click **More info**, then **Run anyway**. This is expected: the installer isn't code-signed yet (that will happen eventually).
 
@@ -140,7 +138,7 @@ This may not be needed, however for sake of completion — here's the full clean
 3. Delete `%APPDATA%\Sachivji` entirely — this clears `onboardingCompleted`, provider keys, sessions, and the pulled embedding model, so onboarding (including the Local Embeddings step) runs from scratch.
 4. Delete `%USERPROFILE%\.sachivji\.env` if it exists — only relevant if you ever switched to file-mode secret storage; skip if you never touched that setting.
 5. Delete `Documents\Sachivji Workspace` if you also want a fresh venv/workspace test (adds time — it has to recreate the Python venv). Skip this if you just want fresh onboarding and don't care about re-testing venv creation.
-6. Reinstall the build from run [38258915721](https://github.com/dpurandare/AryaAI/actions/runs/38258915721) (`sachivji-windows-installer` artifact).
+6. Reinstall the build from the [latest release](https://github.com/dpurandare/AryaAI/releases/latest) (`Sachivji-Setup-<version>.zip` asset).
 
 After reinstall, verify: onboarding runs from scratch with a real network pull for Local Embeddings, and the provider list + first session show up immediately post-onboarding with no restart needed.
 
@@ -150,7 +148,7 @@ Use this when you just want the newest build and want to keep your settings, API
 
 1. Quit the app (check Task Manager as above — no orphan `Sachivji.exe`/`ollama.exe`/`python.exe`/`node.exe` processes left running).
 2. Do **not** delete `%APPDATA%\Sachivji`, `%USERPROFILE%\.sachivji`, or `Documents\Sachivji Workspace` — these hold your provider keys, sessions, embedding model, and Python venv/workspace, and are what this path is meant to preserve.
-3. Download and run the new installer `.exe` directly (no need to uninstall the old version first — the NSIS installer detects the existing install at `\Program Files\Sachivji` and overwrites it in place; the uninstaller/installer here is not configured to touch `%APPDATA%`, so nothing in it is removed either way).
+3. Download the new release's `Sachivji-Setup-<version>.zip` from the [latest release](https://github.com/dpurandare/AryaAI/releases/latest), extract it, and run the installer `.exe` inside (no need to uninstall the old version first — the NSIS installer detects the existing install at `\Program Files\Sachivji` and overwrites it in place; the uninstaller/installer here is not configured to touch `%APPDATA%`, so nothing in it is removed either way).
 4. Launch the app as usual. Your API keys, embedding provider/model choice, search provider, database/MCP/API connections, and chat sessions should all still be there — no onboarding should run again.
 
 ---

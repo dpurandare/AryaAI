@@ -17,10 +17,13 @@ jobs:
         include:
           - os: macos-latest
             flag: --mac
+            predist: predist:mac
           - os: windows-latest
             flag: --win
+            predist: predist:win
           - os: ubuntu-latest
             flag: --linux
+            predist: predist:linux
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -32,8 +35,38 @@ jobs:
 
       - run: npm ci
 
+      # Fetches the bundled Python/Ollama/Node runtime for this platform into resources/
+      # (TASKS #202/#207/#208). Calling electron-builder directly (below) rather than via
+      # `npm run dist:*` skips npm's automatic pre<script> lifecycle hook, so this must be
+      # run explicitly — found live when v0.3.0's published installers on all three
+      # platforms turned out to silently lack every bundled runtime (electron-builder logs
+      # a "file source doesn't exist" warning for a missing extraResources entry, not a
+      # build failure, so the gap shipped unnoticed).
+      - run: npm run ${{ matrix.predist }}
+
       - run: npm run build
 
       - run: npx electron-builder ${{ matrix.flag }} --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Windows only: GitHub's public Release page serves the raw NSIS .exe directly, and
+      # both Edge and Chrome's download-reputation checks now block or heavily warn on a
+      # bare, unsigned .exe from a low-traffic repo (found live on v0.3.0 — the installer
+      # that worked fine as a zipped Actions artifact in #202's testing couldn't be
+      # downloaded at all from the published Release). Re-zip the already-published
+      # installer and swap it in as the asset so the download link is a .zip; the NSIS
+      # wizard inside is unchanged — same install experience documented in
+      # windows_install.md, just one extra extract step before running Setup.exe.
+      - name: Re-package the Windows installer as a zip
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem release -Filter "Sachivji-Setup-*.exe" | Select-Object -First 1
+          $zipPath = Join-Path release ($exe.BaseName + ".zip")
+          Compress-Archive -Path $exe.FullName -DestinationPath $zipPath
+          gh release upload "${{ github.ref_name }}" $zipPath --clobber
+          gh release delete-asset "${{ github.ref_name }}" $exe.Name --yes
+          gh release delete-asset "${{ github.ref_name }}" "$($exe.Name).blockmap" --yes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
