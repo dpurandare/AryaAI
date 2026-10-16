@@ -62,11 +62,18 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $exe = Get-ChildItem release -Filter "Sachivji-Setup-*.exe" | Select-Object -First 1
-          $zipPath = Join-Path release ($exe.BaseName + ".zip")
+          # electron-builder's NSIS output on disk keeps the space in "Sachivji Setup
+          # <version>.exe" (confirmed in a real build log: `file=release\Sachivji Setup
+          # 0.3.1.exe`) but sanitizes it to a hyphen ("Sachivji-Setup-<version>.exe") for
+          # the GitHub release asset name it just uploaded — the two names differ and both
+          # matter here, one to find the local file, the other to delete the right asset.
+          $exe = Get-ChildItem release -Filter "Sachivji Setup *.exe" | Select-Object -First 1
+          $ghAssetName = $exe.Name -replace ' ', '-'
+          $zipName = $ghAssetName -replace '\.exe$', '.zip'
+          $zipPath = Join-Path release $zipName
           Compress-Archive -Path $exe.FullName -DestinationPath $zipPath
           gh release upload "${{ github.ref_name }}" $zipPath --clobber
-          gh release delete-asset "${{ github.ref_name }}" $exe.Name --yes
-          gh release delete-asset "${{ github.ref_name }}" "$($exe.Name).blockmap" --yes
+          gh release delete-asset "${{ github.ref_name }}" $ghAssetName --yes
+          gh release delete-asset "${{ github.ref_name }}" "$ghAssetName.blockmap" --yes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
