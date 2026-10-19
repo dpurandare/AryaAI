@@ -6,7 +6,7 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 
 - **Release 0.3.1 is stable.** It is installed and running well on the sponsor's Windows 11 AMD64 machine (since 2026-10-18), with Anthropic, OpenAI and Tavily keys. The sponsor will read the User Guide and explore the application before giving feedback. That feedback will add items to this plan.
 - **Target for 0.4.0:** no fixed date; two weeks is the goal (Deepak, 2026-10-19).
-- **Anthropic and Claude work is finished** (Deepak, 2026-10-19). Caching was verified on the real API on 2026-10-10, and items #120, #121 and #137 are closed. One question is still open: #159 (extended thinking) has no code in the repo, so we need to know whether it was done elsewhere, dropped, or is still wanted.
+- **Anthropic and Claude work is finished** (Deepak, 2026-10-19). Caching was verified on the real API on 2026-10-10, and items #120, #121 and #137 are closed. Extended thinking (#159) is not done in the code; Deepak asked on 2026-10-19 to keep it as a work item, proposed for 0.4.0.
 - **Who uses it:** the sponsor is the main user and uses cloud models. That lowers the priority of items found only on local models, and raises the priority of cloud-model quality and the Windows experience.
 
 ## Buckets
@@ -64,6 +64,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | Date | Point | Items | Decision | Reason |
 |---|---|---|---|---|
 | 2026-10-19 | Setup | #121, #137, #120 | Closed | Deepak: all the Anthropic and Claude work that was planned is done. The stale 'blocked / carried forward' status was removed from TASKS.md, the triage and the manual-test report. |
+| 2026-10-19 | P6 | #159 | Kept as a work item; proposed 0.4.0 | Deepak: add Anthropic extended thinking wherever it fits. Not built yet, no Anthropic code for it; to be confirmed when P6 is discussed. |
 
 ## Closed during triage setup
 
@@ -126,7 +127,7 @@ The point names are only grouping labels I chose so related items are discussed 
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #159 | Anthropic extended thinking support | feature | 0.4.0 | M | Unblocked, but the code has no extended-thinking support. **Status question for Deepak: done elsewhere, dropped, or still wanted?** | open |
+| #159 | Anthropic extended thinking support | feature | 0.4.0 | M | Added as a work item by Deepak 2026-10-19. The code has no extended-thinking support; the sponsor uses Anthropic and the key is available, so it can be verified live. | open |
 | #134 | Declare vite-node as a pinned devDependency | chore | 0.3.2 | S | The eval scripts depend on whatever npx downloads today. | open |
 | #122 | Slim router hot-core review (drop read_file, list_directory?) | enhancement | Parked | S | The slim router is experimental and off by default; revisit with #123-#127. | open |
 | #135 | Slim/full router on provider tiers with hard limits (Groq, Mistral findings) | enhancement | Parked | M | Groq-specific; the sponsor does not use Groq. | open |
