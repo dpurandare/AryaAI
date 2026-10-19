@@ -58,7 +58,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | P4 Files and workspace | #204, #228 (new), #229 (new), #203, #169 | **DONE 2026-10-19** |
 | P5 Documents | #196, #183, #197, #198, #85 | **DONE 2026-10-19: #196 in 0.4.0; #183, #197, #198, #85 in 0.5.0** |
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | **DONE 2026-10-19: #159 in 0.4.0; #134 in 0.3.2; #122, #135, #136 parked** |
-| P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | open |
+| P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | **recommendations written 2026-10-19; presented, awaiting Deepak** |
 | P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | open |
 | P9 Integrations and media | #151, #160, #217, #76, #79, #195 | open |
 | P10 Documentation | #92 | open |
@@ -125,7 +125,11 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-None. P6 answered 2026-10-19; P7 is next.
+**P7 (details in "P7: item details and recommendations" below).**
+1. **#124, #125, #127** (delegation chain): all 0.5.0 (detail), #125 designed first?
+2. **#123 + #205:** merged into #123, 0.5.0 (detail)?
+3. **#128, #132, #200:** one roles-and-skills design, 0.5.0 (detail)?
+4. **#49:** 0.5.0 (detail)?
 
 ## Item details and recommendations
 
@@ -550,6 +554,30 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 **What it is.** Run four unrun slim cases, capture the raw Groq tool-validation error, and probe Groq's replay behaviour, on a fresh day of Groq quota (about 150K of 200K daily tokens).
 
 **Recommendation (Claude): Parked.** It exists only to feed #135(a); no Groq user, low value now.
+
+### P7: item details and recommendations (written 2026-10-19; awaiting Deepak)
+
+**Context.** All nine items are architecture work: they change how roles delegate, what each role sees, and how tools and roles are loaded. None is a defect, and none is urgent for a cloud-model user on 0.3.1. Group A is the delegation chain (#124, #125, #127). Group B is MCP loading (#123, #205). Group C is roles and skills (#128, #132, #200). #49 stands alone.
+
+#### Group A: delegation chain
+
+**#124: nested delegation.** Today delegation is one level: a specialist's nested `runLoop` gets no delegate tools. Goal: let a specialist delegate, so the PowerPoint flow (`pptx_start_deck`, `pptx_add_slide`, `pptx_save_deck`, the only router-only tools) can move under Document Creator and out of the router prompt. Risks: loops and runaway cost (needs a depth limit), repeated history, and it needs evaluation with real models. **Recommendation (Claude): 0.5.0 (detail), size L.**
+
+**#125: context scoping per hop, and the root cause of #105.** Non-isolated roles receive the whole parent conversation, so N hops resend the history N times, and nested specialist messages are saved interleaved in the parent's stream and repaired only at replay (the cause of the dangling tool_use bug #105). **Recommendation: 0.5.0 (detail), size L.** Design first; it must precede #124, because nesting multiplies the problem.
+
+**#127: router prompt diet** (about 860 down to about 350 tokens). What remains is mostly the PowerPoint flow, blocked on #124, and rule text that cannot be validated without a model. **Recommendation: 0.5.0 (detail), size M.** Falls out of #124.
+
+#### Group B: MCP loading
+
+**#123: MCP Operator lazy schema loading and per-server toggles; #205: design revisit of the same problem.** Every tool of a connected MCP server is put into the MCP Operator's context with its full schema (one 144-tool server dominated the prompt). Intended design: name plus one line until first use, full schema loaded on demand; optional pinning to one server; an opt-in toggle for a server's handshake instructions. Questions: how a deferred tool is loaded, how it interacts with prompt caching (loading tools mid-turn changes the prefix), whether providers offer tool search, the threshold at which it matters. Measure with the largest real server first. **Recommendation: 0.5.0 (detail), size M-L, merge #205 into #123** (one design, one item).
+
+#### Group C: roles and skills
+
+**#128: skills (agentskills.io style) for roles.** Deferred: the largest roles are only about 2 to 2.6K tokens, not heavy enough to justify a skill mechanism. Advice already given: stage it, prove value with plain role files first, then a SKILL.md loader scoped to roles. **#132: user-defined role follow-ups** (a `role_create` tool with confirmation, a change event to the renderer, routing evaluation for user roles, import and sharing with hash approval). **#200: expand user-defined roles** ("concept proven; scope to design"). **Recommendation: 0.5.0 (detail), sizes L, M-L, L; one "roles and skills" design** covering what a user-defined role can do, how it is shared, and whether skills ride on it. Detail only; no building before the design.
+
+#### #49: rolling summarization of earlier turns
+
+Long sessions currently rely on trimming and on `search_history` to recover older content. A rolling summary would keep older turns as a short summary. Needs its own trigger policy (when, by which model, at whose cost), and care with caching and with embedding consistency. **Recommendation: 0.5.0 (detail), size L**; the existing trimming plus #170 (0.3.2) cover the worst cases meanwhile.
 
 ## Closed during triage setup
 
