@@ -57,7 +57,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | P3 Everyday UX and trust | #215, #218, #227 (new), #216, #193, #168, #194, #189, #190 | **DONE 2026-10-19** |
 | P4 Files and workspace | #204, #228 (new), #229 (new), #203, #169 | **DONE 2026-10-19** |
 | P5 Documents | #196, #183, #197, #198, #85 | **DONE 2026-10-19: #196 in 0.4.0; #183, #197, #198, #85 in 0.5.0** |
-| P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | **recommendations written 2026-10-19; presented, awaiting Deepak** |
+| P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | **DONE 2026-10-19: #159 in 0.4.0; #134 in 0.3.2; #122, #135, #136 parked** |
 | P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | open |
 | P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | open |
 | P9 Integrations and media | #151, #160, #217, #76, #79, #195 | open |
@@ -117,6 +117,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P4 | #204, #228 | **Split by release: the small parts of #204 in 0.3.2; #228 and #229 in 0.4.0.** | Deepak: "ok". |
 | 2026-10-19 | P4 | #203, #169 | **#203: 0.5.0 (detail). #169: 0.4.0.** | Deepak: "ok", "ok". |
 | 2026-10-19 | P5 | #196, #183, #197, #198, #85 | **#196: 0.4.0 (L), spike first. #183, #197, #198, #85: 0.5.0 (detail).** | Deepak: "should work and agree" (#196, with a design addition: images, graphs and sketches in a PDF are extracted to a sub-folder of the temporary location and referred to while reading); "Ok" (#183); "Ok" (templates family). Downloads: if the user directs a download it goes to `downloads/`; otherwise a PDF opened for one-time reading stays in transient storage. |
+| 2026-10-19 | P6 | #159, #134, #122, #135, #136 | **#159: 0.4.0 (M, opt-in, off by default, token budget in Settings). #134: 0.3.2 (S). #122, #135, #136: Parked, revisit after 0.5.0.** | Deepak: "Sounds good", "Ok, should do", "Fine for now, will revisit after 0.5.0". |
 
 ## Conflict raised and resolved (P1)
 
@@ -124,10 +125,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-**P6 (details in "P6: item details and recommendations" below).**
-1. **#159:** 0.4.0, size M, opt-in and off by default, token budget in Settings?
-2. **#134:** 0.3.2, size S?
-3. **#122, #135, #136:** Parked? (Small carve-out: the unhelpful Mistral 429 message stays noted in #135.)
+None. P6 answered 2026-10-19; P7 is next.
 
 ## Item details and recommendations
 
@@ -517,7 +515,9 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 
 **Recommendation (Claude): 0.5.0 (detail), size M, part of the templates design** (#197, #198, #85): one design for how a user finds, creates, chooses and defaults a template.
 
-### P6: item details and recommendations (written 2026-10-19; awaiting Deepak)
+### P6: item details and recommendations (DECIDED 2026-10-19)
+
+**Decided 2026-10-19 (Deepak):** #159 0.4.0; #134 0.3.2; #122, #135, #136 Parked, to be revisited after 0.5.0 (the Mistral 429 message stays noted in #135).
 
 **Context.** The sponsor uses Anthropic and OpenAI, not Groq or Mistral. P6 is only a grouping label. Checked in the code today: `src/main/providers/anthropic.ts` has no extended-thinking code, and `vite-node` is not in `package.json`.
 
