@@ -26,8 +26,8 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 | Bucket | Items |
 |---|---|
 | 0.3.2 | 14 |
-| 0.4.0 | 13 |
-| 0.5.0 | 16 |
+| 0.4.0 | 11 |
+| 0.5.0 | 18 |
 | Parked | 10 |
 | Not this repo | 1 |
 | Ongoing rule | 1 |
@@ -53,7 +53,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | Point | Items | Status |
 |---|---|---|
 | P1 Bundled Ollama | #214, #224, #225 (#222 and #223 closed) | **DONE: all three go into 0.4.0** |
-| P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192 | open |
+| P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192 | **presented 2026-10-19; recommendations written, awaiting Deepak's decisions** |
 | P3 Everyday UX and trust | #215, #218, #216, #193, #168, #194, #189, #190 | open |
 | P4 Files and workspace | #204, #203, #169 | open |
 | P5 Documents | #196, #183, #197, #198, #85 | open |
@@ -102,7 +102,13 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-*(None for P1, which is decided. Questions for the next point are added here when it is presented.)*
+**P2 (presented 2026-10-19; details in "P2: item details and recommendations" below).**
+1. **#140:** reduce to logging the stop reason and token count, merged with #141, and drop the Ollama comparison run? 0.3.2?
+2. **#141:** one retry of the planning call when its reply is empty. 0.3.2?
+3. **#146:** do not offer the MCP Operator delegate tool when no MCP server is connected (option A), for the MCP Operator only. 0.3.2?
+4. **#170:** reuse the #149 compact-summary logic when collapsing old tool results. 0.3.2?
+5. **#191:** 0.5.0 (detail), with the two small split-off candidates (keep partial reasoning on Stop; stop the router re-verifying a delegate's files): which of them, if any, go into 0.4.0?
+6. **#192:** 0.5.0 (detail) together with #191? And create the new item #226 (after a failed step, reuse the saved handoff files and do not repeat the data query), bucket 0.4.0 or 0.5.0?
 
 ## Item details and recommendations
 
@@ -243,6 +249,63 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 **Recommendation (Claude, revised 2026-10-19).** Since the fallback is necessary to avoid errors, bring it forward to **0.4.0, size M**: a Settings choice of the fallback model (provider and model, possibly cloud), used only when the selected local Ollama is not reachable; a visible warning in the chat each time it is used, naming the model and saying the conversation is going there; if no fallback is configured, a clear error and no silent switch. The deeper automatic-selection ideas stay in `docs/auto_model_selection.md`.
 
+### P2: item details and recommendations (written 2026-10-19, before presenting)
+
+#### #140: record why a planning reply was empty
+
+**What it is.** `scripts/plan-probe.mts` prints nothing about an empty planning reply beyond `BAD ... ""`. The item asks for the stop reason and the output-token count (and whether hidden reasoning was used) for every empty or invalid reply, then a re-run of the Ollama `gpt-oss-custom` comparison (5 repetitions, both modes) to confirm the suspected cause: the model's hidden reasoning uses up the output budget before any visible text (#139 measured 4 of 40 prompt-only and 7 of 40 structured replies empty, none malformed). It also asks whether the empty rate changes with `--max-tokens` (4096 to 8192).
+
+**Why it matters.** Without the reason, an empty planning reply is a mystery, and #141's second option (a larger output budget) cannot be chosen on evidence. It is a diagnostic, not a product feature.
+
+**Recommendation (Claude): 0.3.2, reduced scope, done together with #141. Size S.**
+- Keep: when the planning reply is empty or invalid, record the stop reason and output-token count in the existing console warning in `classifyAndPlan`, and in the `plan-probe` output.
+- Drop: the five-repetition Ollama comparison. It is local-model research that the fix does not need; #141's option (a) "depends on #140 for the choice, not for (a)".
+- Reason: tiny, no product risk, and it makes any future empty-reply report explainable on any provider.
+
+#### #141: recover from an empty planning reply
+
+**What it is.** `classifyAndPlan` fails open to "no plan" when the planning reply is empty. A compound request (for example the PLF question, which needs the wiki and the database) then loses its split and the router works alone (#138). **Fix, in order of preference:** (a) retry the planning call once when the reply is empty (it mirrors the round-loop recovery from #138 and costs one extra call only on failure, about 25 s on a local gpt-oss); (b) a larger output budget for this call, if #140 shows that hidden reasoning starved the output. Tests with the mock provider: empty then valid; empty twice still fails open with the warning staying console-only.
+
+**Why it matters for the sponsor.** The measured cases are on a local model, but any reasoning model can spend its output budget on hidden reasoning before visible text (plausible for OpenAI reasoning models; not verified here). A silent downgrade from a split plan to "router alone" gives a worse answer with no sign of why.
+
+**Recommendation (Claude): 0.3.2, size S.** A defect with silent degradation, a small contained change (one retry), no dependencies, and an extra call only on failure.
+
+#### #146: MCP-availability substitution for the single-step path
+
+**What it is.** #145 substitutes the Researcher when no MCP server is connected, but only for **plans of two or more steps** (`executePlan`). A plan with one step, or a `simple` classification, runs through the ordinary top-level round, where the model can call `delegate_to_mcp-operator` with no availability information in front of it.
+
+**Verified in the code on 2026-10-19.** `buildDelegateToolDefinitions()` (`orchestrator.ts`, about line 1945) builds a delegate tool for **every** agent, regardless of whether it is available, and the top-level round uses it (about line 1759). So with no MCP server connected the model is still offered the MCP Operator. This is plausibly the more common case (a plain "look this up in the wiki" request).
+
+**The item's two design questions, and a simpler answer.** The item proposed redirecting inside `dispatchDelegate`, which leaves a mismatch: the tool call shown in the transcript still names `mcp-operator`. **Simpler option (A):** do not offer the delegate tool for a role whose requirement is unmet, using the existing `isRoleAvailable` (the same check that already produces "UNAVAILABLE right now" for the planner). Then the model never calls it, there is no attribution mismatch (design question 1 disappears), and the model is less likely to try it at all (design question 2). **Option (B):** the redirect as the item described.
+
+**Recommendation (Claude): 0.3.2, size S, option (A), for the MCP Operator only** (mirroring #145). Generalizing to every role with an unmet requirement (a database role with no database, the email role with no account) is a one-line extension but changes behaviour for more roles; evaluate it separately. Tests: with `config.mcp === 0` the top-level tool list has no `delegate_to_mcp-operator`; with `config.mcp > 0` it does; existing single-step and `executePlan` suites still pass unchanged.
+
+#### #170: keep a compact summary when collapsing old tool results
+
+**What it is.** `collapseOldestToolResultsToFit` still replaces every non-mutating tool result it collapses with the content-free `CONTEXT_FIT_OMITTED_MARKER`, the flaw #149 already fixed for `capRepeatedToolResults`. It has one call site (`refitConversationToBudget`), which the `MAX_TOTAL_ROUNDS` wrap-up path also reuses, so one fix covers both. It is reuse of the already-built `LISTING_TOOL_NAMES` and `compactListing` logic: the trigger differs (budget pressure, not repetition count) but the output shape should be identical. The item itself says no discussion is needed.
+
+**Why it matters.** In a long session on any model, old results are silently replaced by an empty marker, so the model loses what a tool returned.
+
+**Recommendation (Claude): 0.3.2, size S.** Applying a decided pattern, low risk, with tests like #149's.
+
+#### #191: reasoning-loop breaker for local models
+
+**What it is.** Found in manual test 8.2 on `ollama:gpt-oss-custom`: the model's thinking degenerated into one sentence repeated about 100 times (9.7K characters), the round took about 2 minutes, and the step ended with an apology that the orchestrator accepted as finished. Nothing watches for a stream that is full of output and going nowhere (existing recovery covers empty replies, truncated tool calls, round timeouts and repeated failing calls). **Idea:** while a round streams, watch the accumulated thinking and text; when the same normalised sentence repeats N times, or a long tail repeats the text before it, abort the round, retry once with a short nudge, and fail the step clearly if it loops again. **A second occurrence (2026-10-10)** showed the router re-checking a delegate's finished work with its own tool call, then reasoning for 2 min 19 s until the user pressed Stop; and reasoning cut off by Stop is not saved, so such loops can only be diagnosed while running.
+
+**Open design questions.** How to detect a loop without cutting off legitimate repetition (lists, tables, code); thresholds for thinking versus visible text; abort the stream or discard it afterwards; how the retry avoids the same loop; where it lives (`runLoop` stream handling, shared by every role) and how it interacts with the round timeout and the empty-response retry; how to test it.
+
+**Evidence first.** How often it happens across sessions and models (the stored `thinking` blocks are enough to count). The same run on Gemini finished in about 30 seconds with no loop. That evidence is on the sponsor-less machines (the sessions are on Deepak's Mac); this machine has no app data now.
+
+**Recommendation (Claude): 0.5.0 (detail), size M.** Local models remain a supported path (the user's own Ollama), but this needs evidence and several design choices before building, and it does not affect the sponsor, who uses cloud models. **Small candidates split off, for Deepak to choose:** (a) keep the partial reasoning text when a turn is stopped, so loops can be diagnosed (size S, could go into 0.4.0); (b) tell the router in code that a direct delegate's files were created and checked, so it passes the answer on instead of re-verifying (size S to M, applies to cloud models too, needs a small design).
+
+#### #192: keep each plan step to its own job
+
+**What it is.** In the same session a plan step for Data Access ("query the Northwind database") reasoned about the whole request (the Word document), because the original user message is still in its conversation, which led to the loop in #191. **Idea:** when `executePlan` hands a step to a specialist, append a fixed line naming the boundary: "Do only this step. The remaining steps (<role: short description>) are done afterwards by other specialists; do not attempt them." Built from the plan itself, one short sentence per step. **Related, not yet an item:** when a step fails and the top level retries, the retry started from scratch (the data query ran three times) even though the first result was already saved under `.sachiv-handoff/`; pointing recovery at the existing files would fix that.
+
+**Open questions.** Whether the line measurably changes behaviour on small models (a prompt line is only a suggestion to a weak model; compare runs with and without it, counting tool calls and rounds); whether it is needed on cloud models, which did not drift in the Gemini run; the effect on the prompt-size ceilings; where the original request should appear in a step's conversation (full text or only the step's task), which is the root of the drift.
+
+**Recommendation (Claude): 0.5.0 (detail), size M, designed together with #191.** **New candidate item, for Deepak to decide (proposed #226):** "after a failed step, point recovery at the existing handoff files instead of repeating the data query". It wastes real database queries and applies to cloud models too; proposed size M, bucket 0.4.0 or 0.5.0.
+
 ## Closed during triage setup
 
 | # | Item | Why closed |
@@ -265,12 +328,12 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #140 | Record why a planning reply was empty (stop reason, token count) | chore (diagnostic) | 0.3.2 | S | Small, and it tells us whether #141 needs more than a retry. | open |
-| #141 | Retry the planning call once when its reply is empty | defect | 0.3.2 | S | Compound requests silently lose their split today. | open |
-| #146 | MCP-availability substitution for the single-step delegate path | defect | 0.3.2 | M | Same failure shape as #145, which only covered multi-step plans. | open |
-| #170 | Keep a compact summary (not a content-free marker) in collapseOldestToolResultsToFit | defect | 0.3.2 | S | Same flaw #149 already fixed in a sibling function. | open |
-| #191 | Reasoning-loop breaker for local models | enhancement | 0.4.0 | M | Found on a local model; matters less for cloud users, so not a patch. | open |
-| #192 | Keep each plan step to its own job | enhancement | 0.4.0 | M | Analysis item; fixes the cause behind #191. | open |
+| #140 | Record why a planning reply was empty (stop reason, token count) | chore (diagnostic) | 0.3.2 (reduced scope, with #141) | S | Reduce to logging the stop reason and token count when a planning reply is empty; drop the five-repetition Ollama comparison (local-model research). | proposed, awaiting decision |
+| #141 | Retry the planning call once when its reply is empty | defect | 0.3.2 | S | Silent loss of a compound request's split; small fix (one retry); can also affect cloud reasoning models. | proposed, awaiting decision |
+| #146 | MCP-availability substitution for the single-step delegate path | defect | 0.3.2 | M | Verified in the code: the top-level model is offered the MCP Operator even when no MCP server exists. Simplest fix: do not offer it when unavailable. | proposed, awaiting decision |
+| #170 | Keep a compact summary (not a content-free marker) in collapseOldestToolResultsToFit | defect | 0.3.2 | S | Applying an already-decided pattern from #149; avoids silent information loss in long sessions on any model. | proposed, awaiting decision |
+| #191 | Reasoning-loop breaker for local models | enhancement | 0.5.0 (detail) | M | Needs evidence first and several design choices; mainly affects local models; the sponsor uses cloud models. | proposed, awaiting decision |
+| #192 | Keep each plan step to its own job | enhancement | 0.5.0 (detail) | M | A prompt line is only a suggestion to a weak model; measure first. Design together with #191. | proposed, awaiting decision |
 
 ## P3 Everyday UX and trust
 
