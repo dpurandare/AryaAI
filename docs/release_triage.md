@@ -56,7 +56,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192, #226 (new) | **DONE 2026-10-19: #140, #141, #146, #170 in 0.3.2; #191, #192, #226 in 0.5.0** |
 | P3 Everyday UX and trust | #215, #218, #227 (new), #216, #193, #168, #194, #189, #190 | **DONE 2026-10-19** |
 | P4 Files and workspace | #204, #228 (new), #229 (new), #203, #169 | **DONE 2026-10-19** |
-| P5 Documents | #196, #183, #197, #198, #85 | open |
+| P5 Documents | #196, #183, #197, #198, #85 | **recommendations written 2026-10-19 (prepared while Deepak was away); NOT YET PRESENTED to Deepak** |
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | open |
 | P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | open |
 | P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | open |
@@ -123,7 +123,11 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-*(None for P1 to P4, which are decided. Questions for the next point are added here when it is presented.)*
+**P5 (recommendations written 2026-10-19 while Deepak was away; to be presented when he returns; details in "P5: item details and recommendations" below).**
+1. **#196:** 0.4.0, size L, starting with the spike (LiteParse inside Electron 44 on Windows and macOS; fallback `unpdf`)? Two tools (`pdf_open`, `pdf_read`), with `parse_html` and `read_file` handing PDFs over, and `[PDF]` marked in search results?
+2. **#183:** 0.5.0 (detail), re-evaluated after the #196 spike because the PDF engine includes OCR?
+3. **#197, #198, #85:** all 0.5.0 (detail), designed together as one "templates" family; answers to #197's open questions: Python required is acceptable (bundled in the installers), layouts first and sample slides later?
+4. **Download tool:** #196 needs a way to fetch a PDF from a URL; an explicit "download this file" request goes to `downloads/` (#228). Agree that a PDF merely being read stays in temporary storage?
 
 ## Item details and recommendations
 
@@ -465,6 +469,50 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 
 **Recommendation (Claude): 0.4.0, size M.** The design is already mostly settled in the item. A cross-platform tool also matters because the shell tool on Windows has no `grep`, and the sponsor is on Windows. Work: the tool, its owner role, the prompt-budget ceilings, tests (binary file, caps), the tool catalog and the guides.
 
+### P5: item details and recommendations (written 2026-10-19 while Deepak was away; not yet presented)
+
+**Context.** The sponsor is a non-developer on Windows who uses Anthropic, OpenAI and Tavily web search, so web research and documents are his likely work. The installers bundle Python, so Python-based document tools are available to installed users.
+
+#### #196: a PDF reader
+
+**What it is.** Web research keeps hitting PDFs (standards previews, white papers) and the app can only say it cannot read them (`parse_html` refuses PDFs on purpose, because a large PDF once stalled the app); and a user who hands the app a PDF has no route except the Developer writing a one-off script (`read_file` refuses `.pdf`). Wanted: a tool that converts a PDF once to Markdown, keeps it out of the context, and lets the model read it in sections or search it.
+
+**Researched design (2026-10-09, in the item).**
+- **Tools: two, to keep the prompt small.** `pdf_open` converts once (stored per session, not in the user-visible workspace) and returns a small summary (title, page count, outline with page numbers, whether a text layer exists); `pdf_read` takes a page range, a heading or a `query` and returns one section with a size cap, or search hits with page numbers and snippets.
+- **Integration with web research.** `parse_html` and `read_file` on a PDF should hand it to the same converter and return the summary plus the first section, so every existing path that opens search-result links works unchanged; `web_search` stays a search but marks PDF results as `[PDF]`.
+- **Engine (leading candidate): `@llamaindex/liteparse`** (Apache-2.0): a native addon over PDFium with prebuilt binaries for macOS, Windows and Linux (about 25 MB per platform), Markdown output with real tables and headings, a worker pool with a hard per-parse timeout (answers "a bad PDF must not stall the app"), and **built-in Tesseract OCR**. Trials: a 17-page deck in 0.56 s and a 15-page paper in 0.05 s; tables kept as Markdown tables (header rows sometimes mangled). Caveats: a young project; OCR downloads a 15 MB language file on first use, so an offline install must bundle it; not yet tried inside Electron 44. **Fallback: `unpdf`** (MIT, pure JavaScript, plain text only, so heading and section logic would be our own). Ruled out for licence reasons: `mupdf` and PyMuPDF (AGPL).
+- **Guards:** URLs downloaded with a size cap, `%PDF-` sniffed and not trusted from the Content-Type, private and loopback hosts refused, same confirmation rules as `download_image`; scanned PDFs (no text layer) detected and reported, not returned empty (linked to #183); extracted text treated as untrusted data, never as instructions; internal conversion files never named in answers.
+- **Costs:** the tool schemas raise the prompt-size ceilings deliberately; converting a 100+ page PDF takes seconds, so it needs a progress status and must respect the turn deadline and run off the main thread.
+- **Knock-on:** the `parse_html` refusal message and Research's "open these now with `parse_html`" check must route PDF links to the new path; the guides and tool catalog.
+
+**Recommendation (Claude): 0.4.0, size L.** The most valuable item in this point for a web-research user. **Order of work:** (1) a spike, size S to M: run LiteParse inside a throwaway Electron 44 copy on Windows and macOS (native load from `app.asar.unpacked`, worker pool, packaging); if it fails, fall back to `unpdf` plus our own section logic; (2) the two tools and the `parse_html` / `read_file` hand-off; (3) the guards, tests with small generated PDFs (text, two columns, a table, image-only), a live check on the IEC 61400-26 question and a local PDF, the docs. It depends on **#228** for a download tool and folder if the user explicitly asks to download a PDF (a PDF merely being read stays in temporary storage).
+
+#### #183: read text from images and scanned documents (OCR)
+
+**What it is.** Found when a scanned passport PDF had no text layer: the model could only display the image, called `show_media` 82 times and then invented the expiry date. Two routes: a built-in OCR tool (offline; MRZ parsing would give an exact passport expiry) or sending images to a vision-capable model (reverses the earlier decision that the model never sees pixels; costs tokens). An interim rule already forbids stating a value that could not be read.
+
+**What has changed.** The PDF engine candidate for #196 includes Tesseract OCR (an image-only slide worked at about 3 s a page), so most scanned PDFs may be covered by #196. Vision models are available to the sponsor (Anthropic, OpenAI), but a passport or similar scan sent to a cloud model is a privacy decision.
+
+**Recommendation (Claude): 0.5.0 (detail), size L, re-evaluated after the #196 spike.** If LiteParse's OCR works inside Electron, a minimal "scanned PDF to text" comes with #196; what remains is standalone images and MRZ parsing. The design decisions to document in 0.5.0: bundle or download the OCR language data for offline installs, local OCR versus a vision model, and an explicit user choice before an image leaves the machine.
+
+#### #197: build a deck from the user's own PowerPoint template
+
+**What it is.** The deck tools (PptxGenJS) draw slides from scratch and cannot load a template, so "use the template in the workspace" produces a plain deck. Proposed shape: `pptx_start_deck` takes an optional `template` (a `.pptx` or `.potx` under `templates/`), the deck starts as a copy with its sample slides removed, and the result lists the template's layouts compactly; `pptx_compose_slide` takes a `layout` name and `placeholders` (text, bullets or an image) and may still carry free elements; `pptx_save_deck` writes the file. **Engine recommended in the item:** `python-pptx` through the managed Python environment (the mature library for layouts and placeholders; hand-written OOXML is the risk, after a session of repair prompts from PptxGenJS output). Costs: `python-pptx` is not in the base packages, so it must be added pinned (including its native wheels for the bundled Windows wheelhouse) and installed on first use for existing workspaces. Real templates need: empty placeholders removed, layout fallback when names repeat, a warning when text is far longer than its placeholder, template fonts and colours kept, pictures cropped to fill.
+
+**Recommendation (Claude): 0.5.0 (detail), size L, designed together with #198 and #85 as one "templates" family.** The item's open questions can be answered now: Python is available in the installers, so requiring it is acceptable if the tool says clearly when Python is off; keep only the template's layouts at first and treat its sample slides as an optional later extension.
+
+#### #198: template generation from an existing document
+
+**What it is.** `office_extract_template` plus `office_fill_template` made a template that was "far from acceptable" (a resume turned into a template was about 95% the original). Done on 2026-10-10 (not seen live): `apply` matches across the runs of a paragraph, reports content still left, and the prompts ask for a section-by-section list. **Still wrong:** repeating blocks need loops (`{#jobs}...{/jobs}`), whole-paragraph placeholders are clumsy, deciding what is variable is judgement a weak model gets wrong (consider a structure-first pass where the model marks each section fixed, field or loop), headers, footers, text boxes, tracked changes and fields are unchecked, there is no verification step, the placeholder syntax should follow a survey of good products (Word content controls, docxtemplater, mail merge), and the first test was only slim router plus Haiku.
+
+**Recommendation (Claude): 0.5.0 (detail), size L.** The item itself says research first, then design. In 0.5.0 (detail) produce a single templates design note covering the survey, the loop model and the structure-first pass.
+
+#### #85: template selection during document creation
+
+**What it is.** When the user asks for a document and no default template is configured, list the templates in `templates/` for the user to pick from, apply it via `office_fill_template`, and if none exist explain how to create one; it needs a new "default template" setting (per document type). It depends on the template-creation work for the "none exist yet" guidance, though the picker could land alone.
+
+**Recommendation (Claude): 0.5.0 (detail), size M, part of the templates design** (#197, #198, #85): one design for how a user finds, creates, chooses and defaults a template.
+
 ## Closed during triage setup
 
 | # | Item | Why closed |
@@ -524,11 +572,11 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #196 | PDF reader (convert once, read in sections) | feature | 0.4.0 | L | Repeated user request; the engine choice must be decided first. | open |
-| #183 | Read text from images and scanned documents (OCR) | feature | 0.5.0 (detail) | L | Needs an engine decision (bundle vs optional); large binary impact. | open |
-| #197 | Build a deck from the user's own PowerPoint template | feature | 0.5.0 (detail) | L | Engine choice to confirm; family with #198 and #85. | open |
-| #198 | Template generation from an existing document, done properly | feature (research) | 0.5.0 (detail) | L | Research first, then design. | open |
-| #85 | Template selection during document creation | feature | 0.5.0 (detail) | M | Depends on #198 and a default-template setting. | open |
+| #196 | PDF reader (convert once, read in sections) | feature | 0.4.0 | L | Repeated request; web research keeps hitting PDFs and the sponsor uses web search. Start with a spike on the engine inside Electron. | proposed, awaiting decision |
+| #183 | Read text from images and scanned documents (OCR) | feature | 0.5.0 (detail) | L | The leading PDF engine includes OCR, so decide after the #196 spike; privacy matters for scans such as passports. | proposed, awaiting decision |
+| #197 | Build a deck from the user's own PowerPoint template | feature | 0.5.0 (detail) | L | One design for the whole templates family (#197, #198, #85). | proposed, awaiting decision |
+| #198 | Template generation from an existing document, done properly | feature (research) | 0.5.0 (detail) | L | Research first, then design, together with #197 and #85. | proposed, awaiting decision |
+| #85 | Template selection during document creation | feature | 0.5.0 (detail) | M | Depends on the templates design; needs a default-template setting. | proposed, awaiting decision |
 
 ## P6 Provider quality: cost, thinking and evaluation
 
