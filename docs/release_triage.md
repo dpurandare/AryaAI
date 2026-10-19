@@ -25,10 +25,10 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 
 | Bucket | Items |
 |---|---|
-| 0.3.2 | 12 |
+| 0.3.2 | 13 |
 | 0.4.0 | 14 |
 | 0.5.0 | 21 |
-| Parked | 11 |
+| Parked | 10 |
 | Not this repo | 1 |
 | Ongoing rule | 1 |
 | **Total open items** | **60** |
@@ -75,6 +75,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P6 | #159 | Kept as a work item; proposed 0.4.0 | Deepak: add Anthropic extended thinking wherever it fits. Not built yet, no Anthropic code for it; to be confirmed when P6 is discussed. |
 | 2026-10-19 | P7 | #124, #125, #127, #123, #205, #128, #132, #200, #49 | **All 0.5.0 (detail); revisit after 0.4.0.** The merge of #205 into #123 (one design) was part of the proposal and is recorded as accepted. | Deepak: "All items for 0.5.0 so mark those, we will revisit after 0.4.0". |
 | 2026-10-19 | P8 | #131 | **Parked in full** (no locks in 0.3.2). Counts now 0.3.2=12, Parked=11. | Deepak: too remote a corner case; an installed app does not normally run twice. Claude agrees: the race needs a double launch inside the first-run window. Revisit only if a user reports it. |
+| 2026-10-19 | P8 | #131 | **Reversed: #131 reduced to a single-instance check, 0.3.2, size S.** The rest of #131 (venv lock, `.deb` check, Windows/macOS runs, large-workspace cap) stays Parked. Counts back to 0.3.2=13, Parked=10. | Deepak: the app should check at start whether another instance is running and, if so, tell the user that another instance is running and must be closed before launching a new one. Cheap, and it removes the whole double-launch class. |
 | 2026-10-19 | P1 | #222 | Budget stated for GPU parts: about 100 MB more is acceptable | Deepak. Measured: Vulkan only +43 MB on disk; full CUDA +1.8 GB. Proposal is Vulkan only (pending confirmation, question 2). |
 | 2026-10-19 | P1 | #222 | **GPU: keep the Vulkan backend only (+43 MB on disk, +13 MB download); keep dropping CUDA** | Deepak: "I am ok with your proposal for now (for 0.3.2)". |
 | 2026-10-19 | P1 | #214 | **The bundled Ollama uses a non-standard port, never 11434; range 11450 to 11455, first free one** | Deepak: use a port that is not the standard Ollama port; the range comes from his 0.5.0 spec and is applied to 0.3.2 for consistency. Replaces today's 11434 then 11435 to 11438. |
@@ -128,7 +129,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 ## Pending questions (waiting for Deepak)
 
 **P8 (details in "P8: item details and recommendations" below).**
-1. **#131:** DECIDED: Parked in full (Deepak).
+1. **#131:** DECIDED: only the single-instance check, with a message and exit, 0.3.2 (S); the rest Parked (Deepak).
 2. **#208:** 0.3.2 as a verification on your Mac, before shipping 0.3.2?
 3. **#221:** 0.3.2 (S)?
 4. **#220:** 0.5.0 (detail), with #210?
@@ -713,7 +714,7 @@ Long sessions currently rely on trimming and on `search_history` to recover olde
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #131 | Runtime hardening: venv-creation lock, single-instance lock, .deb check, large-workspace cap | defect + chores | Parked | M | Split: the two locks fix a real race; the rest is parked. | **Decided 2026-10-19 (Deepak): Parked in full.** |
+| #131 | Runtime hardening: venv-creation lock, single-instance lock, .deb check, large-workspace cap | defect + chores | 0.3.2 (single-instance check only) | S | Deepak's design: if another instance is running, show a message that it must be closed first, then exit; the rest is Parked. | **Decided 2026-10-19 (Deepak): single-instance check in 0.3.2; the rest Parked.** |
 | #208 | Verify the macOS self-contained build (Ollama Metal) on real Apple Silicon | verification | 0.3.2 | S | Your Mac can run it; it has never been executed. | open |
 | #221 | Tests for aws / az / gcloud basic operations | chore (tests) | 0.3.2 | S | Mocked tests only; no cloud calls. | open |
 | #220 | sudo support for shell_execute (design with the interactive terminal, #210) | feature | 0.5.0 (detail) | L | A pty terminal makes password entry safe by construction; design them together. | open |
