@@ -25,10 +25,10 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 
 | Bucket | Items |
 |---|---|
-| 0.3.2 | 13 |
+| 0.3.2 | 12 |
 | 0.4.0 | 14 |
 | 0.5.0 | 21 |
-| Parked | 10 |
+| Parked | 11 |
 | Not this repo | 1 |
 | Ongoing rule | 1 |
 | **Total open items** | **60** |
@@ -74,6 +74,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P1 | #222 | **Bucket 0.3.2 (not 0.4.0)** | Deepak: a typical user with a good Windows machine or a MacBook with 24 GB or more of memory can run 9 to 20 billion parameter models (observed on his MacBook and Linux machine). Make the feature useful now; do not hold it to the end of 0.4.0. |
 | 2026-10-19 | P6 | #159 | Kept as a work item; proposed 0.4.0 | Deepak: add Anthropic extended thinking wherever it fits. Not built yet, no Anthropic code for it; to be confirmed when P6 is discussed. |
 | 2026-10-19 | P7 | #124, #125, #127, #123, #205, #128, #132, #200, #49 | **All 0.5.0 (detail); revisit after 0.4.0.** The merge of #205 into #123 (one design) was part of the proposal and is recorded as accepted. | Deepak: "All items for 0.5.0 so mark those, we will revisit after 0.4.0". |
+| 2026-10-19 | P8 | #131 | **Parked in full** (no locks in 0.3.2). Counts now 0.3.2=12, Parked=11. | Deepak: too remote a corner case; an installed app does not normally run twice. Claude agrees: the race needs a double launch inside the first-run window. Revisit only if a user reports it. |
 | 2026-10-19 | P1 | #222 | Budget stated for GPU parts: about 100 MB more is acceptable | Deepak. Measured: Vulkan only +43 MB on disk; full CUDA +1.8 GB. Proposal is Vulkan only (pending confirmation, question 2). |
 | 2026-10-19 | P1 | #222 | **GPU: keep the Vulkan backend only (+43 MB on disk, +13 MB download); keep dropping CUDA** | Deepak: "I am ok with your proposal for now (for 0.3.2)". |
 | 2026-10-19 | P1 | #214 | **The bundled Ollama uses a non-standard port, never 11434; range 11450 to 11455, first free one** | Deepak: use a port that is not the standard Ollama port; the range comes from his 0.5.0 spec and is applied to 0.3.2 for consistency. Replaces today's 11434 then 11435 to 11438. |
@@ -127,7 +128,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 ## Pending questions (waiting for Deepak)
 
 **P8 (details in "P8: item details and recommendations" below).**
-1. **#131:** split: the two locks in 0.3.2 (M), the rest Parked?
+1. **#131:** DECIDED: Parked in full (Deepak).
 2. **#208:** 0.3.2 as a verification on your Mac, before shipping 0.3.2?
 3. **#221:** 0.3.2 (S)?
 4. **#220:** 0.5.0 (detail), with #210?
@@ -591,7 +592,7 @@ Long sessions currently rely on trimming and on `search_history` to recover olde
 
 **What it is.** Four separate things in one item: (1) a cross-process **lock for venv creation** and (2) a **single-instance lock**, because two app instances could race to create the Python environment (checked 2026-10-19: `requestSingleInstanceLock` appears nowhere in `src`, so a second launch is allowed today); (3) build the `.deb` and check its Python dependencies; (4) run the workspace runtime and `python_run` on real Windows and macOS, and test the 20,000-file artifact-scan cap on a large workspace.
 
-**Clarification asked by Deepak 2026-10-19 ("why do we need a single-instance lock?"):** two instances *using* the same Python environment is fine; running scripts in one venv from two processes is safe. The race exists only while the venv is being *created or repaired* (first run, a Retry, or a rebuild): both instances run `python -m venv` into the same folder and pip-install into it, and the failure clean-up of one (`removeDir` of the partial venv) can delete the folder the other is still building. It needs a double launch inside that first-run window, so it is rare. Beyond the venv, two instances share one settings store and database and each streams to its own window; that mostly works but is untidy. The single-instance lock is the usual cheap way to remove the whole class (a second launch just focuses the first window); a cross-process venv lock fixes only the venv case and is more code. **Revised recommendation: 0.3.2, size S: the single-instance lock only; no separate venv lock.**
+**Clarification asked by Deepak 2026-10-19 ("why do we need a single-instance lock?"):** two instances *using* the same Python environment is fine; running scripts in one venv from two processes is safe. The race exists only while the venv is being *created or repaired* (first run, a Retry, or a rebuild): both instances run `python -m venv` into the same folder and pip-install into it, and the failure clean-up of one (`removeDir` of the partial venv) can delete the folder the other is still building. It needs a double launch inside that first-run window, so it is rare. Beyond the venv, two instances share one settings store and database and each streams to its own window; that mostly works but is untidy. The single-instance lock is the usual cheap way to remove the whole class (a second launch just focuses the first window); a cross-process venv lock fixes only the venv case and is more code. **Revised recommendation: 0.3.2, size S: the single-instance lock only; no separate venv lock.** **Final (Deepak, same day): too remote a corner case; #131 Parked in full.**
 
 **Recommendation (Claude, original, superseded by the revision above): split.** **0.3.2, size M: the two locks only.** They fix a real race that a non-technical user can trigger by double-clicking the icon twice. The other parts are verification chores, not fixes: (3) is covered the next time a `.deb` is built; (4) is largely covered by the sponsor's Windows use of 0.3.1 and by #208; the large-workspace check is low value. Keep (3) and (4) noted in the item and **Park** them.
 
@@ -712,7 +713,7 @@ Long sessions currently rely on trimming and on `search_history` to recover olde
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #131 | Runtime hardening: venv-creation lock, single-instance lock, .deb check, large-workspace cap | defect + chores | 0.3.2 (locks only) | M | Split: the two locks fix a real race; the rest is parked. | open |
+| #131 | Runtime hardening: venv-creation lock, single-instance lock, .deb check, large-workspace cap | defect + chores | Parked | M | Split: the two locks fix a real race; the rest is parked. | open |
 | #208 | Verify the macOS self-contained build (Ollama Metal) on real Apple Silicon | verification | 0.3.2 | S | Your Mac can run it; it has never been executed. | open |
 | #221 | Tests for aws / az / gcloud basic operations | chore (tests) | 0.3.2 | S | Mocked tests only; no cloud calls. | open |
 | #220 | sudo support for shell_execute (design with the interactive terminal, #210) | feature | 0.5.0 (detail) | L | A pty terminal makes password entry safe by construction; design them together. | open |
