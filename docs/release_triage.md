@@ -27,11 +27,11 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 |---|---|
 | 0.3.2 | 14 |
 | 0.4.0 | 11 |
-| 0.5.0 | 18 |
+| 0.5.0 | 19 |
 | Parked | 10 |
 | Not this repo | 1 |
 | Ongoing rule | 1 |
-| **Total open items** | **55** |
+| **Total open items** | **56** |
 | Closed during triage setup | 5 (#121, #137, #120, #222, #223) |
 
 **Capacity warning.** 14 items in 0.3.2 is a lot for a patch release, and 0.4.0 now holds two L-sized features (#196 PDF reader and #160 video) plus the whole local-Ollama block (#214, #224, #225). We should expect to cut or move items as we decide.
@@ -53,7 +53,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | Point | Items | Status |
 |---|---|---|
 | P1 Bundled Ollama | #214, #224, #225 (#222 and #223 closed) | **DONE: all three go into 0.4.0** |
-| P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192 | **presented 2026-10-19; recommendations written, awaiting Deepak's decisions** |
+| P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192, #226 (new) | **DONE 2026-10-19: #140, #141, #146, #170 in 0.3.2; #191, #192, #226 in 0.5.0** |
 | P3 Everyday UX and trust | #215, #218, #216, #193, #168, #194, #189, #190 | open |
 | P4 Files and workspace | #204, #203, #169 | open |
 | P5 Documents | #196, #183, #197, #198, #85 | open |
@@ -95,6 +95,11 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P1 | #214 | **The Ollama address is editable in Settings, and the user may add an Ollama on the network.** | Deepak: "allowing user to add Ollama on network could be a good idea." |
 | 2026-10-19 | P1 | #225 | **A fallback is NECESSARY: warn the user, then fall back, to avoid errors.** Raised from an optional idea to a needed feature; Claude proposes bucket 0.4.0 (size M), to confirm. | Deepak: "We should warn the user about it and then the fallback is necessary in order to avoid any errors." |
 | 2026-10-19 | P1 | #214, #224, #225 | **All three go into 0.4.0.** #214 moves from 0.3.2 to 0.4.0. | Deepak: "This all goes in 0.4.0 now." Consequence recorded by Claude: the 0.3.x installers keep taking port 11434 for the embedded Ollama (and keep redirecting the "Ollama (local)" chat provider to it) until 0.4.0; that is accepted. The embedded server keeps starting at launch (today's behaviour, only on the new port); starting it on demand is a later option. |
+| 2026-10-19 | P2 | #140, #141 | **0.3.2.** #140 reduced to logging the stop reason and token count of an empty planning reply, merged with #141; the Ollama comparison run is dropped. #141 = retry the planning call once when its reply is empty. | Deepak: "Ok" to questions 1 and 2. |
+| 2026-10-19 | P2 | #146 | **0.3.2, option A, MCP Operator only:** do not offer the `delegate_to_mcp-operator` tool when no MCP server is connected (using the existing `isRoleAvailable`). | Deepak: "ok". |
+| 2026-10-19 | P2 | #170 | **0.3.2:** reuse the #149 compact-summary logic in `collapseOldestToolResultsToFit`. | Deepak: "ok". |
+| 2026-10-19 | P2 | #191 | **0.5.0 (detail).** The two split-off candidates (keep partial reasoning when a turn is stopped; stop the router re-verifying a delegate's files) are not done in 0.4.0; they are **handled together with #191 in 0.5.0**. | Deepak: "ok, no need, handle together in 0.5.0" (Claude's reading of the second half of answer 5). |
+| 2026-10-19 | P2 | #192, #226 (new) | **#192: 0.5.0 with #191. New item #226 (after a failed step, point recovery at the saved handoff files and do not repeat the data query) created, bucket 0.5.0.** | Deepak: "Makes sense, in 0.5.0." |
 
 ## Conflict raised and resolved (P1)
 
@@ -102,13 +107,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-**P2 (presented 2026-10-19; details in "P2: item details and recommendations" below).**
-1. **#140:** reduce to logging the stop reason and token count, merged with #141, and drop the Ollama comparison run? 0.3.2?
-2. **#141:** one retry of the planning call when its reply is empty. 0.3.2?
-3. **#146:** do not offer the MCP Operator delegate tool when no MCP server is connected (option A), for the MCP Operator only. 0.3.2?
-4. **#170:** reuse the #149 compact-summary logic when collapsing old tool results. 0.3.2?
-5. **#191:** 0.5.0 (detail), with the two small split-off candidates (keep partial reasoning on Stop; stop the router re-verifying a delegate's files): which of them, if any, go into 0.4.0?
-6. **#192:** 0.5.0 (detail) together with #191? And create the new item #226 (after a failed step, reuse the saved handoff files and do not repeat the data query), bucket 0.4.0 or 0.5.0?
+*(None for P1 and P2, which are decided. Questions for the next point are added here when it is presented.)*
 
 ## Item details and recommendations
 
@@ -249,7 +248,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 **Recommendation (Claude, revised 2026-10-19).** Since the fallback is necessary to avoid errors, bring it forward to **0.4.0, size M**: a Settings choice of the fallback model (provider and model, possibly cloud), used only when the selected local Ollama is not reachable; a visible warning in the chat each time it is used, naming the model and saying the conversation is going there; if no fallback is configured, a clear error and no silent switch. The deeper automatic-selection ideas stay in `docs/auto_model_selection.md`.
 
-### P2: item details and recommendations (written 2026-10-19, before presenting)
+### P2: item details and recommendations (written 2026-10-19, before presenting; ALL DECIDED, see the decision log)
 
 #### #140: record why a planning reply was empty
 
@@ -328,12 +327,13 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #140 | Record why a planning reply was empty (stop reason, token count) | chore (diagnostic) | 0.3.2 (reduced scope, with #141) | S | Reduce to logging the stop reason and token count when a planning reply is empty; drop the five-repetition Ollama comparison (local-model research). | proposed, awaiting decision |
-| #141 | Retry the planning call once when its reply is empty | defect | 0.3.2 | S | Silent loss of a compound request's split; small fix (one retry); can also affect cloud reasoning models. | proposed, awaiting decision |
-| #146 | MCP-availability substitution for the single-step delegate path | defect | 0.3.2 | M | Verified in the code: the top-level model is offered the MCP Operator even when no MCP server exists. Simplest fix: do not offer it when unavailable. | proposed, awaiting decision |
-| #170 | Keep a compact summary (not a content-free marker) in collapseOldestToolResultsToFit | defect | 0.3.2 | S | Applying an already-decided pattern from #149; avoids silent information loss in long sessions on any model. | proposed, awaiting decision |
-| #191 | Reasoning-loop breaker for local models | enhancement | 0.5.0 (detail) | M | Needs evidence first and several design choices; mainly affects local models; the sponsor uses cloud models. | proposed, awaiting decision |
-| #192 | Keep each plan step to its own job | enhancement | 0.5.0 (detail) | M | A prompt line is only a suggestion to a weak model; measure first. Design together with #191. | proposed, awaiting decision |
+| #140 | Record why a planning reply was empty (stop reason, token count) | chore (diagnostic) | 0.3.2 (reduced scope, with #141) | S | Reduce to logging the stop reason and token count when a planning reply is empty; drop the five-repetition Ollama comparison (local-model research). | **Decided 2026-10-19 (Deepak): 0.3.2, reduced scope, with #141.** |
+| #141 | Retry the planning call once when its reply is empty | defect | 0.3.2 | S | Silent loss of a compound request's split; small fix (one retry); can also affect cloud reasoning models. | **Decided 2026-10-19 (Deepak): 0.3.2.** |
+| #146 | MCP-availability substitution for the single-step delegate path | defect | 0.3.2 | M | Verified in the code: the top-level model is offered the MCP Operator even when no MCP server exists. Simplest fix: do not offer it when unavailable. | **Decided 2026-10-19 (Deepak): 0.3.2, option A, MCP Operator only.** |
+| #170 | Keep a compact summary (not a content-free marker) in collapseOldestToolResultsToFit | defect | 0.3.2 | S | Applying an already-decided pattern from #149; avoids silent information loss in long sessions on any model. | **Decided 2026-10-19 (Deepak): 0.3.2.** |
+| #191 | Reasoning-loop breaker for local models | enhancement | 0.5.0 (detail) | M | Needs evidence first and several design choices; mainly affects local models; the sponsor uses cloud models. | **Decided 2026-10-19 (Deepak): 0.5.0 (detail); the two split-off candidates are handled with it in 0.5.0.** |
+| #192 | Keep each plan step to its own job | enhancement | 0.5.0 (detail) | M | A prompt line is only a suggestion to a weak model; measure first. Design together with #191. | **Decided 2026-10-19 (Deepak): 0.5.0 (detail), with #191.** |
+| #226 | After a failed plan step, point recovery at the saved handoff files and do not repeat the data query | enhancement | 0.5.0 (detail) | M | New 2026-10-19 (from #192's manual test: the same query ran three times). Wastes real database calls on any model. | **Created and decided 2026-10-19 (Deepak): 0.5.0.** |
 
 ## P3 Everyday UX and trust
 
