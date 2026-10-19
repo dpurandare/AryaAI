@@ -55,7 +55,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | P1 Bundled Ollama | #214, #224, #225 (#222 and #223 closed) | **DONE: all three go into 0.4.0** |
 | P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192, #226 (new) | **DONE 2026-10-19: #140, #141, #146, #170 in 0.3.2; #191, #192, #226 in 0.5.0** |
 | P3 Everyday UX and trust | #215, #218, #227 (new), #216, #193, #168, #194, #189, #190 | **DONE 2026-10-19** |
-| P4 Files and workspace | #204, #203, #169 | open |
+| P4 Files and workspace | #204, #203, #169 | **presented 2026-10-19; recommendations written, awaiting Deepak's decisions** |
 | P5 Documents | #196, #183, #197, #198, #85 | open |
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | open |
 | P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | open |
@@ -115,7 +115,11 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-*(None for P1, P2 and P3, which are decided. Questions for the next point are added here when it is presented.)*
+**P4 (presented 2026-10-19; details in "P4: item details and recommendations" below).**
+1. **#204:** split it: the cheap safe parts (output locations in the Developer prompt and `get_environment`, the Export Settings default folder, check the old research notes) in 0.3.2, and new item **#228** (move script outputs after a run, with a safe rule) in 0.4.0, designed with #203?
+2. **#204, Export Settings default folder:** the operating system's Documents folder (my suggestion), or the workspace `documents/` folder?
+3. **#203:** 0.5.0 (detail)?
+4. **#169:** 0.4.0?
 
 ## Item details and recommendations
 
@@ -371,6 +375,37 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 **Recommendation (Claude): 0.4.0, size M, built with #189.** Ctrl+F is expected in a chat window; Electron's built-in find is the cheapest start.
 
+### P4: item details and recommendations (written 2026-10-19, before presenting)
+
+#### #204: files landing in the workspace root
+
+**What it is.** The user's workspace root held 129 loose files. Where they came from (from the session database and the tool calls):
+1. **122 PNGs** (`p2_0..33.png`, `page_*.png`, `crop_p2_*`, `bio_detail.png`, `hounslow_weather_forecast.png`), written by `python_run` scripts with bare relative names such as `plt.savefig("x.png")`. Scripts run with the workspace root as their working directory, so a bare name lands there. The "file by kind" filing in `workspace-layout.ts` only applies to files written through the file tools, not to what a script writes itself.
+2. **Research notes** (three `.md` and `.txt` files) written by the Researcher; a fix sending them to `tmp/` landed on 2026-10-09 and these may predate it (not checked).
+3. `filedetails.csv`: the request itself said "in the workspace root" (an explicit instruction).
+4. `sachivji-settings-export.json`: the Export Settings dialog's own default folder is the workspace root (`settings/import-export.ts`).
+5. `UMLS.sqlite` (286 MB): probably placed by the user.
+
+**Ideas in the item.** After each `python_run` or `shell_execute` the app already snapshots the workspace to report created files ("verified by the app"); use it to move new root files into the right folder by kind and tell the model the new path. Or run scripts with `tmp/` as the working directory and give real paths for inputs. Make the prompts and `get_environment` say explicitly where outputs go (images to `resources/`, documents to `documents/`, scratch to `tmp/`). Change the Export Settings default folder. Add a root-hygiene check. Decide together with #203.
+
+**Why a split is safer.** Moving files after a run is the effective fix but has real traps: a user who explicitly asked for a file in the root (item 3) must be respected; a script that writes a file and a later run that reads it by the old name would break; and changing the working directory breaks scripts that read inputs by bare name.
+
+**Recommendation (Claude): split.**
+- **0.3.2, size S: the cheap, safe parts.** (a) Say explicitly in the Developer prompt and in `get_environment` where outputs go and that scripts should write images to `resources/`, documents to `documents/` and scratch to `tmp/`. (b) Change the Export Settings default folder; Claude's suggestion is the operating system's Documents folder, because a settings file is not a work product. (c) Check whether the three research notes predate the 2026-10-09 fix.
+- **New item #228, 0.4.0, size M: move script outputs after a run.** Needs a safe rule first: only move new root files of generated kinds (images, scratch data), never when the request named the root, always tell the model the new path, and report what was moved. Design it together with #203.
+
+#### #203: design a workspace cleanup mechanism
+
+**What it is.** Today the only cleanup runs at the start of each chat turn: files in `tmp/` and `.sachiv-handoff/` older than 7 days are deleted (`pruneScratchDir`, `pruneHandoffDirs`); it is best-effort, runs only while chatting, is not configurable, and the prompt only says "cleaned up after a few days". Nothing covers `documents/`, `resources/`, `code/`, `templates/`, loose root files, or `.sachiv-clones/` (1,075 files, about 75% of the files in the user's workspace outside `venv`; what it holds and when the app is done with it was not checked). Design questions: which folders are scratch and which are the user's work (never delete those without asking); retention per folder and whether the user can set it (the user thought 30 days); when it runs (turn start, app start, a timer) and whether it reports what it removed; a "Clean up now" button with a preview; protecting files a later step may still need; size limits as well as age (a 286 MB file sits in the root).
+
+**Recommendation (Claude): 0.5.0 (detail), size M.** It is a design task with real data-loss risk, so it must be designed carefully and not rushed into a patch. #204 stops the worst source of clutter first. First step when it is picked up: find out what `.sachiv-clones/` holds.
+
+#### #169: `grep` / `find_in_files` content search
+
+**What it is.** A tool that searches file contents across the workspace through the same `WorkspaceGuard` as every file tool, split out of #148. Design points already named: a binary-file guard reusing the extension and content checks that `write_file` and `show_media` already use; how much context per hit (like `grep -C`); and the sharper risk, result-size explosion. Apply the #148 and #149 principle (cap the view, never silently drop data the model needs): a per-file match cap and a total-file cap with the same honest "showing first N, narrow your pattern" wording `find_files` uses.
+
+**Recommendation (Claude): 0.4.0, size M.** The design is already mostly settled in the item. A cross-platform tool also matters because the shell tool on Windows has no `grep`, and the sponsor is on Windows. Work: the tool, its owner role, the prompt-budget ceilings, tests (binary file, caps), the tool catalog and the guides.
+
 ## Closed during triage setup
 
 | # | Item | Why closed |
@@ -419,9 +454,9 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #204 | Files landing in the workspace root (122 stray PNGs from scripts) | defect | 0.3.2 | M | Analysis done, fix not started; a visible mess for every user. | open |
-| #203 | Design a workspace cleanup mechanism | design | 0.5.0 (detail) | M | Design only; #204 stops the worst source first. | open |
-| #169 | grep / find_in_files content search tool | feature | 0.4.0 | M | Small tool; budget-tested; split from #148. | open |
+| #204 | Files landing in the workspace root (122 stray PNGs from scripts) | defect | 0.3.2 (cheap parts) + new #228 (after-run tidy, 0.4.0) | M | Split: telling the model where outputs go and fixing the Export Settings default are small; moving script outputs after a run needs a safe rule first. | proposed, awaiting decision |
+| #203 | Design a workspace cleanup mechanism | design | 0.5.0 (detail) | M | Design only; #204 stops the worst source first. | proposed, awaiting decision |
+| #169 | grep / find_in_files content search tool | feature | 0.4.0 | M | A cross-platform content search through the workspace guard; Windows has no grep for the shell tool. | proposed, awaiting decision |
 
 ## P5 Documents
 
