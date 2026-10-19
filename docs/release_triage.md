@@ -58,7 +58,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | P4 Files and workspace | #204, #228 (new), #229 (new), #203, #169 | **DONE 2026-10-19** |
 | P5 Documents | #196, #183, #197, #198, #85 | **DONE 2026-10-19: #196 in 0.4.0; #183, #197, #198, #85 in 0.5.0** |
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | **DONE 2026-10-19: #159 in 0.4.0; #134 in 0.3.2; #122, #135, #136 parked** |
-| P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | **recommendations written 2026-10-19; presented, awaiting Deepak** |
+| P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | **DONE 2026-10-19: all nine items in 0.5.0 (detail); revisit after 0.4.0** |
 | P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | open |
 | P9 Integrations and media | #151, #160, #217, #76, #79, #195 | open |
 | P10 Documentation | #92 | open |
@@ -73,6 +73,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P1 | #214 | **Revised: use the bundled Ollama ONLY, for chat and for embeddings. No fallback to the user's own Ollama; option (c) dropped.** | Deepak: running two Ollama instances is not a good idea. |
 | 2026-10-19 | P1 | #222 | **Bucket 0.3.2 (not 0.4.0)** | Deepak: a typical user with a good Windows machine or a MacBook with 24 GB or more of memory can run 9 to 20 billion parameter models (observed on his MacBook and Linux machine). Make the feature useful now; do not hold it to the end of 0.4.0. |
 | 2026-10-19 | P6 | #159 | Kept as a work item; proposed 0.4.0 | Deepak: add Anthropic extended thinking wherever it fits. Not built yet, no Anthropic code for it; to be confirmed when P6 is discussed. |
+| 2026-10-19 | P7 | #124, #125, #127, #123, #205, #128, #132, #200, #49 | **All 0.5.0 (detail); revisit after 0.4.0.** The merge of #205 into #123 (one design) was part of the proposal and is recorded as accepted. | Deepak: "All items for 0.5.0 so mark those, we will revisit after 0.4.0". |
 | 2026-10-19 | P1 | #222 | Budget stated for GPU parts: about 100 MB more is acceptable | Deepak. Measured: Vulkan only +43 MB on disk; full CUDA +1.8 GB. Proposal is Vulkan only (pending confirmation, question 2). |
 | 2026-10-19 | P1 | #222 | **GPU: keep the Vulkan backend only (+43 MB on disk, +13 MB download); keep dropping CUDA** | Deepak: "I am ok with your proposal for now (for 0.3.2)". |
 | 2026-10-19 | P1 | #214 | **The bundled Ollama uses a non-standard port, never 11434; range 11450 to 11455, first free one** | Deepak: use a port that is not the standard Ollama port; the range comes from his 0.5.0 spec and is applied to 0.3.2 for consistency. Replaces today's 11434 then 11435 to 11438. |
@@ -125,11 +126,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-**P7 (details in "P7: item details and recommendations" below).**
-1. **#124, #125, #127** (delegation chain): all 0.5.0 (detail), #125 designed first?
-2. **#123 + #205:** merged into #123, 0.5.0 (detail)?
-3. **#128, #132, #200:** one roles-and-skills design, 0.5.0 (detail)?
-4. **#49:** 0.5.0 (detail)?
+None. P7 answered 2026-10-19; P8 is next.
 
 ## Item details and recommendations
 
@@ -555,7 +552,9 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 
 **Recommendation (Claude): Parked.** It exists only to feed #135(a); no Groq user, low value now.
 
-### P7: item details and recommendations (written 2026-10-19; awaiting Deepak)
+### P7: item details and recommendations (DECIDED 2026-10-19)
+
+**Decided 2026-10-19 (Deepak):** all nine items go to 0.5.0 (detail) and will be revisited after 0.4.0.
 
 **Context.** All nine items are architecture work: they change how roles delegate, what each role sees, and how tools and roles are loaded. None is a defect, and none is urgent for a cloud-model user on 0.3.1. Group A is the delegation chain (#124, #125, #127). Group B is MCP loading (#123, #205). Group C is roles and skills (#128, #132, #200). #49 stands alone.
 
