@@ -29,10 +29,10 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 | 0.4.0 | 13 |
 | 0.5.0 | 22 |
 | Parked | 9 |
-| Not this repo | 1 |
+| Not this repo | 0 |
 | Ongoing rule | 1 |
-| **Total open items** | **58** |
-| Closed during triage setup | 5 (#121, #137, #120, #222, #223); #208 closed during P8; #151 closed during P9 |
+| **Total open items** | **57** |
+| Closed during triage setup | 5 (#121, #137, #120, #222, #223); #208 closed during P8; #151 and #195 closed during P9 |
 
 **Capacity note (updated 2026-10-19).** 0.4.0 is large (the PDF reader and video are L-sized, plus the Ollama block, Anthropic thinking, grep and the search items). Deepak has said not to worry about a two-week timeline because there is no customer deadline, so the release may simply take longer; we will still review the whole scope at the end and can split a release if it grows too big.
 
@@ -60,7 +60,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | **DONE 2026-10-19: #159 in 0.4.0; #134 in 0.3.2; #122, #135, #136 parked** |
 | P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | **DONE 2026-10-19: all nine items in 0.5.0 (detail); revisit after 0.4.0** |
 | P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | **DONE 2026-10-19: #131 reduced to a single-instance check (0.3.2), #208 closed, #221 0.3.2, #220 0.5.0, signing Parked** |
-| P9 Integrations and media | #151, #160, #217, #76, #79, #195 | **mostly decided 2026-10-19; #76 and #195 still open, plus three #79 decisions** |
+| P9 Integrations and media | #151, #160, #217, #76, #79, #195 | **DONE 2026-10-19 except three #79 design decisions** |
 | P10 Documentation | #92 | open |
 
 ## Decision log
@@ -80,6 +80,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P8 | #221 | **0.3.2, size S (tests only).** Counts unchanged. | Deepak: "2. let's plan these." (read as yes to #221; recorded here so he can correct it). |
 | 2026-10-19 | P8 | #220, #11, #63, #64, #65, #66 | **#220: 0.5.0 (detail), with the interactive terminal. #11, #63 to #66: Parked as decided (no contingency).** P8 DONE. | Deepak: "3. Ok."; signing contingency dismissed as too hypothetical. |
 | 2026-10-19 | P9 | #151, #160, #217, #79 | **#151: closed (the verification was already done). #160: moved to 0.5.0 (detail), streaming from disk agreed, scope widened to connecting to streams (for example YouTube, Microsoft Teams recordings). #217: 0.5.0 (detail), with research on API patterns first; a point release after 0.4.0 carrying only this feature is an open option. #79: moved from Parked to 0.4.0, Microsoft 365 email, configurable, with a proper user guide.** #76 and #195 not yet answered. Counts: 0.3.2=12, 0.4.0=13, 0.5.0=22, Parked=9, open 58. | Deepak: "#151 this is just verification which is already done"; "#160 streaming from disk ok. Check possibility to connect to streams ...; I am ok to defer this to 0.5.0 in view of some large items in 0.4.0"; "#217 do some more research on the patterns that we observe in API implementations, ok to defer it to 0.5.0 or we may make a point release only with this feature post 0.4.0 as this is an important feature"; "sponsor uses the Microsoft 365 email; let's work on it in 0.4.0 ... fix at least the Microsoft based implementation of emails so that it can be configured. Plan a proper documentation/guide for the user to configure this properly." |
+| 2026-10-19 | P9 | #76, #195 | **#76: Parked (Oracle on demand). #195: verified and closed in this repo.** P9 DONE. Counts: 0.3.2=12, 0.4.0=13, 0.5.0=22, Parked=9, open 57. | Deepak: "#76: parked. #195: verify and close." Verification (Claude, 2026-10-19): the llmwiki project is not on this machine (its path in the item is a Mac path), so its fix could not be checked here. What was re-verified: with plain SQLite FTS5, `IEC 61400-26 availability` still fails with `no such column: 26`, while `IEC 61400`, the phrase-quoted form and the per-term quoted form (`\"IEC\" \"61400-26\" \"availability\"`) all match, so the diagnosis and the fix recipe are correct. The fix itself belongs in llmwiki (quote each term). |
 | 2026-10-19 | P1 | #222 | Budget stated for GPU parts: about 100 MB more is acceptable | Deepak. Measured: Vulkan only +43 MB on disk; full CUDA +1.8 GB. Proposal is Vulkan only (pending confirmation, question 2). |
 | 2026-10-19 | P1 | #222 | **GPU: keep the Vulkan backend only (+43 MB on disk, +13 MB download); keep dropping CUDA** | Deepak: "I am ok with your proposal for now (for 0.3.2)". |
 | 2026-10-19 | P1 | #214 | **The bundled Ollama uses a non-standard port, never 11434; range 11450 to 11455, first free one** | Deepak: use a port that is not the standard Ollama port; the range comes from his 0.5.0 spec and is applied to 0.3.2 for consistency. Replaces today's 11434 then 11435 to 11438. |
@@ -132,10 +133,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-**P9, still open (answered 2026-10-19 except these):**
-1. **#76:** Parked (Oracle on demand)?
-2. **#195:** closed here with a pointer to the llmwiki project?
-3. **#79 (new 0.4.0 scope, see "P9 update" below):** which kind of Microsoft account the sponsor has (work/school tenant or personal Outlook.com), who owns the app registration (Sachivji's own or the user's), and send only or also read mail?
+**P9 open: only the three #79 decisions** (account type, who owns the Entra app registration, send only or also read; see "P9 update" below).
 
 ## Item details and recommendations
 
@@ -798,9 +796,9 @@ Long sessions currently rely on trimming and on `search_history` to recover olde
 | #151 | Verify and scope video support | verification | 0.4.0 | S | Prerequisite for #160. | **Closed 2026-10-19 (Deepak): verification already done.** |
 | #160 | Real video support in the workspace | feature | 0.4.0 (already committed) | L | You committed this to 0.4.0 on 2026-10-13; #151's verification comes first. | **Decided 2026-10-19 (Deepak): 0.5.0 (detail); streaming from disk; widen to streams.** |
 | #217 | External APIs needing a key plus a session token; self-configuring set-up | feature | 0.5.0 (detail) | L | Large design (login, token, expiry, re-login). | **Decided 2026-10-19 (Deepak): 0.5.0 (detail), research first; possible 0.4.x point release.** |
-| #76 | More database engines (Oracle remains; SQL Server and MySQL are done) | feature | Parked | - | Close the finished part; Oracle only on demand. | open |
+| #76 | More database engines (Oracle remains; SQL Server and MySQL are done) | feature | Parked | - | Close the finished part; Oracle only on demand. | **Decided 2026-10-19 (Deepak): Parked.** |
 | #79 | Email phase 2: Outlook / Microsoft Graph (Gmail is done) | feature | Parked | - | Needs OAuth sign-in; do with #217's authentication work if ever. | **Decided 2026-10-19 (Deepak): 0.4.0, Microsoft 365 email, with a user guide.** |
-| #195 | LLM wiki search fails on hyphenated numbers | defect (other project) | Not this repo | - | The bug is in the separate llmwiki project; track it there. | open |
+| #195 | LLM wiki search fails on hyphenated numbers | defect (other project) | Not this repo | - | The bug is in the separate llmwiki project; track it there. | **Closed 2026-10-19 (Deepak): verified; fix belongs in llmwiki.** |
 
 ## P10 Documentation
 
