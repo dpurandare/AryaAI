@@ -56,7 +56,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192, #226 (new) | **DONE 2026-10-19: #140, #141, #146, #170 in 0.3.2; #191, #192, #226 in 0.5.0** |
 | P3 Everyday UX and trust | #215, #218, #227 (new), #216, #193, #168, #194, #189, #190 | **DONE 2026-10-19** |
 | P4 Files and workspace | #204, #228 (new), #229 (new), #203, #169 | **DONE 2026-10-19** |
-| P5 Documents | #196, #183, #197, #198, #85 | **recommendations written 2026-10-19 (prepared while Deepak was away); NOT YET PRESENTED to Deepak** |
+| P5 Documents | #196, #183, #197, #198, #85 | **DONE 2026-10-19: #196 in 0.4.0; #183, #197, #198, #85 in 0.5.0** |
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | open |
 | P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | open |
 | P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | open |
@@ -116,6 +116,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P4 | #229 (new) | **Drag and drop by path: new 0.4.0 item.** | Deepak: "Ok". |
 | 2026-10-19 | P4 | #204, #228 | **Split by release: the small parts of #204 in 0.3.2; #228 and #229 in 0.4.0.** | Deepak: "ok". |
 | 2026-10-19 | P4 | #203, #169 | **#203: 0.5.0 (detail). #169: 0.4.0.** | Deepak: "ok", "ok". |
+| 2026-10-19 | P5 | #196, #183, #197, #198, #85 | **#196: 0.4.0 (L), spike first. #183, #197, #198, #85: 0.5.0 (detail).** | Deepak: "should work and agree" (#196, with a design addition: images, graphs and sketches in a PDF are extracted to a sub-folder of the temporary location and referred to while reading); "Ok" (#183); "Ok" (templates family). Downloads: if the user directs a download it goes to `downloads/`; otherwise a PDF opened for one-time reading stays in transient storage. |
 
 ## Conflict raised and resolved (P1)
 
@@ -123,11 +124,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-**P5 (recommendations written 2026-10-19 while Deepak was away; to be presented when he returns; details in "P5: item details and recommendations" below).**
-1. **#196:** 0.4.0, size L, starting with the spike (LiteParse inside Electron 44 on Windows and macOS; fallback `unpdf`)? Two tools (`pdf_open`, `pdf_read`), with `parse_html` and `read_file` handing PDFs over, and `[PDF]` marked in search results?
-2. **#183:** 0.5.0 (detail), re-evaluated after the #196 spike because the PDF engine includes OCR?
-3. **#197, #198, #85:** all 0.5.0 (detail), designed together as one "templates" family; answers to #197's open questions: Python required is acceptable (bundled in the installers), layouts first and sample slides later?
-4. **Download tool:** #196 needs a way to fetch a PDF from a URL; an explicit "download this file" request goes to `downloads/` (#228). Agree that a PDF merely being read stays in temporary storage?
+None. P5 answered 2026-10-19; P6 is next.
 
 ## Item details and recommendations
 
@@ -469,7 +466,11 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 
 **Recommendation (Claude): 0.4.0, size M.** The design is already mostly settled in the item. A cross-platform tool also matters because the shell tool on Windows has no `grep`, and the sponsor is on Windows. Work: the tool, its owner role, the prompt-budget ceilings, tests (binary file, caps), the tool catalog and the guides.
 
-### P5: item details and recommendations (written 2026-10-19 while Deepak was away; not yet presented)
+### P5: item details and recommendations (DECIDED 2026-10-19)
+
+**Decided 2026-10-19 (Deepak):** #196 in 0.4.0 (agreed, with the extraction design addition below); #183, #197, #198 and #85 in 0.5.0 (detail), the last three as one templates family; a PDF the user directs to download goes to `downloads/`, a PDF opened only to be read stays in transient storage.
+
+**Design addition for #196 (Deepak):** reading a PDF extracts its text to a temporary location, and any images, graphs or sketches in the PDF are extracted to a sub-folder of that temporary location, so the model can refer to them while reading and interpreting the PDF. (Open for the design: how the model sees them, since images reach it only through a vision-capable model or OCR; this ties to #183. Extracted images are cleaned up with the temporary location.)
 
 **Context.** The sponsor is a non-developer on Windows who uses Anthropic, OpenAI and Tavily web search, so web research and documents are his likely work. The installers bundle Python, so Python-based document tools are available to installed users.
 
@@ -572,11 +573,11 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #196 | PDF reader (convert once, read in sections) | feature | 0.4.0 | L | Repeated request; web research keeps hitting PDFs and the sponsor uses web search. Start with a spike on the engine inside Electron. | proposed, awaiting decision |
-| #183 | Read text from images and scanned documents (OCR) | feature | 0.5.0 (detail) | L | The leading PDF engine includes OCR, so decide after the #196 spike; privacy matters for scans such as passports. | proposed, awaiting decision |
-| #197 | Build a deck from the user's own PowerPoint template | feature | 0.5.0 (detail) | L | One design for the whole templates family (#197, #198, #85). | proposed, awaiting decision |
-| #198 | Template generation from an existing document, done properly | feature (research) | 0.5.0 (detail) | L | Research first, then design, together with #197 and #85. | proposed, awaiting decision |
-| #85 | Template selection during document creation | feature | 0.5.0 (detail) | M | Depends on the templates design; needs a default-template setting. | proposed, awaiting decision |
+| #196 | PDF reader (convert once, read in sections) | feature | 0.4.0 | L | Repeated request; web research keeps hitting PDFs and the sponsor uses web search. Start with a spike on the engine inside Electron. | **Decided 2026-10-19 (Deepak): as proposed.** |
+| #183 | Read text from images and scanned documents (OCR) | feature | 0.5.0 (detail) | L | The leading PDF engine includes OCR, so decide after the #196 spike; privacy matters for scans such as passports. | **Decided 2026-10-19 (Deepak): as proposed.** |
+| #197 | Build a deck from the user's own PowerPoint template | feature | 0.5.0 (detail) | L | One design for the whole templates family (#197, #198, #85). | **Decided 2026-10-19 (Deepak): as proposed.** |
+| #198 | Template generation from an existing document, done properly | feature (research) | 0.5.0 (detail) | L | Research first, then design, together with #197 and #85. | **Decided 2026-10-19 (Deepak): as proposed.** |
+| #85 | Template selection during document creation | feature | 0.5.0 (detail) | M | Depends on the templates design; needs a default-template setting. | **Decided 2026-10-19 (Deepak): as proposed.** |
 
 ## P6 Provider quality: cost, thinking and evaluation
 
