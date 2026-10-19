@@ -16,10 +16,13 @@ How a release such as 0.3.2 is built, verified on other machines, tagged and pub
 |---|---|---|---|
 | 1. Per item | This Linux machine | Unit tests for the item, then `npm run typecheck` and the full `npx vitest run` (Node 24 via `nvm use 24`). Live check against a real model where the item needs one (isolated Electron with the debugging port, as before). | Claude |
 | 2. Whole branch | GitHub Actions | `gh workflow run CI --ref release/0.3.2` builds and tests on Linux, macOS and Windows runners. Manual only (pushes do not start CI). | Claude starts, Deepak sees the result |
-| 3. Installers from the branch (no tag) | GitHub Actions | `gh workflow run "Windows installer (manual)" --ref release/0.3.2` and the macOS and Linux equivalents produce downloadable installers as run artifacts (kept 14 days). Nothing is published and no tag is created. | Claude starts, Deepak downloads |
+| 3. Installers from the branch (no tag) | GitHub Actions | **First bump the version on the branch** (section 3, step 2), so the installers say 0.3.2 and are the same code that will be tagged. Then `gh workflow run "Windows installer (manual)" --ref release/0.3.2` and the macOS and Linux equivalents produce downloadable installers as run artifacts (kept 14 days). Nothing is published and no tag is created. | Claude starts, Deepak downloads |
 | 4. Windows VM | Deepak's Windows VM | Install the Windows installer from stage 3 over the existing install (upgrade path: settings, chats and workspace kept), then run the checklist below. | Deepak |
 | 5. Mac | Deepak's Mac | Install the `.dmg` from stage 3 (right-click, Open, or the `xattr -cr` step in the User Guide), upgrade-path first, then the checklist. For a quick look at one fix a source run also works: `git fetch && git checkout release/0.3.2 && npm ci && npm run dev` (Node 24). | Deepak |
-| 6. Sponsor's Windows machine | Sponsor | Only after stages 1 to 5 pass, via the published release (section 3). | Sponsor |
+| 6. The tag build and the draft release | GitHub Actions | After the tag is pushed (section 3), the release workflow rebuilds all three installers and puts them in a **draft** release that only you can see. Install **those exact files** once on the Windows VM and check them (upgrade over 0.3.1, app starts, version shows 0.3.2). | Deepak |
+| 7. Publish, then the sponsor | GitHub | You publish the draft. From that moment the sponsor's app shows the update banner at its next start; he downloads and installs it himself (nothing is installed silently). | Deepak publishes; sponsor installs |
+
+**Publishing is the release.** Stages 1 to 5 do not publish anything: no tag, no release, no banner for the sponsor. The sponsor sees a new build only after step 7, because the app's update check looks only at published releases, never at drafts or workflow artifacts. The tag build recreates the installers from the tagged commit, so they are not the same files as stage 3, which is why stage 6 checks the real ones before publishing.
 
 **Checklist for stages 4 and 5.** For each item in the release Claude provides a short "how to check it" list (what to do, what you should see), drawn from `docs/manual_testing.md` and the item's note. Deepak reports pass or fail per item; Claude records the result in the item's `TASKS.md` note and in `docs/manual_testing.md`, and fixes failures on the same branch. The release is not tagged until every item passes or is explicitly moved out.
 
@@ -28,10 +31,10 @@ How a release such as 0.3.2 is built, verified on other machines, tagged and pub
 Pushing a tag is outward-facing (it starts three platform builds and creates a draft GitHub Release), so **Claude asks before every tag push and before anything is published**.
 
 1. All items verified (section 2); documentation updated per the standing rule (`docs/docs-outline.md`): both guides, `docs/manual_testing.md`, PDFs regenerated.
-2. On the release branch: bump the version in `package.json`, the root entries of `package-lock.json`, and the `clientInfo` version in `src/main/mcp/client.ts`; add the `[0.3.2]` section to `docs/CHANGELOG.md`. Commit "Release 0.3.2".
+2. On the release branch, **before stage 3 of section 2**: bump the version in `package.json`, the root entries of `package-lock.json`, and the `clientInfo` version in `src/main/mcp/client.ts`; add the `[0.3.2]` section to `docs/CHANGELOG.md`. Commit "Release 0.3.2".
 3. Merge to `main` with `--ff-only` and push `main`.
 4. Create the annotated tag `v0.3.2` on that commit and push it (after Deepak's go-ahead). `release.yml` builds macOS, Windows and Linux, creates one **draft** release and uploads the installers (the Windows installer re-zipped).
-5. Deepak opens the draft, checks the assets (names, sizes), optionally installs once more, and **publishes manually**. The in-app update banner appears only once the release is published.
+5. Deepak opens the draft, checks the assets (names, sizes), installs the real files once (stage 6), and **publishes manually**. The in-app update banner appears for the sponsor only once the release is published.
 6. If the tag build fails, fix on `main`, delete the tag and draft release, and tag again (this happened with 0.3.1; the workflow lessons are recorded in `release.yml`).
 7. Update the memory and `TASKS.md` with the release state; copy the PDFs to the release page or the sponsor.
 
