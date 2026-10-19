@@ -27,11 +27,11 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 |---|---|
 | 0.3.2 | 16 |
 | 0.4.0 | 10 |
-| 0.5.0 | 16 |
+| 0.5.0 | 17 |
 | Parked | 10 |
 | Not this repo | 1 |
 | Ongoing rule | 1 |
-| **Total open items** | **54** |
+| **Total open items** | **55** |
 | Closed during triage setup | 3 (#121, #137, #120) |
 
 **Capacity warning.** 16 items in 0.3.2 (now including the L-sized #222) is a lot for a patch release, and 0.4.0 holds two L-sized features (#196 PDF reader and #160 video). We should expect to cut or move items as we decide.
@@ -52,7 +52,7 @@ The point names are only grouping labels I chose so related items are discussed 
 
 | Point | Items | Status |
 |---|---|---|
-| P1 Bundled Ollama | #214, #222 | decided (both 0.3.2, bundled Ollama only); follow-up questions pending |
+| P1 Bundled Ollama | #214, #222, #223 | #214, #222 decided (0.3.2, bundled Ollama only, Vulkan only, port 11450-11455); #223 added for 0.5.0 (spec recorded, assessment given); questions pending |
 | P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192 | open |
 | P3 Everyday UX and trust | #215, #218, #216, #193, #168, #194, #189, #190 | open |
 | P4 Files and workspace | #204, #203, #169 | open |
@@ -74,6 +74,9 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P1 | #222 | **Bucket 0.3.2 (not 0.4.0)** | Deepak: a typical user with a good Windows machine or a MacBook with 24 GB or more of memory can run 9 to 20 billion parameter models (observed on his MacBook and Linux machine). Make the feature useful now; do not hold it to the end of 0.4.0. |
 | 2026-10-19 | P6 | #159 | Kept as a work item; proposed 0.4.0 | Deepak: add Anthropic extended thinking wherever it fits. Not built yet, no Anthropic code for it; to be confirmed when P6 is discussed. |
 | 2026-10-19 | P1 | #222 | Budget stated for GPU parts: about 100 MB more is acceptable | Deepak. Measured: Vulkan only +43 MB on disk; full CUDA +1.8 GB. Proposal is Vulkan only (pending confirmation, question 2). |
+| 2026-10-19 | P1 | #222 | **GPU: keep the Vulkan backend only (+43 MB on disk, +13 MB download); keep dropping CUDA** | Deepak: "I am ok with your proposal for now (for 0.3.2)". |
+| 2026-10-19 | P1 | #214 | **The bundled Ollama uses a non-standard port, never 11434; range 11450 to 11455, first free one** | Deepak: use a port that is not the standard Ollama port; the range comes from his 0.5.0 spec and is applied to 0.3.2 for consistency. Replaces today's 11434 then 11435 to 11438. |
+| 2026-10-19 | P1 | #223 (new) | **Added as a 0.5.0 TODO** | Deepak's spec for detecting an existing Ollama (recorded in the item details). Claude's assessment is recorded there too; Deepak has not yet decided on it. |
 
 ## Conflict raised and resolved (P1)
 
@@ -81,16 +84,17 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-1. **P1, #214, port.** With the bundled Ollama as the only one, should it use a **dedicated port that is never 11434** (so it never collides with an Ollama the user runs for other tools)? Today it prefers 11434 and falls back to 11435 to 11438.
-2. **P1, #222, GPU.** Deepak's budget (2026-10-19): an increase of **about 100 MB is acceptable**. Measured sizes below (Ollama v0.40.3, the pinned Windows archive; see "GPU backend sizes" under the #222 details). **Proposed: keep the Vulkan backend (+43 MB on disk, +13 MB in the download) and keep dropping CUDA (+1,743 MB on disk, +1,364 MB in the download), which is far over the budget.** Vulkan covers NVIDIA, AMD and Intel GPUs; it is slower than CUDA but much faster than CPU for models that fit in video memory. It must be tested before we rely on it (in the Ollama versions I know, Vulkan is opt-in through an environment variable and marked experimental; not verified for v0.40.3). Confirm?
-3. **P1, #222, capacity and release shape.** #222 is an L-sized feature and now sits in 0.3.2, which was meant to be fix-only. Under the project's versioning a feature normally means a minor release. How do we keep it honest: (a) keep the name 0.3.2 and accept a bigger patch; (b) call it 0.4.0 and make the bundled-Ollama work the first release of that line, moving the other 0.3.2 fixes with it? Please decide, because it affects how we bucket everything else.
-4. **P1, #222, minimum useful scope.** Is the scope in the item details (installed models list with delete, download with progress and cancel, a Modelfile editor with Create model, RAM and disk guidance) the right minimum, or should something be added or cut?
+1. **P1, #222, capacity and release shape.** #222 is an L-sized feature and now sits in 0.3.2, which was meant to be fix-only. Under the project's versioning a feature normally means a minor release. How do we keep it honest: (a) keep the name 0.3.2 and accept a bigger patch; (b) call it 0.4.0 and make the bundled-Ollama work the first release of that line, moving the other 0.3.2 fixes with it? Please decide, because it affects how we bucket everything else.
+2. **P1, #222, minimum useful scope.** Is the scope in the item details (installed models list with delete, download with progress and cancel, a Modelfile editor with Create model, RAM and disk guidance) the right minimum, or should something be added or cut?
+
+3. **P1, #223 (0.5.0), Claude's assessment needs Deepak's reaction** (see its item details): (a) detect an existing Ollama inside the app (first run and on demand) and not in the installer; (b) keep **embeddings always on the bundled server**, never on the existing one; (c) when the existing Ollama disappears, does chat fall back to the bundled one automatically, after asking, or stay unavailable?
+4. **P1, #223, bucket.** Proposed 0.5.0 (detail), size L, as Deepak requested a 0.5.0 TODO. Confirm.
 
 ## Item details and recommendations
 
 ### #214: the "Ollama (local)" chat provider is redirected to the bundled Ollama (P1)
 
-**Status: DECIDED 2026-10-19 (Deepak): bucket 0.3.2. REVISED decision: use the bundled Ollama ONLY, for chat and embeddings, no fallback to a user's own Ollama and no second instance; option (c) dropped. Open: the dedicated port (Pending question 1).**
+**Status: DECIDED 2026-10-19 (Deepak): bucket 0.3.2. REVISED decision: use the bundled Ollama ONLY, for chat and embeddings, no fallback to a user's own Ollama and no second instance; option (c) dropped for 0.3.2 (it returns in spirit in #223 for 0.5.0). PORT DECIDED: the bundled server uses a non-standard port, range 11450 to 11455, first free one, never 11434.**
 
 **What it is.** The installers bundle a small Ollama server meant only for embeddings, which power search over past chats. When it starts, the app points every "Ollama" connection at it, including the "Ollama (local)" chat provider. The code is in `ipc/register.ts` (it calls `setBundledOllamaBaseUrl`) and `providers/setup.ts`.
 
@@ -125,7 +129,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ### #222: download models and run a Modelfile on the bundled Ollama (P1)
 
-**Status: DECIDED 2026-10-19 (Deepak): bucket 0.3.2, size L. Open: GPU, release shape and minimum scope (Pending questions 2 to 4).**
+**Status: DECIDED 2026-10-19 (Deepak): bucket 0.3.2, size L; GPU: keep the Vulkan backend only (about +43 MB on disk), CUDA stays out. Open: release shape and minimum scope (Pending questions 1 and 2).**
 
 **What it is.** The bundled server is CPU-only and holds only the embedding model. The code to pull a model exists (`OllamaRuntime.pullModel`) but is used only for the embedding model. A user cannot get a chat model, change a model's parameters, or list or delete models.
 
@@ -161,6 +165,36 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 **Depends on.** #214 (bundled Ollama only). The chat provider and embeddings both use the bundled server, so a downloaded model is immediately usable for chat.
 
+### #223: detect an existing Ollama; keep the bundled Ollama always present on its own port (P1, new, 0.5.0)
+
+**Status: ADDED 2026-10-19 as a 0.5.0 TODO (Deepak). Claude's assessment below has not been decided on yet.**
+
+**Deepak's spec (2026-10-19), recorded as given.**
+1. The installer bundles the Ollama defined for 0.3.2 (CPU libraries plus Vulkan, model download and Modelfile management, port 11450 to 11455).
+2. The installer checks whether a local Ollama is installed. If yes, it asks that Ollama to download the embedding model, and sets Settings so the already installed Ollama is used.
+3. Irrespective of whether an Ollama is installed, the bundled Ollama is installed and is available on a separate port, between 11450 and 11455 depending on availability.
+4. If the user turns off or uninstalls the existing Ollama, the bundled Ollama should work only for the embedding operations.
+
+**Claude's assessment (2026-10-19): a good scheme, with four changes.**
+
+*Why it is good.*
+- It solves the GPU gap properly. Users with their own Ollama keep CUDA or ROCm speed and the models they already downloaded, while everyone else gets a working local setup out of the box. Vulkan only (decided for 0.3.2) is a stopgap; an existing Ollama is the real answer for GPU owners.
+- A separate non-standard port means the two servers never collide, and the existing Ollama is never touched or restarted by Sachivji.
+- It avoids downloading the same multi-gigabyte models twice, since chat uses the models the user already has.
+
+*Changes I recommend.*
+1. **Do the detection inside the app, not in the installer.** Only the Windows installer has any install-time logic; the macOS disk image, the Linux AppImage and the `.deb` have none. An installer also cannot reliably write the per-user Settings database (it may run elevated, for all users), and downloading a model during installation is slow and fragile. The app already has first-run screens (Python, embeddings); add a step "We found Ollama on this computer. Use it for chat? (Use it / Use the bundled one)", and a Settings choice so the user can change it later. This works the same on all three systems.
+2. **Keep embeddings always on the bundled server; do not ask the existing Ollama to download the embedding model.** The search index records only the provider and model name. If embeddings came sometimes from the existing Ollama and sometimes from the bundled one, a different tag or version of `nomic-embed-text` could produce slightly different vectors and silently damage search results. One fixed, pinned source avoids that, and it also means we never change the user's Ollama installation.
+3. **Never switch silently.** Detect the existing Ollama (a quick request to its address) at start-up and when Settings opens, and show its status. If it disappears while chat was using it, say so and offer the bundled one with one click. Deepak's spec says the bundled one then works only for embeddings; I would offer chat on it as an explicit choice, because 0.3.2 already gives it model management. This is Pending question 3(c).
+4. **Start the bundled server on demand** (first embedding or chat request) instead of at every launch, so two servers are not both resident. Models unload when idle, so the cost of an idle server is small, but on demand is cleaner. Also bind both to the loopback address only.
+
+*Costs and risks.*
+- The test matrix grows: an existing Ollama present or absent, running or stopped, different versions, on three operating systems. It needs written manual test cases.
+- The Windows port range 11450 to 11455 should be checked against ranges Windows reserves for itself; the first-free fallback already handles a clash.
+- Two Ollama processes can run at once when the existing one is in use for chat (the bundled one idles). This relaxes Deepak's earlier remark that two instances are not a good idea; it is acceptable only because they have separate jobs.
+
+*Size and bucket.* L, as proposed: 0.5.0 (detail). The design must be settled with the 0.3.2 work in mind, so 0.3.2 should already keep chat and embeddings as separate code paths with a configurable address, which makes #223 an extension and not a rewrite.
+
 ## Closed during triage setup
 
 | # | Item | Why closed |
@@ -175,6 +209,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 |---|---|---|---|---|---|---|
 | #214 | Chat provider 'Ollama (local)' is routed to the bundled embedding-only Ollama in packaged builds | defect + decision | 0.3.2 | S-M | Revised 2026-10-19: the bundled Ollama is used for chat and embeddings; remaining work is the port, stale messages and docs. | **Decided 2026-10-19 (Deepak): 0.3.2; use the bundled Ollama only (chat and embeddings); option (c) dropped.** Open: the dedicated port. |
 | #222 | Download other models when only the bundled Ollama exists (model download UI) | feature | 0.3.2 | L | Decided 2026-10-19: 9 to 20B models run well on a 24 GB or larger Windows machine or MacBook, so make the bundled Ollama useful now. | **Decided 2026-10-19 (Deepak): 0.3.2; scope = download models and run a Modelfile.** Open: GPU, release shape, minimum scope. |
+| #223 | Smarter local-model setup: detect an existing Ollama; bundled Ollama always present on its own port | feature | 0.5.0 (detail) | L | Deepak's spec 2026-10-19; Claude's assessment is in the item details. Valuable for Windows and Linux GPU users because an existing Ollama can use CUDA. | **Added 2026-10-19 (Deepak) as a 0.5.0 TODO.** Awaiting his reaction to the assessment. |
 
 ## P2 Planner and loop reliability
 
