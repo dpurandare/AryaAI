@@ -26,8 +26,8 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 | Bucket | Items |
 |---|---|
 | 0.3.2 | 15 |
-| 0.4.0 | 11 |
-| 0.5.0 | 17 |
+| 0.4.0 | 12 |
+| 0.5.0 | 16 |
 | Parked | 10 |
 | Not this repo | 1 |
 | Ongoing rule | 1 |
@@ -52,7 +52,7 @@ The point names are only grouping labels I chose so related items are discussed 
 
 | Point | Items | Status |
 |---|---|---|
-| P1 Bundled Ollama | #214, #224, #225 (#222 and #223 closed) | decided; four small confirmations pending |
+| P1 Bundled Ollama | #214, #224, #225 (#222 and #223 closed) | decided; three small confirmations pending |
 | P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192 | open |
 | P3 Everyday UX and trust | #215, #218, #216, #193, #168, #194, #189, #190 | open |
 | P4 Files and workspace | #204, #203, #169 | open |
@@ -90,6 +90,10 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P1 | #214 | **The embedded Ollama must still NOT use the default Ollama port (11434)**; range 11450 to 11455, first free | Deepak, restating the port decision. |
 | 2026-10-19 | P1 | #214 | **When "Ollama (local)" is not available, Settings shows the Ollama address and/or instructions to install Ollama** (the entry itself stays out of the model selection) | Deepak. This accepts Claude's hint idea and goes further. |
 | 2026-10-19 | P1 | #224, #225 (new) | Created from the remaining optional ideas: the embedding digest guard (#224, proposed 0.4.0) and the default fallback chat model (#225, proposed 0.5.0) | Claude, to confirm; buckets pending. |
+| 2026-10-19 | P1 | #214 | **Explicitly confirmed: the embedded Ollama is used for embeddings, the local Ollama for chat.** | Deepak: "Yes we will use embedded Ollama for embeddings and local Ollama for chat." |
+| 2026-10-19 | P1 | #214 | **The "not running" behaviour is accepted** (the saved choice stays visible as "Ollama (local), not running", a clear error on send, no silent switch). **Availability is refreshed automatically, so no restart is needed.** | Deepak: "yes. refresh to avoid restart will be a good idea." (Claude's reading: this answers the earlier question about the not-running case; if it meant the editable address, that is also decided below.) |
+| 2026-10-19 | P1 | #214 | **The Ollama address is editable in Settings, and the user may add an Ollama on the network.** | Deepak: "allowing user to add Ollama on network could be a good idea." |
+| 2026-10-19 | P1 | #225 | **A fallback is NECESSARY: warn the user, then fall back, to avoid errors.** Raised from an optional idea to a needed feature; Claude proposes bucket 0.4.0 (size M), to confirm. | Deepak: "We should warn the user about it and then the fallback is necessary in order to avoid any errors." |
 
 ## Conflict raised and resolved (P1)
 
@@ -97,13 +101,11 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-*(The hard decision itself is recorded as confirmed, see the decision log. These are the small remaining confirmations for P1.)*
+*(Recorded as decided: hard decision confirmed, not-running behaviour, automatic refresh, editable address including an Ollama on the network, fallback is necessary. How Claude read Deepak's four numbered answers is in the decision log; correct any entry that is wrong.)*
 
-1. **Hidden-at-start-up case (#214).** If the saved active provider is "ollama" and the local Ollama is not reachable when the app starts, do not switch silently: keep the choice visible as "Ollama (local), not running" and give a clear error when a message is sent. Right?
-2. **Is the Ollama address editable in Settings (#214)?** Deepak said Settings should show the address (and/or instructions) when Ollama is not available. Claude proposes showing the address in an **editable field**, default `127.0.0.1:11434` (this also allows an Ollama on another machine, such as a shared GPU server), plus the install instructions and the link ollama.com/download. Editable, or display only?
-3. **#224, embedding digest guard.** Store the embedding model's digest with the index and show "needs rebuild" if the server reports a different one; pin the model by digest if Ollama can. Proposed size S, bucket 0.4.0 (it is in the same area as #214, so 0.3.2 is possible). Which bucket?
-4. **#225, default fallback chat model.** A configurable fallback (possibly a cloud model) used when the chosen local Ollama is unavailable; an explicit, visible choice. Proposed size M, bucket 0.5.0 (detail), together with the automatic model selection document. Agree, or drop it?
-5. **Bundled server start-up (#214).** Keep it starting at launch as today, only on the new port (simple). Starting it only when an embedding is needed would save idle memory and can come later. Agree?
+1. **#225, bucket.** Because the fallback is necessary, 0.5.0 is too late. Claude proposes **0.4.0, size M**: a Settings choice of fallback model (possibly cloud), used when the chosen local Ollama is not reachable, with a visible warning in the chat each time it is used; if no fallback is configured the user gets a clear error. Could it be smaller and go into 0.3.2? Which bucket?
+2. **#224, bucket.** The embedding digest guard (store the model digest with the index, show "needs rebuild" on a mismatch): 0.4.0 as proposed, or 0.3.2 with #214 because it is in the same area? (If Deepak's answer 3 about warning the user was about this item and not #225, please say so.)
+3. **Bundled server start-up (#214).** Keep it starting at launch as today, only on the new port 11450 to 11455 (simple). Starting it only when an embedding is needed can come later. Agree?
 
 ## Item details and recommendations
 
@@ -141,6 +143,8 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 **History: first revision (2026-10-19, Deepak), superseded by the second revision above.** Use the bundled Ollama only. Running two Ollama instances is not a good idea, so there is no fallback to the user's own Ollama and option (c) is dropped. What remains of this item: (1) keep chat and embeddings both on the bundled server (today's routing becomes the intended design, not a defect); (2) stop the bundled server from contending for port 11434, using a dedicated port (to confirm, Pending question 1); (3) fix the stale comments and messages that say the bundled Ollama exists only in the Windows sponsor build; (4) tell users plainly in the User Guide that Sachivji uses its own Ollama, so models installed in another Ollama are not visible and are downloaded again through #222.
 
 **Final scope: what the 0.3.2 code work is.** (1) The bundled server serves **embeddings only** and uses a port in 11450 to 11455 (first free, never 11434), so it can never take the standard port; (2) the registry's "Ollama (local)" chat provider stops being redirected to it and uses the user's own Ollama at the default address; `getEmbeddingProvider('ollama')` keeps using the bundled server, so no provider id is renamed and the existing search index stays valid; (3) fix the stale comments and messages; (4) update the guides: Sachivji does not offer local chat models through its bundled Ollama in this release, and a user who wants local chat installs Ollama themselves; (5) re-test first run on a clean machine.
+
+**Confirmed on 2026-10-19 (Deepak):** embedded Ollama for embeddings and the local Ollama for chat; the not-running behaviour (visible as "Ollama (local), not running", clear error on send, no silent switch); availability refreshes automatically so no restart is needed; the Ollama address is editable and may point to an Ollama on the network.
 
 **Added to the code work on 2026-10-19:** hide "Ollama (local)" from the model selection when unavailable (reachability check with a short timeout, cached briefly, re-checked when Settings opens or the provider list refreshes); in Settings show the Ollama address (editable, to confirm) and install instructions when it is not available; the guides say plainly that Sachivji's bundled Ollama only does embeddings and that local chat needs the user's own Ollama.
 
@@ -236,11 +240,11 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ### #225: default fallback chat model when the local Ollama is unavailable (P1, new)
 
-**Status: PROPOSED 2026-10-19 (Claude, from Deepak's idea), bucket pending (proposed 0.5.0 (detail), size M).**
+**Status: NEEDED (Deepak, 2026-10-19: "warn the user about it and then the fallback is necessary in order to avoid any errors"). Bucket pending: Claude proposes 0.4.0, size M.**
 
 **What it is.** Deepak's idea: a configurable default fallback chat model, which may be a cloud model, used when the user's local Ollama is not available. **Rule for the design:** a cloud fallback sends the conversation off the machine, so it must be an explicit choice made by the user, shown clearly in the chat when it happens, and never silent.
 
-**Recommendation (Claude).** 0.5.0 (detail), designed together with `docs/auto_model_selection.md`, because both decide which model answers and how failures are handled.
+**Recommendation (Claude, revised 2026-10-19).** Since the fallback is necessary to avoid errors, bring it forward to **0.4.0, size M**: a Settings choice of the fallback model (provider and model, possibly cloud), used only when the selected local Ollama is not reachable; a visible warning in the chat each time it is used, naming the model and saying the conversation is going there; if no fallback is configured, a clear error and no silent switch. The deeper automatic-selection ideas stay in `docs/auto_model_selection.md`.
 
 ## Closed during triage setup
 
@@ -257,8 +261,8 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
 | #214 | Ollama chat provider and the bundled Ollama (final scope: embedded Ollama = embeddings only, own port; chat on the user's own Ollama) | defect + decision | 0.3.2 | S-M | The hard decision 2026-10-19: embedded Ollama only for embeddings (`nomic-embed-text`), port 11450 to 11455, never 11434; "Ollama (local)" hidden from the model selection when unavailable; Settings shows the address and install instructions. | **Decided 2026-10-19 (Deepak).** Small confirmations pending (questions 1, 2 and 5). |
-| #224 | Embedding model digest guard for the search index | enhancement | 0.4.0 | S | Proposed by Claude; the model is pulled by name, not pinned. | proposed, pending (question 3) |
-| #225 | Default fallback chat model (may be cloud) when the local Ollama is unavailable | feature | 0.5.0 (detail) | M | Deepak's idea; explicit, visible choice only; design with `docs/auto_model_selection.md`. | proposed, pending (question 4) |
+| #224 | Embedding model digest guard for the search index | enhancement | 0.4.0 | S | Proposed by Claude; the model is pulled by name, not pinned. | proposed, pending (question 2) |
+| #225 | Default fallback chat model (may be cloud) when the local Ollama is unavailable | feature | 0.4.0 | M | Deepak: the fallback is necessary to avoid errors; explicit, visible choice with a warning each time it is used. | **Needed (Deepak 2026-10-19).** Bucket 0.4.0 proposed (question 1). |
 
 ## P2 Planner and loop reliability
 
