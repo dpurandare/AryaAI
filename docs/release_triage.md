@@ -59,8 +59,8 @@ The point names are only grouping labels I chose so related items are discussed 
 | P5 Documents | #196, #183, #197, #198, #85 | **DONE 2026-10-19: #196 in 0.4.0; #183, #197, #198, #85 in 0.5.0** |
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | **DONE 2026-10-19: #159 in 0.4.0; #134 in 0.3.2; #122, #135, #136 parked** |
 | P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | **DONE 2026-10-19: all nine items in 0.5.0 (detail); revisit after 0.4.0** |
-| P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | **recommendations written 2026-10-19; presented, awaiting Deepak** |
-| P9 Integrations and media | #151, #160, #217, #76, #79, #195 | open |
+| P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | **DONE 2026-10-19: #131 reduced to a single-instance check (0.3.2), #208 closed, #221 0.3.2, #220 0.5.0, signing Parked** |
+| P9 Integrations and media | #151, #160, #217, #76, #79, #195 | **recommendations written 2026-10-19; presented, awaiting Deepak** |
 | P10 Documentation | #92 | open |
 
 ## Decision log
@@ -78,6 +78,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P8 | #131 | **Reversed: #131 reduced to a single-instance check, 0.3.2, size S.** The rest of #131 (venv lock, `.deb` check, Windows/macOS runs, large-workspace cap) stays Parked. Counts back to 0.3.2=13, Parked=10. | Deepak: the app should check at start whether another instance is running and, if so, tell the user that another instance is running and must be closed before launching a new one. Cheap, and it removes the whole double-launch class. Policy confirmed by Deepak: there is no need for multiple instances of Sachivji on one machine. |
 | 2026-10-19 | P8 | #208 | **Closed: verified.** Counts: 0.3.2=12, open 59. | Deepak: "I checked it and it runs" (the macOS build on his Mac). |
 | 2026-10-19 | P8 | #221 | **0.3.2, size S (tests only).** Counts unchanged. | Deepak: "2. let's plan these." (read as yes to #221; recorded here so he can correct it). |
+| 2026-10-19 | P8 | #220, #11, #63, #64, #65, #66 | **#220: 0.5.0 (detail), with the interactive terminal. #11, #63 to #66: Parked as decided (no contingency).** P8 DONE. | Deepak: "3. Ok."; signing contingency dismissed as too hypothetical. |
 | 2026-10-19 | P1 | #222 | Budget stated for GPU parts: about 100 MB more is acceptable | Deepak. Measured: Vulkan only +43 MB on disk; full CUDA +1.8 GB. Proposal is Vulkan only (pending confirmation, question 2). |
 | 2026-10-19 | P1 | #222 | **GPU: keep the Vulkan backend only (+43 MB on disk, +13 MB download); keep dropping CUDA** | Deepak: "I am ok with your proposal for now (for 0.3.2)". |
 | 2026-10-19 | P1 | #214 | **The bundled Ollama uses a non-standard port, never 11434; range 11450 to 11455, first free one** | Deepak: use a port that is not the standard Ollama port; the range comes from his 0.5.0 spec and is applied to 0.3.2 for consistency. Replaces today's 11434 then 11435 to 11438. |
@@ -130,12 +131,12 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-**P8 (details in "P8: item details and recommendations" below).**
-1. **#131:** DECIDED: only the single-instance check, with a message and exit, 0.3.2 (S); the rest Parked (Deepak).
-2. **#208:** CLOSED, verified by Deepak on his Mac.
-3. **#221:** DECIDED 0.3.2 (S).
-4. **#220:** 0.5.0 (detail), with #210?
-5. **#11, #63 to #66:** Parked, as decided. (Deepak: the idea of bringing Windows signing forward is too hypothetical; no 'ready option' is kept. Waiting only on #208, #221 and #220.)
+**P9 (details in "P9: item details and recommendations" below).**
+1. **#151 then #160:** both 0.4.0 as committed; #160 streams from disk (no base64 in the chat)? If 0.4.0 runs over, #160 is the first to defer?
+2. **#217:** 0.5.0 (detail)?
+3. **#76:** Parked (Oracle on demand)?
+4. **#79:** Parked, unless the sponsor uses Outlook or Microsoft 365 mail. Does he?
+5. **#195:** closed here with a pointer to the llmwiki project?
 
 ## Item details and recommendations
 
@@ -587,7 +588,9 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 
 Long sessions currently rely on trimming and on `search_history` to recover older content. A rolling summary would keep older turns as a short summary. Needs its own trigger policy (when, by which model, at whose cost), and care with caching and with embedding consistency. **Recommendation: 0.5.0 (detail), size L**; the existing trimming plus #170 (0.3.2) cover the worst cases meanwhile.
 
-### P8: item details and recommendations (written 2026-10-19; awaiting Deepak)
+### P8: item details and recommendations (DECIDED 2026-10-19)
+
+**Decided 2026-10-19 (Deepak):** #131 reduced to a single-instance check in 0.3.2 (one instance per machine; the rest Parked); #208 closed (verified on his Mac); #221 0.3.2; #220 0.5.0 (detail) with the interactive terminal; signing (#11, #63 to #66) Parked.
 
 **Context.** The sponsor runs the Windows installer, so Windows correctness and install safety matter most; the macOS build has never been run; signing is deliberately deferred (#11, 2026-10-14).
 
@@ -622,6 +625,48 @@ Long sessions currently rely on trimming and on `search_history` to recover olde
 **What it is.** Windows Authenticode, Apple Developer enrolment, notarization credentials and wiring into CI. Decided 2026-10-14: deferred until distribution is wider than a handful of named people, because of the yearly cost and because the sponsor can click through the warning once.
 
 **Recommendation (Claude): Parked, as decided.** One new fact to weigh: the sponsor is on Windows, where SmartScreen shows the warning on every new version. If it annoys him, #65 and #66 (Windows only) are the ones to bring forward; the Apple items can stay parked.
+
+### P9: item details and recommendations (written 2026-10-19; awaiting Deepak)
+
+**Context.** Six items with little in common. The sponsor is on Windows with cloud models; whether he uses Outlook or Microsoft 365 mail is unknown and matters for #79.
+
+#### #151: verify what video support does today
+
+**What it is.** Confirmed in the code that video is not supported (`show_media` is images only, on purpose). #151 is the verification only: give the app a real video file in the workspace and see what the user sees (a clean "not supported yet" or a silent failure). One data point exists (asked with no video present; the answer was honest). The real test has not been done.
+
+**Recommendation (Claude): 0.4.0, size S.** You committed it on 2026-10-13. It is the first step of #160, so do it first.
+
+#### #160: real video support in the workspace
+
+**What it is.** Play a workspace video inline in the chat. The plan in the item reuses the image approach (a base64 marker and a new `video` content type, with a size cap).
+
+**Concerns found while writing this up (not yet checked):** (1) videos are far larger than the 5 MB image cap; a base64 marker would put a whole video into the message and the database, so playback should stream the file from disk through an app-controlled protocol instead (the data never enters the chat history); (2) whether Electron 44 plays the common formats (H.264/MP4 and WebM) on Windows, macOS and Linux must be tested in the #151 step; (3) the model cannot see video; "what is in this video" needs frame extraction (ffmpeg, a separate matter) and is not part of playback; (4) the path must pass the workspace guard.
+
+**Recommendation (Claude): 0.4.0, size L as committed, after #151.** Note: 0.4.0 already holds two L items (#196 PDF and #160). The sponsor is a document and research user, so if 0.4.0 runs over, #160 is the better candidate to defer than #196. Your commitment stands unless you decide otherwise.
+
+#### #217: external APIs that need a key plus a session token
+
+**What it is.** Some services log in with a key or password, return a session token, and expect it on later calls, with expiry and re-login. Today a connection holds one static credential. Wanted: the app reads the service's description and configures the connection including the login step. Points: model the auth flow; both secrets stay secret; the login call is visible; manual form fallback; docs.
+
+**Recommendation (Claude): 0.5.0 (detail), size L.** A design task (login, token, expiry, re-login) with security implications; no sponsor need known.
+
+#### #76: more database engines
+
+**What it is.** SQL Server and MySQL are done. Left: Oracle and an allowlisted runtime-install mechanism for drivers.
+
+**Recommendation (Claude): Parked** (reworded: "Oracle only on demand"). Nothing in the finished part needs more work.
+
+#### #79: email phase 2, Outlook through Microsoft Graph
+
+**What it is.** Gmail sending is done (with the app-password route). Outlook needs a Microsoft sign-in (OAuth), a heavier piece of work that shares authentication design with #217.
+
+**Recommendation (Claude): Parked, with one question for you:** does the sponsor use Outlook or Microsoft 365 mail? If yes, this is a real candidate for 0.4.0 or 0.5.0 (a simpler route may exist for Microsoft accounts: SMTP with an app password, which the Gmail route already supports).
+
+#### #195: the wiki search failing on hyphenated numbers
+
+**What it is.** The bug is in the separate llmwiki project (the query goes to the database search unescaped). In Sachivji it only costs a wasted call; the MCP Operator recovers.
+
+**Recommendation (Claude): Not this repo.** Close it here with a pointer, and fix it in the llmwiki project (quote each term). The fallback of a prompt hint stays as a note.
 
 ## Closed during triage setup
 
@@ -719,12 +764,12 @@ Long sessions currently rely on trimming and on `search_history` to recover olde
 | #131 | Runtime hardening: venv-creation lock, single-instance lock, .deb check, large-workspace cap | defect + chores | 0.3.2 (single-instance check only) | S | Deepak's design: if another instance is running, show a message that it must be closed first, then exit; the rest is Parked. | **Decided 2026-10-19 (Deepak): single-instance check in 0.3.2; the rest Parked.** |
 | #208 | Verify the macOS self-contained build (Ollama Metal) on real Apple Silicon | verification | 0.3.2 | S | Your Mac can run it; it has never been executed. | **Closed 2026-10-19: verified by Deepak.** |
 | #221 | Tests for aws / az / gcloud basic operations | chore (tests) | 0.3.2 | S | Mocked tests only; no cloud calls. | **Decided 2026-10-19 (Deepak): 0.3.2.** |
-| #220 | sudo support for shell_execute (design with the interactive terminal, #210) | feature | 0.5.0 (detail) | L | A pty terminal makes password entry safe by construction; design them together. | open |
-| #11 | Code signing and notarization in CI | chore (business) | Parked | - | Decided 2026-10-14: deferred until wider distribution. | open |
-| #63 | Apple Developer Program enrolment and certificate | chore (business) | Parked | - | Deferred with #11. | open |
-| #64 | Apple notarization credentials as CI secrets | chore (business) | Parked | - | Deferred with #11. | open |
-| #65 | Windows Authenticode certificate | chore (business) | Parked | - | Deferred with #11. | open |
-| #66 | Wire signing into electron-builder and release.yml | chore (business) | Parked | - | Deferred with #11. | open |
+| #220 | sudo support for shell_execute (design with the interactive terminal, #210) | feature | 0.5.0 (detail) | L | A pty terminal makes password entry safe by construction; design them together. | **Decided 2026-10-19 (Deepak): as proposed.** |
+| #11 | Code signing and notarization in CI | chore (business) | Parked | - | Decided 2026-10-14: deferred until wider distribution. | **Decided 2026-10-19 (Deepak): as proposed.** |
+| #63 | Apple Developer Program enrolment and certificate | chore (business) | Parked | - | Deferred with #11. | **Decided 2026-10-19 (Deepak): as proposed.** |
+| #64 | Apple notarization credentials as CI secrets | chore (business) | Parked | - | Deferred with #11. | **Decided 2026-10-19 (Deepak): as proposed.** |
+| #65 | Windows Authenticode certificate | chore (business) | Parked | - | Deferred with #11. | **Decided 2026-10-19 (Deepak): as proposed.** |
+| #66 | Wire signing into electron-builder and release.yml | chore (business) | Parked | - | Deferred with #11. | **Decided 2026-10-19 (Deepak): as proposed.** |
 
 ## P9 Integrations and media
 
