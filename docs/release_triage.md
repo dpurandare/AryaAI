@@ -108,6 +108,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P3 | #194 | **0.5.0 (detail).** | Deepak: "Ok." |
 | 2026-10-19 | P3 | #189, #190 | **Both 0.4.0, built together.** | Deepak: "Ok." |
 | 2026-10-19 | Plan | all | **The two-week timeline is relaxed**: no customer-defined deadline, so the plan can accommodate some change. | Deepak. |
+| 2026-10-19 | P4 | #204 | **Deepak's file placement policy (recorded as stated):** (1) code generation must not happen in the workspace root; any tool that creates a file must know where to store it; (2) if the user asks to download a file it goes to the **download folder**; (3) any export goes to the **export folder** or a **folder the user chooses**; (4) if the user drops a file in, the drop accepts the **full path** of the file, not its contents, and the app may copy it into `tmp/` if needed; (5) GitHub clones already have their place (`.sachiv-clones`); (6) in general the **root is used very diligently**. | Deepak. Replaces the narrower view of #204 as "stop PNGs landing in the root". Open details are in the pending questions. |
 
 ## Conflict raised and resolved (P1)
 
@@ -115,11 +116,14 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-**P4 (presented 2026-10-19; details in "P4: item details and recommendations" below).**
-1. **#204:** split it: the cheap safe parts (output locations in the Developer prompt and `get_environment`, the Export Settings default folder, check the old research notes) in 0.3.2, and new item **#228** (move script outputs after a run, with a safe rule) in 0.4.0, designed with #203?
-2. **#204, Export Settings default folder:** the operating system's Documents folder (my suggestion), or the workspace `documents/` folder?
-3. **#203:** 0.5.0 (detail)?
-4. **#169:** 0.4.0?
+**P4 (presented 2026-10-19; details in "P4: item details and recommendations" and the "#204 update" below). Deepak's placement policy is recorded in the decision log; these are the open details.**
+1. **Download folder:** a workspace `downloads/` folder (my recommendation: inside the workspace guard, no confirmation dialogs), or the operating system's own Downloads folder (needs a standing write permission outside the workspace, a security-sensitive design)?
+2. **Export folder:** a workspace `exports/` folder as the default (with the native Save dialog for any folder the user chooses), including the Export Settings default? Right?
+3. **Generated `.csv`, `.json`, `.md`, `.txt` files:** into `documents/` (my recommendation), or a new `data/` folder?
+4. **Drag and drop by path (#229):** a new 0.4.0 item as described (insert the full path; outside-workspace paths use the existing read prompt; copy to `tmp/` only when a script needs it)?
+5. **Split by release:** the small parts in 0.3.2 (prompts and `get_environment`, the sweep after `shell_execute`, the Export Settings default), and #228 and #229 in 0.4.0?
+6. **#203:** 0.5.0 (detail)? (still open)
+7. **#169:** 0.4.0? (still open)
 
 ## Item details and recommendations
 
@@ -394,6 +398,39 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 - **0.3.2, size S: the cheap, safe parts.** (a) Say explicitly in the Developer prompt and in `get_environment` where outputs go and that scripts should write images to `resources/`, documents to `documents/` and scratch to `tmp/`. (b) Change the Export Settings default folder; Claude's suggestion is the operating system's Documents folder, because a settings file is not a work product. (c) Check whether the three research notes predate the 2026-10-09 fix.
 - **New item #228, 0.4.0, size M: move script outputs after a run.** Needs a safe rule first: only move new root files of generated kinds (images, scratch data), never when the request named the root, always tell the model the new path, and report what was moved. Design it together with #203.
 
+#### #204 update (2026-10-19): Deepak's placement policy, and a code check that corrects my first write-up
+
+**Correction.** The write-up above (and `TASKS.md` #204, "fix not started") missed that part of the fix **already exists**. Checked in the code on 2026-10-19:
+- `resolveNewFilePath` (`tools/workspace-layout.ts`) sends new files written through the file tools to `code/`, `documents/` or `resources/` by extension, and leaves `templates/`, `.sachiv-clones/` and `tmp/` alone. A file whose extension has no managed folder (`.csv`, `.json`, `.md`, `.txt` and so on) **stays in the workspace root**: the 2026-09-23 rule says "everything else at the workspace root".
+- **`tidyRootStrays` already exists** (added 2026-10-06, commit `844f7b8`): after a `python_run`, if **four or more** new loose files appear in the root, they are filed by kind and anything else goes to `tmp/`; fewer than four stay, on the assumption that one or two are the deliverable the user asked for. It is called only from `python_run`; **`shell_execute` does not call it**.
+- `download_image` saves into `resources/`; there is **no general "download a file" tool** (and so no download folder).
+- The chat export uses the native Save dialog (a folder the user chooses); the Export Settings dialog defaults to the **workspace root**.
+- **There is no drag-and-drop handling at all in the renderer today.** Dropping a file on the window is not a feature yet.
+So my proposed "#228, move script outputs after a run" is **mostly done**; what remains is extending and tightening it.
+
+**What Deepak's policy adds, mapped to the gaps.**
+
+| Policy point | What exists today | Gap |
+|---|---|---|
+| Code is never generated in the root | File tools put code in `code/`; scripts write wherever they run (the root); the sweep needs 4+ files and only runs after `python_run` | Sweep after `shell_execute` too; one or two stray files stay; scripts should be told, and given, a place to write |
+| Downloads go to the download folder | No download tool; images go to `resources/` | A download folder and a download tool (the PDF reader #196 will need it) |
+| Exports go to the export folder or a user-chosen folder | Chat export: user-chosen via the Save dialog; Export Settings: workspace root | An export folder as the default; Export Settings default changed |
+| A dropped file passes its full path, not its contents; may be copied to `tmp/` | No drop handling | A new feature: drop onto the composer inserts the path(s) |
+| Clones have their place | `.sachiv-clones` | none |
+| The root is used very diligently | `.csv`, `.json`, `.md`, `.txt` files created by `write_file` land in the root | A rule for those kinds of files, so nothing generated lands in the root by default |
+
+**Claude's proposal.**
+- **Folders (all inside the workspace, so no confirmation dialogs):** `downloads/` for downloaded files and `exports/` for exports, plus the existing `code/`, `documents/`, `resources/`, `tmp/`, `templates/`, `.sachiv-clones/`. A native Save dialog stays for anything the user chooses interactively, with `exports/` as its default folder. Writing into the operating system's own Downloads folder instead would be a standing write permission outside the workspace, which is a security-sensitive design (today an outside write asks every time), so I do not recommend it.
+- **Generated `.csv`, `.json`, `.md`, `.txt` files:** `documents/` (users think of these as deliverables), with scratch versions in `tmp/`. An explicit user request for the root is still honoured.
+- **One code-owned destination table** for the whole app (kind of file to folder), used by every tool that creates a file, so that "any tool that generates a file knows where to store it" is true by construction. This is the reframed #228.
+- **Drag and drop by path** as a new item (#229): a file dropped onto the composer inserts its full path(s) into the message, not its contents. In Electron 32 and later the renderer reads the path through `webUtils.getPathForFile` in the preload (to verify for the project's Electron 44). A path outside the workspace is covered by the existing external-folder read prompt; when a file must be inside the workspace (for a script), the app copies it to `tmp/`. Copies in `tmp/` are pruned after 7 days (the interplay with #203).
+
+**Proposed split by release.**
+- **0.3.2, size S to M:** the Developer prompt and `get_environment` say where each kind of output goes; the sweep also runs after `shell_execute`; the Export Settings default moves out of the root (to `exports/`).
+- **0.4.0, size M:** the destination table (#228 reframed), the `downloads/` and `exports/` folders, and the generated `.csv`, `.json`, `.md` and `.txt` rule.
+- **0.4.0, size M:** drag and drop by path (#229, new).
+- **0.5.0 (detail):** cleanup of the new folders belongs to #203.
+
 #### #203: design a workspace cleanup mechanism
 
 **What it is.** Today the only cleanup runs at the start of each chat turn: files in `tmp/` and `.sachiv-handoff/` older than 7 days are deleted (`pruneScratchDir`, `pruneHandoffDirs`); it is best-effort, runs only while chatting, is not configurable, and the prompt only says "cleaned up after a few days". Nothing covers `documents/`, `resources/`, `code/`, `templates/`, loose root files, or `.sachiv-clones/` (1,075 files, about 75% of the files in the user's workspace outside `venv`; what it holds and when the app is done with it was not checked). Design questions: which folders are scratch and which are the user's work (never delete those without asking); retention per folder and whether the user can set it (the user thought 30 days); when it runs (turn start, app start, a timer) and whether it reports what it removed; a "Clean up now" button with a preview; protecting files a later step may still need; size limits as well as age (a 286 MB file sits in the root).
@@ -454,7 +491,9 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #204 | Files landing in the workspace root (122 stray PNGs from scripts) | defect | 0.3.2 (cheap parts) + new #228 (after-run tidy, 0.4.0) | M | Split: telling the model where outputs go and fixing the Export Settings default are small; moving script outputs after a run needs a safe rule first. | proposed, awaiting decision |
+| #204 | Files landing in the workspace root (122 stray PNGs from scripts) | defect | 0.3.2 (S to M) + new #228 and #229 (0.4.0) | M | Reframed 2026-10-19 after Deepak's placement policy and a code check: the sweep already exists (python_run only); remaining work is extending it, a destination table, download and export folders, and drop-by-path. | Deepak stated a placement policy 2026-10-19; split proposed, pending |
+| #228 | One code-owned destination table for generated files; `downloads/` and `exports/` folders; a rule for generated .csv/.json/.md/.txt | enhancement | 0.4.0 | M | Reframed from my first #228 (the sweep already exists). Makes "any tool that creates a file knows where to store it" true by construction. | proposed, pending (questions 1 to 3) |
+| #229 | Drag and drop a file into the chat: insert its full path, copy to tmp/ when needed | feature | 0.4.0 | M | New from Deepak's policy 2026-10-19; there is no drop handling today. | proposed, pending (question 4) |
 | #203 | Design a workspace cleanup mechanism | design | 0.5.0 (detail) | M | Design only; #204 stops the worst source first. | proposed, awaiting decision |
 | #169 | grep / find_in_files content search tool | feature | 0.4.0 | M | A cross-platform content search through the workspace guard; Windows has no grep for the shell tool. | proposed, awaiting decision |
 
