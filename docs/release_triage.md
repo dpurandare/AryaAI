@@ -668,6 +668,16 @@ Long sessions currently rely on trimming and on `search_history` to recover olde
 
 **Recommendation (Claude): Not this repo.** Close it here with a pointer, and fix it in the llmwiki project (quote each term). The fallback of a prompt hint stays as a note.
 
+### P10: item details and recommendation (written 2026-10-19 while Deepak was away; not yet presented)
+
+#### #92: reference documentation (User Guide and Developer Guide)
+
+**What it is.** The original item asked for a detailed product reference (architecture, roles, tool catalog, providers, settings, extension points). Both guides now exist and Deepak finished reviewing them on 2026-10-16, so the content of the item is delivered. What remains is keeping them current.
+
+**Recommendation (Claude): close #92 and replace it with a standing per-release rule, not a task:** each release updates both guides for what changed, regenerates the two PDFs (`node scripts/export-docs.mjs user|developer --format pdf`, Node 24) and re-checks the screenshots. Suggested home for the rule: the release checklist in the repo. For the 0.3.2 / 0.4.0 / 0.5.0 plan, each release bucket carries a "docs" line item implicitly (for example 0.4.0: PDF reader, drag and drop, downloads/exports/data folders, Ollama settings, extended thinking, search, video).
+
+**Question for Deepak:** close #92 with that rule?
+
 ## Closed during triage setup
 
 | # | Item | Why closed |
