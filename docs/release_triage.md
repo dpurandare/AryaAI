@@ -43,6 +43,8 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 
 ## Points and status
 
+The point names are only grouping labels I chose so related items are discussed together; they carry no extra meaning.
+
 | Point | Items | Status |
 |---|---|---|
 | P1 Bundled Ollama | #214, #222 | open |
@@ -50,7 +52,7 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 | P3 Everyday UX and trust | #215, #218, #216, #193, #168, #194, #189, #190 | open |
 | P4 Files and workspace | #204, #203, #169 | open |
 | P5 Documents | #196, #183, #197, #198, #85 | open |
-| P6 Anthropic, evaluation and cost | #121, #137, #120, #159, #134, #122, #135, #136 | open |
+| P6 Provider quality: cost, thinking and evaluation | #121, #137, #120, #159, #134, #122, #135, #136 | open |
 | P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | open |
 | P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | open |
 | P9 Integrations and media | #151, #160, #217, #76, #79, #195 | open |
@@ -109,13 +111,13 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 | #198 | Template generation from an existing document, done properly | feature (research) | 0.5.0 (detail) | L | Research first, then design. | open |
 | #85 | Template selection during document creation | feature | 0.5.0 (detail) | M | Depends on #198 and a default-template setting. | open |
 
-## P6 Anthropic, evaluation and cost
+## P6 Provider quality: cost, thinking and evaluation
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
 | #121 | Cost model for cached input; 11b.7 caching switch test | enhancement | 0.3.2 | S | The real-API check is already done; the cost shown is an upper bound. | open |
-| #137 | Everything needing an Anthropic key: Claude routing eval, Appendix E rows | chore (evaluation) | 0.4.0 | M | Unblocked; the sponsor uses Anthropic and OpenAI, so measure them. | open |
-| #120 | Multi-model routing evaluation and replay probe with real keys | chore (evaluation) | 0.4.0 | M | Same run as #137; Anthropic and OpenAI are the priority. | open |
+| #137 | Everything needing an Anthropic key: Claude routing eval, Appendix E rows | chore (evaluation) | 0.4.0 | M | Unblocked; the sponsor uses Anthropic and OpenAI, so measure them. **Note: Deepak skipped the formal Claude routing evaluation on 2026-10-10 (Anthropic already ran well in real use); this proposal goes against that and may be dropped.** | open |
+| #120 | Multi-model routing evaluation and replay probe with real keys | chore (evaluation) | 0.4.0 | M | Same run as #137; Anthropic and OpenAI are the priority. **Same note as #137: skipped by Deepak on 2026-10-10; may be dropped.** | open |
 | #159 | Anthropic extended thinking support | feature | 0.4.0 | M | Unblocked; verify the live request shape first. | open |
 | #134 | Declare vite-node as a pinned devDependency | chore | 0.3.2 | S | The eval scripts depend on whatever npx downloads today. | open |
 | #122 | Slim router hot-core review (drop read_file, list_directory?) | enhancement | Parked | S | The slim router is experimental and off by default; revisit with #123-#127. | open |
