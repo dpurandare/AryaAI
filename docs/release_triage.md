@@ -25,8 +25,8 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 
 | Bucket | Items |
 |---|---|
-| 0.3.2 | 15 |
-| 0.4.0 | 12 |
+| 0.3.2 | 14 |
+| 0.4.0 | 13 |
 | 0.5.0 | 16 |
 | Parked | 10 |
 | Not this repo | 1 |
@@ -34,7 +34,7 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 | **Total open items** | **55** |
 | Closed during triage setup | 5 (#121, #137, #120, #222, #223) |
 
-**Capacity warning.** 15 items in 0.3.2 is a lot for a patch release, and 0.4.0 holds two L-sized features (#196 PDF reader and #160 video). We should expect to cut or move items as we decide.
+**Capacity warning.** 14 items in 0.3.2 is a lot for a patch release, and 0.4.0 now holds two L-sized features (#196 PDF reader and #160 video) plus the whole local-Ollama block (#214, #224, #225). We should expect to cut or move items as we decide.
 
 ## How we work
 
@@ -52,7 +52,7 @@ The point names are only grouping labels I chose so related items are discussed 
 
 | Point | Items | Status |
 |---|---|---|
-| P1 Bundled Ollama | #214, #224, #225 (#222 and #223 closed) | decided; three small confirmations pending |
+| P1 Bundled Ollama | #214, #224, #225 (#222 and #223 closed) | **DONE: all three go into 0.4.0** |
 | P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192 | open |
 | P3 Everyday UX and trust | #215, #218, #216, #193, #168, #194, #189, #190 | open |
 | P4 Files and workspace | #204, #203, #169 | open |
@@ -94,6 +94,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P1 | #214 | **The "not running" behaviour is accepted** (the saved choice stays visible as "Ollama (local), not running", a clear error on send, no silent switch). **Availability is refreshed automatically, so no restart is needed.** | Deepak: "yes. refresh to avoid restart will be a good idea." (Claude's reading: this answers the earlier question about the not-running case; if it meant the editable address, that is also decided below.) |
 | 2026-10-19 | P1 | #214 | **The Ollama address is editable in Settings, and the user may add an Ollama on the network.** | Deepak: "allowing user to add Ollama on network could be a good idea." |
 | 2026-10-19 | P1 | #225 | **A fallback is NECESSARY: warn the user, then fall back, to avoid errors.** Raised from an optional idea to a needed feature; Claude proposes bucket 0.4.0 (size M), to confirm. | Deepak: "We should warn the user about it and then the fallback is necessary in order to avoid any errors." |
+| 2026-10-19 | P1 | #214, #224, #225 | **All three go into 0.4.0.** #214 moves from 0.3.2 to 0.4.0. | Deepak: "This all goes in 0.4.0 now." Consequence recorded by Claude: the 0.3.x installers keep taking port 11434 for the embedded Ollama (and keep redirecting the "Ollama (local)" chat provider to it) until 0.4.0; that is accepted. The embedded server keeps starting at launch (today's behaviour, only on the new port); starting it on demand is a later option. |
 
 ## Conflict raised and resolved (P1)
 
@@ -101,17 +102,13 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-*(Recorded as decided: hard decision confirmed, not-running behaviour, automatic refresh, editable address including an Ollama on the network, fallback is necessary. How Claude read Deepak's four numbered answers is in the decision log; correct any entry that is wrong.)*
-
-1. **#225, bucket.** Because the fallback is necessary, 0.5.0 is too late. Claude proposes **0.4.0, size M**: a Settings choice of fallback model (possibly cloud), used when the chosen local Ollama is not reachable, with a visible warning in the chat each time it is used; if no fallback is configured the user gets a clear error. Could it be smaller and go into 0.3.2? Which bucket?
-2. **#224, bucket.** The embedding digest guard (store the model digest with the index, show "needs rebuild" on a mismatch): 0.4.0 as proposed, or 0.3.2 with #214 because it is in the same area? (If Deepak's answer 3 about warning the user was about this item and not #225, please say so.)
-3. **Bundled server start-up (#214).** Keep it starting at launch as today, only on the new port 11450 to 11455 (simple). Starting it only when an embedding is needed can come later. Agree?
+*(None for P1, which is decided. Questions for the next point are added here when it is presented.)*
 
 ## Item details and recommendations
 
 ### #214: the "Ollama (local)" chat provider is redirected to the bundled Ollama (P1)
 
-**Status: FINAL SCOPE DECIDED 2026-10-19 (Deepak): bucket 0.3.2. The embedded Ollama serves ONLY embeddings, always, with `nomic-embed-text`, on a non-standard port (range 11450 to 11455, first free, never 11434). The "Ollama (local)" chat provider uses the user's own Ollama and is hidden from the model selection when that is not available; Settings then shows the Ollama address and/or install instructions.**
+**Status: FINAL SCOPE DECIDED 2026-10-19 (Deepak): bucket MOVED FROM 0.3.2 TO 0.4.0 ("This all goes in 0.4.0 now"). Scope: The embedded Ollama serves ONLY embeddings, always, with `nomic-embed-text`, on a non-standard port (range 11450 to 11455, first free, never 11434). The "Ollama (local)" chat provider uses the user's own Ollama and is hidden from the model selection when that is not available; Settings then shows the Ollama address and/or install instructions.**
 
 **What it is.** The installers bundle a small Ollama server meant only for embeddings, which power search over past chats. When it starts, the app points every "Ollama" connection at it, including the "Ollama (local)" chat provider. The code is in `ipc/register.ts` (it calls `setBundledOllamaBaseUrl`) and `providers/setup.ts`.
 
@@ -230,7 +227,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ### #224: guard the search index against a different embedding model (P1, new)
 
-**Status: PROPOSED 2026-10-19 (Claude), bucket pending (proposed 0.4.0, size S).**
+**Status: DECIDED 2026-10-19 (Deepak): 0.4.0, size S.**
 
 **What it is.** The search index records only the provider and model name. The embedding model is not shipped with the installer: first run makes the embedded Ollama download `nomic-embed-text` **by name** (the `latest` tag) over the network, so a reinstall months later, or another machine, can end up with different weights than the ones that built the index; and a different Ollama version can also change how embeddings are produced. Query vectors would then not match the stored ones and search would degrade silently.
 
@@ -240,7 +237,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ### #225: default fallback chat model when the local Ollama is unavailable (P1, new)
 
-**Status: NEEDED (Deepak, 2026-10-19: "warn the user about it and then the fallback is necessary in order to avoid any errors"). Bucket pending: Claude proposes 0.4.0, size M.**
+**Status: NEEDED (Deepak, 2026-10-19: "warn the user about it and then the fallback is necessary in order to avoid any errors"). DECIDED 2026-10-19 (Deepak): 0.4.0, size M.**
 
 **What it is.** Deepak's idea: a configurable default fallback chat model, which may be a cloud model, used when the user's local Ollama is not available. **Rule for the design:** a cloud fallback sends the conversation off the machine, so it must be an explicit choice made by the user, shown clearly in the chat when it happens, and never silent.
 
@@ -260,9 +257,9 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #214 | Ollama chat provider and the bundled Ollama (final scope: embedded Ollama = embeddings only, own port; chat on the user's own Ollama) | defect + decision | 0.3.2 | S-M | The hard decision 2026-10-19: embedded Ollama only for embeddings (`nomic-embed-text`), port 11450 to 11455, never 11434; "Ollama (local)" hidden from the model selection when unavailable; Settings shows the address and install instructions. | **Decided 2026-10-19 (Deepak).** Small confirmations pending (questions 1, 2 and 5). |
-| #224 | Embedding model digest guard for the search index | enhancement | 0.4.0 | S | Proposed by Claude; the model is pulled by name, not pinned. | proposed, pending (question 2) |
-| #225 | Default fallback chat model (may be cloud) when the local Ollama is unavailable | feature | 0.4.0 | M | Deepak: the fallback is necessary to avoid errors; explicit, visible choice with a warning each time it is used. | **Needed (Deepak 2026-10-19).** Bucket 0.4.0 proposed (question 1). |
+| #214 | Ollama chat provider and the bundled Ollama (final scope: embedded Ollama = embeddings only, own port; chat on the user's own Ollama) | defect + decision | 0.4.0 | S-M | The hard decision 2026-10-19: embedded Ollama only for embeddings (`nomic-embed-text`), port 11450 to 11455, never 11434; "Ollama (local)" hidden from the model selection when unavailable; Settings shows the address and install instructions. | **Decided 2026-10-19 (Deepak): 0.4.0, with #224 and #225.** |
+| #224 | Embedding model digest guard for the search index | enhancement | 0.4.0 | S | Proposed by Claude; the model is pulled by name, not pinned. | **Decided 2026-10-19 (Deepak): 0.4.0.** |
+| #225 | Default fallback chat model (may be cloud) when the local Ollama is unavailable | feature | 0.4.0 | M | Deepak: the fallback is necessary to avoid errors; explicit, visible choice with a warning each time it is used. | **Needed (Deepak 2026-10-19); decided 2026-10-19: 0.4.0.** |
 
 ## P2 Planner and loop reliability
 
