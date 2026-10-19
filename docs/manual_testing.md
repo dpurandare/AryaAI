@@ -216,7 +216,7 @@ You do not need to export any key: the helper below decrypts the ones you alread
 command, redacted from the output). Each run is ONE sample of a non-deterministic model, so run it more than once before believing a
 difference of a few cases.
 ```bash
-# Anthropic has no key configured in Sachivji yet — add one in Settings first, or use the env-var form (ANTHROPIC_API_KEY=... npx vite-node ...).
+# Anthropic needs a key in Sachivji (one is configured on the dev machine and the sponsor's machine as of 2026-10-19) — add one in Settings first, or use the env-var form (ANTHROPIC_API_KEY=... npx vite-node ...).
 export SACHIV_USER_DATA="$HOME/Library/Application Support/Sachivji"   # macOS; the helper's default is the Linux path ~/.config/Sachivji
 E() { "$(node -p "require('electron')")" --no-sandbox scripts/with-app-key.cjs "$@"; }
 R=(npx vite-node --config vitest.config.ts scripts/routing-eval.mts --)
@@ -348,7 +348,7 @@ automated test). That's what this section is for.
 | # | Do | Expect |
 |---|----|--------|
 | 11d.1 | Ask something that should make the model reason before answering (e.g. a multi-step word problem), on a model/provider known to stream reasoning (Ollama/Groq models that support it, or Gemini). **Example prompt:** *"A train leaves A at 9:00 going 60 km/h. A second train leaves B, 300 km away, at 10:00 going 90 km/h toward A. At what time do they meet, and how far from A? Think it through before answering."* (answer: 11:36, 156 km from A: by 10:00 train A is 60 km out, the 240 km gap closes at 150 km/h in 1.6 h). Send it again on a second model if the first shows no block. | A collapsible **🧠 Thinking** block appears **before** the answer text, collapsed by default except the most recent one; click to expand/collapse. **Note the model** — not every model streams a separate reasoning field even when asked to "think" (this is real, observed model-behavior variance, not necessarily a bug — see #147's TASKS.md note). |
-| 11d.2 | Same as 11d.1, on **Anthropic** | No thinking block (out of scope — extended thinking is #159, blocked on an Anthropic key). Confirm nothing breaks; the answer streams normally. |
+| 11d.2 | Same as 11d.1, on **Anthropic** | No thinking block (out of scope — extended thinking is #159; no longer blocked, an Anthropic key is available since 2026-10-19, but not started). Confirm nothing breaks; the answer streams normally. |
 | 11d.3 | Mid-generation, while the assistant is working, type a note in the composer (now labeled for steering while sending) and send it | A **💬 Note added mid-run**-style box appears in the transcript at the point the next round started, and the assistant's next round visibly responds to it — this is separate from **Stop**, which still ends the turn. |
 | 11d.4 | On a tool confirmation dialog, click **Talk about it**, type a comment, send | The call is denied *and* your comment reaches the model as a steering note (same mechanism as 11d.3) — check the transcript shows both the denial and your comment. |
 | 11d.5 | Two separate prompts, each in a **new session**, no library named. **(a) Diagram:** *"Draw me a diagram of how a web browser loads a page: the user types a URL, DNS lookup, TCP/TLS connection, HTTP request, server response, HTML parsing, then rendering."* **(b) Chart:** *"Chart this data: monthly sales in thousands, Jan 12, Feb 15, Mar 11, Apr 18, May 22, Jun 20. Show it as a line chart with labelled axes and a title."* | **(a)** The reply contains a **Mermaid** code block that renders as a diagram in the chat (a `flowchart`/`graph`, one node per stage, in order); no `web_search`, no `list_directory`, no question about which tool to use first. **(b)** The assistant writes **matplotlib** code and runs it (`python_run`), a PNG is saved under `resources/`, the chart shows labelled axes, a title and the six points (12, 15, 11, 18, 22, 20); again no searching for chart libraries first. Check the tool calls in the transcript, not only the assistant's wording. Note the model and the router. |
@@ -375,6 +375,7 @@ every "covered" line below describes the slim router unless it says otherwise; t
 - **Tag emission.** `[handoff: out_of_scope -> role]`, `needs_input`, `incomplete` and `no_information` were all emitted by real models (Haiku,
   qwen); the chat hides the trailing tag. If the literal text `[handoff: …]` ever shows in a reply, report it.
 - **macOS.** Everything in this pass ran on macOS (arm64).
+- **Windows 11 AMD64, real user (update 2026-10-19).** Release **0.3.1** was installed on the sponsor's own Windows 11 AMD64 machine on 2026-10-18 and is running well, with **Anthropic, OpenAI and Tavily** keys configured. The sponsor will read the User Guide and explore the application before giving feedback; that feedback is the next input for triage (`docs/release_triage.md`). The same installer was earlier verified end to end on a clean Windows VM (TASKS #202).
 - **Prompt caching on Anthropic.** Real API, `claude-haiku-5-5`, full router: 20,382 input tokens, calls 2 and 3 read 100% from the cache (11b.6);
   the context meter keeps counting cached tokens (11b.5). Run on macOS with `SACHIV_USER_DATA` set (see section 8's helper).
 - **Wiki/MCP fallback chain (#142-#146).** Exercised in real sessions (sections 9 and 13.4; `no_information` and `incomplete` handoffs seen on qwen
@@ -387,7 +388,7 @@ every "covered" line below describes the slim router unless it says otherwise; t
 
 ### Still open
 
-1. **Windows.** The Windows branches are unit-tested only. Deferred until section 12 is complete, then the main item (TASKS #202; see the notes below).
+1. ~~**Windows.** The Windows branches are unit-tested only.~~ **Update 2026-10-19:** no longer unit-test-only. The installer ran end to end on a clean Windows VM (TASKS #202) and 0.3.1 now runs on the sponsor's Windows 11 AMD64 machine. Remaining Windows work is whatever the sponsor's feedback finds. Number kept so the other items keep theirs.
 2. **Very large workspaces.** Artifact detection stops scanning at 20,000 files (it then says it could not determine files).
 3. **`.deb` packaging** (`python3`, `python3-venv` dependencies) was never built. Deferred: not part of the Windows sponsor release; the Linux work resumes after the Windows work is done (decided 2026-10-10).
 4. **11b.7** (Anthropic prompt-caching switch off/on) was skipped; revisit.
