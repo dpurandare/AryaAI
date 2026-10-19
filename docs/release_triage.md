@@ -48,7 +48,7 @@ The point names are only grouping labels I chose so related items are discussed 
 
 | Point | Items | Status |
 |---|---|---|
-| P1 Bundled Ollama | #214, #222 | open |
+| P1 Bundled Ollama | #214, #222 | in progress (#214 decided, #222 being discussed) |
 | P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192 | open |
 | P3 Everyday UX and trust | #215, #218, #216, #193, #168, #194, #189, #190 | open |
 | P4 Files and workspace | #204, #203, #169 | open |
@@ -64,7 +64,13 @@ The point names are only grouping labels I chose so related items are discussed 
 | Date | Point | Items | Decision | Reason |
 |---|---|---|---|---|
 | 2026-10-19 | Setup | #121, #137, #120 | Closed | Deepak: all the Anthropic and Claude work that was planned is done. The stale 'blocked / carried forward' status was removed from TASKS.md, the triage and the manual-test report. |
+| 2026-10-19 | P1 | #214 | 0.3.2; option (a) now, option (c) later | Deepak. Chat and embeddings are separate code paths, so no provider id is renamed and the existing search index stays valid. |
+| 2026-10-19 | P1 | #222 | Scope expanded (bucket still to finalize) | Deepak: the bundled Ollama must let users download models and run a Modelfile to change model parameters; without this the bundled Ollama cannot be used. |
 | 2026-10-19 | P6 | #159 | Kept as a work item; proposed 0.4.0 | Deepak: add Anthropic extended thinking wherever it fits. Not built yet, no Anthropic code for it; to be confirmed when P6 is discussed. |
+
+## Open conflict to resolve (P1)
+
+Option (a) sends the **chat** provider back to the user's own Ollama and keeps the bundled server for embeddings only. But Deepak's new requirement is that the **bundled** Ollama is usable by the user (download models, run a Modelfile). Together these leave a user with no Ollama of their own and a downloaded bundled model unable to chat with it. Proposed resolution, to be confirmed: **the 'Ollama (local)' chat provider uses the user's own Ollama when one answers on port 11434, and otherwise falls back to the bundled server (on its own dedicated port)**, with model management (#222) working against the bundled server.
 
 ## Closed during triage setup
 
@@ -78,8 +84,8 @@ The point names are only grouping labels I chose so related items are discussed 
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #214 | Chat provider 'Ollama (local)' is routed to the bundled embedding-only Ollama in packaged builds | defect + decision | 0.3.2 | S-M | Needs your decision first. Smallest fix: the bundled server serves embeddings only; the chat provider talks to the user's own Ollama. | open |
-| #222 | Download other models when only the bundled Ollama exists (model download UI) | feature | 0.5.0 (detail) | L | Depends on #214. Local-first matters, but the sponsor uses cloud models. | open |
+| #214 | Chat provider 'Ollama (local)' is routed to the bundled embedding-only Ollama in packaged builds | defect + decision | 0.3.2 | S-M | Needs your decision first. Smallest fix: the bundled server serves embeddings only; the chat provider talks to the user's own Ollama. | **Decided 2026-10-19 (Deepak): 0.3.2, option (a) now, option (c) later.** Open detail: see the conflict note under the log (chat on the bundled server). |
+| #222 | Download other models when only the bundled Ollama exists (model download UI) | feature | 0.5.0 (detail) | L | Depends on #214. Local-first matters, but the sponsor uses cloud models. | **Scope expanded 2026-10-19 (Deepak): the bundled Ollama must let the user download models AND run a Modelfile to change model parameters; without that the bundled Ollama is not usable.** Bucket to be finalized (proposed 0.4.0). |
 
 ## P2 Planner and loop reliability
 
