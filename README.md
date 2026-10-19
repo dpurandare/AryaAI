@@ -154,3 +154,9 @@ Sachivji follows [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`
 - `models/` — example Ollama Modelfiles with larger context windows (see Troubleshooting above)
 - `scripts/` — build/dev helpers, probes and evals, and the Windows prerequisites installer
 - `test/support` — shared test helpers (the mock provider)
+
+## License
+
+Sachivji is free software, released under the **GNU General Public License, version 3** (GPL-3.0-only). The full text is in [`LICENSE`](LICENSE). Copyright (C) 2026 Deepak Purandare.
+
+You may use, study, change and share it under those terms; a modified version you distribute must also be released under the GPL with its source. The installers also include third-party runtimes (Python, Node.js, Ollama) and libraries, each under its own licence. They are all compatible with the GPL.

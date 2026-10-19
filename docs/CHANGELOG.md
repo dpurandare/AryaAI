@@ -8,6 +8,10 @@ version is still `0`.
 
 ## [Unreleased]
 
+### Changed
+
+- The project is now licensed under the GNU General Public License, version 3 (`LICENSE`, `package.json`, README).
+
 ## [0.3.1] - 2026-10-16
 
 ### Fixed
