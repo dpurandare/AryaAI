@@ -718,7 +718,7 @@ Long sessions currently rely on trimming and on `search_history` to recover olde
 |---|---|---|---|---|---|---|
 | #131 | Runtime hardening: venv-creation lock, single-instance lock, .deb check, large-workspace cap | defect + chores | 0.3.2 (single-instance check only) | S | Deepak's design: if another instance is running, show a message that it must be closed first, then exit; the rest is Parked. | **Decided 2026-10-19 (Deepak): single-instance check in 0.3.2; the rest Parked.** |
 | #208 | Verify the macOS self-contained build (Ollama Metal) on real Apple Silicon | verification | 0.3.2 | S | Your Mac can run it; it has never been executed. | **Closed 2026-10-19: verified by Deepak.** |
-| #221 | Tests for aws / az / gcloud basic operations | chore (tests) | 0.3.2 | S | Mocked tests only; no cloud calls. | open |
+| #221 | Tests for aws / az / gcloud basic operations | chore (tests) | 0.3.2 | S | Mocked tests only; no cloud calls. | **Decided 2026-10-19 (Deepak): 0.3.2.** |
 | #220 | sudo support for shell_execute (design with the interactive terminal, #210) | feature | 0.5.0 (detail) | L | A pty terminal makes password entry safe by construction; design them together. | open |
 | #11 | Code signing and notarization in CI | chore (business) | Parked | - | Decided 2026-10-14: deferred until wider distribution. | open |
 | #63 | Apple Developer Program enrolment and certificate | chore (business) | Parked | - | Deferred with #11. | open |
