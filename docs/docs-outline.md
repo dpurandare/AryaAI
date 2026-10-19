@@ -61,3 +61,13 @@
 - Screenshots in the User Guide? (Useful, but they go stale; I can add placeholders and you supply them, or I capture them from the running app.)
 - Release the docs inside the app (a Help menu entry opening the User Guide) as a later step?
 - Name of the product in the docs: "Sachivji" throughout? (The window and installer say Sachivji; some code and the older DMG say Sachiv.)
+
+## Standing rule: documentation updates with every release
+
+Decided 2026-10-19 (Deepak), replacing the open task #92. Documentation is standard release work, not a backlog item. For every release (0.3.2, 0.4.0, 0.5.0 and later):
+
+1. Update the User Guide and the Developer Guide pages for everything that changed in the release (new tools, settings, roles, providers, folders, procedures such as the Microsoft 365 email set-up).
+2. Update `docs/manual_testing.md` and the tool catalog or settings tables where they are affected.
+3. Re-check the screenshots that show changed screens.
+4. Regenerate both PDFs (`node scripts/export-docs.mjs user|developer --format pdf`, with Node 24) and attach or publish them with the release.
+5. Do this before the release is tagged. A feature is not finished until its pages are.

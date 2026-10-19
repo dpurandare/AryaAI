@@ -30,9 +30,9 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 | 0.5.0 | 22 |
 | Parked | 9 |
 | Not this repo | 0 |
-| Ongoing rule | 1 |
-| **Total open items** | **57** |
-| Closed during triage setup | 5 (#121, #137, #120, #222, #223); #208 closed during P8; #151 and #195 closed during P9 |
+| Ongoing rule | 0 (#92 closed; the rule lives in `docs/docs-outline.md`) |
+| **Total open items** | **56** |
+| Closed during triage setup | 5 (#121, #137, #120, #222, #223); #208 closed during P8; #151 and #195 closed during P9; #92 closed during P10 |
 
 **Capacity note (updated 2026-10-19).** 0.4.0 is large (the PDF reader and video are L-sized, plus the Ollama block, Anthropic thinking, grep and the search items). Deepak has said not to worry about a two-week timeline because there is no customer deadline, so the release may simply take longer; we will still review the whole scope at the end and can split a release if it grows too big.
 
@@ -60,8 +60,8 @@ The point names are only grouping labels I chose so related items are discussed 
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | **DONE 2026-10-19: #159 in 0.4.0; #134 in 0.3.2; #122, #135, #136 parked** |
 | P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | **DONE 2026-10-19: all nine items in 0.5.0 (detail); revisit after 0.4.0** |
 | P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | **DONE 2026-10-19: #131 reduced to a single-instance check (0.3.2), #208 closed, #221 0.3.2, #220 0.5.0, signing Parked** |
-| P9 Integrations and media | #151, #160, #217, #76, #79, #195 | **DONE 2026-10-19 except three #79 design decisions** |
-| P10 Documentation | #92 | open |
+| P9 Integrations and media | #151, #160, #217, #76, #79, #195 | **DONE 2026-10-19** |
+| P10 Documentation | #92 | **DONE 2026-10-19: #92 closed, standing documentation rule** |
 
 ## Decision log
 
@@ -81,6 +81,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P8 | #220, #11, #63, #64, #65, #66 | **#220: 0.5.0 (detail), with the interactive terminal. #11, #63 to #66: Parked as decided (no contingency).** P8 DONE. | Deepak: "3. Ok."; signing contingency dismissed as too hypothetical. |
 | 2026-10-19 | P9 | #151, #160, #217, #79 | **#151: closed (the verification was already done). #160: moved to 0.5.0 (detail), streaming from disk agreed, scope widened to connecting to streams (for example YouTube, Microsoft Teams recordings). #217: 0.5.0 (detail), with research on API patterns first; a point release after 0.4.0 carrying only this feature is an open option. #79: moved from Parked to 0.4.0, Microsoft 365 email, configurable, with a proper user guide.** #76 and #195 not yet answered. Counts: 0.3.2=12, 0.4.0=13, 0.5.0=22, Parked=9, open 58. | Deepak: "#151 this is just verification which is already done"; "#160 streaming from disk ok. Check possibility to connect to streams ...; I am ok to defer this to 0.5.0 in view of some large items in 0.4.0"; "#217 do some more research on the patterns that we observe in API implementations, ok to defer it to 0.5.0 or we may make a point release only with this feature post 0.4.0 as this is an important feature"; "sponsor uses the Microsoft 365 email; let's work on it in 0.4.0 ... fix at least the Microsoft based implementation of emails so that it can be configured. Plan a proper documentation/guide for the user to configure this properly." |
 | 2026-10-19 | P9 | #76, #195 | **#76: Parked (Oracle on demand). #195: verified and closed in this repo.** P9 DONE. Counts: 0.3.2=12, 0.4.0=13, 0.5.0=22, Parked=9, open 57. | Deepak: "#76: parked. #195: verify and close." Verification (Claude, 2026-10-19): the llmwiki project is not on this machine (its path in the item is a Mac path), so its fix could not be checked here. What was re-verified: with plain SQLite FTS5, `IEC 61400-26 availability` still fails with `no such column: 26`, while `IEC 61400`, the phrase-quoted form and the per-term quoted form (`\"IEC\" \"61400-26\" \"availability\"`) all match, so the diagnosis and the fix recipe are correct. The fix itself belongs in llmwiki (quote each term). |
+| 2026-10-19 | P9, P10 | #79, #92 | **#79: option B first (the organization's own app registration; client ID and tenant ID in Settings; browser sign-in once, token renewed silently; scope send only). The sponsor has an IT administrator. #92: closed; documentation updates are a standard part of every release (rule in `docs/docs-outline.md`).** P10 DONE; all ten points decided. Counts: 0.3.2=12, 0.4.0=13, 0.5.0=22, Parked=9, open 56. | Deepak: "1. Yes, let's start with option b, 2. Yes, sponsor have an IT admin, 3. Yes, close and track as standard doc updates." |
 | 2026-10-19 | P1 | #222 | Budget stated for GPU parts: about 100 MB more is acceptable | Deepak. Measured: Vulkan only +43 MB on disk; full CUDA +1.8 GB. Proposal is Vulkan only (pending confirmation, question 2). |
 | 2026-10-19 | P1 | #222 | **GPU: keep the Vulkan backend only (+43 MB on disk, +13 MB download); keep dropping CUDA** | Deepak: "I am ok with your proposal for now (for 0.3.2)". |
 | 2026-10-19 | P1 | #214 | **The bundled Ollama uses a non-standard port, never 11434; range 11450 to 11455, first free one** | Deepak: use a port that is not the standard Ollama port; the range comes from his 0.5.0 spec and is applied to 0.3.2 for consistency. Replaces today's 11434 then 11435 to 11438. |
@@ -681,7 +682,7 @@ Long sessions currently rely on trimming and on `search_history` to recover olde
   - **Access is limited by the permission requested, not by what the account can do.** We would ask only for `Mail.Send` (and `offline_access` to stay signed in). The resulting token can send and cannot read mail; reading later needs a new permission (`Mail.Read`) and a new consent. So "send only" is enforced by Microsoft, which is the safer design.
   - **Two ways to supply the registration:** (A) **Sachivji's own** registration made once by the project: users only sign in. In a work tenant a multi-tenant app from an unverified publisher usually cannot be consented to by ordinary users (my understanding of Microsoft's rules since 2020, not re-checked), so the sponsor's administrator would approve it once, or the project would need publisher verification. (B) **The organization's own** registration: the sponsor's IT administrator creates a single-tenant registration in his tenant (about ten minutes: name, "public client", redirect `http://localhost`, delegated `Mail.Send` and `offline_access`, grant consent) and gives us the *application (client) ID* and *directory (tenant) ID*, which the user pastes into Settings. No dependence on the project, no publisher verification, and the organization controls it.
   - **Recommendation (Claude, awaiting Deepak):** build **(B) first**: Settings fields for client ID and tenant ID, sign-in in the browser, the token kept like other secrets. The user guide has two parts: "for your IT administrator" (the registration steps with screenshots) and "for you" (paste the two IDs, sign in). Add a built-in project registration (A) later only if wanted. It also suits an organization whose administrator will not approve third-party apps. Corrects my earlier wording: the user does not always register it; the administrator can, or the project can.
-  - **Pending:** Deepak's agreement, and whether the sponsor has an administrator who can do the registration.
+  - **Decided 2026-10-19 (Deepak): option B first; the sponsor has an IT administrator.** Refresh-token note given to Deepak: the user signs in once; the app renews tokens silently; sign-in again only when Microsoft or the tenant's policy invalidates the token (password change, revocation, conditional access, long inactivity).
 
 ### P10: item details and recommendation (written 2026-10-19 while Deepak was away; not yet presented)
 
@@ -811,4 +812,4 @@ Long sessions currently rely on trimming and on `search_history` to recover olde
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #92 | Reference documentation (User Guide and Developer Guide) | ongoing | Ongoing rule | - | Both guides are written and reviewed. Replace the open item with a per-release rule: update both guides and regenerate the PDFs. | open |
+| #92 | Reference documentation (User Guide and Developer Guide) | ongoing | Ongoing rule | - | Both guides are written and reviewed. Replace the open item with a per-release rule: update both guides and regenerate the PDFs. | **Closed 2026-10-19 (Deepak): standard documentation updates every release.** |
