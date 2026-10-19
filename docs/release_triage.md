@@ -85,6 +85,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P1 | #222 | **Moved to 0.4.0, entire** (download models and Modelfile management) | Deepak: moving it entirely to 0.4.0 makes sense. |
 | 2026-10-19 | P1 | #214 | **In 0.3.2 the bundled Ollama is a fallback only and provides only embeddings** (Claude's reading of Deepak's "as we decided now"; TO CONFIRM). This returns #214 to its option (a): chat is not routed to the bundled server, which keeps the port range 11450 to 11455. | Deepak: "embedded Ollama is a fallback only and will provide only embedding now." Supersedes the earlier "bundled Ollama only for chat and embeddings" revision. |
 | 2026-10-19 | P1 | #222 | The Vulkan decision (+43 MB) is **not needed in 0.3.2** (embeddings only, CPU is enough); it is carried to 0.4.0 for when chat runs on the bundled server | Claude's consequence of the two decisions above (TO CONFIRM). |
+| 2026-10-19 | P1 | #214 | **"Ollama (local)" is hidden from the model selection when the local Ollama is not available** | Deepak. It builds on the proposed hard decision (embedded Ollama for embeddings only; chat on the user's own Ollama), which still awaits his explicit confirmation. |
 
 ## Conflict raised and resolved (P1)
 
@@ -103,7 +104,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 - **Memory:** only one Ollama server is ever running, which is what Deepak wants.
 
 *Small items that remain (to confirm).*
-1. **S, with #214 in 0.3.2:** when the user's Ollama is not reachable, "Ollama (local)" shows a clear message ("not reachable at the configured address; install Ollama from ollama.com/download and start it, or choose a cloud provider") instead of an empty model list.
+1. **S, with #214 in 0.3.2. DECIDED 2026-10-19 (Deepak): if the local Ollama is not available, "Ollama (local)" is NOT shown in the model selection** (this replaces my earlier idea of showing a message). Design details to settle in the code work: (a) availability is a quick reachability check of the Ollama address with a short timeout, cached briefly; (b) it is re-checked when Settings opens and when the provider list is refreshed, so starting Ollama makes the entry appear without restarting the app; (c) if the saved active provider is "ollama" and it is not reachable at start-up, do not silently switch to another provider: keep the choice visible as "Ollama (local), not running" and give a clear error on send; (d) Claude's suggestion, not decided: a one-line hint in Settings > Providers, such as "Ollama (local) appears here when Ollama is running on this computer", so a user whose Ollama is simply stopped is not left guessing. "Ollama Cloud" is a separate provider and is unaffected.
 2. **S, optional:** a Settings field for the Ollama address (default `127.0.0.1:11434`). It also allows an Ollama on another machine, such as a shared GPU server. This is the old option (c), now trivial.
 3. **Optional, later:** a configurable default fallback chat model (possibly cloud) used when the local Ollama is unavailable. A cloud fallback sends the conversation off the machine, so it must be an explicit, visible user choice.
 4. **Optional:** start the bundled server only when an embedding is needed, to save idle memory.
