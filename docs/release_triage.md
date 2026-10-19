@@ -59,7 +59,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | P5 Documents | #196, #183, #197, #198, #85 | **DONE 2026-10-19: #196 in 0.4.0; #183, #197, #198, #85 in 0.5.0** |
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | **DONE 2026-10-19: #159 in 0.4.0; #134 in 0.3.2; #122, #135, #136 parked** |
 | P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | **DONE 2026-10-19: all nine items in 0.5.0 (detail); revisit after 0.4.0** |
-| P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | open |
+| P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | **recommendations written 2026-10-19; presented, awaiting Deepak** |
 | P9 Integrations and media | #151, #160, #217, #76, #79, #195 | open |
 | P10 Documentation | #92 | open |
 
@@ -126,7 +126,12 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-None. P7 answered 2026-10-19; P8 is next.
+**P8 (details in "P8: item details and recommendations" below).**
+1. **#131:** split: the two locks in 0.3.2 (M), the rest Parked?
+2. **#208:** 0.3.2 as a verification on your Mac, before shipping 0.3.2?
+3. **#221:** 0.3.2 (S)?
+4. **#220:** 0.5.0 (detail), with #210?
+5. **#11, #63 to #66:** Parked, as decided? (Windows signing #65/#66 can be brought forward if the SmartScreen warning bothers the sponsor.)
 
 ## Item details and recommendations
 
@@ -577,6 +582,40 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 #### #49: rolling summarization of earlier turns
 
 Long sessions currently rely on trimming and on `search_history` to recover older content. A rolling summary would keep older turns as a short summary. Needs its own trigger policy (when, by which model, at whose cost), and care with caching and with embedding consistency. **Recommendation: 0.5.0 (detail), size L**; the existing trimming plus #170 (0.3.2) cover the worst cases meanwhile.
+
+### P8: item details and recommendations (written 2026-10-19; awaiting Deepak)
+
+**Context.** The sponsor runs the Windows installer, so Windows correctness and install safety matter most; the macOS build has never been run; signing is deliberately deferred (#11, 2026-10-14).
+
+#### #131: runtime hardening and platform checks
+
+**What it is.** Four separate things in one item: (1) a cross-process **lock for venv creation** and (2) a **single-instance lock**, because two app instances could race to create the Python environment (checked 2026-10-19: `requestSingleInstanceLock` appears nowhere in `src`, so a second launch is allowed today); (3) build the `.deb` and check its Python dependencies; (4) run the workspace runtime and `python_run` on real Windows and macOS, and test the 20,000-file artifact-scan cap on a large workspace.
+
+**Recommendation (Claude): split.** **0.3.2, size M: the two locks only.** They fix a real race that a non-technical user can trigger by double-clicking the icon twice. The other parts are verification chores, not fixes: (3) is covered the next time a `.deb` is built; (4) is largely covered by the sponsor's Windows use of 0.3.1 and by #208; the large-workspace check is low value. Keep (3) and (4) noted in the item and **Park** them.
+
+#### #208: verify the macOS build on real Apple Silicon
+
+**What it is.** The self-contained macOS build (Python, Node, Ollama with Metal) was implemented on a Linux machine and has never been executed. The Ollama bundle is conservative (about 480 MB, keeping both Metal bundles); the build is Apple Silicon only. A manual workflow, `macos-dist.yml`, builds the `.dmg`. You planned to test the upgrade path on your Mac first.
+
+**Recommendation (Claude): 0.3.2, size S, a verification, not a code change.** Run the workflow, install the `.dmg` on your Mac and check that scripts, embeddings and an MCP server work. Do it before shipping 0.3.2, because a macOS user would otherwise get an untested build. Any fixes found become new items.
+
+#### #221: tests for the `aws`, `az` and `gcloud` tools
+
+**What it is.** Today the tests only check that the tools are mutating, call the right binary and report exit codes, against a fake runner. Plan: mocked tests per CLI for typical read-only calls (for example `aws sts get-caller-identity`, `az account show`, `gcloud projects list`), covering the exact arguments, JSON parsing and the unauthenticated error; an optional live smoke test, skipped unless the CLI is installed. No mutating cloud command in any test.
+
+**Recommendation (Claude): 0.3.2, size S.** Test-only, no risk to users, and your Developer Guide review asked for it.
+
+#### #220: `sudo` support for `shell_execute`
+
+**What it is.** `shell_execute` has no terminal, so `sudo` fails or hangs. A password must never pass through the model, chat history or the database. With a real pseudo-terminal (the interactive terminal pane, #210) the user types the password into the pane himself, so that holds by construction.
+
+**Recommendation (Claude): 0.5.0 (detail), size L, designed together with #210.** A one-off password prompt would be the wrong shape.
+
+#### #11, #63, #64, #65, #66: code signing and notarization
+
+**What it is.** Windows Authenticode, Apple Developer enrolment, notarization credentials and wiring into CI. Decided 2026-10-14: deferred until distribution is wider than a handful of named people, because of the yearly cost and because the sponsor can click through the warning once.
+
+**Recommendation (Claude): Parked, as decided.** One new fact to weigh: the sponsor is on Windows, where SmartScreen shows the warning on every new version. If it annoys him, #65 and #66 (Windows only) are the ones to bring forward; the Apple items can stay parked.
 
 ## Closed during triage setup
 
