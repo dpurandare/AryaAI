@@ -1,4 +1,6 @@
-# Release process (proposal, 2026-10-19; awaiting Deepak's approval)
+# Release process (APPROVED by Deepak 2026-10-19)
+
+**Approved 2026-10-19.** Deepak will run the Windows VM and Mac checks. The 0.3.2 work starts on the morning of 2026-10-20, on the branch `release/0.3.2`, beginning with the planner fixes (#140, #141, #146, #170). The per-item "how to check it" lists are written by Claude as each item is finished (they are not in this document yet).
 
 How a release such as 0.3.2 is built, verified on other machines, tagged and published. Based on what the repository does today (`release.yml`, `windows-dist.yml`, `macos-dist.yml`, `linux-dist.yml`, `ci.yml`, the earlier 0.2.x and 0.3.x releases).
 
