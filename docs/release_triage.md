@@ -57,7 +57,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | P3 Everyday UX and trust | #215, #218, #227 (new), #216, #193, #168, #194, #189, #190 | **DONE 2026-10-19** |
 | P4 Files and workspace | #204, #228 (new), #229 (new), #203, #169 | **DONE 2026-10-19** |
 | P5 Documents | #196, #183, #197, #198, #85 | **DONE 2026-10-19: #196 in 0.4.0; #183, #197, #198, #85 in 0.5.0** |
-| P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | open |
+| P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | **recommendations written 2026-10-19; presented, awaiting Deepak** |
 | P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | open |
 | P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | open |
 | P9 Integrations and media | #151, #160, #217, #76, #79, #195 | open |
@@ -124,7 +124,10 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-None. P5 answered 2026-10-19; P6 is next.
+**P6 (details in "P6: item details and recommendations" below).**
+1. **#159:** 0.4.0, size M, opt-in and off by default, token budget in Settings?
+2. **#134:** 0.3.2, size S?
+3. **#122, #135, #136:** Parked? (Small carve-out: the unhelpful Mistral 429 message stays noted in #135.)
 
 ## Item details and recommendations
 
@@ -513,6 +516,40 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 **What it is.** When the user asks for a document and no default template is configured, list the templates in `templates/` for the user to pick from, apply it via `office_fill_template`, and if none exist explain how to create one; it needs a new "default template" setting (per document type). It depends on the template-creation work for the "none exist yet" guidance, though the picker could land alone.
 
 **Recommendation (Claude): 0.5.0 (detail), size M, part of the templates design** (#197, #198, #85): one design for how a user finds, creates, chooses and defaults a template.
+
+### P6: item details and recommendations (written 2026-10-19; awaiting Deepak)
+
+**Context.** The sponsor uses Anthropic and OpenAI, not Groq or Mistral. P6 is only a grouping label. Checked in the code today: `src/main/providers/anthropic.ts` has no extended-thinking code, and `vite-node` is not in `package.json`.
+
+#### #159: Anthropic extended thinking
+
+**What it is.** Claude can think before answering and stream that reasoning. The app already shows thinking for other providers (#147); for Anthropic it never asks for it, and ignores the `thinking_delta` events it would receive. Needed: (1) an opt-in setting that adds `thinking: { type: 'enabled', budget_tokens: N }` to the request; (2) handling `thinking_delta` events so the reasoning shows in the existing thinking block; (3) Anthropic's multi-turn rule: when tool use follows a thinking block, that block (with its signature, and any redacted block) must be sent back verbatim on the next turn, or the request is rejected; (4) the budget counts toward output tokens and cost, and thinking changes the caching of the conversation prefix. An Anthropic key is available here, so it can be verified live.
+
+**Recommendation (Claude): 0.4.0, size M.** You asked for it as a work item. It is cloud-only and aimed at the sponsor's provider; the main risk is the replay rule (3), which must be verified live and covered by a test. Keep it opt-in, off by default, with the token budget set in Settings and cost shown.
+
+#### #134: declare vite-node as a pinned devDependency
+
+**What it is.** The eval scripts (`routing-eval.mts`, `cache-probe.mts`) and the commands in `docs/manual_testing.md` only work through Vite's runner, but it is not in `package.json`, so `npx` downloads whatever is current each time. Fix: add it pinned, and add `npm run eval:routing` and `eval:cache` scripts.
+
+**Recommendation (Claude): 0.3.2, size S.** A developer-only chore with no user-visible risk; it makes later evaluation reproducible.
+
+#### #122: slim router hot-core review
+
+**What it is.** The slim router is experimental and off by default. Evidence from one model family says dropping `read_file` and `list_directory` from its core helps (exploring-first fell 30 to 14 of 43), but it is one sample each, so nothing was changed. Also open: a usage report in Settings, and whether the `describe_capabilities` sentence makes small models call it needlessly.
+
+**Recommendation (Claude): Parked.** It only affects an off-by-default option. Revisit with the router work in P7 (#123 to #127).
+
+#### #135: slim and full router on providers with hard limits (Groq, Mistral)
+
+**What it is.** Groq rejects a whole request when the model calls a tool not in the request (10 to 12 of 43 slim cases failed); the full router does not fit Groq's free tier; Mistral's configured model gave HTTP 429 with a quota of 0 and the app shows only "429 Rate limit exceeded".
+
+**Recommendation (Claude): Parked, with one carve-out.** The Groq parts are provider-specific and the sponsor does not use Groq. The unhelpful 429 message (say the account has no access to the model) is small and useful for any provider; I suggest we keep it as a note in the item and take it up if a real user hits it, not schedule it now.
+
+#### #136: finish the Groq evaluation
+
+**What it is.** Run four unrun slim cases, capture the raw Groq tool-validation error, and probe Groq's replay behaviour, on a fresh day of Groq quota (about 150K of 200K daily tokens).
+
+**Recommendation (Claude): Parked.** It exists only to feed #135(a); no Groq user, low value now.
 
 ## Closed during triage setup
 
