@@ -132,7 +132,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 2. **#208:** 0.3.2 as a verification on your Mac, before shipping 0.3.2?
 3. **#221:** 0.3.2 (S)?
 4. **#220:** 0.5.0 (detail), with #210?
-5. **#11, #63 to #66:** Parked, as decided? (Windows signing #65/#66 can be brought forward if the SmartScreen warning bothers the sponsor.)
+5. **#11, #63 to #66:** Parked, as decided. (Deepak: the idea of bringing Windows signing forward is too hypothetical; no 'ready option' is kept. Waiting only on #208, #221 and #220.)
 
 ## Item details and recommendations
 
