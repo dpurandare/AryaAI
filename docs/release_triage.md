@@ -73,6 +73,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P1 | #214 | **Revised: use the bundled Ollama ONLY, for chat and for embeddings. No fallback to the user's own Ollama; option (c) dropped.** | Deepak: running two Ollama instances is not a good idea. |
 | 2026-10-19 | P1 | #222 | **Bucket 0.3.2 (not 0.4.0)** | Deepak: a typical user with a good Windows machine or a MacBook with 24 GB or more of memory can run 9 to 20 billion parameter models (observed on his MacBook and Linux machine). Make the feature useful now; do not hold it to the end of 0.4.0. |
 | 2026-10-19 | P6 | #159 | Kept as a work item; proposed 0.4.0 | Deepak: add Anthropic extended thinking wherever it fits. Not built yet, no Anthropic code for it; to be confirmed when P6 is discussed. |
+| 2026-10-19 | P1 | #222 | Budget stated for GPU parts: about 100 MB more is acceptable | Deepak. Measured: Vulkan only +43 MB on disk; full CUDA +1.8 GB. Proposal is Vulkan only (pending confirmation, question 2). |
 
 ## Conflict raised and resolved (P1)
 
@@ -81,7 +82,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 ## Pending questions (waiting for Deepak)
 
 1. **P1, #214, port.** With the bundled Ollama as the only one, should it use a **dedicated port that is never 11434** (so it never collides with an Ollama the user runs for other tools)? Today it prefers 11434 and falls back to 11435 to 11438.
-2. **P1, #222, GPU.** The Windows and Linux bundles are stripped to a **CPU-only** Ollama (macOS keeps Metal). A user with a good Windows or Linux GPU will not get GPU speed from the bundled server, and 9 to 20 billion parameter models on CPU are slow (60 s or more per round was measured on the Linux dev machine). Options: (a) accept CPU-only for now and say so in the UI; (b) ship or offer a GPU-capable Ollama build on Windows and Linux (larger download, more testing); (c) let the user choose later (the dropped option (c) would return). Which?
+2. **P1, #222, GPU.** Deepak's budget (2026-10-19): an increase of **about 100 MB is acceptable**. Measured sizes below (Ollama v0.40.3, the pinned Windows archive; see "GPU backend sizes" under the #222 details). **Proposed: keep the Vulkan backend (+43 MB on disk, +13 MB in the download) and keep dropping CUDA (+1,743 MB on disk, +1,364 MB in the download), which is far over the budget.** Vulkan covers NVIDIA, AMD and Intel GPUs; it is slower than CUDA but much faster than CPU for models that fit in video memory. It must be tested before we rely on it (in the Ollama versions I know, Vulkan is opt-in through an environment variable and marked experimental; not verified for v0.40.3). Confirm?
 3. **P1, #222, capacity and release shape.** #222 is an L-sized feature and now sits in 0.3.2, which was meant to be fix-only. Under the project's versioning a feature normally means a minor release. How do we keep it honest: (a) keep the name 0.3.2 and accept a bigger patch; (b) call it 0.4.0 and make the bundled-Ollama work the first release of that line, moving the other 0.3.2 fixes with it? Please decide, because it affects how we bucket everything else.
 4. **P1, #222, minimum useful scope.** Is the scope in the item details (installed models list with delete, download with progress and cancel, a Modelfile editor with Create model, RAM and disk guidance) the right minimum, or should something be added or cut?
 
@@ -140,6 +141,21 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 **Recommendation (Claude): bucket 0.4.0, size L.** Moved up from 0.5.0 because the bundled Ollama is not usable without it. **Capacity catch:** 0.4.0 already holds the PDF reader (L) and video (L); three L-sized features do not fit in two weeks. We decide the final cut once every item is bucketed.
 
 **Risks.** Models are large (hundreds of MB to many GB), so disk space and failed or cancelled downloads need care. CPU-only speed makes most useful models feel slow, so the UI must say so. A free-text model name needs validation.
+
+**GPU backend sizes (measured 2026-10-19 from the pinned Ollama v0.40.3 Windows archive, `ollama-windows-amd64.zip`, 1,400 MB download, 1,852 MB unpacked, by reading the zip directory).**
+
+| Part | Unpacked | In the download | Shipped today? |
+|---|---|---|---|
+| Everything we ship now (CPU libraries, `ollama.exe`) | about 66 MB | about 23 MB | yes |
+| `lib/ollama/vulkan` | **43 MB** | **13 MB** | no (excluded) |
+| `lib/ollama/cuda_v13` | 634 MB | 495 MB | no (excluded) |
+| `lib/ollama/cuda_v12` | 1,109 MB | 869 MB | no (excluded) |
+
+- **Keeping everything GPU-related** (CUDA 12 and 13 plus Vulkan) adds about **1.8 GB on disk and 1.4 GB to the installer**. That is not 100 MB.
+- **Keeping only Vulkan** adds about **43 MB on disk and 13 MB to the installer**, inside the 100 MB budget.
+- On **Linux** the fetch script excludes only the CUDA folders, so Vulkan is probably already in the shipped 103 MB bundle (not checked); CUDA there is also about 1.3 GB or more. On **macOS** Metal is already in the 480 MB bundle.
+- AMD's ROCm build is a separate Ollama download (243 MB on Windows, 1,003 MB on Linux), not part of these archives; it is not proposed.
+- The Windows installer is also published as a `.zip` on GitHub, and a single release file has a 2 GB limit; adding CUDA would push it close to that limit.
 
 **Decision (2026-10-19, Deepak): bucket 0.3.2.** Reason given: a typical user with a good Windows machine or a MacBook with 24 GB or more of memory can run 9 to 20 billion parameter models (he observed this on his MacBook and his Linux machine), so the bundled Ollama is useful once model download and Modelfile changes exist; splitting the feature and shipping it at the end of 0.4.0 would leave it unavailable. **Consequences to settle** (Pending questions 2 to 4): the Windows and Linux bundles are CPU-only; this puts an L-sized feature in a release meant to be fix-only; and the minimum scope must be agreed.
 
