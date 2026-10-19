@@ -25,16 +25,16 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 
 | Bucket | Items |
 |---|---|
-| 0.3.2 | 15 |
+| 0.3.2 | 16 |
 | 0.4.0 | 10 |
-| 0.5.0 | 17 |
+| 0.5.0 | 16 |
 | Parked | 10 |
 | Not this repo | 1 |
 | Ongoing rule | 1 |
 | **Total open items** | **54** |
 | Closed during triage setup | 3 (#121, #137, #120) |
 
-**Capacity warning.** 15 items in 0.3.2 is a lot for a patch release, and 0.4.0 holds two L-sized features (#196 PDF reader and #160 video). We should expect to cut or move items as we decide.
+**Capacity warning.** 16 items in 0.3.2 (now including the L-sized #222) is a lot for a patch release, and 0.4.0 holds two L-sized features (#196 PDF reader and #160 video). We should expect to cut or move items as we decide.
 
 ## How we work
 
@@ -52,7 +52,7 @@ The point names are only grouping labels I chose so related items are discussed 
 
 | Point | Items | Status |
 |---|---|---|
-| P1 Bundled Ollama | #214, #222 | in progress (#214 decided, #222 being discussed) |
+| P1 Bundled Ollama | #214, #222 | decided (both 0.3.2, bundled Ollama only); follow-up questions pending |
 | P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192 | open |
 | P3 Everyday UX and trust | #215, #218, #216, #193, #168, #194, #189, #190 | open |
 | P4 Files and workspace | #204, #203, #169 | open |
@@ -68,24 +68,28 @@ The point names are only grouping labels I chose so related items are discussed 
 | Date | Point | Items | Decision | Reason |
 |---|---|---|---|---|
 | 2026-10-19 | Setup | #121, #137, #120 | Closed | Deepak: all the Anthropic and Claude work that was planned is done. The stale 'blocked / carried forward' status was removed from TASKS.md, the triage and the manual-test report. |
-| 2026-10-19 | P1 | #214 | 0.3.2; option (a) now, option (c) later | Deepak. Chat and embeddings are separate code paths, so no provider id is renamed and the existing search index stays valid. |
-| 2026-10-19 | P1 | #222 | Scope expanded (bucket still to finalize) | Deepak: the bundled Ollama must let users download models and run a Modelfile to change model parameters; without this the bundled Ollama cannot be used. |
+| 2026-10-19 | P1 | #214 | 0.3.2; option (a) now, option (c) later (first decision, superseded below) | Deepak. |
+| 2026-10-19 | P1 | #222 | Scope expanded: download models and run a Modelfile | Deepak: without this the bundled Ollama cannot be used. |
+| 2026-10-19 | P1 | #214 | **Revised: use the bundled Ollama ONLY, for chat and for embeddings. No fallback to the user's own Ollama; option (c) dropped.** | Deepak: running two Ollama instances is not a good idea. |
+| 2026-10-19 | P1 | #222 | **Bucket 0.3.2 (not 0.4.0)** | Deepak: a typical user with a good Windows machine or a MacBook with 24 GB or more of memory can run 9 to 20 billion parameter models (observed on his MacBook and Linux machine). Make the feature useful now; do not hold it to the end of 0.4.0. |
 | 2026-10-19 | P6 | #159 | Kept as a work item; proposed 0.4.0 | Deepak: add Anthropic extended thinking wherever it fits. Not built yet, no Anthropic code for it; to be confirmed when P6 is discussed. |
 
-## Open conflict to resolve (P1)
+## Conflict raised and resolved (P1)
 
-Option (a) sends the **chat** provider back to the user's own Ollama and keeps the bundled server for embeddings only. But Deepak's new requirement is that the **bundled** Ollama is usable by the user (download models, run a Modelfile). Together these leave a user with no Ollama of their own and a downloaded bundled model unable to chat with it. Proposed resolution, to be confirmed: **the 'Ollama (local)' chat provider uses the user's own Ollama when one answers on port 11434, and otherwise falls back to the bundled server (on its own dedicated port)**, with model management (#222) working against the bundled server.
+Option (a) as first described would have sent chat to the user's own Ollama and kept the bundled server for embeddings only, which conflicts with the requirement that the bundled Ollama be usable (download, Modelfile). **Resolved 2026-10-19 by Deepak: the app uses the bundled Ollama only, for both chat and embeddings.** There is no fallback to a user's own Ollama and no second instance.
 
 ## Pending questions (waiting for Deepak)
 
-1. **P1, #214 conflict:** do we accept the proposed resolution, that the "Ollama (local)" chat provider uses the user's own Ollama when one answers on port 11434 and otherwise falls back to the bundled server on its own dedicated port?
-2. **P1, #222:** bucket **0.4.0**, size L, with the scope written in its item details below?
+1. **P1, #214, port.** With the bundled Ollama as the only one, should it use a **dedicated port that is never 11434** (so it never collides with an Ollama the user runs for other tools)? Today it prefers 11434 and falls back to 11435 to 11438.
+2. **P1, #222, GPU.** The Windows and Linux bundles are stripped to a **CPU-only** Ollama (macOS keeps Metal). A user with a good Windows or Linux GPU will not get GPU speed from the bundled server, and 9 to 20 billion parameter models on CPU are slow (60 s or more per round was measured on the Linux dev machine). Options: (a) accept CPU-only for now and say so in the UI; (b) ship or offer a GPU-capable Ollama build on Windows and Linux (larger download, more testing); (c) let the user choose later (the dropped option (c) would return). Which?
+3. **P1, #222, capacity and release shape.** #222 is an L-sized feature and now sits in 0.3.2, which was meant to be fix-only. Under the project's versioning a feature normally means a minor release. How do we keep it honest: (a) keep the name 0.3.2 and accept a bigger patch; (b) call it 0.4.0 and make the bundled-Ollama work the first release of that line, moving the other 0.3.2 fixes with it? Please decide, because it affects how we bucket everything else.
+4. **P1, #222, minimum useful scope.** Is the scope in the item details (installed models list with delete, download with progress and cancel, a Modelfile editor with Create model, RAM and disk guidance) the right minimum, or should something be added or cut?
 
 ## Item details and recommendations
 
 ### #214: the "Ollama (local)" chat provider is redirected to the bundled Ollama (P1)
 
-**Status: DECIDED 2026-10-19 (Deepak): bucket 0.3.2; option (a) now, option (c) later. One conflict is open, see Pending questions.**
+**Status: DECIDED 2026-10-19 (Deepak): bucket 0.3.2. REVISED decision: use the bundled Ollama ONLY, for chat and embeddings, no fallback to a user's own Ollama and no second instance; option (c) dropped. Open: the dedicated port (Pending question 1).**
 
 **What it is.** The installers bundle a small Ollama server meant only for embeddings, which power search over past chats. When it starts, the app points every "Ollama" connection at it, including the "Ollama (local)" chat provider. The code is in `ipc/register.ts` (it calls `setBundledOllamaBaseUrl`) and `providers/setup.ts`.
 
@@ -114,11 +118,13 @@ Option (a) sends the **chat** provider back to the user's own Ollama and keeps t
 
 **Conflict raised after the decision (2026-10-19).** Option (a) sends chat to the user's own Ollama and keeps the bundled server for embeddings only. Deepak's new requirement (see #222) is that the bundled Ollama must be usable, with model download and Modelfile changes. A user with no Ollama of their own and a model downloaded into the bundled server would then be unable to chat with it. **Proposed resolution (not yet confirmed):** the "Ollama (local)" chat provider uses the user's own Ollama when one answers on port 11434, and otherwise falls back to the bundled server on its dedicated port. No new setting, no provider rename, and the search index stays valid.
 
+**Revised decision (2026-10-19, Deepak).** Use the bundled Ollama only. Running two Ollama instances is not a good idea, so there is no fallback to the user's own Ollama and option (c) is dropped. What remains of this item: (1) keep chat and embeddings both on the bundled server (today's routing becomes the intended design, not a defect); (2) stop the bundled server from contending for port 11434, using a dedicated port (to confirm, Pending question 1); (3) fix the stale comments and messages that say the bundled Ollama exists only in the Windows sponsor build; (4) tell users plainly in the User Guide that Sachivji uses its own Ollama, so models installed in another Ollama are not visible and are downloaded again through #222.
+
 **To record in the code work (0.3.2):** a dedicated port for the bundled server away from 11434; chat and embeddings use separate addresses; fix the stale comments and messages that say the bundled Ollama exists only in the Windows sponsor build (`ipc/register.ts`, `ollama-runtime.ts`); update User Guide page 03 (known limitation) and Developer Guide pages 05 and 08; re-test first run on a clean machine.
 
 ### #222: download models and run a Modelfile on the bundled Ollama (P1)
 
-**Status: scope expanded 2026-10-19 (Deepak); bucket pending (proposed 0.4.0, size L).**
+**Status: DECIDED 2026-10-19 (Deepak): bucket 0.3.2, size L. Open: GPU, release shape and minimum scope (Pending questions 2 to 4).**
 
 **What it is.** The bundled server is CPU-only and holds only the embedding model. The code to pull a model exists (`OllamaRuntime.pullModel`) but is used only for the embedding model. A user cannot get a chat model, change a model's parameters, or list or delete models.
 
@@ -135,7 +141,9 @@ Option (a) sends the **chat** provider back to the user's own Ollama and keeps t
 
 **Risks.** Models are large (hundreds of MB to many GB), so disk space and failed or cancelled downloads need care. CPU-only speed makes most useful models feel slow, so the UI must say so. A free-text model name needs validation.
 
-**Depends on.** The #214 conflict resolution above (chat must reach the bundled server when the user has no Ollama of their own).
+**Decision (2026-10-19, Deepak): bucket 0.3.2.** Reason given: a typical user with a good Windows machine or a MacBook with 24 GB or more of memory can run 9 to 20 billion parameter models (he observed this on his MacBook and his Linux machine), so the bundled Ollama is useful once model download and Modelfile changes exist; splitting the feature and shipping it at the end of 0.4.0 would leave it unavailable. **Consequences to settle** (Pending questions 2 to 4): the Windows and Linux bundles are CPU-only; this puts an L-sized feature in a release meant to be fix-only; and the minimum scope must be agreed.
+
+**Depends on.** #214 (bundled Ollama only). The chat provider and embeddings both use the bundled server, so a downloaded model is immediately usable for chat.
 
 ## Closed during triage setup
 
@@ -149,8 +157,8 @@ Option (a) sends the **chat** provider back to the user's own Ollama and keeps t
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #214 | Chat provider 'Ollama (local)' is routed to the bundled embedding-only Ollama in packaged builds | defect + decision | 0.3.2 | S-M | Needs your decision first. Smallest fix: the bundled server serves embeddings only; the chat provider talks to the user's own Ollama. | **Decided 2026-10-19 (Deepak): 0.3.2, option (a) now, option (c) later.** Open detail: see the conflict note under the log (chat on the bundled server). |
-| #222 | Download other models when only the bundled Ollama exists (model download UI) | feature | 0.5.0 (detail) | L | Depends on #214. Local-first matters, but the sponsor uses cloud models. | **Scope expanded 2026-10-19 (Deepak): the bundled Ollama must let the user download models AND run a Modelfile to change model parameters; without that the bundled Ollama is not usable.** Bucket to be finalized (proposed 0.4.0). |
+| #214 | Chat provider 'Ollama (local)' is routed to the bundled embedding-only Ollama in packaged builds | defect + decision | 0.3.2 | S-M | Revised 2026-10-19: the bundled Ollama is used for chat and embeddings; remaining work is the port, stale messages and docs. | **Decided 2026-10-19 (Deepak): 0.3.2; use the bundled Ollama only (chat and embeddings); option (c) dropped.** Open: the dedicated port. |
+| #222 | Download other models when only the bundled Ollama exists (model download UI) | feature | 0.3.2 | L | Decided 2026-10-19: 9 to 20B models run well on a 24 GB or larger Windows machine or MacBook, so make the bundled Ollama useful now. | **Decided 2026-10-19 (Deepak): 0.3.2; scope = download models and run a Modelfile.** Open: GPU, release shape, minimum scope. |
 
 ## P2 Planner and loop reliability
 
