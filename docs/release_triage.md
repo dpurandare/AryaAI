@@ -26,12 +26,12 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 | Bucket | Items |
 |---|---|
 | 0.3.2 | 13 |
-| 0.4.0 | 12 |
+| 0.4.0 | 14 |
 | 0.5.0 | 21 |
 | Parked | 10 |
 | Not this repo | 1 |
 | Ongoing rule | 1 |
-| **Total open items** | **58** |
+| **Total open items** | **60** |
 | Closed during triage setup | 5 (#121, #137, #120, #222, #223) |
 
 **Capacity note (updated 2026-10-19).** 0.4.0 is large (the PDF reader and video are L-sized, plus the Ollama block, Anthropic thinking, grep and the search items). Deepak has said not to worry about a two-week timeline because there is no customer deadline, so the release may simply take longer; we will still review the whole scope at the end and can split a release if it grows too big.
@@ -55,7 +55,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | P1 Bundled Ollama | #214, #224, #225 (#222 and #223 closed) | **DONE: all three go into 0.4.0** |
 | P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192, #226 (new) | **DONE 2026-10-19: #140, #141, #146, #170 in 0.3.2; #191, #192, #226 in 0.5.0** |
 | P3 Everyday UX and trust | #215, #218, #227 (new), #216, #193, #168, #194, #189, #190 | **DONE 2026-10-19** |
-| P4 Files and workspace | #204, #203, #169 | **presented 2026-10-19; recommendations written, awaiting Deepak's decisions** |
+| P4 Files and workspace | #204, #228 (new), #229 (new), #203, #169 | **DONE 2026-10-19** |
 | P5 Documents | #196, #183, #197, #198, #85 | open |
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | open |
 | P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | open |
@@ -110,6 +110,12 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | Plan | all | **The two-week timeline is relaxed**: no customer-defined deadline, so the plan can accommodate some change. | Deepak. |
 | 2026-10-19 | P4 | #204 | **Deepak's file placement policy (recorded as stated):** (1) code generation must not happen in the workspace root; any tool that creates a file must know where to store it; (2) if the user asks to download a file it goes to the **download folder**; (3) any export goes to the **export folder** or a **folder the user chooses**; (4) if the user drops a file in, the drop accepts the **full path** of the file, not its contents, and the app may copy it into `tmp/` if needed; (5) GitHub clones already have their place (`.sachiv-clones`); (6) in general the **root is used very diligently**. | Deepak. Replaces the narrower view of #204 as "stop PNGs landing in the root". Open details are in the pending questions. |
 | 2026-10-19 | P3 (added later) | #230 (new) | **New TODO from Deepak: ask the user to confirm before deleting a session. Bucket 0.3.2, size S (decided by Claude, because Deepak asked Claude to decide where it goes).** | Deepak: "When user deletes a session, we should get a confirmation from the user to avoid accidental deletion." Number #230 is used because #228 and #229 are reserved for the pending P4 proposals. |
+| 2026-10-19 | P4 | #228 | **Downloads go to a workspace `downloads/` folder** (not the operating system's Downloads folder). | Deepak: "workspace downloads/". |
+| 2026-10-19 | P4 | #228, #204 | **Exports go to a workspace `exports/` folder by default (including the Export Settings default); the native Save dialog stays for a folder the user chooses.** | Deepak: "yes". |
+| 2026-10-19 | P4 | #228 | **File kind rules: `.md` always to `documents/`; `.csv` and `.json` to a new `data/` folder, except the session export (which goes to the export folder or the user-chosen folder); `.txt` to `documents/` for now, until a way is found to tell pure text from delimited data.** | Deepak. |
+| 2026-10-19 | P4 | #229 (new) | **Drag and drop by path: new 0.4.0 item.** | Deepak: "Ok". |
+| 2026-10-19 | P4 | #204, #228 | **Split by release: the small parts of #204 in 0.3.2; #228 and #229 in 0.4.0.** | Deepak: "ok". |
+| 2026-10-19 | P4 | #203, #169 | **#203: 0.5.0 (detail). #169: 0.4.0.** | Deepak: "ok", "ok". |
 
 ## Conflict raised and resolved (P1)
 
@@ -117,14 +123,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-**P4 (presented 2026-10-19; details in "P4: item details and recommendations" and the "#204 update" below). Deepak's placement policy is recorded in the decision log; these are the open details.**
-1. **Download folder:** a workspace `downloads/` folder (my recommendation: inside the workspace guard, no confirmation dialogs), or the operating system's own Downloads folder (needs a standing write permission outside the workspace, a security-sensitive design)?
-2. **Export folder:** a workspace `exports/` folder as the default (with the native Save dialog for any folder the user chooses), including the Export Settings default? Right?
-3. **Generated `.csv`, `.json`, `.md`, `.txt` files:** into `documents/` (my recommendation), or a new `data/` folder?
-4. **Drag and drop by path (#229):** a new 0.4.0 item as described (insert the full path; outside-workspace paths use the existing read prompt; copy to `tmp/` only when a script needs it)?
-5. **Split by release:** the small parts in 0.3.2 (prompts and `get_environment`, the sweep after `shell_execute`, the Export Settings default), and #228 and #229 in 0.4.0?
-6. **#203:** 0.5.0 (detail)? (still open)
-7. **#169:** 0.4.0? (still open)
+*(None for P1 to P4, which are decided. Questions for the next point are added here when it is presented.)*
 
 ## Item details and recommendations
 
@@ -396,7 +395,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 **Alternative considered, not chosen.** A soft delete with an "Undo" toast for a few seconds is friendlier but needs a soft-delete state and a purge timer, which is a bigger change. The confirmation is what Deepak asked for.
 
-### P4: item details and recommendations (written 2026-10-19, before presenting)
+### P4: item details and recommendations (written 2026-10-19, before presenting; ALL DECIDED, see the decision log)
 
 #### #204: files landing in the workspace root
 
@@ -415,7 +414,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 - **0.3.2, size S: the cheap, safe parts.** (a) Say explicitly in the Developer prompt and in `get_environment` where outputs go and that scripts should write images to `resources/`, documents to `documents/` and scratch to `tmp/`. (b) Change the Export Settings default folder; Claude's suggestion is the operating system's Documents folder, because a settings file is not a work product. (c) Check whether the three research notes predate the 2026-10-09 fix.
 - **New item #228, 0.4.0, size M: move script outputs after a run.** Needs a safe rule first: only move new root files of generated kinds (images, scratch data), never when the request named the root, always tell the model the new path, and report what was moved. Design it together with #203.
 
-#### #204 update (2026-10-19): Deepak's placement policy, and a code check that corrects my first write-up
+#### #204 update (2026-10-19): Deepak's placement policy, and a code check that corrects my first write-up (final scope below; DECIDED)
 
 **Correction.** The write-up above (and `TASKS.md` #204, "fix not started") missed that part of the fix **already exists**. Checked in the code on 2026-10-19:
 - `resolveNewFilePath` (`tools/workspace-layout.ts`) sends new files written through the file tools to `code/`, `documents/` or `resources/` by extension, and leaves `templates/`, `.sachiv-clones/` and `tmp/` alone. A file whose extension has no managed folder (`.csv`, `.json`, `.md`, `.txt` and so on) **stays in the workspace root**: the 2026-09-23 rule says "everything else at the workspace root".
@@ -447,6 +446,12 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 - **0.4.0, size M:** the destination table (#228 reframed), the `downloads/` and `exports/` folders, and the generated `.csv`, `.json`, `.md` and `.txt` rule.
 - **0.4.0, size M:** drag and drop by path (#229, new).
 - **0.5.0 (detail):** cleanup of the new folders belongs to #203.
+
+**FINAL SCOPE (decided 2026-10-19, Deepak).**
+- **#204, 0.3.2, size S to M:** (1) the Developer prompt and `get_environment` say where each kind of output goes, using only the folders that exist in 0.3.2 (`code/`, `documents/`, `resources/`, `tmp/`, and `exports/` for exports); the wording is updated again when #228 adds the new folders; (2) the sweep (`tidyRootStrays`) also runs after `shell_execute`; (3) the Export Settings dialog defaults to the workspace `exports/` folder (created if missing), not the root; (4) check whether the three old research notes predate the 2026-10-09 fix.
+- **#228, 0.4.0, size M: one code-owned destination table** (kind of file to folder), used by every tool that creates a file: `code/` (code), `documents/` (office documents, PDF, `.md`, and `.txt` for now), `resources/` (images, audio, video), **`data/` (new: `.csv` and `.json`; not the session export)**, **`downloads/` (new: downloaded files)**, **`exports/` (new: exports)**, `tmp/` (scratch), `templates/`, `.sachiv-clones/`. Nothing generated lands in the root unless the user explicitly asks for the root. Later refinement noted by Deepak: find a way to tell pure `.txt` text from delimited data. Open for the design (not yet decided): other structured formats (`.tsv`, `.xml`, `.sqlite`, `.parquet`); a download tool (the PDF reader #196 will need one).
+- **#229, 0.4.0, size M: drag and drop by path.** A file dropped onto the composer inserts its full path(s) in the message, not its contents (`webUtils.getPathForFile` in the preload; to verify for Electron 44); a path outside the workspace uses the existing external-folder read prompt; the app copies the file to `tmp/` only when a script needs it there (copies are pruned after 7 days; see #203).
+- **#203, 0.5.0 (detail):** cleanup of all these folders. **#169, 0.4.0:** the content search tool.
 
 #### #203: design a workspace cleanup mechanism
 
@@ -509,11 +514,11 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #204 | Files landing in the workspace root (122 stray PNGs from scripts) | defect | 0.3.2 (S to M) + new #228 and #229 (0.4.0) | M | Reframed 2026-10-19 after Deepak's placement policy and a code check: the sweep already exists (python_run only); remaining work is extending it, a destination table, download and export folders, and drop-by-path. | Deepak stated a placement policy 2026-10-19; split proposed, pending |
-| #228 | One code-owned destination table for generated files; `downloads/` and `exports/` folders; a rule for generated .csv/.json/.md/.txt | enhancement | 0.4.0 | M | Reframed from my first #228 (the sweep already exists). Makes "any tool that creates a file knows where to store it" true by construction. | proposed, pending (questions 1 to 3) |
-| #229 | Drag and drop a file into the chat: insert its full path, copy to tmp/ when needed | feature | 0.4.0 | M | New from Deepak's policy 2026-10-19; there is no drop handling today. | proposed, pending (question 4) |
-| #203 | Design a workspace cleanup mechanism | design | 0.5.0 (detail) | M | Design only; #204 stops the worst source first. | proposed, awaiting decision |
-| #169 | grep / find_in_files content search tool | feature | 0.4.0 | M | A cross-platform content search through the workspace guard; Windows has no grep for the shell tool. | proposed, awaiting decision |
+| #204 | Files landing in the workspace root (122 stray PNGs from scripts) | defect | 0.3.2 (S to M) | M | Reframed 2026-10-19 after Deepak's placement policy and a code check: the sweep already exists (python_run only); remaining work is extending it, a destination table, download and export folders, and drop-by-path. | **Decided 2026-10-19 (Deepak): split; the small parts in 0.3.2, #228 and #229 in 0.4.0.** |
+| #228 | One code-owned destination table for generated files; `downloads/` and `exports/` folders; a rule for generated .csv/.json/.md/.txt | enhancement | 0.4.0 | M | Reframed from my first #228 (the sweep already exists). Makes "any tool that creates a file knows where to store it" true by construction. | **Decided 2026-10-19 (Deepak): 0.4.0; downloads/, exports/, data/ for .csv/.json, documents/ for .md and .txt.** |
+| #229 | Drag and drop a file into the chat: insert its full path, copy to tmp/ when needed | feature | 0.4.0 | M | New from Deepak's policy 2026-10-19; there is no drop handling today. | **Decided 2026-10-19 (Deepak): 0.4.0.** |
+| #203 | Design a workspace cleanup mechanism | design | 0.5.0 (detail) | M | Design only; #204 stops the worst source first. | **Decided 2026-10-19 (Deepak): 0.5.0 (detail).** |
+| #169 | grep / find_in_files content search tool | feature | 0.4.0 | M | A cross-platform content search through the workspace guard; Windows has no grep for the shell tool. | **Decided 2026-10-19 (Deepak): 0.4.0.** |
 
 ## P5 Documents
 
