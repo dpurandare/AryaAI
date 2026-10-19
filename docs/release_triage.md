@@ -26,13 +26,13 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 | Bucket | Items |
 |---|---|
 | 0.3.2 | 12 |
-| 0.4.0 | 14 |
-| 0.5.0 | 21 |
-| Parked | 10 |
+| 0.4.0 | 13 |
+| 0.5.0 | 22 |
+| Parked | 9 |
 | Not this repo | 1 |
 | Ongoing rule | 1 |
-| **Total open items** | **59** |
-| Closed during triage setup | 5 (#121, #137, #120, #222, #223); #208 closed during P8 |
+| **Total open items** | **58** |
+| Closed during triage setup | 5 (#121, #137, #120, #222, #223); #208 closed during P8; #151 closed during P9 |
 
 **Capacity note (updated 2026-10-19).** 0.4.0 is large (the PDF reader and video are L-sized, plus the Ollama block, Anthropic thinking, grep and the search items). Deepak has said not to worry about a two-week timeline because there is no customer deadline, so the release may simply take longer; we will still review the whole scope at the end and can split a release if it grows too big.
 
@@ -60,7 +60,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | **DONE 2026-10-19: #159 in 0.4.0; #134 in 0.3.2; #122, #135, #136 parked** |
 | P7 Architecture | #124, #125, #127, #123, #205, #128, #132, #200, #49 | **DONE 2026-10-19: all nine items in 0.5.0 (detail); revisit after 0.4.0** |
 | P8 Platform and distribution | #131, #208, #221, #220, #11, #63, #64, #65, #66 | **DONE 2026-10-19: #131 reduced to a single-instance check (0.3.2), #208 closed, #221 0.3.2, #220 0.5.0, signing Parked** |
-| P9 Integrations and media | #151, #160, #217, #76, #79, #195 | **recommendations written 2026-10-19; presented, awaiting Deepak** |
+| P9 Integrations and media | #151, #160, #217, #76, #79, #195 | **mostly decided 2026-10-19; #76 and #195 still open, plus three #79 decisions** |
 | P10 Documentation | #92 | open |
 
 ## Decision log
@@ -79,6 +79,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P8 | #208 | **Closed: verified.** Counts: 0.3.2=12, open 59. | Deepak: "I checked it and it runs" (the macOS build on his Mac). |
 | 2026-10-19 | P8 | #221 | **0.3.2, size S (tests only).** Counts unchanged. | Deepak: "2. let's plan these." (read as yes to #221; recorded here so he can correct it). |
 | 2026-10-19 | P8 | #220, #11, #63, #64, #65, #66 | **#220: 0.5.0 (detail), with the interactive terminal. #11, #63 to #66: Parked as decided (no contingency).** P8 DONE. | Deepak: "3. Ok."; signing contingency dismissed as too hypothetical. |
+| 2026-10-19 | P9 | #151, #160, #217, #79 | **#151: closed (the verification was already done). #160: moved to 0.5.0 (detail), streaming from disk agreed, scope widened to connecting to streams (for example YouTube, Microsoft Teams recordings). #217: 0.5.0 (detail), with research on API patterns first; a point release after 0.4.0 carrying only this feature is an open option. #79: moved from Parked to 0.4.0, Microsoft 365 email, configurable, with a proper user guide.** #76 and #195 not yet answered. Counts: 0.3.2=12, 0.4.0=13, 0.5.0=22, Parked=9, open 58. | Deepak: "#151 this is just verification which is already done"; "#160 streaming from disk ok. Check possibility to connect to streams ...; I am ok to defer this to 0.5.0 in view of some large items in 0.4.0"; "#217 do some more research on the patterns that we observe in API implementations, ok to defer it to 0.5.0 or we may make a point release only with this feature post 0.4.0 as this is an important feature"; "sponsor uses the Microsoft 365 email; let's work on it in 0.4.0 ... fix at least the Microsoft based implementation of emails so that it can be configured. Plan a proper documentation/guide for the user to configure this properly." |
 | 2026-10-19 | P1 | #222 | Budget stated for GPU parts: about 100 MB more is acceptable | Deepak. Measured: Vulkan only +43 MB on disk; full CUDA +1.8 GB. Proposal is Vulkan only (pending confirmation, question 2). |
 | 2026-10-19 | P1 | #222 | **GPU: keep the Vulkan backend only (+43 MB on disk, +13 MB download); keep dropping CUDA** | Deepak: "I am ok with your proposal for now (for 0.3.2)". |
 | 2026-10-19 | P1 | #214 | **The bundled Ollama uses a non-standard port, never 11434; range 11450 to 11455, first free one** | Deepak: use a port that is not the standard Ollama port; the range comes from his 0.5.0 spec and is applied to 0.3.2 for consistency. Replaces today's 11434 then 11435 to 11438. |
@@ -131,12 +132,10 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-**P9 (details in "P9: item details and recommendations" below).**
-1. **#151 then #160:** both 0.4.0 as committed; #160 streams from disk (no base64 in the chat)? If 0.4.0 runs over, #160 is the first to defer?
-2. **#217:** 0.5.0 (detail)?
-3. **#76:** Parked (Oracle on demand)?
-4. **#79:** Parked, unless the sponsor uses Outlook or Microsoft 365 mail. Does he?
-5. **#195:** closed here with a pointer to the llmwiki project?
+**P9, still open (answered 2026-10-19 except these):**
+1. **#76:** Parked (Oracle on demand)?
+2. **#195:** closed here with a pointer to the llmwiki project?
+3. **#79 (new 0.4.0 scope, see "P9 update" below):** which kind of Microsoft account the sponsor has (work/school tenant or personal Outlook.com), who owns the app registration (Sachivji's own or the user's), and send only or also read mail?
 
 ## Item details and recommendations
 
@@ -668,6 +667,17 @@ Long sessions currently rely on trimming and on `search_history` to recover olde
 
 **Recommendation (Claude): Not this repo.** Close it here with a pointer, and fix it in the llmwiki project (quote each term). The fallback of a prompt hint stays as a note.
 
+#### P9 update, 2026-10-19 (after Deepak's answers)
+
+- **#151: closed.** Deepak: the verification was already done. No findings were recorded.
+- **#160: 0.5.0 (detail), size L.** Streaming from disk agreed (the video never enters the chat history). Scope widened by Deepak: investigate connecting to **streams**, for example playing a YouTube video or a Microsoft Teams session recording. Notes for the design (not researched yet): a YouTube or Teams link is a web page with its own player and rights, so the likely routes are (a) open the link in an embedded view or the browser, (b) download the file explicitly (to `downloads/`, #228) when the service allows it, then play it from disk; Teams recordings sit in SharePoint/OneDrive behind the user's Microsoft sign-in, which connects to the Microsoft work in #79.
+- **#217: 0.5.0 (detail), size L, research first.** Deepak: study the patterns seen in real API implementations (login and token flows, key plus session token, expiry, refresh, OAuth variants) before designing. It is an important feature: **open option, to decide after 0.4.0: ship #217 alone as a point release (0.4.x).**
+- **#79: moved from Parked to 0.4.0.** The sponsor uses Microsoft 365 email. Deepak: fix at least the Microsoft-based implementation so that it can be configured, and plan a proper user guide for configuring it.
+  - **What I found (web search 2026-10-19, secondary sources repeating Microsoft message-centre post MC786329, not opened directly):** Exchange Online's SMTP AUTH **basic authentication** (user name and app password) stays unchanged until the end of December 2026, is then **disabled by default for existing tenants** (administrators can re-enable it), and is **unavailable for tenants created after that**; OAuth is the supported method; the final removal date is to be announced in the second half of 2027. Earlier dates (March and April 2026) were superseded. So an app-password route like Gmail's would work for the sponsor only until the end of 2026 and only if his tenant allows it. **Recommendation: build the real thing, OAuth sign-in.**
+  - **Proposed scope for 0.4.0 (size L, was Parked):** Microsoft 365 sign-in with OAuth (browser sign-in, loopback or device-code), sending through Microsoft Graph (`Mail.Send`, delegated permission) or SMTP with the OAuth token; tokens stored like other secrets (OS keychain or the file store, never in chat, logs or exports); the existing `send_email` confirmation dialog unchanged; the connection configured from Settings; token refresh and a clear "sign in again" path. Reading mail stays out of scope.
+  - **Decisions needed from Deepak:** (1) what kind of account the sponsor has: a work/school Microsoft 365 tenant (admin policies may block user consent or SMTP AUTH) or a personal Outlook.com account; (2) who owns the Microsoft app registration (Entra ID): **Sachivji's own multi-tenant registration** (the user just signs in and consents; needs a registration made by the project, and for other organisations possibly publisher verification) or **the user's own** (the user or their IT creates a registration and pastes the client ID; no project dependency but heavy for a non-developer); (3) send only, or also read mail.
+  - **Guide:** a new User Guide section on configuring Microsoft 365 email, step by step with screenshots and a "may change" note as for the Gmail example (page 09), covering the sign-in, consent, what an administrator may need to allow, and troubleshooting (the `550 5.7.30` error, consent blocked, expired sign-in); the Developer Guide email page (Gmail flow diagram) gets the OAuth flow. Written together with the feature, tested with the sponsor's real account type.
+
 ### P10: item details and recommendation (written 2026-10-19 while Deepak was away; not yet presented)
 
 #### #92: reference documentation (User Guide and Developer Guide)
@@ -785,11 +795,11 @@ Long sessions currently rely on trimming and on `search_history` to recover olde
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #151 | Verify and scope video support | verification | 0.4.0 | S | Prerequisite for #160. | open |
-| #160 | Real video support in the workspace | feature | 0.4.0 (already committed) | L | You committed this to 0.4.0 on 2026-10-13; #151's verification comes first. | open |
-| #217 | External APIs needing a key plus a session token; self-configuring set-up | feature | 0.5.0 (detail) | L | Large design (login, token, expiry, re-login). | open |
+| #151 | Verify and scope video support | verification | 0.4.0 | S | Prerequisite for #160. | **Closed 2026-10-19 (Deepak): verification already done.** |
+| #160 | Real video support in the workspace | feature | 0.4.0 (already committed) | L | You committed this to 0.4.0 on 2026-10-13; #151's verification comes first. | **Decided 2026-10-19 (Deepak): 0.5.0 (detail); streaming from disk; widen to streams.** |
+| #217 | External APIs needing a key plus a session token; self-configuring set-up | feature | 0.5.0 (detail) | L | Large design (login, token, expiry, re-login). | **Decided 2026-10-19 (Deepak): 0.5.0 (detail), research first; possible 0.4.x point release.** |
 | #76 | More database engines (Oracle remains; SQL Server and MySQL are done) | feature | Parked | - | Close the finished part; Oracle only on demand. | open |
-| #79 | Email phase 2: Outlook / Microsoft Graph (Gmail is done) | feature | Parked | - | Needs OAuth sign-in; do with #217's authentication work if ever. | open |
+| #79 | Email phase 2: Outlook / Microsoft Graph (Gmail is done) | feature | Parked | - | Needs OAuth sign-in; do with #217's authentication work if ever. | **Decided 2026-10-19 (Deepak): 0.4.0, Microsoft 365 email, with a user guide.** |
 | #195 | LLM wiki search fails on hyphenated numbers | defect (other project) | Not this repo | - | The bug is in the separate llmwiki project; track it there. | open |
 
 ## P10 Documentation
