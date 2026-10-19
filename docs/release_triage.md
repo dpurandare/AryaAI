@@ -5,7 +5,7 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 ## Inputs
 
 - **Release 0.3.1 is stable.** It is installed and running well on the sponsor's Windows 11 AMD64 machine (since 2026-10-18), with Anthropic, OpenAI and Tavily keys. The sponsor will read the User Guide and explore the application before giving feedback. That feedback will add items to this plan.
-- **Target for 0.4.0:** no fixed date; two weeks is the goal (Deepak, 2026-10-19).
+- **Target for 0.4.0:** no fixed date. Two weeks was the first goal; **Deepak relaxed it on 2026-10-19: there is no customer-defined deadline, so the plan can accommodate some change and the timeline is not a constraint.**
 - **Anthropic and Claude work is finished** (Deepak, 2026-10-19). Caching was verified on the real API on 2026-10-10, and items #120, #121 and #137 are closed. Extended thinking (#159) is not done in the code; Deepak asked on 2026-10-19 to keep it as a work item, proposed for 0.4.0.
 - **Who uses it:** the sponsor is the main user and uses cloud models. That lowers the priority of items found only on local models, and raises the priority of cloud-model quality and the Windows experience.
 
@@ -25,16 +25,16 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 
 | Bucket | Items |
 |---|---|
-| 0.3.2 | 14 |
-| 0.4.0 | 11 |
-| 0.5.0 | 19 |
+| 0.3.2 | 12 |
+| 0.4.0 | 12 |
+| 0.5.0 | 21 |
 | Parked | 10 |
 | Not this repo | 1 |
 | Ongoing rule | 1 |
-| **Total open items** | **56** |
+| **Total open items** | **57** |
 | Closed during triage setup | 5 (#121, #137, #120, #222, #223) |
 
-**Capacity warning.** 14 items in 0.3.2 is a lot for a patch release, and 0.4.0 now holds two L-sized features (#196 PDF reader and #160 video) plus the whole local-Ollama block (#214, #224, #225). We should expect to cut or move items as we decide.
+**Capacity note (updated 2026-10-19).** 0.4.0 is large (the PDF reader and video are L-sized, plus the Ollama block, Anthropic thinking, grep and the search items). Deepak has said not to worry about a two-week timeline because there is no customer deadline, so the release may simply take longer; we will still review the whole scope at the end and can split a release if it grows too big.
 
 ## How we work
 
@@ -54,7 +54,7 @@ The point names are only grouping labels I chose so related items are discussed 
 |---|---|---|
 | P1 Bundled Ollama | #214, #224, #225 (#222 and #223 closed) | **DONE: all three go into 0.4.0** |
 | P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192, #226 (new) | **DONE 2026-10-19: #140, #141, #146, #170 in 0.3.2; #191, #192, #226 in 0.5.0** |
-| P3 Everyday UX and trust | #215, #218, #216, #193, #168, #194, #189, #190 | **presented 2026-10-19; recommendations written, awaiting Deepak's decisions** |
+| P3 Everyday UX and trust | #215, #218, #227 (new), #216, #193, #168, #194, #189, #190 | **DONE 2026-10-19** |
 | P4 Files and workspace | #204, #203, #169 | open |
 | P5 Documents | #196, #183, #197, #198, #85 | open |
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | open |
@@ -100,6 +100,14 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P2 | #170 | **0.3.2:** reuse the #149 compact-summary logic in `collapseOldestToolResultsToFit`. | Deepak: "ok". |
 | 2026-10-19 | P2 | #191 | **0.5.0 (detail).** The two split-off candidates (keep partial reasoning when a turn is stopped; stop the router re-verifying a delegate's files) are not done in 0.4.0; they are **handled together with #191 in 0.5.0**. | Deepak: "ok, no need, handle together in 0.5.0" (Claude's reading of the second half of answer 5). |
 | 2026-10-19 | P2 | #192, #226 (new) | **#192: 0.5.0 with #191. New item #226 (after a failed step, point recovery at the saved handoff files and do not repeat the data query) created, bucket 0.5.0.** | Deepak: "Makes sense, in 0.5.0." |
+| 2026-10-19 | P3 | #215 | **0.3.2** (role-prompt sentence, re-probe on small models, User Guide tip). | Deepak: "Looks good." |
+| 2026-10-19 | P3 | #218, #227 (new) | **Split: the check in 0.3.2; new #227 (rules redesign: per MCP server, per connection) in 0.5.0 (detail).** | Deepak: "Ok." |
+| 2026-10-19 | P3 | #216 | **0.4.0** (it touches the security boundary). | Deepak: "Ok." |
+| 2026-10-19 | P3 | #193 | **0.3.2; the menu opens upward** (the picker is on the status bar at the bottom). | Deepak. |
+| 2026-10-19 | P3 | #168 | **0.4.0**, with the Ollama block (#214). | Deepak: "Ok." |
+| 2026-10-19 | P3 | #194 | **0.5.0 (detail).** | Deepak: "Ok." |
+| 2026-10-19 | P3 | #189, #190 | **Both 0.4.0, built together.** | Deepak: "Ok." |
+| 2026-10-19 | Plan | all | **The two-week timeline is relaxed**: no customer-defined deadline, so the plan can accommodate some change. | Deepak. |
 
 ## Conflict raised and resolved (P1)
 
@@ -107,14 +115,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-**P3 (presented 2026-10-19; details in "P3: item details and recommendations" below).**
-1. **#215:** 0.3.2 (size S to M), including the role-prompt sentence, the re-probe and the User Guide tip?
-2. **#218:** split it: the check in 0.3.2, and a new item **#227** (the rules redesign: per MCP server, per connection) in 0.5.0 (detail)?
-3. **#216:** 0.4.0 (moved from 0.3.2 because it touches the security boundary)?
-4. **#193:** 0.3.2? And should the menu open upward?
-5. **#168:** 0.4.0 with the Ollama block (moved from 0.3.2)?
-6. **#194:** 0.5.0 (detail) (moved from 0.4.0)?
-7. **#189 and #190:** both 0.4.0, built together?
+*(None for P1, P2 and P3, which are decided. Questions for the next point are added here when it is presented.)*
 
 ## Item details and recommendations
 
@@ -312,9 +313,9 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 **Recommendation (Claude): 0.5.0 (detail), size M, designed together with #191.** **New candidate item, for Deepak to decide (proposed #226):** "after a failed step, point recovery at the existing handoff files instead of repeating the data query". It wastes real database queries and applies to cloud models too; proposed size M, bucket 0.4.0 or 0.5.0.
 
-### P3: item details and recommendations (written 2026-10-19, before presenting)
+### P3: item details and recommendations (written 2026-10-19, before presenting; ALL DECIDED, see the decision log)
 
-**Capacity note.** Everything proposed for 0.4.0 so far (the PDF reader, video, the Ollama block, Anthropic thinking, grep, the search items and the two below) is **far more than two weeks** of work. These recommendations try to keep 0.4.0 honest; a final cut happens at the end of the triage, and the cosmetic items are the first candidates.
+**Capacity note.** Everything proposed for 0.4.0 so far is far more than two weeks of work. Deepak later said the two-week timeline does not matter (no customer deadline), so this is only a note that the whole scope is reviewed at the end.
 
 #### #215: a pinned specialist does not state its role when greeted
 
@@ -404,14 +405,15 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #215 | Pinned specialist does not state its role when greeted | defect | 0.3.2 | S | A defect against documented behaviour (manual test 11.6, User Guide 05); likely to be seen when the sponsor explores the Agent picker on a small OpenAI model. | proposed, awaiting decision |
-| #218 | Check Settings > Auto-approve rules (why mcp_llmwiki appears; rules for MCP, databases, APIs) | defect (investigate) | 0.3.2 (the check) + new #227 (rules design, 0.5.0) | S-M | Split: the check, list refresh and safety wording are small; a per-server and per-connection rules design is large. | proposed, awaiting decision |
-| #216 | Grant outside-folder access up front in Settings (Add folder...) | enhancement | 0.4.0 | S | Moved from 0.3.2: it touches the security boundary (blocked folders), so it is not a low-risk patch item. | proposed, awaiting decision |
-| #193 | Agent picker opens a menu instead of cycling | enhancement | 0.3.2 | S | Small UI-only change with a clear request; makes the 12 roles easier to find. | proposed, awaiting decision |
-| #168 | Ollama Cloud usage shown as $0 | defect | 0.4.0 | S-M | Moved from 0.3.2: affects only Ollama Cloud users and needs plumbing through shared functions; same area as the Ollama block (#214). | proposed, awaiting decision |
-| #194 | Group the session list by date (configurable) | enhancement | 0.5.0 (detail) | M | Moved from 0.4.0: cosmetic compared with search (#189, #190); first candidate to cut when 0.4.0 is over capacity. | proposed, awaiting decision |
-| #189 | Search across past conversations (find a session by text) | feature | 0.4.0 | M-L | More valuable than grouping once sessions pile up; design shared with #190. | proposed, awaiting decision |
-| #190 | Find within the current session (Ctrl/Cmd+F) | feature | 0.4.0 | M | Ctrl+F is expected in a chat view; share the matching code with #189. | proposed, awaiting decision |
+| #215 | Pinned specialist does not state its role when greeted | defect | 0.3.2 | S | A defect against documented behaviour (manual test 11.6, User Guide 05); likely to be seen when the sponsor explores the Agent picker on a small OpenAI model. | **Decided 2026-10-19 (Deepak): 0.3.2.** |
+| #218 | Check Settings > Auto-approve rules (why mcp_llmwiki appears; rules for MCP, databases, APIs) | defect (investigate) | 0.3.2 (the check only; redesign is #227) | S-M | Split: the check, list refresh and safety wording are small; a per-server and per-connection rules design is large. | **Decided 2026-10-19 (Deepak): split; the check in 0.3.2, redesign as #227 in 0.5.0.** |
+| #227 | Auto-approve rules redesign: rules per MCP server with exceptions, grouped by source, and per-connection rules for databases and APIs | feature | 0.5.0 (detail) | M-L | New 2026-10-19, split from #218. A design task, not a patch. | **Created and decided 2026-10-19 (Deepak): 0.5.0 (detail).** |
+| #216 | Grant outside-folder access up front in Settings (Add folder...) | enhancement | 0.4.0 | S | Moved from 0.3.2: it touches the security boundary (blocked folders), so it is not a low-risk patch item. | **Decided 2026-10-19 (Deepak): 0.4.0.** |
+| #193 | Agent picker opens a menu instead of cycling | enhancement | 0.3.2 | S | Small UI-only change with a clear request; makes the 12 roles easier to find. | **Decided 2026-10-19 (Deepak): 0.3.2; menu opens upward.** |
+| #168 | Ollama Cloud usage shown as $0 | defect | 0.4.0 | S-M | Moved from 0.3.2: affects only Ollama Cloud users and needs plumbing through shared functions; same area as the Ollama block (#214). | **Decided 2026-10-19 (Deepak): 0.4.0, with the Ollama block.** |
+| #194 | Group the session list by date (configurable) | enhancement | 0.5.0 (detail) | M | Moved from 0.4.0: cosmetic compared with search (#189, #190); first candidate to cut when 0.4.0 is over capacity. | **Decided 2026-10-19 (Deepak): 0.5.0 (detail).** |
+| #189 | Search across past conversations (find a session by text) | feature | 0.4.0 | M-L | More valuable than grouping once sessions pile up; design shared with #190. | **Decided 2026-10-19 (Deepak): 0.4.0, with #190.** |
+| #190 | Find within the current session (Ctrl/Cmd+F) | feature | 0.4.0 | M | Ctrl+F is expected in a chat view; share the matching code with #189. | **Decided 2026-10-19 (Deepak): 0.4.0, with #189.** |
 
 ## P4 Files and workspace
 
