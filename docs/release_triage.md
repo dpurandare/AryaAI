@@ -54,7 +54,7 @@ The point names are only grouping labels I chose so related items are discussed 
 |---|---|---|
 | P1 Bundled Ollama | #214, #224, #225 (#222 and #223 closed) | **DONE: all three go into 0.4.0** |
 | P2 Planner and loop reliability | #140, #141, #146, #170, #191, #192, #226 (new) | **DONE 2026-10-19: #140, #141, #146, #170 in 0.3.2; #191, #192, #226 in 0.5.0** |
-| P3 Everyday UX and trust | #215, #218, #216, #193, #168, #194, #189, #190 | open |
+| P3 Everyday UX and trust | #215, #218, #216, #193, #168, #194, #189, #190 | **presented 2026-10-19; recommendations written, awaiting Deepak's decisions** |
 | P4 Files and workspace | #204, #203, #169 | open |
 | P5 Documents | #196, #183, #197, #198, #85 | open |
 | P6 Provider quality: cost, thinking and evaluation | #159, #134, #122, #135, #136 | open |
@@ -107,7 +107,14 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 ## Pending questions (waiting for Deepak)
 
-*(None for P1 and P2, which are decided. Questions for the next point are added here when it is presented.)*
+**P3 (presented 2026-10-19; details in "P3: item details and recommendations" below).**
+1. **#215:** 0.3.2 (size S to M), including the role-prompt sentence, the re-probe and the User Guide tip?
+2. **#218:** split it: the check in 0.3.2, and a new item **#227** (the rules redesign: per MCP server, per connection) in 0.5.0 (detail)?
+3. **#216:** 0.4.0 (moved from 0.3.2 because it touches the security boundary)?
+4. **#193:** 0.3.2? And should the menu open upward?
+5. **#168:** 0.4.0 with the Ollama block (moved from 0.3.2)?
+6. **#194:** 0.5.0 (detail) (moved from 0.4.0)?
+7. **#189 and #190:** both 0.4.0, built together?
 
 ## Item details and recommendations
 
@@ -305,6 +312,64 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 **Recommendation (Claude): 0.5.0 (detail), size M, designed together with #191.** **New candidate item, for Deepak to decide (proposed #226):** "after a failed step, point recovery at the existing handoff files instead of repeating the data query". It wastes real database queries and applies to cloud models too; proposed size M, bucket 0.4.0 or 0.5.0.
 
+### P3: item details and recommendations (written 2026-10-19, before presenting)
+
+**Capacity note.** Everything proposed for 0.4.0 so far (the PDF reader, video, the Ollama block, Anthropic thinking, grep, the search items and the two below) is **far more than two weeks** of work. These recommendations try to keep 0.4.0 honest; a final cut happens at the end of the triage, and the cosmetic items are the first candidates.
+
+#### #215: a pinned specialist does not state its role when greeted
+
+**What it is.** `docs/manual_testing.md` 11.6 expects that after pinning a specialist in the Agent picker and saying hello, it states its own role. Probed on 2026-10-15 without the UI: on `gpt-4o-mini` all 12 pinned roles answered a bare greeting ("Hello! How can I assist you today?") and answered "What can you do?" with a generic "tell me what you need"; only Auto gave a real list. On `claude-haiku-5-5` every role answered correctly (a role statement plus abilities). So the failure is **model-dependent**. Deepak's requirement (2026-10-15): do not write it off as a weak model; the model is meant to learn what it can do from its tools (`describe_capabilities`, `get_environment`), and the weakest supported models must handle a greeting well.
+
+**Direction.** Check whether pinned roles even have those tools; add to each role prompt that when greeted or asked what it can do, it states its role and its main abilities (and may call `describe_capabilities`). Docs follow-up already decided: add the "pick a role, send Hello" tip to `docs/user-guide/05-agents-and-roles.md`.
+
+**Costs and risks.** A sentence added to 12 role prompts raises the prompt-size ceilings in `prompt-budget.test.ts`; measure it. The evidence is one small model; re-probe after the change on `gpt-4o-mini` and a second small model.
+
+**Recommendation (Claude): 0.3.2, size S to M.** It is a defect against documented behaviour, and the sponsor, who has an OpenAI key and is exploring the application, is exactly the person who will pin a role and say hello.
+
+#### #218: check Settings > Auto-approve rules
+
+**What it is.** Deepak saw `mcp_llmwiki` rows in the Auto-approve list and asked for a thorough check. A quick look found the list is generated from the live registry: every tool whose `mutates` is true or a function gets a checkbox, so an MCP server's tools appear as individual `mcp__<server>__<tool>` rows. The thorough check must answer six things: (1) exactly which names appear and why, and whether `mcp_llmwiki` is a tool, a stale entry or a name-format problem; (2) one row per MCP tool can mean dozens of rows per server (consider a rule per server with per-tool exceptions, grouped by source); (3) a rule on the generic database and API tools applies to **all** connections (a rule per connection may be wanted); (4) the list is loaded once, so it goes stale when a server connects or a connection is added, and rules for tools that no longer exist stay stored; (5) safety: a rule on a tool that only sometimes mutates approves all its calls (SQL writes included), so the warning must be clear, and outside-workspace folder access must stay never auto-approved; (6) update the User Guide (pages 04, 10 and 11), the Developer Guide and `docs/manual_testing.md`.
+
+**Recommendation (Claude): split it.**
+- **0.3.2, size S to M: the check itself** (questions 1, 4, 5 and 6): explain the rows, refresh the list when a server connects, drop stored rules for tools that no longer exist, make the warning for "sometimes mutates" tools clear, and confirm the outside-folder rule. Safety-related and small.
+- **New item #227, bucket 0.5.0 (detail), size M to L: redesign the rules** (questions 2 and 3): rules per MCP server with exceptions, grouping by source, and per-connection rules for databases and APIs. A design task, not a patch.
+
+#### #216: grant folder access up front in Settings
+
+**What it is.** Settings > Workspace > "Folders outside the workspace" only lists folders the user chose "Always" for in a chat prompt, and offers only Remove. Deepak wants an **Add folder...** button (native folder picker) to grant access to places such as Downloads, Desktop or Documents in advance. To settle: the grant is the same read-only grant as "Always" (creating a new file outside still asks each time); the blocked list (`.ssh`, `.aws`, keychains, the app's own data) must still win, and the picker must refuse the home directory or a drive root as too broad; quick-add shortcuts for the usual folders; de-duplicate and normalise paths; docs and a manual test case.
+
+**Recommendation (Claude): 0.4.0, size M.** It removes a repeated confirmation for a non-developer user, but it sits on the **security boundary**, so it needs careful tests (a blocked folder refused; a grant honoured with no prompt) and should not be a patch-release change.
+
+#### #193: Agent picker opens a menu instead of cycling
+
+**What it is.** The `Agent: <name>` button in the chat status bar rotates through Auto and every enabled role on each click, so reaching a specific role means clicking through the others. Wanted: a click opens a menu listing Auto and every pickable, enabled role (user-defined roles included), the current choice marked; it opens **upward** (the status bar is at the bottom; the request said "now down", read as "not down", to confirm); closes on outside click, Esc or selection; keyboard use with focus returned; Ctrl+Tab cycling stays and the tooltip is updated; a one-line purpose per role if the roster has one. It needs a live check in a throwaway Electron copy.
+
+**Recommendation (Claude): 0.3.2, size S.** UI-only, low risk, and a visible improvement for someone exploring the 12 specialists.
+
+#### #168: Ollama Cloud usage shown as $0
+
+**What it is.** `isLocalModelId()` decides a model is free and local from the shape of its id (`name:tag`). Ollama Cloud ids such as `gemma4:cloud` match that shape, so real, billed Ollama Cloud usage can be shown as $0; `gpt-oss:120b-cloud` does not match and shows "cost unknown". A proper fix needs an optional provider id threaded through `estimateCost` and `contextWindowFor` and into `ContextMeter.svelte` (none of their call sites has the provider today). Cloud costs can stay "unknown" once they are not mistaken for free.
+
+**Recommendation (Claude): 0.4.0, size S to M, with the Ollama block (#214).** It affects only Ollama Cloud users, not the sponsor, and the plumbing is easier to design together with the provider changes in #214. The item itself says not to implement it before testing with real Ollama Cloud usage.
+
+#### #194: group the session list by date
+
+**What it is.** A configurable setting "Group sessions by date" that shows the left pane as expandable groups (Today, Yesterday, Previous 7 days, then months) instead of one long list. Renderer-only; many details were already worked out (group by last activity, local time, the active session's group auto-expands, activity indicators visible on a collapsed header, per-group state remembered, keyboard and screen-reader use).
+
+**Recommendation (Claude): 0.5.0 (detail), size M.** Nice to have, but search (#189, #190) helps more once sessions pile up. It is the first item to cut when 0.4.0 is over capacity.
+
+#### #189: search across past conversations
+
+**What it is.** A magnifier in the left pane that searches the stored messages of all sessions for text the user remembers, shows a list (session title, a snippet with the match highlighted, date) and opens the session, ideally scrolled to the matching message. Open design questions: where the input lives; the matching engine (SQLite FTS5 versus plain `LIKE`); whether to index tool output (huge and noisy) or only user and assistant text; structured message blocks; result limits and debouncing; the shortcut; jump-to-message; whether deleted sessions are included.
+
+**Recommendation (Claude): 0.4.0, size M.** Plain matching over message text is enough at personal scale; leave tool output out at first. Note that the memory index (vector search) is agent-facing and a different feature.
+
+#### #190: find within the current session
+
+**What it is.** Ctrl+F (Cmd+F on macOS) searches the current session's transcript. Share the matching code with #189 and keep the shortcuts distinct. Open: a find bar (match count, next and previous, Esc) versus Electron's `webContents.findInPage`; whether collapsed tool blocks are searched and auto-expanded; long or lazily rendered sessions; highlighting inside KaTeX, Mermaid and code blocks; not hijacking the shortcut while the message box or Settings has focus.
+
+**Recommendation (Claude): 0.4.0, size M, built with #189.** Ctrl+F is expected in a chat window; Electron's built-in find is the cheapest start.
+
 ## Closed during triage setup
 
 | # | Item | Why closed |
@@ -339,14 +404,14 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 | # | Item | Type | Proposed | Size | Why | Decision |
 |---|---|---|---|---|---|---|
-| #215 | Pinned specialist does not state its role when greeted | defect | 0.3.2 | S | Manual test 11.6 expects it; probed on gpt-4o-mini, all 12 roles fail. | open |
-| #218 | Check Settings > Auto-approve rules (why mcp_llmwiki appears; rules for MCP, databases, APIs) | defect (investigate) | 0.3.2 | S-M | Quick look says the list is generated from the live registry; needs the full check. | open |
-| #216 | Grant outside-folder access up front in Settings (Add folder...) | enhancement | 0.3.2 | S | Small, and removes a repeated confirmation. | open |
-| #193 | Agent picker opens a menu instead of cycling | enhancement | 0.3.2 | S | Small UI change, clear request. | open |
-| #168 | Ollama Cloud usage shown as $0 | defect | 0.3.2 | S-M | Wrong number shown to the user; needs a small UI prop chain. | open |
-| #194 | Group the session list by date (configurable) | enhancement | 0.4.0 | M | Nice to have; not urgent. | open |
-| #189 | Search across past conversations (find a session by text) | feature | 0.4.0 | M-L | Related to #190; shared matching code. The memory index already exists. | open |
-| #190 | Find within the current session (Ctrl/Cmd+F) | feature | 0.4.0 | M | Do with #189. | open |
+| #215 | Pinned specialist does not state its role when greeted | defect | 0.3.2 | S | A defect against documented behaviour (manual test 11.6, User Guide 05); likely to be seen when the sponsor explores the Agent picker on a small OpenAI model. | proposed, awaiting decision |
+| #218 | Check Settings > Auto-approve rules (why mcp_llmwiki appears; rules for MCP, databases, APIs) | defect (investigate) | 0.3.2 (the check) + new #227 (rules design, 0.5.0) | S-M | Split: the check, list refresh and safety wording are small; a per-server and per-connection rules design is large. | proposed, awaiting decision |
+| #216 | Grant outside-folder access up front in Settings (Add folder...) | enhancement | 0.4.0 | S | Moved from 0.3.2: it touches the security boundary (blocked folders), so it is not a low-risk patch item. | proposed, awaiting decision |
+| #193 | Agent picker opens a menu instead of cycling | enhancement | 0.3.2 | S | Small UI-only change with a clear request; makes the 12 roles easier to find. | proposed, awaiting decision |
+| #168 | Ollama Cloud usage shown as $0 | defect | 0.4.0 | S-M | Moved from 0.3.2: affects only Ollama Cloud users and needs plumbing through shared functions; same area as the Ollama block (#214). | proposed, awaiting decision |
+| #194 | Group the session list by date (configurable) | enhancement | 0.5.0 (detail) | M | Moved from 0.4.0: cosmetic compared with search (#189, #190); first candidate to cut when 0.4.0 is over capacity. | proposed, awaiting decision |
+| #189 | Search across past conversations (find a session by text) | feature | 0.4.0 | M-L | More valuable than grouping once sessions pile up; design shared with #190. | proposed, awaiting decision |
+| #190 | Find within the current session (Ctrl/Cmd+F) | feature | 0.4.0 | M | Ctrl+F is expected in a chat view; share the matching code with #189. | proposed, awaiting decision |
 
 ## P4 Files and workspace
 
