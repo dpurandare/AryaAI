@@ -77,6 +77,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P8 | #131 | **Parked in full** (no locks in 0.3.2). Counts now 0.3.2=12, Parked=11. | Deepak: too remote a corner case; an installed app does not normally run twice. Claude agrees: the race needs a double launch inside the first-run window. Revisit only if a user reports it. |
 | 2026-10-19 | P8 | #131 | **Reversed: #131 reduced to a single-instance check, 0.3.2, size S.** The rest of #131 (venv lock, `.deb` check, Windows/macOS runs, large-workspace cap) stays Parked. Counts back to 0.3.2=13, Parked=10. | Deepak: the app should check at start whether another instance is running and, if so, tell the user that another instance is running and must be closed before launching a new one. Cheap, and it removes the whole double-launch class. Policy confirmed by Deepak: there is no need for multiple instances of Sachivji on one machine. |
 | 2026-10-19 | P8 | #208 | **Closed: verified.** Counts: 0.3.2=12, open 59. | Deepak: "I checked it and it runs" (the macOS build on his Mac). |
+| 2026-10-19 | P8 | #221 | **0.3.2, size S (tests only).** Counts unchanged. | Deepak: "2. let's plan these." (read as yes to #221; recorded here so he can correct it). |
 | 2026-10-19 | P1 | #222 | Budget stated for GPU parts: about 100 MB more is acceptable | Deepak. Measured: Vulkan only +43 MB on disk; full CUDA +1.8 GB. Proposal is Vulkan only (pending confirmation, question 2). |
 | 2026-10-19 | P1 | #222 | **GPU: keep the Vulkan backend only (+43 MB on disk, +13 MB download); keep dropping CUDA** | Deepak: "I am ok with your proposal for now (for 0.3.2)". |
 | 2026-10-19 | P1 | #214 | **The bundled Ollama uses a non-standard port, never 11434; range 11450 to 11455, first free one** | Deepak: use a port that is not the standard Ollama port; the range comes from his 0.5.0 spec and is applied to 0.3.2 for consistency. Replaces today's 11434 then 11435 to 11438. |
@@ -132,7 +133,7 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 **P8 (details in "P8: item details and recommendations" below).**
 1. **#131:** DECIDED: only the single-instance check, with a message and exit, 0.3.2 (S); the rest Parked (Deepak).
 2. **#208:** CLOSED, verified by Deepak on his Mac.
-3. **#221:** 0.3.2 (S)?
+3. **#221:** DECIDED 0.3.2 (S).
 4. **#220:** 0.5.0 (detail), with #210?
 5. **#11, #63 to #66:** Parked, as decided. (Deepak: the idea of bringing Windows signing forward is too hypothetical; no 'ready option' is kept. Waiting only on #208, #221 and #220.)
 
