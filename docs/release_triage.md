@@ -25,13 +25,13 @@ Started 2026-10-19. This document is where the open backlog (`TASKS.md`) is sort
 
 | Bucket | Items |
 |---|---|
-| 0.3.2 | 12 |
+| 0.3.2 | 13 |
 | 0.4.0 | 12 |
 | 0.5.0 | 21 |
 | Parked | 10 |
 | Not this repo | 1 |
 | Ongoing rule | 1 |
-| **Total open items** | **57** |
+| **Total open items** | **58** |
 | Closed during triage setup | 5 (#121, #137, #120, #222, #223) |
 
 **Capacity note (updated 2026-10-19).** 0.4.0 is large (the PDF reader and video are L-sized, plus the Ollama block, Anthropic thinking, grep and the search items). Deepak has said not to worry about a two-week timeline because there is no customer deadline, so the release may simply take longer; we will still review the whole scope at the end and can split a release if it grows too big.
@@ -109,6 +109,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P3 | #189, #190 | **Both 0.4.0, built together.** | Deepak: "Ok." |
 | 2026-10-19 | Plan | all | **The two-week timeline is relaxed**: no customer-defined deadline, so the plan can accommodate some change. | Deepak. |
 | 2026-10-19 | P4 | #204 | **Deepak's file placement policy (recorded as stated):** (1) code generation must not happen in the workspace root; any tool that creates a file must know where to store it; (2) if the user asks to download a file it goes to the **download folder**; (3) any export goes to the **export folder** or a **folder the user chooses**; (4) if the user drops a file in, the drop accepts the **full path** of the file, not its contents, and the app may copy it into `tmp/` if needed; (5) GitHub clones already have their place (`.sachiv-clones`); (6) in general the **root is used very diligently**. | Deepak. Replaces the narrower view of #204 as "stop PNGs landing in the root". Open details are in the pending questions. |
+| 2026-10-19 | P3 (added later) | #230 (new) | **New TODO from Deepak: ask the user to confirm before deleting a session. Bucket 0.3.2, size S (decided by Claude, because Deepak asked Claude to decide where it goes).** | Deepak: "When user deletes a session, we should get a confirmation from the user to avoid accidental deletion." Number #230 is used because #228 and #229 are reserved for the pending P4 proposals. |
 
 ## Conflict raised and resolved (P1)
 
@@ -379,6 +380,22 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 **Recommendation (Claude): 0.4.0, size M, built with #189.** Ctrl+F is expected in a chat window; Electron's built-in find is the cheapest start.
 
+#### #230: confirm before deleting a session (added 2026-10-19, after P3 was decided)
+
+**What it is (Deepak's TODO).** When the user deletes a session, ask for confirmation, to avoid accidental deletion.
+
+**What the code does today (checked 2026-10-19).** The small **x** button on a session row (`SessionList.svelte`) calls `removeSession` in `App.svelte`, which deletes at once with **no confirmation**. The delete is permanent: `deleteSession` removes the chat's messages, token usage, search-index chunks and their vectors in one transaction, and there is no recycle bin. One more quirk: if the session is the open one, or is generating, `removeSession` returns silently and nothing visible happens.
+
+**Where it goes (Claude's decision, as Deepak asked): 0.3.2, size S.** It is a data-loss safeguard on an irreversible action, a small UI change with no effect on the engine, in the same family as the other 0.3.2 UX items.
+
+**What to build.**
+- An in-app confirmation (a small modal in the app's own style, not the browser `confirm`) that names the session title and says the chat, its saved usage and its search-index entries are removed and **cannot be undone**; buttons **Delete** and **Cancel**; focus on **Cancel** and Esc cancels, so an accidental Enter or click does not delete.
+- Tell the user why nothing happens when they try to delete the open or a running session (a short message: switch to another session, or wait/stop), instead of silence.
+- Nice, optional: mention that the chat can be exported first (the export button already exists).
+- Tests and docs: a check that Cancel keeps the session and Delete removes it; a manual-test case; one line in User Guide page 04 (sessions).
+
+**Alternative considered, not chosen.** A soft delete with an "Undo" toast for a few seconds is friendlier but needs a soft-delete state and a purge timer, which is a bigger change. The confirmation is what Deepak asked for.
+
 ### P4: item details and recommendations (written 2026-10-19, before presenting)
 
 #### #204: files landing in the workspace root
@@ -486,6 +503,7 @@ So my proposed "#228, move script outputs after a run" is **mostly done**; what 
 | #194 | Group the session list by date (configurable) | enhancement | 0.5.0 (detail) | M | Moved from 0.4.0: cosmetic compared with search (#189, #190); first candidate to cut when 0.4.0 is over capacity. | **Decided 2026-10-19 (Deepak): 0.5.0 (detail).** |
 | #189 | Search across past conversations (find a session by text) | feature | 0.4.0 | M-L | More valuable than grouping once sessions pile up; design shared with #190. | **Decided 2026-10-19 (Deepak): 0.4.0, with #190.** |
 | #190 | Find within the current session (Ctrl/Cmd+F) | feature | 0.4.0 | M | Ctrl+F is expected in a chat view; share the matching code with #189. | **Decided 2026-10-19 (Deepak): 0.4.0, with #189.** |
+| #230 | Confirm before deleting a session | enhancement (data-loss safeguard) | 0.3.2 | S | New 2026-10-19 (Deepak). Deleting is immediate and permanent today; a small, low-risk UI change. | **Added by Deepak 2026-10-19; bucket 0.3.2 chosen by Claude on his request.** |
 
 ## P4 Files and workspace
 
