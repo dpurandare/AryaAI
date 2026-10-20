@@ -35,7 +35,7 @@ When you fix a bug found live, add a test that fails without the fix, and, if yo
 
 ## Scripts that measure real models
 
-These spend quota; ration them and use `scripts/with-app-key.cjs` so keys are never typed or logged. They run with `npx vite-node --config vitest.config.ts scripts/<name>.mts -- <provider> <model>`.
+These spend quota; ration them and use `scripts/with-app-key.cjs` so keys are never typed or logged. They run with `npx vite-node --config vitest.config.ts scripts/<name>.mts -- <provider> <model>` (`vite-node` is pinned in `devDependencies`); `npm run eval:routing` and `npm run eval:cache` are shortcuts for the two main ones.
 
 - `routing-eval.mts`: the role manifest's examples replayed against a provider with the router's real prompt and tool list (non-deterministic: run per model, several times), plus a replay probe (does the provider accept a history containing a call to a tool that is not in the request's list?).
 - `plan-probe.mts`: how reliably a model returns a valid plan, prompt-only versus structured output.

@@ -21,6 +21,8 @@
     "typecheck:web": "svelte-check --tsconfig ./tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "test": "vitest run",
+    "eval:routing": "vite-node --config vitest.config.ts scripts/routing-eval.mts --",
+    "eval:cache": "vite-node --config vitest.config.ts scripts/cache-probe.mts --",
     "fetch:bundled-python:mac": "node scripts/fetch-bundled-python-mac.mjs",
     "fetch:bundled-ollama:mac": "node scripts/fetch-bundled-ollama-mac.mjs",
     "fetch:bundled-node:mac": "node scripts/fetch-bundled-node-mac.mjs",
@@ -90,6 +92,7 @@
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",
     "vite": "^7.3.6",
+    "vite-node": "6.0.0",
     "vitest": "^5.0.0"
   },
   "allowScripts": {

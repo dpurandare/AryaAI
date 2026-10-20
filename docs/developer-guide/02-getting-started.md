@@ -76,7 +76,7 @@ For UI work, verify changes in a **running** copy rather than relying on type ch
 | `fix-native-modules.sh` | Rebuilds `better-sqlite3` against this machine's Electron ABI (a Linux old-glibc workaround). |
 | `export-docs.mjs`, `gen-tool-catalog.mjs`, `docs-screenshots.mjs` | Documentation tooling (see [Conventions](12-conventions.md)). |
 
-The eval and probe scripts are run with `npx vite-node --config vitest.config.ts scripts/<name>.mts -- <provider> <model>`. They call real models and spend quota: ration them.
+The eval and probe scripts are run with `npx vite-node --config vitest.config.ts scripts/<name>.mts -- <provider> <model>` (`vite-node` is a pinned devDependency, so `npx` uses the installed copy). Shortcuts: `npm run eval:routing -- <provider> <model> [flags]` and `npm run eval:cache -- <provider> <model> [flags]`. They call real models and spend quota: ration them.
 
 ## Linux dev note
 
