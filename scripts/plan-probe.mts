@@ -103,6 +103,8 @@ for (const mode of ['plain', 'structured'] as const) {
     for (const c of CASES) {
       const t0 = performance.now()
       let text = ''
+      let stopReason = 'unknown'
+      let outputTokens: number | undefined
       try {
         for await (const ev of provider.stream({
           model,
@@ -113,6 +115,8 @@ for (const mode of ['plain', 'structured'] as const) {
           ...(mode === 'structured' ? { structuredOutput: { name: 'classify_and_plan', schema } } : {})
         })) {
           if (ev.type === 'text_delta') text += ev.text
+          else if (ev.type === 'usage') outputTokens = ev.outputTokens
+          else if (ev.type === 'message_stop') stopReason = ev.stopReason
         }
       } catch (err) {
         tally.calls++
@@ -140,7 +144,7 @@ for (const mode of ['plain', 'structured'] as const) {
         if (rolesMatch) tally.rightRoles++
         roleNote = ` roles=[${gotRoles.join(',')}] ${rolesMatch ? 'roles-ok' : `roles-WANT=[${c.expectRoles.join(',')}]`}`
       }
-      console.log(`  ${plan ? 'ok ' : 'BAD'} ${((performance.now() - t0) / 1000).toFixed(1)}s [${c.expect}]${roleNote} ${flags.includes('--show') || !plan ? JSON.stringify(text.slice(0, 160)) : ''}`)
+      console.log(`  ${plan ? 'ok ' : 'BAD'} ${((performance.now() - t0) / 1000).toFixed(1)}s [${c.expect}]${roleNote} ${!plan ? `stop=${stopReason} outTokens=${outputTokens ?? '?'} ` : ''}${flags.includes('--show') || !plan ? JSON.stringify(text.slice(0, 160)) : ''}`)
     }
   }
 }

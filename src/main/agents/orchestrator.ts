@@ -1453,7 +1453,9 @@ export class Orchestrator {
       // malformed JSON) is left alone here; that is the routine, expected case already handled below.
       if (!plan && stopReason !== 'max_tokens' && text.trim() === '' && emptyPlanRetries < MAX_EMPTY_PLAN_RETRIES) {
         emptyPlanRetries++
-        console.error('orchestrator: classify-and-plan returned no text at all — retrying once before falling open to no plan')
+        console.error(
+          `orchestrator: classify-and-plan returned no text at all (stop=${stopReason}, outputTokens=${roundUsage?.outputTokens ?? 'unknown'}) — retrying once before falling open to no plan`
+        )
         continue outer
       }
       break
@@ -1488,7 +1490,9 @@ export class Orchestrator {
         // noise on every turn it happened to fire.
         console.error(
           'orchestrator: classify-and-plan response was not valid JSON, treating as a normal request' +
-            (text.trim() ? ` — the model said: ${JSON.stringify(text.trim().slice(0, 300))}` : ' — the model returned no text')
+            (text.trim()
+            ? ` — the model said: ${JSON.stringify(text.trim().slice(0, 300))}`
+            : ` — the model returned no text (stop=${stopReason}, outputTokens=${roundUsage?.outputTokens ?? 'unknown'})`)
         )
       }
     }

@@ -2430,6 +2430,28 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(streamEvents.find((e) => e.type === 'warning')).toBeUndefined()
       expect(streamEvents).toContainEqual({ type: 'text_delta', text: 'Hi there!' })
     })
+
+    it('an empty classify-and-plan reply logs its stop reason and output-token count to the console — TASKS #140', async () => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([
+        { text: '', stopReason: 'end_turn' },
+        { text: '', stopReason: 'end_turn' },
+        { text: 'Hi there!', stopReason: 'end_turn' }
+      ])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: true
+      })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'hi and thanks' }] }])
+        const logged = errorSpy.mock.calls.map((c) => String(c[0]))
+        expect(logged.some((m) => m.includes('retrying once') && m.includes('stop=end_turn') && m.includes('outputTokens='))).toBe(true)
+        expect(logged.some((m) => m.includes('returned no text') && m.includes('stop=end_turn'))).toBe(true)
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
   })
 
   describe('exhausting the MAX_TOTAL_ROUNDS budget (previously untested — a real bug found live)', () => {
