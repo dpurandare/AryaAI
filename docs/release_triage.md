@@ -129,6 +129,30 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P5 | #196, #183, #197, #198, #85 | **#196: 0.4.0 (L), spike first. #183, #197, #198, #85: 0.5.0 (detail).** | Deepak: "should work and agree" (#196, with a design addition: images, graphs and sketches in a PDF are extracted to a sub-folder of the temporary location and referred to while reading); "Ok" (#183); "Ok" (templates family). Downloads: if the user directs a download it goes to `downloads/`; otherwise a PDF opened for one-time reading stays in transient storage. |
 | 2026-10-19 | P6 | #159, #134, #122, #135, #136 | **#159: 0.4.0 (M, opt-in, off by default, token budget in Settings). #134: 0.3.2 (S). #122, #135, #136: Parked, revisit after 0.5.0.** | Deepak: "Sounds good", "Ok, should do", "Fine for now, will revisit after 0.5.0". |
 
+### Release 0.3.2: implementation log (2026-10-20)
+
+All twelve 0.3.2 items were built on `release/0.3.2`, one commit per item, pushed after each. Version bumped to 0.3.2 (`daa7b0a`). Status: **built, in manual testing; nothing tagged or published.** Test plan: `docs/manual_testing_0.3.2.md`; release note: `docs/releases/0.3.2.md`.
+
+| Item | Commit | What was done | Differs from the plan |
+|---|---|---|---|
+| #140, #141 | `bd24dc1` | Stop reason and output-token count added to the empty-planning-reply log and to `plan-probe` | #141's retry was already in the code (commit `69b3357`); only #140 needed work |
+| #146 | `c695c30` | MCP Operator delegate tool not offered while no MCP server is connected (option A) | The existing rewrite-to-Researcher stays as a safety net |
+| #170 | `945a3cd` | Collapsing old results keeps a listing's entries; last-resort erase if still too big | Added the last-resort pass so an overflow cannot fail the request |
+| #215 | `99c86e1` | Pinned-role notice tells the specialist to state role and abilities when greeted, with its manifest text and tools | Pinned roles have no `describe_capabilities`, so it is written into the notice; not re-probed on `gpt-4o-mini` (no key here) |
+| #193 | `aa160e6` | Agent button opens an upward menu | None |
+| #230 | `0e360e0` | Confirmation dialog before deleting a chat | The 'refused' message was not built: the x is already hidden for the open or a generating chat |
+| #131 | `fe902d7` | Single-instance lock, message, exit; first window comes forward | Only the reduced scope (as decided); dialog shown after `ready` (found live) |
+| #134 | `109baaf` | `vite-node` 6.0.0 pinned; `eval:routing`, `eval:cache` | Brings its own nested Vite 8 |
+| #221 | `bf74eef` | 12 mocked tests plus an opt-in live smoke test | The tool has no `--output json` handling, so the tests check pass-through |
+| #204 (small parts) | `5e6026b` | Prompt and `get_environment` wording; sweep after `shell_execute`; Export Settings opens in `exports/`; old notes checked by code | Old notes could only be checked by code (data is on the Mac); risk noted: a command that creates 4+ files in the root has them moved |
+| #218 (check) | `ca5db1c` | Source tags, refresh, stale rules listed with Remove, clearer warnings, outside-folder rule tested | Stale rules are listed for removal, not deleted silently |
+
+| Date | Decision (Deepak) | Effect |
+|---|---|---|
+| 2026-10-20 | A per-release test document, with OS-specific checks and exact prompts. | `docs/manual_testing_0.3.2.md`; the rule is in `docs/release_process.md` section 0. |
+| 2026-10-20 | A release note per release: what changed, new features in a line each. | `docs/releases/0.3.2.md`; changelog section `[0.3.2]`. |
+| 2026-10-20 | No intermediate sponsor builds; the sponsor gets a build only after Deepak's testing and fixes. CI before or after testing is Claude's call. | CI and the branch installers are run **before** manual testing (cheap, publish nothing, and they are the files tested); re-run after any fix. |
+
 ## Conflict raised and resolved (P1)
 
 Option (a) as first described would have sent chat to the user's own Ollama and kept the bundled server for embeddings only, which conflicts with the requirement that the bundled Ollama be usable (download, Modelfile). **Resolved 2026-10-19 by Deepak, then changed the same day:** first the app was to use the bundled Ollama only, for chat and embeddings; later Deepak decided the bundled Ollama is a fallback that provides only embeddings, and the whole bundled-chat feature (#222) moves to 0.4.0. See the decision log.
