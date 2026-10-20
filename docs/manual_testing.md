@@ -287,7 +287,7 @@ Cleanup: `rm -rf /tmp/sachiv-fresh /tmp/sachiv-fresh2 /tmp/sachiv-ws /tmp/sachiv
 | 11.3 | Ask Data Processor to append a row to a CSV/JSON | Works; asks for confirmation. |
 | 11.4 | Ask for a saved query: run a query, then "save that as a reusable query" | `db_save_query` works; the new `db_query_*` tool is used next time **by Data Access**. |
 | 11.5 | Research: "Search the web for X and write a summary into a Word document" | Two steps: Researcher, then Document Creator; the document contains the researched content. |
-| 11.6 | Pin **each** specialist in the picker and say hello | None errors; each states its own role. |
+| 11.6 | Pin **each** specialist in the picker and say hello, then "What can you do?" | None errors; each states its own role and its main abilities (0.3.2, #215: written into the pinned-role notice; a probe with a 0.8B local model named the role in 22 of 22 replies). |
 | 11.7 | Token/usage numbers in the status bar look plausible | — |
 | 11.8 | Chat export to PDF | Works. |
 | 11.9 | (Optional, **⚠ destructive**) Settings > Python runtime > **Repair…** | Confirms first; then rebuilds `venv/` (a minute); packages reinstall. **Your own packages in that venv are deleted.** Skip unless you're sure. |

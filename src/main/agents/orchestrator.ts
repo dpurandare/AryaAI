@@ -4,7 +4,7 @@ import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
 import { KNOWLEDGE_FIRST_REFUSAL, mcpAttemptedThisTurn, wantsWebExplicitly } from './knowledge-first'
 import { emptyDelegateCalls, isInternalWorkFile, isRestatement, lastDelegateReplies, planStepReplies, stripInternalPaths } from './restatement'
 import type { AgentRole } from '@shared/agents'
-import { PLANNABLE_ROLES, roleLabel, type RoleMeta } from '@shared/agents'
+import { PLANNABLE_ROLES, roleLabel, roleMeta, type RoleMeta } from '@shared/agents'
 import { contextWindowFor, maxOutputTokensFor } from '@shared/model-metadata'
 import { evaluateClassifyGate, shouldSampleForCalibration, type ClassifyGateVerdict } from './classify-gate'
 import {
@@ -1938,8 +1938,17 @@ export class Orchestrator {
       .filter((a) => a.role !== currentRole)
       .map((a) => `- ${this.labelOf(a.role)} (${a.role}): ${a.summary}`)
       .join('\n')
+    // TASKS #215: a pinned specialist has no describe_capabilities, and a small model answers a bare "Hello" with a generic
+    // greeting unless told what it is. So its own role and abilities are written into the notice (from the manifest and its live tools).
+    const self = this.agents.get(currentRole)
+    const toolNames = (self?.tools ?? []).map((t) => t.name)
+    const ownAbilities =
+      `Your abilities: ${(self ? (self.meta ?? roleMeta(self.role))?.description ?? self.summary : '')}` +
+      (toolNames.length ? ` Your tools: ${toolNames.join(', ')}.` : ' You have no tools of your own.')
     return (
       '\n\n---\n' +
+      `When the user greets you (for example "Hello") or asks what you can do, do not give a generic greeting: say you are the ` +
+      `${this.labelOf(currentRole)} specialist and state your main abilities in a few short lines, from this description. ${ownAbilities}\n\n` +
       `You are currently pinned to the ${this.labelOf(currentRole)} specialist only (the ` +
       'composer\'s "Agent:" selector, bottom-left, is set away from "Auto") — you cannot hand off to ' +
       'another specialist yourself right now, even when one clearly fits the request better, and you ' +

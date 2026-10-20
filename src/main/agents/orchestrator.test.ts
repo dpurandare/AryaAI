@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '@shared/protocol'
-import type { AgentRole } from '@shared/agents'
+import { roleLabel, roleMeta, type AgentRole } from '@shared/agents'
 import { MockProvider, type ScriptedTurn } from '../../../test/support/mock-provider'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import { ToolRegistry } from '../tools/registry'
@@ -602,6 +602,23 @@ describe('Orchestrator (integration, mocked provider)', () => {
     // composer's `sending` state gets stuck disabled forever.
     const finalStop = streamEvents.at(-1)
     expect(finalStop).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
+  })
+
+  it('a pinned specialist is told to state its role and abilities when greeted, from its own manifest text and tools — TASKS #215', async () => {
+    const registry = buildRegistry()
+    const agents = createAgents(registry)
+    for (const role of ['research', 'coding', 'data', 'document-creator'] as const) {
+      const provider = new MockProvider([{ text: 'ok', stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+        planningEnabled: false
+      })
+      await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }], role)
+      const system = provider.requests[0].system ?? ''
+      const label = roleLabel(role)
+      expect(system).toContain(`When the user greets you`)
+      expect(system).toContain(`say you are the ${label} specialist`)
+      expect(system).toContain(`Your abilities: ${roleMeta(role)?.description}`)
+    }
   })
 
   it('reports one clean usage event per round, not one per raw provider usage chunk, and aggregates through a delegate', async () => {
