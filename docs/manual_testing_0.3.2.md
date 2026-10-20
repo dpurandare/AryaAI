@@ -179,9 +179,9 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T6 | Normal start after close | **Pass** | Linux (2026-10-20) | Deepak; the visible-box check on the Linux desktop was part of T5 |
 | T7 | Agent menu opens upward (#193) | **Pass** | Linux (2026-10-20) | Deepak |
 | T8 | Menu selection, keys, Esc, outside click | **Pass** | Linux (2026-10-20) | Deepak |
-| T8b | Ctrl+Tab still cycles | | | |
+| T8b | Ctrl+Tab still cycles | **Pass** | Linux (2026-10-20) | Deepak |
 | T8c | User-defined role in menu | | | |
-| T9a-d | Delete confirmation (#230) | | | |
+| T9a-d | Delete confirmation (#230) | **Pass** | Linux (2026-10-20) | Deepak |
 | T10 | Greetings, 10 specialists, model 1: ___ / 10 | | | |
 | T10 | Greetings, 10 specialists, model 2: ___ / 10 | | | |
 | T11 | No MCP server: Researcher (#146) | | | |
