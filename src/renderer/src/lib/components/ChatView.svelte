@@ -257,6 +257,58 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     return role ? label(role) : 'Auto'
   }
 
+  // TASKS #193: a click on the picker opens a menu (upward, the status bar is at the bottom) instead of cycling.
+  let modeMenuOpen = $state(false)
+  let modeMenuIndex = $state(0)
+  let modePickerEl: HTMLButtonElement | undefined = $state()
+  let modeMenuEl: HTMLDivElement | undefined = $state()
+
+  function modeSummary(role: AgentRole | null): string {
+    return role ? (roleRoster.find((r) => r.id === role)?.summary ?? '') : 'The assistant decides which specialist handles each request.'
+  }
+
+  function openModeMenu(): void {
+    modeMenuIndex = Math.max(0, modeCycle.indexOf(forcedRole))
+    modeMenuOpen = true
+    void tick().then(() => modeMenuEl?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')[modeMenuIndex]?.focus())
+  }
+
+  function closeModeMenu(returnFocus: boolean): void {
+    modeMenuOpen = false
+    if (returnFocus) modePickerEl?.focus()
+  }
+
+  function chooseMode(role: AgentRole | null): void {
+    forcedRole = role
+    closeModeMenu(true)
+  }
+
+  function onModeMenuKeydown(e: KeyboardEvent): void {
+    const items = modeMenuEl?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    if (!items?.length) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeModeMenu(true)
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      modeMenuIndex = (modeMenuIndex + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+      items[modeMenuIndex].focus()
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault()
+      modeMenuIndex = e.key === 'Home' ? 0 : items.length - 1
+      items[modeMenuIndex].focus()
+    } else if (e.key === 'Tab') {
+      closeModeMenu(false)
+    }
+  }
+
+  function onWindowPointerDown(e: PointerEvent): void {
+    if (!modeMenuOpen) return
+    const target = e.target as Node
+    if (modeMenuEl?.contains(target) || modePickerEl?.contains(target)) return
+    closeModeMenu(false)
+  }
+
   function limitReachedMessage(limit: LimitReachedRequestPayload): string {
     const who = limit.agentRole ? `The ${label(limit.agentRole)} specialist` : 'This turn'
     return limit.reason === 'time'
@@ -406,6 +458,8 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     toolBlockOverride[segmentId] = !isThinkingBlockExpanded(segmentId)
   }
 </script>
+
+<svelte:window onpointerdown={onWindowPointerDown} />
 
 <div class="chat-view">
   <div class="messages" bind:this={messagesEl} onscroll={onMessagesScroll}>
@@ -760,17 +814,41 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     <div class="status-bar">
       <div class="status-left">
         <span class="status-text">{statusLine}</span>
-        <button
-          class="mode-picker"
-          class:pinned={forcedRole !== null}
-          onclick={() => cycleMode(1)}
-          title={forcedRole !== null
-            ? `Pinned to ${modeLabel(forcedRole)} — this agent alone, no auto hand-off to others. Click or Ctrl+Tab to cycle, Ctrl+Shift+Tab to reverse.`
-            : 'Ctrl+Tab to cycle agent, Ctrl+Shift+Tab to reverse'}
-        >
-          <span class="dot"></span>
-          Agent: {modeLabel(forcedRole)}
-        </button>
+        <div class="mode-picker-wrap">
+          <button
+            bind:this={modePickerEl}
+            class="mode-picker"
+            class:pinned={forcedRole !== null}
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={modeMenuOpen}
+            onclick={() => (modeMenuOpen ? closeModeMenu(false) : openModeMenu())}
+            title={forcedRole !== null
+              ? `Pinned to ${modeLabel(forcedRole)} — this agent alone, no auto hand-off to others. Click to choose an agent, Ctrl+Tab to cycle, Ctrl+Shift+Tab to reverse.`
+              : 'Click to choose an agent, Ctrl+Tab to cycle, Ctrl+Shift+Tab to reverse'}
+          >
+            <span class="dot"></span>
+            Agent: {modeLabel(forcedRole)}
+          </button>
+          {#if modeMenuOpen}
+            <div class="mode-menu" role="menu" aria-label="Agent" tabindex="-1" bind:this={modeMenuEl} onkeydown={onModeMenuKeydown}>
+              {#each modeCycle as role (role ?? 'auto')}
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={role === forcedRole}
+                  class="mode-item"
+                  class:current={role === forcedRole}
+                  title={modeSummary(role)}
+                  onclick={() => chooseMode(role)}
+                >
+                  <span class="check">{role === forcedRole ? '✓' : ''}</span>
+                  {modeLabel(role)}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
         {#if model}
           <ContextMeter
             {model}
@@ -1308,6 +1386,52 @@ import { formatToolInputForDisplay } from '../tool-input-display'
   .status-text {
     font-size: 0.72rem;
     color: var(--text-muted);
+  }
+  .mode-picker-wrap {
+    position: relative;
+  }
+  /* Opens upward: the status bar is at the bottom of the window. */
+  .mode-menu {
+    position: absolute;
+    bottom: calc(100% + 0.35rem);
+    left: 0;
+    z-index: 20;
+    min-width: 11rem;
+    max-height: 60vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding: 0.25rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  }
+  .mode-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 0.78rem;
+    text-align: left;
+    cursor: pointer;
+    padding: 0.3rem 0.55rem;
+    border-radius: 5px;
+  }
+  .mode-item:hover,
+  .mode-item:focus-visible {
+    background: var(--panel-hover);
+    outline: none;
+  }
+  .mode-item.current {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .mode-item .check {
+    width: 0.8rem;
+    flex-shrink: 0;
   }
   .mode-picker {
     display: flex;

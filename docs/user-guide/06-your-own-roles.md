@@ -136,7 +136,7 @@ Sachivji does not rank roles. The assistant gets all the summaries and picks the
 ## Using your role
 
 - **Let the assistant choose.** With the Agent selector on **Auto**, the assistant reads all summaries and examples and may hand a matching request to your role. The reply shows your role's name.
-- **Choose it yourself.** Click the **Agent** button in the status bar, or press **Ctrl+Tab** in the message box, until your role's name shows. A pinned role answers alone. If you ask it for something outside its job, it passes the request back to the main assistant.
+- **Choose it yourself.** Click the **Agent** button in the status bar and pick your role's name from the menu (or press **Ctrl+Tab** in the message box until it shows). A pinned role answers alone. If you ask it for something outside its job, it passes the request back to the main assistant.
 - **Plans.** If the role is `plannable`, it can be one step of a multi-step plan. Set `plannable: false` to keep it out of plans, or `pickable: false` to keep it out of the selector (it can then still be used by the assistant).
 - **Give it a clear job each time.** Because a role's instructions are fixed, say in your message what you want done and with which file or data.
 

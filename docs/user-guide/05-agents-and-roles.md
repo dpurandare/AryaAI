@@ -47,7 +47,7 @@ If the wrong specialist was used, say so and name the one you want, or pin one (
 
 ## Choosing a specialist yourself
 
-Click the **Agent** button in the status bar, or press **Ctrl+Tab** in the message box (**Ctrl+Shift+Tab** goes backwards). Each press moves to the next choice: **Auto**, then each specialist you can pick, including roles of your own.
+Click the **Agent** button in the status bar. A menu opens upward listing **Auto** and each specialist you can pick, including roles of your own, with the current choice marked; click one to choose it. Esc or a click elsewhere closes the menu, and the arrow keys and Enter work too. Or press **Ctrl+Tab** in the message box (**Ctrl+Shift+Tab** goes backwards) to move to the next choice without opening the menu.
 
 ![The Agent selector pinned to a specialist](images/agent-picker.png)
 
@@ -55,7 +55,7 @@ While a specialist is pinned:
 
 - It answers **alone**. It does not hand work to other specialists.
 - If you ask it for something that is not its job, it passes the request back to the main assistant, which then handles it in Auto fashion.
-- The choice stays until you change it with the button or Ctrl+Tab.
+- The choice stays until you change it with the menu or Ctrl+Tab.
 
 Pin a specialist when you want a specific behaviour (for example, only the Researcher), or when Auto keeps choosing wrongly for your kind of request. Go back to **Auto** for everyday use.
 

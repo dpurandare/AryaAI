@@ -26,7 +26,7 @@ Type in the message box and press **Enter** to send. **Shift+Enter** adds a new 
 
 By default the agent selector shows **Auto**: the main assistant decides whether to answer itself or hand part of the job to a specialist (Researcher, Developer and so on). The reply shows which specialist wrote each part.
 
-To make one specialist answer, click the **Agent** button in the status bar, or press **Ctrl+Tab** in the message box (**Ctrl+Shift+Tab** goes backwards). Pressing it cycles through Auto and the specialists. A pinned specialist answers alone and does not hand off to others; if you ask it for something that is not its job, it passes the request back to the main assistant. This is covered in [Agents and roles](05-agents-and-roles.md) (planned).
+To make one specialist answer, click the **Agent** button in the status bar. A menu opens upward with Auto and every specialist you can pick; the current one is marked, and you click one to choose it (Esc or a click elsewhere closes the menu). You can also press **Ctrl+Tab** in the message box to step through the same list (**Ctrl+Shift+Tab** goes backwards). A pinned specialist answers alone and does not hand off to others; if you ask it for something that is not its job, it passes the request back to the main assistant. This is covered in [Agents and roles](05-agents-and-roles.md) (planned).
 
 ![The Agent selector pinned to a specialist](images/agent-picker.png)
 
