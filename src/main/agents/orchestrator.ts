@@ -1946,8 +1946,16 @@ export class Orchestrator {
       : `Model (${this.model}) is ${activity}… ${progress}`
   }
 
+  /**
+   * TASKS #146 (option A): the MCP Operator is not offered at all while no MCP server is connected
+   * (`isRoleAvailable`), so the top-level model never picks it for a one-off wiki lookup. The redirect to
+   * Researcher in the tool-call handling stays as a safety net for a call that names it anyway.
+   */
   private buildDelegateToolDefinitions(): ToolDefinition[] {
-    return [...this.agents.values()].map((a) => buildDelegateToolDefinition(a.role, this.labelOf(a.role), a.summary))
+    const config = this.options.getConfiguration?.()
+    return [...this.agents.values()]
+      .filter((a) => a.role !== 'mcp-operator' || isRoleAvailable(a, config))
+      .map((a) => buildDelegateToolDefinition(a.role, this.labelOf(a.role), a.summary))
   }
 
   /**

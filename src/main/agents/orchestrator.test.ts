@@ -2287,6 +2287,22 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(provider.requests[1]?.system ?? '').toMatch(/MCP Operator specialist/)
     })
 
+    it('the top-level round does not offer delegate_to_mcp_operator when no MCP server is connected, and does when one is — TASKS #146', async () => {
+      const offered = async (mcp: number): Promise<boolean> => {
+        const registry = buildRegistry()
+        const agents = createAgents(registry)
+        const provider = new MockProvider([{ text: 'Done.', stopReason: 'end_turn' }])
+        const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+          planningEnabled: false,
+          getConfiguration: () => ({ databases: 0, apis: 0, email: 0, mcp })
+        })
+        await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'look up the inverter maintenance policy' }] }])
+        return provider.requests[0]?.tools?.some((t) => t.name === 'delegate_to_mcp_operator') ?? false
+      }
+      expect(await offered(0)).toBe(false)
+      expect(await offered(1)).toBe(true)
+    })
+
     it('a classify-and-plan call that hits the output-token limit reports why, instead of silently falling open unremarked', async () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
