@@ -1,1 +1,4 @@
 *.cmd text eol=crlf
+# Scripts with a shebang line break when checked out with CRLF (Windows CI: "SyntaxError: Invalid or unexpected token" importing scripts/export-docs.mjs); shell scripts need LF too.
+*.mjs text eol=lf
+*.sh text eol=lf

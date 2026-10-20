@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MessageRecord } from '../db/messages'
 import type { SessionRecord } from '../db/sessions'
@@ -407,9 +408,9 @@ describe('image export (TASKS.md #212)', () => {
   it('Markdown export writes the images to a same-named folder next to the file and percent-encodes the folder in the link', async () => {
     mockShowSaveDialog.mockResolvedValue({ canceled: false, filePath: '/tmp/out dir/My Chat.md' })
     await exportSession('s1', null)
-    expect(mockMkdir).toHaveBeenCalledWith('/tmp/out dir/My Chat', { recursive: true })
+    expect(mockMkdir).toHaveBeenCalledWith(join('/tmp/out dir', 'My Chat'), { recursive: true })
     const written = mockWriteFile.mock.calls.map((c) => c[0])
-    expect(written).toEqual(['/tmp/out dir/My Chat/image-1.png', '/tmp/out dir/My Chat/image-2.jpg', '/tmp/out dir/My Chat.md'])
+    expect(written).toEqual([join('/tmp/out dir/My Chat', 'image-1.png'), join('/tmp/out dir/My Chat', 'image-2.jpg'), join('/tmp/out dir', 'My Chat.md')])
     expect(mockWriteFile.mock.calls[0][1]).toEqual(Buffer.from('fake-png-bytes'))
     const md = mockWriteFile.mock.calls[2][1] as string
     expect(md).toContain('(My%20Chat/image-1.png)')
@@ -418,7 +419,7 @@ describe('image export (TASKS.md #212)', () => {
   it('JSON export replaces the payload with a relative file path and keeps the rest of the block', async () => {
     mockShowSaveDialog.mockResolvedValue({ canceled: false, filePath: '/tmp/chat.json' })
     await exportSession('s1', null)
-    expect(mockMkdir).toHaveBeenCalledWith('/tmp/chat', { recursive: true })
+    expect(mockMkdir).toHaveBeenCalledWith(join('/tmp', 'chat'), { recursive: true })
     const json = JSON.parse(mockWriteFile.mock.calls[2][1] as string)
     expect(json.messages[1].content[0]).toEqual({
       type: 'image',
