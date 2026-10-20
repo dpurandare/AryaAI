@@ -8,9 +8,35 @@ version is still `0`.
 
 ## [Unreleased]
 
+## [0.3.2] - not yet released
+
+Details, with a short description of every change, in [`docs/releases/0.3.2.md`](releases/0.3.2.md).
+
+### Added
+
+- The Agent button in the status bar opens a menu (upward) listing Auto and every specialist, instead of cycling on each click; Ctrl+Tab still cycles (#193).
+- Deleting a chat now asks for confirmation first, naming the chat and saying it cannot be undone (#230).
+- A second launch of Sachivji shows "Sachivji is already running" and exits, instead of opening a second instance; the first window comes to the front (#131).
+- Settings > Auto-approve rules: every tool is tagged with where it comes from (built-in, saved query, MCP server), a **Refresh list** button, and a section listing stored rules for tools that no longer exist, with **Remove** (#218).
+- `npm run eval:routing` and `npm run eval:cache`; `vite-node` is now a pinned devDependency (#134).
+
 ### Changed
 
-- The project is now licensed under the GNU General Public License, version 3 (`LICENSE`, `package.json`, README).
+- A pinned specialist now says what it is and what it can do when greeted ("Hello", "What can you do?"), also on small models (#215).
+- The MCP Operator is not offered to the assistant while no MCP server is connected (#146).
+- When the context is nearly full, an old file listing is now shortened to a compact list of its entries instead of being erased (#170).
+- Commands run with `shell_execute` that leave four or more new loose files in the workspace root are filed by type, as `python_run` already did; the prompts and `get_environment` say where each kind of output goes (#204).
+- Export Settings opens in the workspace's `exports/` folder instead of the root (#204).
+- The warnings in Settings > Auto-approve rules are clearer, including that a rule on a tool that only sometimes changes things covers all its calls and all connections (#218).
+- The project is now licensed under the GNU General Public License, version 3 (`LICENSE`, `package.json`, README) (#231).
+
+### Fixed
+
+- The log message for an empty planning reply now includes the stop reason and the output-token count; the planning retry for an empty reply was already in place (#140, #141).
+
+### Tests
+
+- Mocked tests for typical read-only `aws`, `az` and `gcloud` calls, and an opt-in live smoke test (#221).
 
 ## [0.3.1] - 2026-10-16
 

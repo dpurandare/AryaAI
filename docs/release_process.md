@@ -4,6 +4,15 @@
 
 How a release such as 0.3.2 is built, verified on other machines, tagged and published. Based on what the repository does today (`release.yml`, `windows-dist.yml`, `macos-dist.yml`, `linux-dist.yml`, `ci.yml`, the earlier 0.2.x and 0.3.x releases).
 
+## 0. Per-release documents (added 2026-10-20, Deepak)
+
+Every release has two documents, written before testing starts and kept in the repository:
+
+- **`docs/releases/<version>.md`**: the release note. What changed, a table of new and improved features and fixes with a one-line description each, developer-facing changes, known limits. Its `Status` line says "in testing (not published)" until Deepak publishes.
+- **`docs/manual_testing_<version>.md`**: the checklist for that release only, with specific prompts and steps per item and the operating-system-specific checks (Windows, macOS, Linux). The general `docs/manual_testing.md` remains the full regression list.
+
+**No intermediate sponsor builds** (Deepak, 2026-10-20). Stage 1 to 6 builds are for Deepak's machines only; the sponsor receives a build only when Deepak publishes the draft release, after his manual testing is finished and any fixes are done. CI (stage 2) and the branch installers (stage 3) run **before** manual testing, because they are the files tested and a failing build or test on Windows or macOS is cheaper to find first; they publish nothing. After any fix, the version stays the same and CI and the installers are re-run.
+
 ## 1. Branching
 
 - **Triage, plans and documentation-only changes** are committed straight to `main`, as now.
