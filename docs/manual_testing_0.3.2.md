@@ -191,7 +191,7 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T15 | Two files stay in root | **Pass** | Linux (2026-10-20) | Deepak |
 | T16 | get_environment wording | **Pass** | Linux (2026-10-20) | Deepak |
 | T17 | Export Settings opens in exports/ | **Pass** | Linux (2026-10-20) | Deepak |
-| T18 | Auto-approve tags and refresh (#218) | | | |
+| T18 | Auto-approve tags and refresh (#218) | **Pass** (limited scope) | Linux (2026-10-20) | Deepak: tags and sorting fine. Comments, both follow-ups in **TASKS #233** (fixing cycle): the Refresh list button seems to do nothing; show the list as a table with three columns (checkbox, rule name, description) |
 | T19 | Red notes on sometimes-mutating tools | | | |
 | T20 | MCP rows appear | | | |
 | T21 | Stale rule listed and removable | | | |
