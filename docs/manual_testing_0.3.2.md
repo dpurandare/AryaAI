@@ -186,11 +186,11 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T10 | Greetings, 10 specialists, model 2: `claude-haiku-5-5` | **Odd** | Linux (2026-10-20) | Deepak: better than gpt-4o-mini, but the same information is repeated for both prompts (Hello and What can you do?). Follow-up **TASKS #232**, fixing cycle |
 | T11 | No MCP server: Researcher (#146) | **Pass** | Linux (2026-10-20) | Deepak |
 | T12 | MCP server connected: MCP Operator | **Pass** | Linux (2026-10-20) | Deepak |
-| T13 | Python charts not in root (#204) | | | |
-| T14 / T14w | Shell files moved (#204) | | | |
-| T15 | Two files stay in root | | | |
-| T16 | get_environment wording | | | |
-| T17 | Export Settings opens in exports/ | | | |
+| T13 | Python charts not in root (#204) | **Pass** | Linux (2026-10-20) | Deepak |
+| T14 / T14w | Shell files moved (#204) | **Pass** (T14, Linux); T14w Windows pending | Linux (2026-10-20) | Deepak |
+| T15 | Two files stay in root | **Pass** | Linux (2026-10-20) | Deepak |
+| T16 | get_environment wording | **Pass** | Linux (2026-10-20) | Deepak |
+| T17 | Export Settings opens in exports/ | **Pass** | Linux (2026-10-20) | Deepak |
 | T18 | Auto-approve tags and refresh (#218) | | | |
 | T19 | Red notes on sometimes-mutating tools | | | |
 | T20 | MCP rows appear | | | |
