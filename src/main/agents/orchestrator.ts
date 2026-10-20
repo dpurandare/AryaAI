@@ -381,6 +381,9 @@ function bucketKey(toolName: string, input: Record<string, unknown>): string {
  * already minimal, so the caller leaves it completely untouched rather than wrapping a placeholder around
  * essentially nothing.
  */
+/** Start of every `compactListing` result, so a listing that is already compact is not compacted again. */
+const COMPACT_LISTING_PREFIX = '[Earlier '
+
 function compactListing(toolName: string, content: string): string | undefined {
   const lines = content.split('\n')
   const names =
@@ -388,7 +391,7 @@ function compactListing(toolName: string, content: string): string | undefined {
       ? lines.map((l) => l.replace(/^(dir|file)\s+/, '')).filter((l) => l && l !== '(empty directory)')
       : lines.slice(1).filter(Boolean) // find_files: line 0 is always the header ("N matched"/"No files matched")
   if (names.length === 0) return undefined
-  return `[Earlier ${toolName} result, collapsed to save context but still complete — every entry found: ${names.join(', ')}]`
+  return `${COMPACT_LISTING_PREFIX}${toolName} result, collapsed to save context but still complete — every entry found: ${names.join(', ')}]`
 }
 
 /**
@@ -638,15 +641,41 @@ function collapseOldestToolResultsToFit(
     }
   }
 
-  let working = conversation
-  for (const id of collapsibleIdsInOrder) {
-    if (fits(working)) break
-    working = working.map((m) => ({
+  const replaceResult = (messages: Message[], id: string, content: string): Message[] =>
+    messages.map((m) => ({
       ...m,
-      content: m.content.map((b): ContentBlock =>
-        b.type === 'tool_result' && b.toolUseId === id ? { ...b, content: CONTEXT_FIT_OMITTED_MARKER } : b
-      )
+      content: m.content.map((b): ContentBlock => (b.type === 'tool_result' && b.toolUseId === id ? { ...b, content } : b))
     }))
+  const resultContent = (messages: Message[], id: string): string =>
+    messages.flatMap((m) => m.content).find((b): b is Extract<ContentBlock, { type: 'tool_result' }> => b.type === 'tool_result' && b.toolUseId === id)?.content ?? ''
+
+  // TASKS #170 (same rule as #149): a listing (`list_directory`/`find_files`) keeps every entry it found in a
+  // compact form instead of being erased; only other tools' results get the content-free marker. Pass 1 does
+  // that, oldest first. Pass 2 is the last resort when pass 1 still does not fit: erase the compacted
+  // listings too, because a request that overflows the context window fails outright.
+  let working = conversation
+  const compactedIds: string[] = []
+  for (const id of collapsibleIdsInOrder) {
+    if (fits(working)) return working
+    const toolName = toolNameByUseId.get(id) ?? ''
+    if (LISTING_TOOL_NAMES.has(toolName)) {
+      const content = resultContent(working, id)
+      if (content.startsWith(COMPACT_LISTING_PREFIX)) {
+        compactedIds.push(id) // already compacted by capRepeatedToolResults — keep for pass 2 only
+        continue
+      }
+      const compact = compactListing(toolName, content)
+      if (compact !== undefined) {
+        working = replaceResult(working, id, compact)
+        compactedIds.push(id)
+      }
+      continue
+    }
+    working = replaceResult(working, id, CONTEXT_FIT_OMITTED_MARKER)
+  }
+  for (const id of compactedIds) {
+    if (fits(working)) break
+    working = replaceResult(working, id, CONTEXT_FIT_OMITTED_MARKER)
   }
   return working
 }

@@ -3664,6 +3664,47 @@ describe('Orchestrator (integration, mocked provider)', () => {
       expect(findResult('old_write')).toBe(bigMutatingContent)
     })
 
+    describe('a collapsed listing keeps its entries (TASKS #170, same rule as #149)', () => {
+      const names = Array.from({ length: 60 }, (_, i) => `report_${String(i).padStart(3, '0')}.txt`)
+      const runWith = async (listing: string, extra: Array<{ id: string; name: string; input: Record<string, unknown>; content: string }>) => {
+        const registry = buildRegistry()
+        const agents = createAgents(registry)
+        const uses = [{ id: 'old_list', name: 'list_directory', input: { path: 'docs' }, content: listing }, ...extra]
+        const prior: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'earlier request' }] },
+          { role: 'assistant', content: uses.map((u) => ({ type: 'tool_use' as const, id: u.id, name: u.name, input: u.input })) },
+          { role: 'user', content: uses.map((u) => ({ type: 'tool_result' as const, toolUseId: u.id, content: u.content, isError: false })) },
+          { role: 'assistant', content: [{ type: 'text', text: 'done with that earlier request' }] },
+          { role: 'user', content: [{ type: 'text', text: 'new question' }] }
+        ]
+        const provider = new MockProvider([{ text: 'ok', stopReason: 'end_turn' }], { tokensUsed: 1000 })
+        const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, {
+          planningEnabled: false
+        })
+        await collect(orchestrator, prior)
+        return (id: string): string | undefined =>
+          provider.requests[0].messages
+            .flatMap((m) => m.content)
+            .find((b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result' && b.toolUseId === id)?.content
+      }
+
+      it('compacts an old listing instead of erasing it, and collapses the other large read-only result', async () => {
+        const find = await runWith(names.map((n) => `file ${n}`).join('\n'), [
+          { id: 'old_read', name: 'read_file', input: { path: 'a.txt' }, content: 'X'.repeat(6000) }
+        ])
+        const listing = find('old_list') ?? ''
+        expect(listing).toMatch(/^\[Earlier list_directory result/)
+        for (const n of names) expect(listing).toContain(n)
+        expect(find('old_read')).toMatch(/omitted to fit this round/i)
+      })
+
+      it('as a last resort, still erases a listing that is too large to fit even when compact', async () => {
+        const many = Array.from({ length: 400 }, (_, i) => `file report_${String(i).padStart(4, '0')}.txt`).join('\n')
+        const find = await runWith(many, [])
+        expect(find('old_list')).toMatch(/omitted to fit this round/i)
+      })
+    })
+
     it('does nothing to an ordinary small conversation — the cheap local estimate alone is enough to skip the real check', async () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
