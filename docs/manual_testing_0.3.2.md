@@ -184,8 +184,8 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T9a-d | Delete confirmation (#230) | **Pass** | Linux (2026-10-20) | Deepak |
 | T10 | Greetings, 10 specialists, model 1: `gpt-4o-mini` | **Fail** | Linux (2026-10-20) | Deepak: "does not give proper response". Claude read the sessions: roles are named and abilities described but no tool list is shown; follow-up **TASKS #232**, fixing cycle |
 | T10 | Greetings, 10 specialists, model 2: `claude-haiku-5-5` | **Odd** | Linux (2026-10-20) | Deepak: better than gpt-4o-mini, but the same information is repeated for both prompts (Hello and What can you do?). Follow-up **TASKS #232**, fixing cycle |
-| T11 | No MCP server: Researcher (#146) | | | |
-| T12 | MCP server connected: MCP Operator | | | |
+| T11 | No MCP server: Researcher (#146) | **Pass** | Linux (2026-10-20) | Deepak |
+| T12 | MCP server connected: MCP Operator | **Pass** | Linux (2026-10-20) | Deepak |
 | T13 | Python charts not in root (#204) | | | |
 | T14 / T14w | Shell files moved (#204) | | | |
 | T15 | Two files stay in root | | | |
