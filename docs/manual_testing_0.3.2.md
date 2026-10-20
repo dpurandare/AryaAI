@@ -139,7 +139,8 @@ Use a fresh chat, **Auto** agent. Look at the workspace folder in Explorer, Find
 | **T21** | Tick `mcp__test_wiki__create_page`. Then Settings > MCP servers > **remove** `test_wiki`. Reopen Settings > Auto-approve rules. | The row is gone from the main list; a section **"Saved rules for tools that are not available now"** lists `mcp__test_wiki__create_page` with a **Remove** button. Click **Remove**: it disappears; reopening Settings confirms it is gone. |
 | **T22** | Add the server again, **while Settings is open**: Settings > MCP servers > Add (as T12), then look at Auto-approve rules without leaving Settings. | The new server's rows appear (possibly after **Refresh list**). |
 | **T23** | Tick `write_file` in the rules. In a chat send: `Write the text hello to a file called one.txt` | It writes **without** a confirmation dialog. Untick `write_file`: the next write asks again. |
-| **T24** | Switch on the session setting **Auto-approve tool calls for this session** (in a confirmation dialog), then send: `Read the file C:\Windows\win.ini` (Windows) or `Read the file /etc/hostname` (macOS/Linux). | An **"Allow access outside the workspace?"** question still appears: access outside the workspace is **never** auto-approved. Answer **Deny** or "just this once". |
+| **T24** | **Corrected 2026-10-20 (the first version used `/etc/hostname`, which is a protected system location: the app refuses it outright and never asks, so it could not test the rule).** Prepare a test file in a normal folder outside the workspace that is not already allowed in Settings > Workspace > Folders outside the workspace: **Linux / macOS:** run `echo hello > ~/Downloads/sachiv_t24.txt`; **Windows (PowerShell):** `Set-Content "$env:USERPROFILE\Downloads\sachiv_t24.txt" hello`. Then switch on **Auto-approve tool calls for this session** (tick it in any confirmation dialog, e.g. after `Write the text hi to a file called t24.txt`), and send: `Read the file ~/Downloads/sachiv_t24.txt` (Windows: `Read the file C:\Users\<you>\Downloads\sachiv_t24.txt`). | An **"Allow access outside the workspace?"** question still appears, although the session auto-approve is on. Answer **Deny**; the assistant says it could not read the file. (Answer "just this once" instead to see the content.) |
+| **T24b** | Optional, Linux / macOS: with the same session setting on, send `Read the file /etc/hostname`. | **No question at all**: a refusal that the location is protected (credentials, keys, system or Sachivji's own data) and cannot be read. |
 
 ---
 
@@ -196,8 +197,9 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T20 | MCP rows appear | **Pass** | Linux (2026-10-20) | Deepak: 3 `test_wiki` rows seen. The test server has 3 tools and none is marked read-only, so all 3 count as changing things and are listed |
 | T21 | Stale rule listed and removable | **Pass** | Linux (2026-10-20) | Deepak |
 | T22 | List updates with Settings open | **Pass** | Linux (2026-10-20) | Deepak; whether Refresh list was needed was not stated (relevant to TASKS #233) |
-| T23 | A ticked rule skips the dialog | | | |
-| T24 | Outside-workspace access never auto-approved | | | |
+| T23 | A ticked rule skips the dialog | **Pass** | Linux (2026-10-20) | Deepak |
+| T24 | Outside-workspace access never auto-approved | **Void** (test case was faulty; `/etc` is a protected location, so no question is ever asked) | Linux (2026-10-20) | Deepak. Corrected test T24 and new optional T24b: please re-run |
+| T24b | Protected location refused without a question (optional) | | | |
 | T25 to T31 | Smoke tests | | | |
 
 When everything is Pass (or the failures are fixed and re-tested), tell Claude: it will record the results in `TASKS.md` and `docs/manual_testing.md`, then ask for your go-ahead to merge, tag and build the draft release.
