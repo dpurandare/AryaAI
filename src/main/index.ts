@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, dialog, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/register'
@@ -8,6 +8,7 @@ import { attachZoomShortcuts, ZOOM_SETTING_KEY } from './window/zoom'
 import { attachBoundsPersistence, parseWindowBounds, resolveInitialBounds, WINDOW_BOUNDS_SETTING_KEY } from './window/bounds'
 import { attachSpellcheckContextMenu } from './window/context-menu'
 import { initUpdater } from './updater'
+import { ensureSingleInstance } from './single-instance'
 
 // On GNOME/Wayland, Electron auto-selects the native Wayland backend, whose
 // window taskbar/dash icon comes from a .desktop file matched to the
@@ -78,7 +79,26 @@ function createMainWindow(): BrowserWindow {
 // fresh empty one gets created under the new name instead.
 app.setName('Sachivji')
 
+// TASKS #131: a second launch shows a message and exits; the first instance just brings its window forward.
+const isOnlyInstance = ensureSingleInstance(
+  app,
+  // A native dialog cannot be shown before the app is ready (on Linux showErrorBox would only write to stderr).
+  async (title, message) => {
+    await app.whenReady()
+    dialog.showMessageBoxSync({ type: 'error', title, message, buttons: ['OK'] })
+  },
+  () => {
+    const [window] = BrowserWindow.getAllWindows()
+    if (!window) return
+    if (window.isMinimized()) window.restore()
+    window.focus()
+  }
+)
+
 app.whenReady().then(() => {
+  // The second instance is only showing its message: no window, no database, no IPC handlers.
+  if (!isOnlyInstance) return
+
   electronApp.setAppUserModelId('com.sachiv.app')
 
   if (is.dev && process.platform === 'darwin') {

@@ -63,6 +63,7 @@ Rough time: P1 ≈ 60–75 min, P2 ≈ 30 min, P3 ≈ 30 min.
 | 1.4 | Settings > **Slim router** | Present, marked experimental, **unchecked**. |
 | 1.4a | Click the **Agent** button in the status bar (0.3.2, #193) | A menu opens **upward** listing Auto and every pickable role (the current one ticked). Click one: it is pinned and the menu closes. Arrow keys + Enter and Esc work; a click outside closes it; focus returns to the button. |
 | 1.4b | Make two chats and click **×** on the one that is not open (0.3.2, #230) | A dialog "Delete this chat?" names the chat and says it cannot be undone; focus is on **Cancel**. Esc or Cancel keeps the chat; **Delete** removes it. The open chat and a generating chat show no **×**. |
+| 1.4c | With Sachivji open, start it again (icon or command) (0.3.2, #131) | A message "Sachivji is already running … Close it before starting a new one" appears; **OK** ends the second launch. The first window comes to the front and keeps working. Closing the first and starting again works normally. |
 | 1.5 | Press **Ctrl+Tab** in the composer, 10 times | Cycles: Auto → Planner → Researcher → History Analyst → Developer → Data Access → Data Processor → Document Creator → Configurator → MCP Operator → Email → Auto. |
 | 1.6 | Look inside `~/Documents/Sachivji Workspace` | Empty `resources/` (and `code/`, `documents/` if absent) may have appeared — expected. Your venv and files are untouched. |
 

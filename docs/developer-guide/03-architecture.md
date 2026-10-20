@@ -15,6 +15,7 @@
 ## Start-up (`src/main/index.ts`)
 
 1. `app.setName('Sachivji')` fixes the user-data folder name.
+   Then `ensureSingleInstance` (`single-instance.ts`, TASKS #131) asks Electron for the single-instance lock (keyed by the user-data folder, so a copy started with its own `--user-data-dir` is not blocked). A second launch shows an error box once the app is ready, quits when it is dismissed, and creates no window, database or handlers; the first instance restores and focuses its window.
 2. On `whenReady`: set the database path (`<userData>/sachiv.db`), call `registerIpcHandlers()`, create the window (saved bounds and zoom), start the update check (packaged builds only).
 3. `registerIpcHandlers()` (`ipc/register.ts`) builds the tool context, registers every handler and starts, without blocking, the Python runtime, the bundled Ollama, the MCP connections, the saved-query tools and the search-history backfill. Their progress reaches the UI as state events (`RuntimeStateChanged`, `OllamaStateChanged`).
 
