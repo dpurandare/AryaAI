@@ -171,10 +171,10 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 
 | ID | Item | Pass / Fail / Odd | Model / OS | Notes |
 |---|---|---|---|---|
-| T1 | Install over 0.3.1 | | | |
-| T2 | Version shows 0.3.2 | | | |
-| T3 | Data kept | | | |
-| T4 | First message | | | |
+| T1 | Install over 0.3.1 | **Pass** | Linux (2026-10-20) | Deepak; installer type not stated |
+| T2 | Version shows 0.3.2 | **Pass** | Linux (2026-10-20) | Deepak; installer type not stated |
+| T3 | Data kept | **Pass** | Linux (2026-10-20) | Deepak; installer type not stated |
+| T4 | First message | **Pass** | Linux (2026-10-20) | Deepak; installer type not stated |
 | T5 | Second launch message (#131) | | | |
 | T6 | Normal start after close | | | |
 | T7 | Agent menu opens upward (#193) | | | |
