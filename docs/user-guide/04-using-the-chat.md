@@ -16,7 +16,7 @@
 - **New chat** starts a fresh conversation. A chat is named automatically from your first message.
 - Click a chat in the list to open it. Your chats are saved on your computer and are still there after a restart.
 - Chats can run **at the same time**. You can open another chat or Settings while one is still working. A small dot next to a chat in the list shows that it is generating a reply or waiting for your confirmation.
-- The **⇩** button on a chat exports it (see below). The **×** button deletes it. The open chat cannot be deleted, and neither can one that is still generating.
+- The **⇩** button on a chat exports it (see below). The **×** button deletes it, after asking you to confirm: the dialog names the chat and says the deletion is permanent and cannot be undone, with **Cancel** selected first (Esc also cancels). Export the chat first if you want to keep a copy. The open chat has no **×**, and neither does one that is still generating; switch to another chat, or wait for it to finish, first.
 
 ## Sending messages
 

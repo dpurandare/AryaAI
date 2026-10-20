@@ -5,6 +5,8 @@
   import FirstRunSetup from './lib/components/FirstRunSetup.svelte'
   import AccountMenu from './lib/components/AccountMenu.svelte'
   import SplashScreen from './lib/components/SplashScreen.svelte'
+  import ConfirmDeleteDialog from './lib/components/ConfirmDeleteDialog.svelte'
+  import { createSessionDeleteConfirm } from './lib/session-delete'
   import {
     DEFAULT_SESSION_TITLE,
     type SessionDto,
@@ -370,6 +372,23 @@
     await window.sachiv.deleteSession(id)
     sessions = sessions.filter((s) => s.id !== id)
     delete runtimes[id]
+  }
+
+  // TASKS #230: the × on a session row only asks; the delete runs when the user confirms. The × is not shown for the open or a
+  // generating session (SessionList), and removeSession still refuses them.
+  const deleteConfirm = createSessionDeleteConfirm(removeSession)
+  let deleteAsked: { id: string; title: string } | null = $state(null)
+  function askDeleteSession(id: string): void {
+    deleteConfirm.request(id, sessions.find((s) => s.id === id)?.title ?? 'This chat')
+    deleteAsked = deleteConfirm.pending
+  }
+  async function confirmDeleteSession(): Promise<void> {
+    deleteAsked = null
+    await deleteConfirm.confirm()
+  }
+  function cancelDeleteSession(): void {
+    deleteConfirm.cancel()
+    deleteAsked = null
   }
 
   async function exportSession(id: string): Promise<void> {
@@ -874,7 +893,7 @@
       activity={sessionActivity}
       onSelect={onSidebarSelect}
       onNew={onSidebarNew}
-      onDelete={removeSession}
+      onDelete={askDeleteSession}
       onExport={exportSession}
     />
     <AccountMenu
@@ -964,6 +983,9 @@
 {/if}
 {#if showAbout}
   <SplashScreen info={appInfo} dismissible onClose={() => (showAbout = false)} />
+{/if}
+{#if deleteAsked}
+  <ConfirmDeleteDialog title={deleteAsked.title} onConfirm={() => void confirmDeleteSession()} onCancel={cancelDeleteSession} />
 {/if}
 
 <style>
