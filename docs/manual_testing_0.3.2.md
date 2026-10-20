@@ -175,8 +175,8 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T2 | Version shows 0.3.2 | **Pass** | Linux (2026-10-20) | Deepak; installer type not stated |
 | T3 | Data kept | **Pass** | Linux (2026-10-20) | Deepak; installer type not stated |
 | T4 | First message | **Pass** | Linux (2026-10-20) | Deepak; installer type not stated |
-| T5 | Second launch message (#131) | | | |
-| T6 | Normal start after close | | | |
+| T5 | Second launch message (#131) | **Pass** | Linux (2026-10-20) | Deepak; the visible-box check on the Linux desktop was part of T5 |
+| T6 | Normal start after close | **Pass** | Linux (2026-10-20) | Deepak; the visible-box check on the Linux desktop was part of T5 |
 | T7 | Agent menu opens upward (#193) | | | |
 | T8 | Menu selection, keys, Esc, outside click | | | |
 | T8b | Ctrl+Tab still cycles | | | |
