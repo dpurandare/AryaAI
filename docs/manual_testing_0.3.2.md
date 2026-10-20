@@ -15,11 +15,23 @@ For Deepak. Written 2026-10-20 for the `release/0.3.2` branch, version **0.3.2**
 
 Rough time: section A 15 min per OS, B to H about 60 min, I 15 min.
 
+## The builds to test
+
+Built from commit `9ae657d` on `release/0.3.2` (CI green on Windows, macOS and Linux, run 39374736316) on 2026-10-20. **They expire on 2026-11-03** (14 days); if a fix is made, the installers are rebuilt and these links are replaced. Downloading needs a GitHub login with access to the repository.
+
+| OS | Artifact (zip containing the installer) | Size | Run |
+|---|---|---|---|
+| Windows | [sachivji-windows-installer](https://github.com/dpurandare/AryaAI/actions/runs/39375049107/artifacts/12243097748) | 286 MB | [39375049107](https://github.com/dpurandare/AryaAI/actions/runs/39375049107) |
+| macOS (Apple Silicon) | [sachivji-macos-installer](https://github.com/dpurandare/AryaAI/actions/runs/39375051786/artifacts/12243790002) | 514 MB | [39375051786](https://github.com/dpurandare/AryaAI/actions/runs/39375051786) |
+| Linux | [sachivji-linux-installer](https://github.com/dpurandare/AryaAI/actions/runs/39375054447/artifacts/12243620433) | 706 MB | [39375054447](https://github.com/dpurandare/AryaAI/actions/runs/39375054447) |
+
+From a terminal instead (GitHub CLI, signed in): `gh run download 39375049107 -R dpurandare/AryaAI -n sachivji-windows-installer` (use `39375051786` / `sachivji-macos-installer` and `39375054447` / `sachivji-linux-installer` for the others).
+
 ## Where things are, per operating system
 
 | | Windows 11 | macOS (Apple Silicon) | Linux |
 |---|---|---|---|
-| Installer from the Actions run | `Sachivji-0.3.2-Setup.exe` (inside the artifact zip) | `Sachivji-0.3.2-arm64.dmg` | `.deb` or `.AppImage` |
+| Installer from the Actions run | `Sachivji Setup 0.3.2.exe` (inside the artifact zip; a wizard, per user, you can choose the folder) | `Sachivji-0.3.2-arm64.dmg` | `sachivji_0.3.2_amd64.deb` or `Sachivji-0.3.2.AppImage` |
 | App data (database, settings) | `%APPDATA%\Sachivji` | `~/Library/Application Support/Sachivji` | `~/.config/Sachivji` |
 | Workspace (default) | `Documents\Sachivji Workspace` | `~/Documents/Sachivji Workspace` | `~/Documents/Sachivji Workspace` |
 | Shell the assistant uses | **PowerShell** | bash/zsh | bash |
