@@ -109,6 +109,9 @@ export function workspaceRelativePath(root: string, absPath: string): string {
   return relative(root, absPath).split(sep).join('/')
 }
 
+/** Where exports go by default (the Export Settings dialog opens here); created when needed. */
+export const EXPORTS_DIR = 'exports'
+
 /** Where scripts put scratch and intermediate files (page images, crops, temp data). Cleared automatically after a while — see `pruneScratchDir`. */
 export const SCRATCH_DIR = 'tmp'
 

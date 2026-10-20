@@ -107,7 +107,7 @@ Shows where provider keys and connection secrets are kept: **OS Keychain** (encr
 
 ## Export Settings and Import Settings
 
-In the account menu. They move your configuration to another computer or share it.
+In the account menu. They move your configuration to another computer or share it. The Save dialog opens in the workspace's `exports/` folder by default.
 
 **Export Settings…** writes a file with:
 

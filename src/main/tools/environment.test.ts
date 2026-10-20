@@ -21,8 +21,10 @@ describe('get_environment', () => {
   it('states the workspace path and what each of its folders is for', () => {
     const text = buildEnvironment(base)
     expect(text).toContain('Workspace: /Users/me/Documents/Sachivji Workspace')
-    for (const folder of ['code/', 'documents/', 'resources/', 'tmp/', 'templates/']) expect(text).toContain(`- ${folder}`)
+    for (const folder of ['code/', 'documents/', 'resources/', 'exports/', 'tmp/', 'templates/']) expect(text).toContain(`- ${folder}`)
     expect(text).toContain('goes in the workspace')
+    // TASKS #204: scripts and shell commands are told that a bare file name lands in the root.
+    expect(text).toContain('a bare file name lands in the workspace root')
   })
 
   it('names the OS, shell, home and the common folders that exist, and the date in the time zone', () => {

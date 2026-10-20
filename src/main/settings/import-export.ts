@@ -1,6 +1,6 @@
 import { dialog } from 'electron'
 import type { BrowserWindow } from 'electron'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   type SettingsExportPayload,
@@ -10,6 +10,7 @@ import {
   type SettingsImportPreviewResult
 } from '@shared/ipc-contract'
 import { getSetting, setSetting } from '../db/settings'
+import { EXPORTS_DIR } from '../tools/workspace-layout'
 import type { ProviderRegistry } from '../providers/registry'
 import { listServerConfigs, saveServerConfig } from '../mcp/config'
 import { listConnections, saveConnection, saveSavedQuery } from '../data/connections'
@@ -165,8 +166,11 @@ export async function exportSettings(
   window: BrowserWindow | null,
   rolesFolder?: string
 ): Promise<SettingsExportResult> {
+  // TASKS #204: exports open in the workspace's exports/ folder, not the root (created if missing; best-effort, the dialog still works without it).
+  const exportsDir = join(workspaceRoot, EXPORTS_DIR)
+  await mkdir(exportsDir, { recursive: true }).catch(() => undefined)
   const dialogOptions = {
-    defaultPath: join(workspaceRoot, DEFAULT_EXPORT_FILENAME),
+    defaultPath: join(exportsDir, DEFAULT_EXPORT_FILENAME),
     filters: [{ name: 'JSON', extensions: ['json'] }]
   }
   const { canceled, filePath } = window

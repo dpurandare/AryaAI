@@ -14,6 +14,7 @@ const mockShowSaveDialog = vi.fn()
 const mockShowOpenDialog = vi.fn()
 const mockWriteFile = vi.fn()
 const mockReadFile = vi.fn()
+const mockMkdir = vi.fn()
 
 vi.mock('electron', () => ({
   app: { getPath: () => userDataDir },
@@ -24,7 +25,7 @@ vi.mock('electron', () => ({
   },
   dialog: { showSaveDialog: mockShowSaveDialog, showOpenDialog: mockShowOpenDialog }
 }))
-vi.mock('node:fs/promises', () => ({ writeFile: mockWriteFile, readFile: mockReadFile }))
+vi.mock('node:fs/promises', () => ({ writeFile: mockWriteFile, readFile: mockReadFile, mkdir: mockMkdir }))
 
 const { setDbPath } = await import('../db')
 const { getSetting, setSetting } = await import('../db/settings')
@@ -41,6 +42,8 @@ describe('settings import/export (#150)', () => {
     setDbPath(':memory:')
     userDataDir = mkdtempSync(join(tmpdir(), 'sachiv-settings-io-'))
     mockShowSaveDialog.mockReset()
+    mockMkdir.mockReset()
+    mockMkdir.mockResolvedValue(undefined)
     mockShowOpenDialog.mockReset()
     mockWriteFile.mockReset()
     mockReadFile.mockReset()
@@ -82,6 +85,21 @@ describe('settings import/export (#150)', () => {
       const [path, content] = mockWriteFile.mock.calls[0]
       expect(path).toBe('/tmp/export.json')
       expect(JSON.parse(content as string).formatVersion).toBe(2)
+    })
+
+    it('opens the Save dialog in the workspace exports/ folder, creating it, not in the root (TASKS #204)', async () => {
+      mockMkdir.mockResolvedValue(undefined)
+      mockShowSaveDialog.mockResolvedValue({ canceled: true, filePath: undefined })
+      await exportSettings(fakeRegistry, join('/workspace'), null)
+      expect(mockMkdir).toHaveBeenCalledWith(join('/workspace', 'exports'), { recursive: true })
+      const options = mockShowSaveDialog.mock.calls.at(-1)?.[0] as { defaultPath: string }
+      expect(options.defaultPath.startsWith(join('/workspace', 'exports'))).toBe(true)
+    })
+
+    it('still opens the dialog when the exports/ folder cannot be created', async () => {
+      mockMkdir.mockRejectedValue(new Error('read-only'))
+      mockShowSaveDialog.mockResolvedValue({ canceled: true, filePath: undefined })
+      await expect(exportSettings(fakeRegistry, '/workspace', null)).resolves.toEqual({ cancelled: true })
     })
 
     it('returns cancelled without writing anything when the user dismisses the dialog', async () => {

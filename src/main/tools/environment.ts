@@ -54,9 +54,11 @@ export function buildEnvironment(input: EnvironmentInput): string {
   out.push('- code/ : scripts and source you write')
   out.push('- documents/ : Word, Excel, PowerPoint and PDF files you produce')
   out.push('- resources/ : pictures, charts and other media')
+  out.push('- exports/ : files exported for the user (the Export Settings dialog opens here)')
   out.push('- tmp/ : scratch files (the SACHIV_TMP environment variable in scripts), cleaned up after a few days')
   out.push('- templates/ : the user\'s own templates, read as input')
   out.push('A new file of a known type is filed in the matching folder even when only a bare name is given.')
+  out.push('In scripts and shell commands a bare file name lands in the workspace root: save charts and images to resources/, documents to documents/, scratch to tmp/, and never leave generated files loose in the root.')
 
   out.push('\nOutside the workspace: reading a file in another folder needs the user\'s permission, asked per folder; creating a new file there asks every time; credentials and system folders are never reachable.')
   if (input.allowedFolders?.length) out.push(`Folders the user allowed for good: ${input.allowedFolders.join(', ')}`)

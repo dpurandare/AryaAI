@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -185,4 +186,35 @@ describe.skipIf(isWindows)('shell_execute + workspace venv', () => {
     const result = await shellExecuteTool.execute({ command: 'definitely-not-a-command' }, ctx)
     expect(result).not.toContain('hint:')
   })
+
+  // TASKS #204: the same sweep python_run has. File-creating commands are written in POSIX shell syntax here.
+  describe.skipIf(isWindows)('files a command leaves loose in the workspace root', () => {
+    it('files a bulk of new loose files by kind, and says where they went', async () => {
+      const result = await shellExecuteTool.execute({ command: 'for i in 1 2 3 4; do echo x > page_$i.png; done; echo x > notes.csv' }, ctx)
+      expect(result).toContain('exit code: 0')
+      expect(result).toContain('Moved 5 file(s) the command left in the workspace root')
+      expect(result).toContain('page_1.png -> resources/page_1.png')
+      expect(result).toContain('notes.csv -> tmp/notes.csv')
+      expect(existsSync(join(root, 'page_1.png'))).toBe(false)
+      expect(existsSync(join(root, 'resources', 'page_4.png'))).toBe(true)
+      expect(existsSync(join(root, 'tmp', 'notes.csv'))).toBe(true)
+    })
+
+    it('leaves one or two new files alone (they are normally the deliverable), and adds no note', async () => {
+      const result = await shellExecuteTool.execute({ command: 'echo x > data.json; echo y > chart.png' }, ctx)
+      expect(result).not.toContain('Moved ')
+      expect(existsSync(join(root, 'data.json'))).toBe(true)
+      expect(existsSync(join(root, 'chart.png'))).toBe(true)
+    })
+
+    it('never touches files that already existed, files in folders, or hidden files', async () => {
+      for (const n of [1, 2, 3, 4]) await writeFile(join(root, `old_${n}.png`), 'old')
+      const result = await shellExecuteTool.execute({ command: 'mkdir out; for i in 1 2 3 4 5; do echo x > out/f$i.png; echo x > .h$i; done' }, ctx)
+      expect(result).not.toContain('Moved ')
+      expect(existsSync(join(root, 'old_1.png'))).toBe(true)
+      expect(existsSync(join(root, 'out', 'f1.png'))).toBe(true)
+      expect(existsSync(join(root, '.h1'))).toBe(true)
+    })
+  })
 })
+
