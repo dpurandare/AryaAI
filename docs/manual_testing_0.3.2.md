@@ -194,8 +194,8 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T18 | Auto-approve tags and refresh (#218) | **Pass** (limited scope) | Linux (2026-10-20) | Deepak: tags and sorting fine. Comments, both follow-ups in **TASKS #233** (fixing cycle): the Refresh list button seems to do nothing; show the list as a table with three columns (checkbox, rule name, description) |
 | T19 | Red notes on sometimes-mutating tools | **Pass** | Linux (2026-10-20) | Deepak |
 | T20 | MCP rows appear | **Pass** | Linux (2026-10-20) | Deepak: 3 `test_wiki` rows seen. The test server has 3 tools and none is marked read-only, so all 3 count as changing things and are listed |
-| T21 | Stale rule listed and removable | | | |
-| T22 | List updates with Settings open | | | |
+| T21 | Stale rule listed and removable | **Pass** | Linux (2026-10-20) | Deepak |
+| T22 | List updates with Settings open | **Pass** | Linux (2026-10-20) | Deepak; whether Refresh list was needed was not stated (relevant to TASKS #233) |
 | T23 | A ticked rule skips the dialog | | | |
 | T24 | Outside-workspace access never auto-approved | | | |
 | T25 to T31 | Smoke tests | | | |
