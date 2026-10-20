@@ -19,6 +19,7 @@ The orchestrator and everything above providers is tested against a **scripted m
 | Orchestrator (`orchestrator.test.ts`, `handoff`, `classify-gate`, `restatement`, `knowledge-first`, …) | Scripted mock provider; assert on the events emitted and the messages persisted. |
 | Providers | A mocked SDK; assert on the request built and the events produced (caching markers, temperature retry, tool-call parsing). |
 | Tools | Direct `tool.execute(input, ctx)` against a temporary workspace (`mkdtemp`), a real `WorkspaceGuard`, and fakes for databases, network and CLIs; refusals tested as well as success. |
+| Cloud CLI tools (`tools/cloud-cli.test.ts`) | Mocked `execFile`: exact argv for typical read-only calls (`aws sts get-caller-identity`, `az group list`, `gcloud projects list`, …), JSON output returned intact, the unauthenticated error path, no shell. An opt-in live smoke test, `cloud-cli.live.test.ts`, is skipped unless `SACHIV_LIVE_CLOUD_CLI=1` and the CLI is installed and logged in; it runs read-only commands only. |
 | Settings, stores, db | In-memory or temporary databases; the keychain is mocked. |
 | Electron-dependent modules (`export.ts`, `tools/setup.ts`) | `vi.mock('electron', …)`, `vi.mock` of `node:fs/promises` where needed. A module that imports `electron` at the top cannot be imported by a test without a mock. |
 | Runtimes | A fake filesystem and a scripted process runner (`RuntimeDeps`) on both platforms. |
