@@ -51,7 +51,7 @@ After **Talk about it** you write your comment and choose how to send it:
 
 You can edit the details of the request (shown as editable text) before approving. If you change it, Sachivji checks it before it runs.
 
-To skip the questions you can tick **Auto-approve tool calls for this session**, or **Always auto-approve** for one particular action. The second choice is also listed in Settings under **Auto-approve rules**, where you can switch it off again. Use it with care: an auto-approved action that writes or changes something will run without asking.
+To skip the questions you can tick **Auto-approve tool calls for this session**, or **Always auto-approve** for one particular action. The second choice is also listed in Settings under **Auto-approve rules**, where you can switch it off again (each tool is tagged with where it comes from: built-in, a saved query, or an MCP server). Use it with care: an auto-approved action that writes or changes something will run without asking.
 
 When the assistant wants to read or write a file **outside your workspace folder**, the panel asks **Allow access outside the workspace?** For reading you can choose to remember the folder: *Just this once*, *For this session*, or *Always* (always-allowed folders are listed in Settings, where you can remove them). The default is *Just this once*, so the next file in the same folder asks again unless you choose a longer option.
 

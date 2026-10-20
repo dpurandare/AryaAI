@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { RoleRosterDto, RoleToolsDto, ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor, WebSearchProviderDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
+  import { staleRuleNames } from '../auto-approve'
   import type { OllamaRuntimeState, RuntimeState } from '@shared/runtime'
 
   let {
@@ -15,6 +16,7 @@
     onBack,
     onLeaveResolved,
     onToggleAutoApproveRule,
+    onRemoveAutoApproveRule,
     onChangeTheme,
     onChangePlanningEnabled,
     onChangeShowAnsweringModel,
@@ -37,6 +39,8 @@
     /** Answer to the leave prompt: `true` = go ahead and leave (discarding what's left), `false` = stay in Settings. */
     onLeaveResolved: (leave: boolean) => void
     onToggleAutoApproveRule: (name: string, value: boolean) => void
+    /** Forgets a stored rule altogether (for a rule whose tool no longer exists). */
+    onRemoveAutoApproveRule: (name: string) => void
     onChangeTheme: (mode: ThemeMode) => void
     onChangePlanningEnabled: (value: boolean) => void
     onChangeShowAnsweringModel: (value: boolean) => void
@@ -922,6 +926,18 @@
     tools = await window.sachiv.listTools()
   }
   loadTools()
+  const staleRules = $derived(staleRuleNames(autoApproveRules, tools))
+  // TASKS #218: the list was read once when Settings opened, so an MCP server or connection added while it was open never showed up.
+  // Re-read whenever the servers or connections on this screen change (and on the Refresh button, for anything else, e.g. a saved query).
+  let toolsFirstRun = true
+  $effect(() => {
+    void [mcpServers, connections, apiConnections, emailConnections].map((list) => list.length + ':' + JSON.stringify(list.map((x) => ('status' in x ? x.status : '') + ('toolCount' in x ? x.toolCount : ''))))
+    if (toolsFirstRun) {
+      toolsFirstRun = false
+      return
+    }
+    void loadTools()
+  })
 </script>
 
 <div class="settings-view">
@@ -1793,7 +1809,14 @@
     <hr />
 
     <h2>Auto-approve rules</h2>
-    <p class="status">Tools checked here skip the confirmation dialog, persisted across restarts.</p>
+    <p class="status">
+      A ticked tool skips the confirmation dialog, and the choice is remembered. The tag after each name says where the tool comes from:
+      <strong>Built-in</strong>, a <strong>Saved query</strong>, or one tool of a connected <strong>MCP server</strong> (named
+      <code>mcp__server__tool</code>; each tool is listed on its own). Folder access outside the workspace is never auto-approved.
+    </p>
+    <p class="status">
+      <button type="button" onclick={() => void loadTools()}>Refresh list</button>
+    </p>
 
     {#if tools.length}
       <ul class="connection-list auto-approve-list">
@@ -1808,9 +1831,19 @@
               />
               <span class="conn-name">
                 {tool.name}
+                <span class="status">({tool.source})</span>
                 {#if tool.mutates === 'sometimes'}
                   <span class="mcp-status error">
-                    Only some calls of this tool mutate — enabling skips confirmation for all of them, writes included
+                    Some calls of this tool only read and some change things. Ticking it skips the confirmation for <strong>all</strong>
+                    of them, including those that write or delete.
+                    {#if tool.name === 'db_execute_sql' || tool.name === 'api_call'}
+                      It applies to every {tool.name === 'db_execute_sql' ? 'database' : 'API'} connection, not one in particular.
+                    {/if}
+                  </span>
+                {:else if tool.source.startsWith('MCP server')}
+                  <span class="mcp-status error">
+                    The server did not mark this tool read-only, so it is treated as one that changes things. Ticking it lets the assistant
+                    run it without asking.
                   </span>
                 {/if}
               </span>
@@ -1820,6 +1853,22 @@
       </ul>
     {:else}
       <p class="status">No tools need confirmation yet.</p>
+    {/if}
+
+    {#if staleRules.length}
+      <h3>Saved rules for tools that are not available now</h3>
+      <p class="status">
+        These rules are still stored, but no tool with that name exists right now: a server that was removed or renamed, or one that is
+        disconnected at the moment (its rules apply again when it reconnects). Remove the ones you no longer need.
+      </p>
+      <ul class="connection-list auto-approve-list">
+        {#each staleRules as name (name)}
+          <li class="tool-rule">
+            <span class="conn-name">{name}</span>
+            <button type="button" onclick={() => onRemoveAutoApproveRule(name)}>Remove</button>
+          </li>
+        {/each}
+      </ul>
     {/if}
 
     <hr />

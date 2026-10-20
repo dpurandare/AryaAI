@@ -99,7 +99,19 @@ Lets Anthropic reuse the unchanged start of each request at a fraction of the no
 
 ## Auto-approve rules
 
-Tools you tick here skip the confirmation dialog, and the choice is remembered. A tool that only sometimes changes things (for example SQL) is approved for **all** its calls, including the ones that change data. Folder access outside the workspace is never auto-approved. You can also switch these on from the confirmation panel itself. Be selective: an auto-approved tool can change files or send messages without asking.
+Tools you tick here skip the confirmation dialog, and the choice is remembered. You can also switch these on from the confirmation panel itself ("Always auto-approve"). Be selective: an auto-approved tool can change files or send messages without asking.
+
+**What the list shows.** Every tool that can change something, one row each, with a tag saying where it comes from:
+
+- **Built-in** tools of the application (for example `write_file`, `shell_execute`, `db_execute_sql`, `api_call`).
+- **Saved query**: a database query you asked the assistant to save (`db_query_…`).
+- **MCP server: name**: one row for each tool of a connected MCP server, named `mcp__server__tool` (two underscores each side). A server with many tools therefore gives many rows. A tool the server did not mark read-only counts as one that changes things.
+
+The list is read when you open Settings, and again when the servers or connections on that screen change; **Refresh list** reads it again by hand (for example after the assistant saved a query).
+
+**Read the red notes.** A tool that only sometimes changes things (SQL, an API call, `git_exec`) is approved for **all** its calls, including those that write or delete. The rule is per tool, not per connection: ticking `db_execute_sql` covers every database you have connected, and `api_call` every API connection. Folder access outside the workspace is never auto-approved, not by a rule and not by the session setting.
+
+**Saved rules for tools that are not available now.** A rule can name a tool that does not exist at the moment: an MCP server you removed or renamed, or one that is disconnected right now. The rule stays stored and is listed in its own section, where you can **Remove** it. It applies again if the server comes back under the same name.
 
 ## Secret storage
 

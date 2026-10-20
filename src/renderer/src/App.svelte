@@ -7,6 +7,7 @@
   import SplashScreen from './lib/components/SplashScreen.svelte'
   import ConfirmDeleteDialog from './lib/components/ConfirmDeleteDialog.svelte'
   import { createSessionDeleteConfirm } from './lib/session-delete'
+  import { shouldAutoApprove } from './lib/auto-approve'
   import {
     DEFAULT_SESSION_TITLE,
     type SessionDto,
@@ -603,6 +604,13 @@
     window.sachiv.setSetting('autoApproveToolRules', JSON.stringify(autoApproveRules))
   }
 
+  /** TASKS #218: forgets a stored rule altogether (used for rules whose tool no longer exists). */
+  function removeAutoApproveRule(name: string): void {
+    const { [name]: _removed, ...rest } = autoApproveRules
+    autoApproveRules = rest
+    window.sachiv.setSetting('autoApproveToolRules', JSON.stringify(autoApproveRules))
+  }
+
   function changePlanningEnabled(value: boolean): void {
     planningEnabled = value
     window.sachiv.setSetting('planningEnabled', String(value))
@@ -776,7 +784,7 @@
 
   window.sachiv.onToolConfirmRequest((payload) => {
     // Access to a folder outside the workspace is never auto-approved: not by the session blanket, not by a per-tool rule.
-    if (payload.name !== 'external_folder_access' && (autoApproveTools || autoApproveRules[payload.name])) {
+    if (shouldAutoApprove(payload.name, autoApproveTools, autoApproveRules)) {
       window.sachiv.respondToolConfirm(payload.toolUseId, true, payload.input)
       return
     }
@@ -933,6 +941,7 @@
         {showTimestamps}
         onApiKeyChanged={onProviderApiKeyChanged}
         onToggleAutoApproveRule={toggleAutoApproveTool}
+        onRemoveAutoApproveRule={removeAutoApproveRule}
         onChangeTheme={changeThemeMode}
         onChangePlanningEnabled={changePlanningEnabled}
         onChangeShowAnsweringModel={changeShowAnsweringModel}

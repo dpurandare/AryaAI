@@ -567,6 +567,8 @@ export interface ToolDescriptor {
   name: string
   description: string
   mutates: 'always' | 'sometimes'
+  /** Where the tool comes from, shown next to it in Settings > Auto-approve rules: 'Built-in', 'Saved query', or 'MCP server: <name>'. */
+  source: string
 }
 
 /**

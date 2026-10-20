@@ -91,6 +91,7 @@ import { buildRoster } from '../roles/roster'
 import { EXAMPLE_ROLE_FILE, EXAMPLE_ROLE_FILE_NAME, UserRoleLoader } from '../roles/user-roles'
 import { SYSTEM_PROMPT } from '../agents/system-prompt'
 import { createDescribeCapabilitiesTool } from '../agents/capabilities'
+import { sourceRank, toolSourceLabel } from '../tools/tool-source'
 import { fullRouterTools, selectRouterTools } from '../agents/router-tools'
 import { logToolUse } from '../db/tool-usage-log'
 import {
@@ -502,11 +503,14 @@ export function registerIpcHandlers(): void {
     toolRegistry
       .list()
       .filter((tool) => typeof tool.mutates === 'function' || tool.mutates === true)
-      .map((tool) => ({
+      .map((tool): ToolDescriptor => ({
         name: tool.name,
         description: tool.description,
-        mutates: typeof tool.mutates === 'function' ? 'sometimes' : 'always'
+        mutates: typeof tool.mutates === 'function' ? 'sometimes' : 'always',
+        source: toolSourceLabel(tool)
       }))
+      // Built-in tools first, then saved queries, then MCP servers (by server name); by name within each.
+      .sort((a, b) => sourceRank(a.source) - sourceRank(b.source) || a.source.localeCompare(b.source) || a.name.localeCompare(b.name))
   )
 
   // TASKS.md #164 — unfiltered (unlike ToolsList above, which drops never-mutating tools for the
