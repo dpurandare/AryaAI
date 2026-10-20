@@ -182,8 +182,8 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T8b | Ctrl+Tab still cycles | **Pass** | Linux (2026-10-20) | Deepak |
 | T8c | User-defined role in menu | | | |
 | T9a-d | Delete confirmation (#230) | **Pass** | Linux (2026-10-20) | Deepak |
-| T10 | Greetings, 10 specialists, model 1: ___ / 10 | | | |
-| T10 | Greetings, 10 specialists, model 2: ___ / 10 | | | |
+| T10 | Greetings, 10 specialists, model 1: `gpt-4o-mini` | **Fail** | Linux (2026-10-20) | Deepak: "does not give proper response"; reply texts and per-specialist count not yet supplied |
+| T10 | Greetings, 10 specialists, model 2: `claude-haiku-5-5` | **Odd** | Linux (2026-10-20) | Deepak: better than gpt-4o-mini, but the same information is repeated for both prompts (Hello and What can you do?) |
 | T11 | No MCP server: Researcher (#146) | | | |
 | T12 | MCP server connected: MCP Operator | | | |
 | T13 | Python charts not in root (#204) | | | |
