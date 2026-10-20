@@ -410,7 +410,7 @@ describe('image export (TASKS.md #212)', () => {
     await exportSession('s1', null)
     expect(mockMkdir).toHaveBeenCalledWith(join('/tmp/out dir', 'My Chat'), { recursive: true })
     const written = mockWriteFile.mock.calls.map((c) => c[0])
-    expect(written).toEqual([join('/tmp/out dir/My Chat', 'image-1.png'), join('/tmp/out dir/My Chat', 'image-2.jpg'), join('/tmp/out dir', 'My Chat.md')])
+    expect(written).toEqual([join('/tmp/out dir/My Chat', 'image-1.png'), join('/tmp/out dir/My Chat', 'image-2.jpg'), '/tmp/out dir/My Chat.md'])
     expect(mockWriteFile.mock.calls[0][1]).toEqual(Buffer.from('fake-png-bytes'))
     const md = mockWriteFile.mock.calls[2][1] as string
     expect(md).toContain('(My%20Chat/image-1.png)')
