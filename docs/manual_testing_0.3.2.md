@@ -199,7 +199,7 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T22 | List updates with Settings open | **Pass** | Linux (2026-10-20) | Deepak; whether Refresh list was needed was not stated (relevant to TASKS #233) |
 | T23 | A ticked rule skips the dialog | **Pass** | Linux (2026-10-20) | Deepak |
 | T24 | Outside-workspace access never auto-approved | **Re-run needed** (2 faulty test texts so far; #234, #235) | Linux (2026-10-21) | Deepak: 1st try `/etc/hostname` went through `shell_execute` (finding #234); 2nd try used `~/Downloads/...` and `read_file` got `ENOENT` because `~` is not expanded (finding #235): no outside-folder question was reached. Use the absolute path from the corrected text |
-| T24b | Protected location refused without a question (optional) | **Not testable as first written** | Linux (2026-10-20) | The model used the shell instead (see T24 and TASKS #234); re-run with the corrected text |
+| T24b | Protected location refused without a question (optional) | **Pass** | Linux (2026-10-21) | Deepak. `read_file` on a protected location is refused with no question (the shell bypass is #234) |
 | T25 to T31 | Smoke tests | | | |
 
 When everything is Pass (or the failures are fixed and re-tested), tell Claude: it will record the results in `TASKS.md` and `docs/manual_testing.md`, then ask for your go-ahead to merge, tag and build the draft release.
