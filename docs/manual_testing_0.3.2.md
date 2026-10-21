@@ -204,6 +204,8 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T26 | Word document created | **Odd** (works; wasteful and padded, TASKS #237) | Linux (2026-10-21) | Deepak, gpt-4o-mini: `documents/hello.docx` created and opens, but `office_create_document` was called three times (two rejected by the head-and-tail rule / a misuse of `fromPreviousAnswer`) and the document got an extra, unrequested closing paragraph, so it has 2 paragraphs instead of 1 |
 | T27 | get_environment and workspace folders | **Pass** (two odd points, TASKS #238) | Linux (2026-10-21) | Deepak, gpt-4o-mini: path, OS and bash correct; only the top level was listed, which is how `list_directory` works (one level, no recursion). Odd: the reply named `templates/`, which does not exist on disk (taken from the get_environment text), and listed the internal `.sachiv-handoff/` folder |
 | T28 | Windows: PowerShell syntax works | **N/A on Linux; pending on Windows** | Linux (2026-10-21) | Deepak ran it on Linux by mistake of the plan (Windows-only test): `Get-Location` is a PowerShell command and bash correctly says it is not recognised; the plain-language prompt ("get the current location") worked via `pwd`, which is also correct. Run on the Windows VM |
-| T29 to T31 | Smoke tests | | | |
+| T29 | Zoom shortcuts and remembered level | **Pass** | Linux (2026-10-21) | Deepak |
+| T30 | Theme toggle, Settings open/close | **Pass** | Linux (2026-10-21) | Deepak |
+| T31 | Planner pinned and Auto both answer | | | |
 
 When everything is Pass (or the failures are fixed and re-tested), tell Claude: it will record the results in `TASKS.md` and `docs/manual_testing.md`, then ask for your go-ahead to merge, tag and build the draft release.
