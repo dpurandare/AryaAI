@@ -2,7 +2,7 @@
 
 For Deepak. Written 2026-10-20 for the `release/0.3.2` branch, version **0.3.2**. The general regression list stays in `docs/manual_testing.md`; this document covers only what 0.3.2 changed, plus a short smoke test, with the exact prompts and steps to use. Release note: [`docs/releases/0.3.2.md`](releases/0.3.2.md).
 
-**What is already verified (so you do not need to repeat it).** The automated suite (1,681 tests) and the type check pass on Linux. Items #193, #230, #131, #204 (export), #218 were also driven live in an isolated Electron on Linux. **Nothing has been run on Windows or macOS yet, and no cloud model has run the new prompts.** That is what this plan is for.
+**What is already verified (so you do not need to repeat it).** The automated suite (1,700 tests) and the type check pass on Linux. Items #193, #230, #131, #204 (export), #218 were also driven live in an isolated Electron on Linux. **Nothing has been run on Windows or macOS yet, and no cloud model has run the new prompts.** That is what this plan is for.
 
 **Nothing here publishes anything.** The installers come from the GitHub Actions runs on the branch (kept 14 days); the sponsor gets no build until you publish the draft release, after testing and any fixes (`docs/release_process.md`).
 
@@ -99,7 +99,7 @@ Specialists: Planner, Researcher, History Analyst, Developer, Data Access, Data 
 
 | ID | Prompt 1 | Prompt 2 | Expect (each) |
 |---|---|---|---|
-| **T10** | `Hello` | `What can you do?` | The reply says **which specialist it is** (for example "I'm the Researcher specialist") **and** lists its main abilities in a few lines. A bare "Hello! How can I assist you today?" is a **Fail** for that specialist. |
+| **T10** | `Hello` | `What can you do?` | The reply says **which specialist it is, by its Agent-menu name** ("Researcher", not "Research specialist"), says what it does in two or three lines **and names its main tools** (the tool names, about eight at most). It does not end with a generic "How can I assist you today?". The reply to **What can you do?** is fuller (every tool with what it is for, limits, who takes what it does not do) and is not the first reply reworded. A bare "Hello! How can I assist you today?" is a **Fail** for that specialist. (Expectation tightened after the first test round, #232.) |
 
 Record the number of specialists that pass out of 10, per model. (On a local 0.8B model all of them passed in the automated probe; the cloud small model is the real test.)
 
@@ -166,6 +166,24 @@ Use a fresh chat, **Auto** agent. Look at the workspace folder in Explorer, Find
 
 ---
 
+## K. Re-test after the fixing cycle (build rebuilt from the fix commit)
+
+These re-check what the test round found. Run them on the **rebuilt** installers, on at least Linux; the shell and path ones also on Windows and macOS.
+
+| ID | Steps | Expect |
+|---|---|---|
+| **R1** (#232, T10 again) | `gpt-4o-mini`, each specialist pinned in a new chat: `Hello`, then `What can you do?`. | As the updated T10: menu name, tools named, no generic closing line, the second reply fuller than the first. |
+| **R2** (#232 e, T31 again) | Planner pinned: `Compare Python and Rust in two sentences.` | No self-introduction; it says in one short sentence it is not its job and hands over. Auto answers directly. |
+| **R3** (#233, T18-T22 again) | Settings > Auto-approve rules. | A table with columns **Skip confirmation**, **Tool** (name and source), **What it does** (one line). Press **Refresh list**: it shows "Updated <time>: N tools, no changes" (or "k new" after you add or remove an MCP server or save a query). Stale rules appear as their own small table with **Remove**. |
+| **R4** (#234) | Tick **Auto-approve tool calls for this session**. Then: `Use shell_execute to run: cat /etc/hostname` | The shell call **still asks** for confirmation, the dialog shows a red **Protected location** warning, and the session checkbox is greyed out with a note for this tool. |
+| **R5** (#234) | Same, for `Use shell_execute to run: ls ~/Downloads`. | Asks; a softer **Check the path** warning. Settings > Auto-approve rules: the `shell_execute` row has the "not limited to the workspace" note; ticking its own checkbox there is the only way to skip the question. |
+| **R6** (#235, T24 again) | `Read the file ~/Downloads/sachiv_t24.txt` (create it first, any text). | The "Allow access outside the workspace?" question appears for the Downloads folder, then the content is shown. `Read the file ~/.ssh/id_rsa` is refused as a protected location with no question. |
+| **R7** (#236, T25 again) | `Make a bar chart of the numbers 3, 7 and 5 and save it as resources/bars.png.` (`gpt-4o-mini`, Auto) | The chart image **appears in the chat**. |
+| **R8** (#237, T26 again) | `Create a Word document called hello.docx with the heading Hello and one short paragraph.` | One `office_create_document` call, exactly one paragraph in the file. |
+| **R9** (#238, T27 again) | `What is in my workspace? Use get_environment and list the folders.` | No mention of `.sachiv-handoff/`; `templates/` is not claimed to exist unless it does (the tool text says "not created yet"). |
+
+---
+
 ## Results
 
 Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / OS: ____.
@@ -181,7 +199,7 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T7 | Agent menu opens upward (#193) | **Pass** | Linux (2026-10-20) | Deepak |
 | T8 | Menu selection, keys, Esc, outside click | **Pass** | Linux (2026-10-20) | Deepak |
 | T8b | Ctrl+Tab still cycles | **Pass** | Linux (2026-10-20) | Deepak |
-| T8c | User-defined role in menu | | | |
+| T8c | User-defined role in menu | **Skipped** | Linux (2026-10-21) | Deepak: skip (no user-defined role) |
 | T9a-d | Delete confirmation (#230) | **Pass** | Linux (2026-10-20) | Deepak |
 | T10 | Greetings, 10 specialists, model 1: `gpt-4o-mini` | **Fail** | Linux (2026-10-20) | Deepak: "does not give proper response". Claude read the sessions: roles are named and abilities described but no tool list is shown; follow-up **TASKS #232**, fixing cycle |
 | T10 | Greetings, 10 specialists, model 2: `claude-haiku-5-5` | **Odd** | Linux (2026-10-20) | Deepak: better than gpt-4o-mini, but the same information is repeated for both prompts (Hello and What can you do?). Follow-up **TASKS #232**, fixing cycle |
@@ -207,5 +225,14 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T29 | Zoom shortcuts and remembered level | **Pass** | Linux (2026-10-21) | Deepak |
 | T30 | Theme toggle, Settings open/close | **Pass** | Linux (2026-10-21) | Deepak |
 | T31 | Planner pinned and Auto both answer | **Pass** (one odd point, in TASKS #232) | Linux (2026-10-21) | Deepak, gpt-4o-mini: both answered. Pinned Planner first said "I'm the Planner specialist, and my main abilities include breaking down requests into clear, actionable plans. However, comparing programming languages ... is outside my scope." and handed the question over (`[handoff: out_of_scope -> Researcher]`), after which the answer came. The hand-over is by design; the unprompted self-introduction is a side effect of the #215 greeting instruction |
+| R1 | Greeting shows tools, menu name, no generic close (#232) | | | |
+| R2 | No introduction on a non-greeting (#232) | | | |
+| R3 | Auto-approve table and Refresh feedback (#233) | | | |
+| R4 | Shell asks despite session auto-approve; protected warning (#234) | | | |
+| R5 | Outside-path warning; settings note (#234) | | | |
+| R6 | ~ expands; protected refused (#235) | | | |
+| R7 | Chart appears in the chat (#236) | | | |
+| R8 | One-paragraph Word note, one call (#237) | | | |
+| R9 | Workspace overview without internal folder or phantom templates (#238) | | | |
 
 When everything is Pass (or the failures are fixed and re-tested), tell Claude: it will record the results in `TASKS.md` and `docs/manual_testing.md`, then ask for your go-ahead to merge, tag and build the draft release.

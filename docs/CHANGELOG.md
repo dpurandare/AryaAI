@@ -32,6 +32,14 @@ Details, with a short description of every change, in [`docs/releases/0.3.2.md`]
 
 ### Fixed
 
+- Found in the 0.3.2 manual test and fixed before release:
+  - The session-wide "Auto-approve tool calls for this session" switch no longer covers tools that run commands or scripts (`shell_execute`, `python_run`, `git_exec`, `aws_cli`, `azure_cli`, `gcloud_cli`, `github_cli`); each call still asks, and the confirmation warns when the command mentions a protected or outside-workspace location. User Guide 10 and 11 corrected (#234).
+  - File tools now expand a leading `~` to the home folder, as the shell does, so `~/Downloads/x.txt` is recognised (#235).
+  - `python_run` and `shell_execute` tell the assistant to show an image they saved, so a chart made by a script appears in the chat (#236).
+  - `office_create_document` no longer forces a second paragraph onto a one-paragraph note (#237).
+  - A pinned specialist's greeting names its tools, uses the Agent-menu name, no longer ends with a generic offer, and introduces itself only when greeted or asked what it can do (#232).
+  - Settings > Auto-approve rules is a table (checkbox, tool, one-line description), and **Refresh list** reports what it found (#233).
+  - The assistant no longer sees Sachivji's own `.sachiv-handoff` folder in listings, and `get_environment` says which conventional folders do not exist yet (#238).
 - The log message for an empty planning reply now includes the stop reason and the output-token count; the planning retry for an empty reply was already in place (#140, #141).
 
 ### Tests
