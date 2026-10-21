@@ -206,6 +206,6 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T28 | Windows: PowerShell syntax works | **N/A on Linux; pending on Windows** | Linux (2026-10-21) | Deepak ran it on Linux by mistake of the plan (Windows-only test): `Get-Location` is a PowerShell command and bash correctly says it is not recognised; the plain-language prompt ("get the current location") worked via `pwd`, which is also correct. Run on the Windows VM |
 | T29 | Zoom shortcuts and remembered level | **Pass** | Linux (2026-10-21) | Deepak |
 | T30 | Theme toggle, Settings open/close | **Pass** | Linux (2026-10-21) | Deepak |
-| T31 | Planner pinned and Auto both answer | | | |
+| T31 | Planner pinned and Auto both answer | **Pass** (one odd point, in TASKS #232) | Linux (2026-10-21) | Deepak, gpt-4o-mini: both answered. Pinned Planner first said "I'm the Planner specialist, and my main abilities include breaking down requests into clear, actionable plans. However, comparing programming languages ... is outside my scope." and handed the question over (`[handoff: out_of_scope -> Researcher]`), after which the answer came. The hand-over is by design; the unprompted self-introduction is a side effect of the #215 greeting instruction |
 
 When everything is Pass (or the failures are fixed and re-tested), tell Claude: it will record the results in `TASKS.md` and `docs/manual_testing.md`, then ask for your go-ahead to merge, tag and build the draft release.
