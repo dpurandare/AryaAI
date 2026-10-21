@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WorkspaceGuard } from './workspace-guard'
@@ -27,6 +27,13 @@ describe('external access', () => {
 
   it('paths inside the workspace never need a grant', () => {
     expect(resolveReadable(ctxOf(undefined), 'docs/x.txt')).toBe(join(root, 'docs', 'x.txt'))
+  })
+
+  it('a leading ~ is the home folder: protected places stay refused, other places ask first (TASKS #235)', () => {
+    const real = new ExternalAccess({ getAlways: () => always, setAlways: (l) => (always = l), home: homedir() })
+    expect(() => resolveReadable(ctxOf(real), '~/.ssh/id_rsa')).toThrow(/protected location/)
+    expect(() => resolveReadable(ctxOf(real), '~/Downloads/x.txt')).toThrow(/outside the workspace and Sachivji has not been given access/)
+    expect(() => resolveWritableNewOutside(ctxOf(real), '~/.aws/credentials')).toThrow(/protected location/)
   })
 
   it('an outside path is refused until its folder is granted, and a grant covers the folder and everything below it', async () => {

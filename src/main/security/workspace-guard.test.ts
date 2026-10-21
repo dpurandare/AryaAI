@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { WorkspaceGuard } from './workspace-guard'
+import { WorkspaceGuard, expandHome } from './workspace-guard'
 
 describe('WorkspaceGuard', () => {
   // A real OS-native absolute path (not a hand-built one) so the expected
@@ -42,5 +42,22 @@ describe('WorkspaceGuard', () => {
 
   it('accepts an absolute path that happens to be inside the workspace', () => {
     expect(guard.assertWithinWorkspace(join(root, 'inside.txt'))).toBe(join(root, 'inside.txt'))
+  })
+
+  describe('expandHome (TASKS #235)', () => {
+    const home = resolve(tmpdir(), 'sachiv-fake-home')
+    it('expands ~, ~/x and ~\\x to the home folder', () => {
+      expect(expandHome('~', home)).toBe(home)
+      expect(expandHome('~/Downloads/a.txt', home)).toBe(join(home, 'Downloads', 'a.txt'))
+      if (process.platform === 'win32') expect(expandHome('~\\Downloads\\a.txt', home)).toBe(join(home, 'Downloads', 'a.txt'))
+    })
+    it('leaves ~user, ~x and ordinary paths alone', () => {
+      expect(expandHome('~bob/x', home)).toBe('~bob/x')
+      expect(expandHome('~x', home)).toBe('~x')
+      expect(expandHome('a/~/b', home)).toBe('a/~/b')
+    })
+    it('the guard rejects an expanded home path outside the workspace', () => {
+      expect(() => guard.assertWithinWorkspace('~/Downloads/a.txt')).toThrow(/outside the workspace/)
+    })
   })
 })

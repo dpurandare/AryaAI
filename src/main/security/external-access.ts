@@ -1,6 +1,8 @@
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, win32 } from 'node:path'
+import { expandHome } from './workspace-guard'
+import { PROTECTED_ABSOLUTE, PROTECTED_UNDER_HOME } from '@shared/command-risk'
 
 /**
  * Access to files OUTSIDE the workspace, which the file tools used to refuse outright: a file the user downloaded
@@ -21,22 +23,8 @@ export const EXTERNAL_READ_FOLDERS_SETTING_KEY = 'externalReadFolders'
 export type ExternalAccessKind = 'read' | 'write-new'
 export type RememberScope = 'once' | 'session' | 'always'
 
-/** Home-relative places that are never offered, even if a parent folder was granted. */
-const BLOCKED_UNDER_HOME = [
-  '.ssh',
-  '.aws',
-  '.gnupg',
-  '.azure',
-  '.kube',
-  '.docker',
-  '.config/gcloud',
-  '.sachivji',
-  'Library/Keychains',
-  'Library/Cookies',
-  'Library/Application Support/Sachivji',
-  'Library/Application Support/Sachiv'
-]
-const BLOCKED_ABSOLUTE = ['/etc', '/private/etc', '/var/db', '/System', '/Library/Keychains']
+const BLOCKED_UNDER_HOME = PROTECTED_UNDER_HOME
+const BLOCKED_ABSOLUTE = PROTECTED_ABSOLUTE
 
 /** A `BLOCKED_ABSOLUTE` entry (e.g. `/etc`) has no drive letter — a cross-platform literal
  *  that was never meant to be Windows-specific. `abs`, in contrast, picked up a real drive
@@ -140,7 +128,7 @@ export interface ExternalAccessCtx {
 }
 
 function resolveInWorkspaceOrNull(ctx: ExternalAccessCtx, target: string): { abs: string; inside: boolean } {
-  const abs = resolve(ctx.workspaceGuard.root, target)
+  const abs = resolve(ctx.workspaceGuard.root, expandHome(target))
   const rel = relative(ctx.workspaceGuard.root, abs)
   return { abs, inside: !(rel.startsWith('..') || isAbsolute(rel)) }
 }

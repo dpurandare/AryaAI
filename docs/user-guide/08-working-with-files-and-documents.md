@@ -36,7 +36,7 @@ If a file already exists at a path, the assistant writes back to that existing l
 
 ### Folders outside the workspace
 
-To read a file or folder outside the workspace (for example in Downloads), the assistant must ask you first: **Allow access outside the workspace?** The access is **read-only**; saving a new file elsewhere asks every time, and nothing outside the workspace is edited or deleted. See [Using the chat](04-using-the-chat.md) for the options (just this once, this session, always). Folders you allowed with *Always* are listed in **Settings > Workspace** under *Folders outside the workspace*, where you can remove them.
+To read a file or folder outside the workspace (for example in Downloads), the assistant must ask you first: **Allow access outside the workspace?** The access is **read-only**; saving a new file elsewhere asks every time, and nothing outside the workspace is edited or deleted. See [Using the chat](04-using-the-chat.md) for the options (just this once, this session, always). A leading `~` means your home folder, as in the shell (`~/Downloads/report.pdf`). Folders you allowed with *Always* are listed in **Settings > Workspace** under *Folders outside the workspace*, where you can remove them.
 
 ## Reading and writing files
 

@@ -1,4 +1,12 @@
+import { homedir } from 'node:os'
 import { resolve, relative, isAbsolute } from 'node:path'
+
+/** TASKS #235: the shell expands a leading `~` and models write it constantly, so the file tools do too. `~`, `~/x` and `~\x` only (not `~user`, not `~x`); done before every gate, so protected and outside-workspace rules apply to the expanded path. */
+export function expandHome(target: string, home: string = homedir()): string {
+  if (target === '~') return home
+  if (target.startsWith('~/') || (process.platform === 'win32' && target.startsWith('~\\'))) return resolve(home, target.slice(2))
+  return target
+}
 
 /**
  * Enforces the workspace-boundary requirement with real path checks, not a
@@ -25,7 +33,7 @@ export class WorkspaceGuard {
   }
 
   assertWithinWorkspace(targetPath: string): string {
-    const resolved = resolve(this.workspaceRoot, targetPath)
+    const resolved = resolve(this.workspaceRoot, expandHome(targetPath))
     const rel = relative(this.workspaceRoot, resolved)
     if (rel.startsWith('..') || isAbsolute(rel)) {
       throw new Error(`Path "${targetPath}" resolves outside the workspace boundary (${this.workspaceRoot})`)

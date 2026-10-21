@@ -19,6 +19,7 @@ import {
 import { isRateLimitError, retryAfterMsFromError } from '../providers/rate-limit'
 import type { ModelProvider, ToolDefinition } from '../providers/types'
 import { EXTERNAL_ACCESS_TOOL_NAME, isInsideWorkspace } from '../security/external-access'
+import { expandHome } from '../security/workspace-guard'
 import { pruneScratchDir } from '../tools/workspace-layout'
 import { SHOW_MEDIA_MARKER, type ShowMediaPayload } from '../tools/show-media'
 import type { Tool, ToolContext } from '../tools/types'
@@ -2847,7 +2848,7 @@ export class Orchestrator {
     const ctx = this.toolContext
     for (const [i, request] of requests.entries()) {
       if (isInsideWorkspace(ctx, request.path)) continue
-      const abs = resolve(ctx.workspaceGuard.root, request.path)
+      const abs = resolve(ctx.workspaceGuard.root, expandHome(request.path))
       const access = ctx.externalAccess
       if (!access) return `"${request.path}" is outside the workspace, which this tool may not access here.`
       if (access.isBlocked(abs)) return `"${request.path}" is a protected location (credentials, keys, system or Sachivji's own data) and cannot be accessed.`
