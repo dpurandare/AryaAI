@@ -74,3 +74,19 @@ export function diffSnapshots(before: WorkspaceSnapshot, after: WorkspaceSnapsho
   }
   return { created: created.sort(), modified: modified.sort(), reliable: !before.truncated && !after.truncated }
 }
+
+const IMAGE_FILE = /\.(png|jpe?g|gif|svg|webp)$/i
+const MAX_HINT_IMAGES = 5
+
+/**
+ * TASKS #236: a run that saves a chart or picture is only half done until the user sees it, and the "call show_media" rule lives in the
+ * Developer prompt alone, while the router often runs the script itself. This puts the nudge in the tool result, for every role, at the
+ * moment it matters. Null when no image file was created or changed (scratch under tmp/ and internal folders do not count).
+ */
+export function showMediaHint(files: readonly string[]): string | null {
+  const images = files.filter((f) => IMAGE_FILE.test(f) && !/^(tmp|\.sachiv[^/]*)\//.test(f))
+  if (!images.length) return null
+  const shown = images.slice(0, MAX_HINT_IMAGES)
+  const more = images.length > shown.length ? ` (and ${images.length - shown.length} more)` : ''
+  return `Image file(s) created or changed: ${shown.join(', ')}${more}. Call show_media with each path so the user sees ${images.length === 1 ? 'it' : 'them'} in the chat.`
+}

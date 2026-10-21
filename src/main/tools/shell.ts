@@ -1,7 +1,7 @@
 import { exec } from 'node:child_process'
 import { looksLikePythonNotFound, pythonNotFoundHint, withWorkspaceVenv } from './python-env'
 import { tidyRootStrays } from './workspace-layout'
-import { diffSnapshots, snapshotWorkspace } from './workspace-snapshot'
+import { diffSnapshots, showMediaHint, snapshotWorkspace } from './workspace-snapshot'
 import type { Tool } from './types'
 
 const TIMEOUT_MS = 30_000
@@ -83,8 +83,10 @@ export const shellExecuteTool: Tool = {
     // (see tidyRootStrays); the model is told the new paths. Only when the workspace could be scanned reliably.
     const diff = diffSnapshots(before, await snapshotWorkspace(root))
     const moved = diff.reliable ? await tidyRootStrays(root, diff.created) : []
-    if (!moved.length) return output
+    const renamed = new Map(moved.map((m) => [m.from, m.to]))
+    const mediaHint = diff.reliable ? showMediaHint([...diff.created.map((f) => renamed.get(f) ?? f), ...diff.modified]) : null
+    if (!moved.length) return mediaHint ? `${output}\n\n${mediaHint}` : output
     const listed = moved.slice(0, MAX_LISTED_MOVES).map((m) => `${m.from} -> ${m.to}`).join(', ')
-    return `${output}\n\nMoved ${moved.length} file(s) the command left in the workspace root: ${listed}${moved.length > MAX_LISTED_MOVES ? ', ...' : ''}. Use the new paths, and put scratch files in tmp/ next time.`
+    return `${output}\n\nMoved ${moved.length} file(s) the command left in the workspace root: ${listed}${moved.length > MAX_LISTED_MOVES ? ', ...' : ''}. Use the new paths, and put scratch files in tmp/ next time.${mediaHint ? `\n\n${mediaHint}` : ''}`
   }
 }

@@ -139,6 +139,14 @@ describe('python_run', () => {
       expect(none).toMatch(/Files created or changed by this run: none\. If you expected output/)
     })
 
+    runIt('tells the model to show an image the script saved (TASKS #236)', async () => {
+      await installVenv()
+      const out = await pythonRunTool.execute({ code: 'import os\nos.makedirs("resources", exist_ok=True)\nopen("resources/bars.png","w").write("1")\nopen("d.csv","w").write("a")' }, ctx)
+      expect(out).toContain('Image file(s) created or changed: resources/bars.png. Call show_media')
+      const none = await pythonRunTool.execute({ code: 'open("e.csv","w").write("a")' }, ctx)
+      expect(none).not.toContain('show_media')
+    })
+
     runIt('files a bulk of loose root-level outputs away (images to resources/, the rest to tmp/) and reports the new paths — but leaves one or two requested outputs where the script wrote them', async () => {
       await installVenv()
       const few = await pythonRunTool.execute({ code: 'open("answer.json","w").write("{}")\nopen("note.txt","w").write("x")' }, ctx)

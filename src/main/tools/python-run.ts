@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { WORKSPACE_VENV_DIR, withWorkspaceVenv, workspaceVenvBinDir } from './python-env'
-import { diffSnapshots, snapshotWorkspace } from './workspace-snapshot'
+import { diffSnapshots, showMediaHint, snapshotWorkspace } from './workspace-snapshot'
 import { SCRATCH_DIR, tidyRootStrays } from './workspace-layout'
 import type { Tool, ToolContext } from './types'
 
@@ -209,6 +209,8 @@ export const pythonRunTool: Tool = {
     if (produced.length) {
       const shown = produced.slice(0, MAX_LISTED_FILES)
       parts.push(`Files created or changed by this run (found by the app): ${shown.join(', ')}${produced.length > shown.length ? `, and ${produced.length - shown.length} more` : ''}`)
+      const mediaHint = showMediaHint(produced)
+      if (mediaHint) parts.push(mediaHint)
     } else if (diff.reliable) {
       parts.push('Files created or changed by this run: none.' + (outcome.code === 0 ? ' If you expected output, the script did not write any — check that it saves to a file.' : ''))
     } else {

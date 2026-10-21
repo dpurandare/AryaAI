@@ -207,6 +207,13 @@ describe.skipIf(isWindows)('shell_execute + workspace venv', () => {
       expect(existsSync(join(root, 'chart.png'))).toBe(true)
     })
 
+    it('tells the model to show a picture the command saved (TASKS #236), and says nothing for other files', async () => {
+      const withImage = await shellExecuteTool.execute({ command: 'mkdir -p resources; echo x > resources/c.png' }, ctx)
+      expect(withImage).toContain('Image file(s) created or changed: resources/c.png. Call show_media')
+      const without = await shellExecuteTool.execute({ command: 'echo x > data.json' }, ctx)
+      expect(without).not.toContain('show_media')
+    })
+
     it('never touches files that already existed, files in folders, or hidden files', async () => {
       for (const n of [1, 2, 3, 4]) await writeFile(join(root, `old_${n}.png`), 'old')
       const result = await shellExecuteTool.execute({ command: 'mkdir out; for i in 1 2 3 4 5; do echo x > out/f$i.png; echo x > .h$i; done' }, ctx)
