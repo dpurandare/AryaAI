@@ -109,7 +109,7 @@ Tools you tick here skip the confirmation dialog, and the choice is remembered. 
 
 The list is read when you open Settings, and again when the servers or connections on that screen change; **Refresh list** reads it again by hand (for example after the assistant saved a query).
 
-**Read the red notes.** A tool that only sometimes changes things (SQL, an API call, `git_exec`) is approved for **all** its calls, including those that write or delete. The rule is per tool, not per connection: ticking `db_execute_sql` covers every database you have connected, and `api_call` every API connection. Folder access outside the workspace is never auto-approved, not by a rule and not by the session setting.
+**Read the red notes.** A tool that only sometimes changes things (SQL, an API call, `git_exec`) is approved for **all** its calls, including those that write or delete. The rule is per tool, not per connection: ticking `db_execute_sql` covers every database you have connected, and `api_call` every API connection. Folder access outside the workspace through the file tools is never auto-approved, not by a rule and not by the session setting. Tools that run commands or scripts (`shell_execute`, `python_run`, `git_exec`, `aws_cli`, `azure_cli`, `gcloud_cli`, `github_cli`) are not limited to the workspace; the session setting never covers them, so only a rule ticked here for that one tool skips their confirmation.
 
 **Saved rules for tools that are not available now.** A rule can name a tool that does not exist at the moment: an MCP server you removed or renamed, or one that is disconnected right now. The rule stays stored and is listed in its own section, where you can **Remove** it. It applies again if the server comes back under the same name.
 

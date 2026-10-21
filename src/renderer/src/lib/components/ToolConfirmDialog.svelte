@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { commandWarning, isShellLikeTool } from '@shared/command-risk'
+
   let {
     toolUseId,
     name,
@@ -50,6 +52,17 @@
     onToggleAutoApprove: (value: boolean) => void
     onToggleAutoApproveTool: (value: boolean) => void
   } = $props()
+
+  /** TASKS #234: a command or script is not limited to the workspace, so the dialog says when it mentions a protected or outside place. Checks the text as currently edited. */
+  const isCommandRunner = $derived(isShellLikeTool(name))
+  const warning = $derived.by(() => {
+    if (!isCommandRunner) return null
+    try {
+      return commandWarning(name, JSON.parse(editedJson) as Record<string, unknown>)
+    } catch {
+      return commandWarning(name, input)
+    }
+  })
 
   let editedJson = $state('')
   /** The outside-the-workspace folder request (name "external_folder_access") is not a tool run: no editable JSON, no auto-approve, and — for reading — a choice of how long to remember the folder. */
@@ -172,6 +185,7 @@
   {:else}
     <textarea class="json" bind:value={editedJson} spellcheck="false"></textarea>
     {#if jsonError}<p class="error">{jsonError}</p>{/if}
+    {#if warning}<p class="error" role="alert"><strong>{warning.level === 'protected' ? 'Protected location' : 'Check the path'}:</strong> {warning.text}</p>{/if}
   {/if}
 
   {#each secretFields as field (field)}
@@ -188,9 +202,11 @@
       <input
         type="checkbox"
         checked={autoApprove}
+        disabled={isCommandRunner}
         onchange={(e) => onToggleAutoApprove((e.target as HTMLInputElement).checked)}
       />
-      Auto-approve tool calls for this session
+      Auto-approve tool calls for this session{#if isCommandRunner}
+        <span class="hint">(does not include <code>{name}</code>: a command is not limited to the workspace)</span>{/if}
     </label>
     <label class="auto-approve">
       <input
@@ -238,6 +254,10 @@
 </div>
 
 <style>
+  .hint {
+    color: var(--text-muted, #888);
+    font-size: 0.85em;
+  }
   .confirm {
     display: flex;
     flex-direction: column;

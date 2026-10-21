@@ -2,12 +2,16 @@
  * TASKS #218: the pure rules behind Settings > Auto-approve rules and the confirmation gate, kept free of Svelte so they are unit-tested.
  */
 import type { ToolDescriptor } from '@shared/ipc-contract'
+import { isShellLikeTool } from '@shared/command-risk'
 
 /** Folder access outside the workspace is its own confirmation request: never auto-approved, by the session blanket or by a per-tool rule. */
 export const EXTERNAL_FOLDER_ACCESS = 'external_folder_access'
 
 export function shouldAutoApprove(toolName: string, sessionBlanket: boolean, rules: Record<string, boolean>): boolean {
   if (toolName === EXTERNAL_FOLDER_ACCESS) return false
+  // TASKS #234: a command or script is not limited to the workspace, so the confirmation is its only safeguard: the session-wide
+  // switch never removes it. A per-tool rule is an explicit, named choice and still works.
+  if (isShellLikeTool(toolName)) return rules[toolName] === true
   return sessionBlanket || rules[toolName] === true
 }
 

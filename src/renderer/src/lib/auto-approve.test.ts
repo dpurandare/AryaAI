@@ -5,8 +5,16 @@ describe('shouldAutoApprove (TASKS #218)', () => {
   it('a ticked rule approves that tool only; the session blanket approves any tool', () => {
     expect(shouldAutoApprove('write_file', false, { write_file: true })).toBe(true)
     expect(shouldAutoApprove('shell_execute', false, { write_file: true })).toBe(false)
-    expect(shouldAutoApprove('shell_execute', true, {})).toBe(true)
+    expect(shouldAutoApprove('create_chart', true, {})).toBe(true)
     expect(shouldAutoApprove('write_file', false, { write_file: false })).toBe(false)
+  })
+
+  it('the session blanket never covers a tool that runs a command or script; an explicit per-tool rule still does (TASKS #234)', () => {
+    for (const name of ['shell_execute', 'python_run', 'git_exec', 'aws_cli', 'azure_cli', 'gcloud_cli', 'github_cli']) {
+      expect(shouldAutoApprove(name, true, {})).toBe(false)
+      expect(shouldAutoApprove(name, true, { [name]: false })).toBe(false)
+      expect(shouldAutoApprove(name, false, { [name]: true })).toBe(true)
+    }
   })
 
   it('folder access outside the workspace is never auto-approved, by the blanket or by a rule', () => {

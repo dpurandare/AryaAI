@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isShellLikeTool } from '@shared/command-risk'
   import type { RoleRosterDto, RoleToolsDto, ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor, WebSearchProviderDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
   import { staleRuleNames } from '../auto-approve'
@@ -1839,6 +1840,11 @@
                     {#if tool.name === 'db_execute_sql' || tool.name === 'api_call'}
                       It applies to every {tool.name === 'db_execute_sql' ? 'database' : 'API'} connection, not one in particular.
                     {/if}
+                  </span>
+                {:else if isShellLikeTool(tool.name)}
+                  <span class="mcp-status error">
+                    Runs commands that are not limited to the workspace (they can read your keys and system files). The session-wide
+                    "Auto-approve" switch never covers it; ticking it here is the only way to skip the confirmation.
                   </span>
                 {:else if tool.source.startsWith('MCP server')}
                   <span class="mcp-status error">
