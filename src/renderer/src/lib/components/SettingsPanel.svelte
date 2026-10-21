@@ -2,7 +2,8 @@
   import { isShellLikeTool } from '@shared/command-risk'
   import type { RoleRosterDto, RoleToolsDto, ApiAuthType, ApiConnectionDto, DataConnectionDto, EmailConnectionDto, EmailProvider, McpServerDto, McpTransport, ProviderDescriptor, SearchHistoryStatusDto, ToolDescriptor, WebSearchProviderDescriptor } from '@shared/ipc-contract'
   import type { ThemeMode } from '../theme'
-  import { staleRuleNames } from '../auto-approve'
+  import { untrack } from 'svelte'
+  import { refreshSummary, staleRuleNames, toolSummary } from '../auto-approve'
   import type { OllamaRuntimeState, RuntimeState } from '@shared/runtime'
 
   let {
@@ -923,8 +924,19 @@
   // --- Auto-approve rules (TASKS.md #40) ---
   let tools = $state<ToolDescriptor[]>([])
 
-  async function loadTools(): Promise<void> {
-    tools = await window.sachiv.listTools()
+  let toolsRefreshing = $state(false)
+  let toolsStatus = $state('')
+  async function loadTools(showResult = false): Promise<void> {
+    const before = tools
+    toolsRefreshing = true
+    try {
+      tools = await window.sachiv.listTools()
+      if (showResult) toolsStatus = `Updated ${new Date().toLocaleTimeString()}: ${refreshSummary(before, tools)}`
+    } catch (err) {
+      if (showResult) toolsStatus = `Could not read the list: ${err instanceof Error ? err.message : String(err)}`
+    } finally {
+      toolsRefreshing = false
+    }
   }
   loadTools()
   const staleRules = $derived(staleRuleNames(autoApproveRules, tools))
@@ -937,7 +949,8 @@
       toolsFirstRun = false
       return
     }
-    void loadTools()
+    // untrack: loadTools reads `tools` and writes `toolsRefreshing`, which would otherwise make this effect depend on its own work and loop.
+    void untrack(() => loadTools())
   })
 </script>
 
@@ -1816,47 +1829,55 @@
       <code>mcp__server__tool</code>; each tool is listed on its own). Folder access outside the workspace is never auto-approved.
     </p>
     <p class="status">
-      <button type="button" onclick={() => void loadTools()}>Refresh list</button>
+      <button type="button" disabled={toolsRefreshing} onclick={() => void loadTools(true)}>{toolsRefreshing ? 'Refreshing…' : 'Refresh list'}</button>
+      <span role="status">{toolsStatus}</span>
     </p>
 
     {#if tools.length}
-      <ul class="connection-list auto-approve-list">
-        {#each tools as tool (tool.name)}
-          <li>
-            <label class="tool-rule">
-              <input
-                type="checkbox"
-                checked={Boolean(autoApproveRules[tool.name])}
-                onchange={(e) =>
-                  onToggleAutoApproveRule(tool.name, (e.target as HTMLInputElement).checked)}
-              />
-              <span class="conn-name">
-                {tool.name}
-                <span class="status">({tool.source})</span>
-                {#if tool.mutates === 'sometimes'}
-                  <span class="mcp-status error">
-                    Some calls of this tool only read and some change things. Ticking it skips the confirmation for <strong>all</strong>
-                    of them, including those that write or delete.
-                    {#if tool.name === 'db_execute_sql' || tool.name === 'api_call'}
-                      It applies to every {tool.name === 'db_execute_sql' ? 'database' : 'API'} connection, not one in particular.
-                    {/if}
-                  </span>
-                {:else if isShellLikeTool(tool.name)}
-                  <span class="mcp-status error">
-                    Runs commands that are not limited to the workspace (they can read your keys and system files). The session-wide
-                    "Auto-approve" switch never covers it; ticking it here is the only way to skip the confirmation.
-                  </span>
-                {:else if tool.source.startsWith('MCP server')}
-                  <span class="mcp-status error">
-                    The server did not mark this tool read-only, so it is treated as one that changes things. Ticking it lets the assistant
-                    run it without asking.
-                  </span>
-                {/if}
-              </span>
-            </label>
-          </li>
-        {/each}
-      </ul>
+      <div class="tool-table-wrap">
+        <table class="tool-table">
+          <thead>
+            <tr><th scope="col">Skip confirmation</th><th scope="col">Tool</th><th scope="col">What it does</th></tr>
+          </thead>
+          <tbody>
+            {#each tools as tool (tool.name)}
+              <tr>
+                <td class="tool-check">
+                  <input
+                    type="checkbox"
+                    aria-label={`Auto-approve ${tool.name}`}
+                    checked={Boolean(autoApproveRules[tool.name])}
+                    onchange={(e) => onToggleAutoApproveRule(tool.name, (e.target as HTMLInputElement).checked)}
+                  />
+                </td>
+                <td class="tool-name"><code>{tool.name}</code><span class="status tool-source">{tool.source}</span></td>
+                <td class="tool-desc">
+                  {toolSummary(tool.description)}
+                  {#if tool.mutates === 'sometimes'}
+                    <span class="mcp-status error">
+                      Some calls of this tool only read and some change things. Ticking it skips the confirmation for <strong>all</strong>
+                      of them, including those that write or delete.
+                      {#if tool.name === 'db_execute_sql' || tool.name === 'api_call'}
+                        It applies to every {tool.name === 'db_execute_sql' ? 'database' : 'API'} connection, not one in particular.
+                      {/if}
+                    </span>
+                  {:else if isShellLikeTool(tool.name)}
+                    <span class="mcp-status error">
+                      Runs commands that are not limited to the workspace (they can read your keys and system files). The session-wide
+                      "Auto-approve" switch never covers it; ticking it here is the only way to skip the confirmation.
+                    </span>
+                  {:else if tool.source.startsWith('MCP server')}
+                    <span class="mcp-status error">
+                      The server did not mark this tool read-only, so it is treated as one that changes things. Ticking it lets the assistant
+                      run it without asking.
+                    </span>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     {:else}
       <p class="status">No tools need confirmation yet.</p>
     {/if}
@@ -1867,14 +1888,19 @@
         These rules are still stored, but no tool with that name exists right now: a server that was removed or renamed, or one that is
         disconnected at the moment (its rules apply again when it reconnects). Remove the ones you no longer need.
       </p>
-      <ul class="connection-list auto-approve-list">
-        {#each staleRules as name (name)}
-          <li class="tool-rule">
-            <span class="conn-name">{name}</span>
-            <button type="button" onclick={() => onRemoveAutoApproveRule(name)}>Remove</button>
-          </li>
-        {/each}
-      </ul>
+      <table class="tool-table">
+        <thead>
+          <tr><th scope="col">Saved rule</th><th scope="col"><span class="sr-only">Action</span></th></tr>
+        </thead>
+        <tbody>
+          {#each staleRules as name (name)}
+            <tr>
+              <td class="tool-name"><code>{name}</code></td>
+              <td><button type="button" onclick={() => onRemoveAutoApproveRule(name)}>Remove</button></td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
     {/if}
 
     <hr />
@@ -2053,15 +2079,7 @@
     align-items: stretch;
     gap: 0.4rem;
   }
-  /* #165: caps the auto-approve list to ~15 visible rows with its own scroll, rather than growing
-     unbounded with the full tool registry. Scoped to this one list (not .connection-list itself,
-     shared by the data-source/MCP/API-connection lists, which must stay unbounded — #155). 36.5rem
-     measured live against a real 23-tool registry (897px / 23 rows ≈ 39px/row * 15 ≈ 585px), not
-     estimated from the CSS box model alone — an earlier 31rem estimate undershot to ~12-13 rows. */
-  .connection-list.auto-approve-list {
-    max-height: 36.5rem;
-    overflow-y: auto;
-  }
+  /* #165: the auto-approve table scrolls inside .tool-table-wrap (about 15 rows) instead of growing with the full tool registry. */
   .role-head {
     display: flex;
     align-items: center;
@@ -2098,6 +2116,50 @@
   }
   .key-check.key-bad {
     color: var(--danger);
+  }
+  .tool-table-wrap {
+    max-height: 36.5rem;
+    overflow: auto;
+  }
+  .tool-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  .tool-table th {
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    text-align: left;
+    font-weight: 600;
+    padding: 0.35rem 0.5rem;
+  }
+  .tool-table td {
+    padding: 0.4rem 0.5rem;
+    vertical-align: top;
+    border-top: 1px solid var(--border, rgba(128, 128, 128, 0.25));
+  }
+  .tool-check {
+    width: 1%;
+    text-align: center;
+  }
+  .tool-name {
+    white-space: nowrap;
+  }
+  .tool-source {
+    display: block;
+    font-size: 0.75rem;
+  }
+  .tool-desc .mcp-status {
+    display: block;
+    margin-top: 0.2rem;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
   }
   .tool-rule {
     display: flex;

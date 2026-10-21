@@ -101,13 +101,13 @@ Lets Anthropic reuse the unchanged start of each request at a fraction of the no
 
 Tools you tick here skip the confirmation dialog, and the choice is remembered. You can also switch these on from the confirmation panel itself ("Always auto-approve"). Be selective: an auto-approved tool can change files or send messages without asking.
 
-**What the list shows.** Every tool that can change something, one row each, with a tag saying where it comes from:
+**What the list shows.** A table with one row for every tool that can change something: a checkbox (**Skip confirmation**), the tool's name with a tag saying where it comes from, and a one-line description (for an MCP server's tool, only the first sentence of what the server says, shortened). The sources are:
 
 - **Built-in** tools of the application (for example `write_file`, `shell_execute`, `db_execute_sql`, `api_call`).
 - **Saved query**: a database query you asked the assistant to save (`db_query_…`).
 - **MCP server: name**: one row for each tool of a connected MCP server, named `mcp__server__tool` (two underscores each side). A server with many tools therefore gives many rows. A tool the server did not mark read-only counts as one that changes things.
 
-The list is read when you open Settings, and again when the servers or connections on that screen change; **Refresh list** reads it again by hand (for example after the assistant saved a query).
+The list is read when you open Settings, and again when the servers or connections on that screen change; **Refresh list** reads it again by hand (for example after the assistant saved a query) and says what it found, for example "Updated 11:43:32: 24 tools, no changes".
 
 **Read the red notes.** A tool that only sometimes changes things (SQL, an API call, `git_exec`) is approved for **all** its calls, including those that write or delete. The rule is per tool, not per connection: ticking `db_execute_sql` covers every database you have connected, and `api_call` every API connection. Folder access outside the workspace through the file tools is never auto-approved, not by a rule and not by the session setting. Tools that run commands or scripts (`shell_execute`, `python_run`, `git_exec`, `aws_cli`, `azure_cli`, `gcloud_cli`, `github_cli`) are not limited to the workspace; the session setting never covers them, so only a rule ticked here for that one tool skips their confirmation.
 
