@@ -201,6 +201,7 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T24 | Outside-workspace access never auto-approved | **Pass** (with the absolute path; findings #234 and #235 stand) | Linux (2026-10-21) | Deepak: with the session auto-approve on, `read_file` on `/home/deepak/Downloads/sachiv_t24.txt` still showed the "Allow access outside the workspace?" question. Earlier attempts failed because of the shell route (#234) and the unexpanded `~` (#235) |
 | T24b | Protected location refused without a question (optional) | **Pass** | Linux (2026-10-21) | Deepak. `read_file` on a protected location is refused with no question (the shell bypass is #234) |
 | T25 | Bar chart saved and shown | **Fail** (partial: file correct, image not shown) | Linux (2026-10-21) | Deepak, gpt-4o-mini, Auto: `python_run` ran at the top level and `resources/bars.png` was created, but the chart did not appear in the chat and the reply only named the file. Cause and fix: **TASKS #236** |
-| T26 to T31 | Smoke tests | | | |
+| T26 | Word document created | **Odd** (works; wasteful and padded, TASKS #237) | Linux (2026-10-21) | Deepak, gpt-4o-mini: `documents/hello.docx` created and opens, but `office_create_document` was called three times (two rejected by the head-and-tail rule / a misuse of `fromPreviousAnswer`) and the document got an extra, unrequested closing paragraph, so it has 2 paragraphs instead of 1 |
+| T27 to T31 | Smoke tests | | | |
 
 When everything is Pass (or the failures are fixed and re-tested), tell Claude: it will record the results in `TASKS.md` and `docs/manual_testing.md`, then ask for your go-ahead to merge, tag and build the draft release.
