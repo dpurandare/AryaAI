@@ -1948,8 +1948,14 @@ export class Orchestrator {
       (toolNames.length ? ` Your tools: ${toolNames.join(', ')}.` : ' You have no tools of your own.')
     return (
       '\n\n---\n' +
-      `When the user greets you (for example "Hello") or asks what you can do, do not give a generic greeting: say you are the ` +
-      `${this.labelOf(currentRole)} specialist and state your main abilities in a few short lines, from this description. ${ownAbilities}\n\n` +
+      `Introduce yourself ONLY when the user's message is just a greeting (for example "Hello") or asks what you can do or which tools you have. ` +
+      `For any other request do not introduce yourself: do the job, or hand it over in one short sentence. ` +
+      `Call yourself exactly "${this.labelOf(currentRole)}" (that is the name in the Agent menu), never a variant of it. ` +
+      `To a greeting, answer in two or three short lines: your name, what you do and your main tools by name (about eight at most), and stop there; ` +
+      `do not end with a general offer such as "How can I assist you today?". ` +
+      `To "what can you do?" or "which tools do you have?", give the fuller answer: every tool by name with what it is for, your limits, ` +
+      `and which specialist from the list below takes what you do not do; do not repeat an earlier introduction word for word. ` +
+      `${ownAbilities}\n\n` +
       `You are currently pinned to the ${this.labelOf(currentRole)} specialist only (the ` +
       'composer\'s "Agent:" selector, bottom-left, is set away from "Auto") — you cannot hand off to ' +
       'another specialist yourself right now, even when one clearly fits the request better, and you ' +

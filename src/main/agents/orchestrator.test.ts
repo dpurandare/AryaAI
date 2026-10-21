@@ -615,8 +615,11 @@ describe('Orchestrator (integration, mocked provider)', () => {
       await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }], role)
       const system = provider.requests[0].system ?? ''
       const label = roleLabel(role)
-      expect(system).toContain(`When the user greets you`)
-      expect(system).toContain(`say you are the ${label} specialist`)
+      expect(system).toContain('Introduce yourself ONLY when the user\'s message is just a greeting')
+      expect(system).toContain('For any other request do not introduce yourself')
+      expect(system).toContain(`Call yourself exactly "${label}"`)
+      expect(system).toContain('do not end with a general offer')
+      expect(system).toContain('every tool by name with what it is for')
       expect(system).toContain(`Your abilities: ${roleMeta(role)?.description}`)
     }
   })
