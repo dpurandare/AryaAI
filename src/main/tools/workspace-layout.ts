@@ -29,6 +29,9 @@ export const MANAGED_FOLDERS: readonly ManagedFolder[] = ['code', 'documents', '
  * excluded from it for the same reason they're excluded from write-placement: not ordinary managed content. */
 export const EXCLUDED_FOLDERS: readonly string[] = ['templates', '.sachiv-clones']
 
+/** TASKS #238: Sachivji's own working folder. Never shown to the model by `list_directory` or `find_files` (User Guide 08: the assistant must not quote it to the user); its paths reach the model only through handoff messages. */
+export const INTERNAL_FOLDER = '.sachiv-handoff'
+
 const CODE_EXTENSIONS = new Set([
   'py', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'sh', 'bash', 'zsh', 'ps1', 'bat', 'cmd',
   'java', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'go', 'rb', 'php', 'rs', 'swift', 'kt', 'kts',

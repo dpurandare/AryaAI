@@ -27,6 +27,14 @@ describe('get_environment', () => {
     expect(text).toContain('a bare file name lands in the workspace root')
   })
 
+  it('says which conventional folders do not exist yet, so none is reported as present when it is not (TASKS #238)', () => {
+    const text = buildEnvironment({ ...base, workspaceExists: (rel) => ['code', 'documents'].includes(rel) })
+    expect(text).toContain('- code/ : scripts and source you write\n')
+    expect(text).toMatch(/- templates\/ : the user's own templates, read as input \(not created yet\)/)
+    expect(text).toMatch(/- exports\/ : .*\(not created yet\)/)
+    expect(text).not.toMatch(/- documents\/ : .*not created yet/)
+  })
+
   it('names the OS, shell, home and the common folders that exist, and the date in the time zone', () => {
     const text = buildEnvironment(base)
     expect(text).toContain('OS: macOS 25.0.0 (arm64)')

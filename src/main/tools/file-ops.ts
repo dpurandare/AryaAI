@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, extname } from 'node:path'
 import { isInsideWorkspace, resolveReadable, resolveWritableNewOutside } from '../security/external-access'
 import type { Tool } from './types'
-import { resolveNewFilePath, workspaceRelativePath } from './workspace-layout'
+import { INTERNAL_FOLDER, resolveNewFilePath, workspaceRelativePath } from './workspace-layout'
 
 const MAX_READ_BYTES = 200_000
 
@@ -85,7 +85,7 @@ export const listDirectoryTool: Tool = {
   externalPaths: (input) => [{ path: String(input.path ?? '.'), access: 'read' }],
   async execute(input, ctx) {
     const path = resolveReadable(ctx, String(input.path ?? '.'))
-    const entries = await readdir(path, { withFileTypes: true })
+    const entries = (await readdir(path, { withFileTypes: true })).filter((e) => e.name !== INTERNAL_FOLDER)
     if (entries.length === 0) return '(empty directory)'
     return entries
       .map((e) => `${e.isDirectory() ? 'dir ' : 'file'}  ${e.name}`)

@@ -25,6 +25,14 @@ describe('find_files', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it("does not return files from Sachivji's own .sachiv-handoff folder (TASKS #238)", async () => {
+    await touch(root, '.sachiv-handoff/turn1/rows.json')
+    await touch(root, 'data/rows.json')
+    const out = await findFilesTool.execute({ pattern: '**/rows.json' }, ctx)
+    expect(out).toContain('data/rows.json')
+    expect(out).not.toContain('.sachiv-handoff')
+  })
+
   it('finds files matching a ** glob across nested directories', async () => {
     await touch(root, 'charts/2020.png')
     await touch(root, 'charts/nested/2021.png')

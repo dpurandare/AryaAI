@@ -2,7 +2,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { isInsideWorkspace, resolveReadable } from '../security/external-access'
 import type { Tool } from './types'
-import { EXCLUDED_FOLDERS, workspaceRelativePath } from './workspace-layout'
+import { EXCLUDED_FOLDERS, INTERNAL_FOLDER, workspaceRelativePath } from './workspace-layout'
 
 /**
  * TASKS.md #148: recursive find-by-pattern, the fix for the incident that
@@ -16,6 +16,7 @@ import { EXCLUDED_FOLDERS, workspaceRelativePath } from './workspace-layout'
  * `EXCLUDED_FOLDERS` (workspace-layout.ts), reused rather than duplicated so the two lists can't drift apart. */
 const DEFAULT_IGNORED_DIRS = new Set([
   ...EXCLUDED_FOLDERS,
+  INTERNAL_FOLDER,
   'node_modules',
   '.git',
   'venv',

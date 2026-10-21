@@ -19,6 +19,8 @@ export interface EnvironmentInput {
   timeZone?: string
   workspaceRoot: string
   runtime?: RuntimeState | null
+  /** Whether a workspace sub-folder exists right now (tests pass a fake); defaults to the disk. */
+  workspaceExists?: (relativeFolder: string) => boolean
   /** Folders outside the workspace the user allowed for good (Settings > Workspace). */
   allowedFolders?: string[]
 }
@@ -51,12 +53,15 @@ export function buildEnvironment(input: EnvironmentInput): string {
     'Everything the user asks you to create or save goes in the workspace, not in the folder of a file you were just reading. ' +
       'Relative paths resolve against it, and the shell and Python run inside it, so prefer relative paths.'
   )
-  out.push('- code/ : scripts and source you write')
-  out.push('- documents/ : Word, Excel, PowerPoint and PDF files you produce')
-  out.push('- resources/ : pictures, charts and other media')
-  out.push('- exports/ : files exported for the user (the Export Settings dialog opens here)')
-  out.push('- tmp/ : scratch files (the SACHIV_TMP environment variable in scripts), cleaned up after a few days')
-  out.push('- templates/ : the user\'s own templates, read as input')
+  // TASKS #238: say which of the conventional folders exist now, so a model does not report one that was never created (a phantom templates/).
+  const present = input.workspaceExists ?? ((rel: string) => exists(join(root, rel)))
+  const folder = (name: string, purpose: string): string => `- ${name}/ : ${purpose}${present(name) ? '' : ' (not created yet)'}`
+  out.push(folder('code', 'scripts and source you write'))
+  out.push(folder('documents', 'Word, Excel, PowerPoint and PDF files you produce'))
+  out.push(folder('resources', 'pictures, charts and other media'))
+  out.push(folder('exports', 'files exported for the user (the Export Settings dialog opens here)'))
+  out.push(folder('tmp', 'scratch files (the SACHIV_TMP environment variable in scripts), cleaned up after a few days'))
+  out.push(folder('templates', "the user's own templates, read as input"))
   out.push('A new file of a known type is filed in the matching folder even when only a bare name is given.')
   out.push('In scripts and shell commands a bare file name lands in the workspace root: save charts and images to resources/, documents to documents/, scratch to tmp/, and never leave generated files loose in the root.')
 

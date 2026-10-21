@@ -165,6 +165,14 @@ describe('file-ops tools', () => {
       expect(listing).toContain('dir   sub')
     })
 
+    it("never shows Sachivji's own .sachiv-handoff folder (TASKS #238)", async () => {
+      await writeFileTool.execute({ path: 'a.txt', content: '1' }, ctx)
+      await mkdir(join(root, '.sachiv-handoff', 'turn1'), { recursive: true })
+      const listing = await listDirectoryTool.execute({}, ctx)
+      expect(listing).toContain('file  a.txt')
+      expect(listing).not.toContain('.sachiv-handoff')
+    })
+
     it('reports an empty directory', async () => {
       expect(await listDirectoryTool.execute({}, ctx)).toBe('(empty directory)')
     })
