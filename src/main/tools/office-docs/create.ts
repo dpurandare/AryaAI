@@ -80,6 +80,9 @@ export const documentFraming = { enforce: true }
 function documentFramingProblem(title: string | undefined, sections: DocxSection[]): string | null {
   const hasProse = (s: DocxSection | undefined): boolean => !!s?.paragraphs?.some((p) => typeof p === 'string' && p.trim())
   const isProseOnly = (s: DocxSection): boolean => !s.table && !s.bullets?.length && !s.numbers?.length
+  // TASKS #237: a short note (one prose-only section, no table or list) has nothing to frame; requiring a head and a tail made the model
+  // pad "one short paragraph" with a second one. Anything with a table or list, or with several sections, is still held to the rule.
+  if (sections.length === 1 && isProseOnly(sections[0]) && hasProse(sections[0])) return null
   const missing: string[] = []
   if (!title?.trim()) missing.push('a `title`')
   if (!hasProse(sections[0])) {

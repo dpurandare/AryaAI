@@ -73,6 +73,24 @@ describe('office_create_document', () => {
       ).rejects.toThrow(/no head or tail.*title.*opening.*final prose-only/s)
     })
 
+    it('accepts a short plain note first time: one prose-only section needs no head or tail (TASKS #237)', async () => {
+      const result = await officeCreateDocumentTool.execute(
+        { path: 'hello.docx', title: 'Hello', sections: [{ heading: 'Hello', paragraphs: ['A single short paragraph.'] }] },
+        ctx
+      )
+      expect(result).toBe('Created documents/hello.docx.')
+    })
+
+    it('still refuses a single section with a table or a list, and a single empty section', async () => {
+      await expect(
+        officeCreateDocumentTool.execute({ path: 'a.docx', title: 'T', sections: [{ paragraphs: ['Intro'], table: { headers: ['A'], rows: [['1']] } }] }, ctx)
+      ).rejects.toThrow(/no head or tail/)
+      await expect(
+        officeCreateDocumentTool.execute({ path: 'b.docx', title: 'T', sections: [{ paragraphs: ['Intro'], bullets: ['x'] }] }, ctx)
+      ).rejects.toThrow(/no head or tail/)
+      await expect(officeCreateDocumentTool.execute({ path: 'c.docx', title: 'T', sections: [{ heading: 'Only a heading' }] }, ctx)).rejects.toThrow(/no head or tail/)
+    })
+
     it('accepts a title, an opening paragraph and a closing paragraph', async () => {
       const result = await officeCreateDocumentTool.execute(
         {
