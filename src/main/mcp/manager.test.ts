@@ -54,6 +54,23 @@ describe('McpManager', () => {
     })
   })
 
+  it('connectMissing connects only servers without a live entry (a settings import writes configs but does not connect)', async () => {
+    mockListServerConfigs.mockReturnValue([configA])
+    mockConnectMcpServer.mockResolvedValue({ client: { close: closeSpy }, tools: [fakeTool('mcp__fs__read_file')] })
+    const manager = new McpManager()
+    await manager.connectAll(registry)
+
+    const imported: McpServerConfig = { id: 'c', name: 'wiki', transport: 'stdio', command: 'node' }
+    mockListServerConfigs.mockReturnValue([configA, imported])
+    mockConnectMcpServer.mockClear()
+    mockConnectMcpServer.mockResolvedValue({ client: { close: closeSpy }, tools: [fakeTool('mcp__wiki__create_page')] })
+    await manager.connectMissing(registry)
+
+    expect(mockConnectMcpServer).toHaveBeenCalledTimes(1)
+    expect(registry.get('mcp__wiki__create_page')).toBeDefined()
+    expect(manager.getStatus('c')?.status).toBe('connected')
+  })
+
   it('a failed server records an error status and does not block a successful one in the same batch', async () => {
     mockListServerConfigs.mockReturnValue([configA, configB])
     mockConnectMcpServer.mockImplementation(async (config: McpServerConfig) => {

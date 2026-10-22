@@ -492,9 +492,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.SettingsImportPreview, (event): Promise<SettingsImportPreviewResult> =>
     previewSettingsImport(BrowserWindow.fromWebContents(event.sender), userRolesFolder())
   )
-  ipcMain.handle(IpcChannel.SettingsImportApply, (_event, payload: SettingsExportPayload): SettingsImportApplyResult =>
-    applySettingsImport(payload, userRolesFolder())
-  )
+  ipcMain.handle(IpcChannel.SettingsImportApply, async (_event, payload: SettingsExportPayload): Promise<SettingsImportApplyResult> => {
+    const result = applySettingsImport(payload, userRolesFolder())
+    // The import only writes the MCP server configs; connect the new ones now so their tools register (and show in Auto-approve rules).
+    await mcpManager.connectMissing(toolRegistry)
+    return result
+  })
 
   ipcMain.handle(IpcChannel.ExternalFoldersList, (): string[] => externalAccess.listAlways())
   ipcMain.handle(IpcChannel.ExternalFoldersRemove, (_event, folder: string): void => externalAccess.revokeAlways(folder))

@@ -34,6 +34,11 @@ export class McpManager {
     await Promise.all(listServerConfigs().map((config) => this.connect(config, registry)))
   }
 
+  /** Connects every configured server that has no live entry yet (e.g. just added by a settings import, which only writes the config). */
+  async connectMissing(registry: ToolRegistry): Promise<void> {
+    await Promise.all(listServerConfigs().filter((c) => !this.servers.has(c.id)).map((c) => this.connect(c, registry)))
+  }
+
   async reconnect(id: string, registry: ToolRegistry): Promise<void> {
     this.disconnect(id, registry)
     const config = listServerConfigs().find((c) => c.id === id)
