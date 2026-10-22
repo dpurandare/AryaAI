@@ -17,7 +17,7 @@ Rough time: section A 15 min per OS, B to H about 60 min, I 15 min.
 
 ## L. What is still to do (updated 2026-10-22)
 
-Nothing here is a failure; it is the list of what has not been run yet. Tick them off in the Results table (rows L1 to L12). **L1 to L3 need the NEXT build** (fixes made after `7aca87e`: #239, #240, #241); Claude will say when it is built and put its links in "The builds to test".
+Nothing here is a failure; it is the list of what has not been run yet. Tick them off in the Results table (rows L1 to L12). **L1 to L3 need the build from `4f16316` or later** (fixes made after `7aca87e`: #239, #240, #241); it is built, links in "The builds to test". Use it for L4 to L10 as well.
 
 | ID | Where | Steps | Expect |
 |---|---|---|---|
@@ -38,15 +38,15 @@ Nothing here is a failure; it is the list of what has not been run yet. Tick the
 
 ## The builds to test
 
-Built from commit `7aca87e` on `release/0.3.2` (CI green on Windows, macOS and Linux, run 39554420985) on 2026-10-21, after the fixing cycle (#232 to #238). The first builds (`9ae657d`) were replaced and deleted. **They expire on 2026-11-04** (14 days); if a fix is made, the installers are rebuilt and these links are replaced. Downloading needs a GitHub login with access to the repository.
+Built from commit `4f16316` on `release/0.3.2` (CI green on Windows, macOS and Linux, run 39793668598) on 2026-10-22, after the second fixing round (#239 model picker, #240 MCP import, #241 MCP startup errors, on top of #232 to #238). The earlier builds (`7aca87e`) are superseded; their runs are kept for now and are not needed. **These expire on 2026-11-05** (14 days); if a fix is made, the installers are rebuilt and these links are replaced. Downloading needs a GitHub login with access to the repository.
 
 | OS | Artifact (zip containing the installer) | Size | Run |
 |---|---|---|---|
-| Windows | [sachivji-windows-installer](https://github.com/dpurandare/AryaAI/actions/runs/39554659097/artifacts/12324679478) | 286 MB | [39554659097](https://github.com/dpurandare/AryaAI/actions/runs/39554659097) |
-| macOS (Apple Silicon) | [sachivji-macos-installer](https://github.com/dpurandare/AryaAI/actions/runs/39554661914/artifacts/12325211201) | 513 MB | [39554661914](https://github.com/dpurandare/AryaAI/actions/runs/39554661914) |
-| Linux | [sachivji-linux-installer](https://github.com/dpurandare/AryaAI/actions/runs/39554664793/artifacts/12324928615) | 706 MB | [39554664793](https://github.com/dpurandare/AryaAI/actions/runs/39554664793) |
+| Windows | [sachivji-windows-installer](https://github.com/dpurandare/AryaAI/actions/runs/39795558273/artifacts/12434315054) | 286 MB | [39795558273](https://github.com/dpurandare/AryaAI/actions/runs/39795558273) |
+| macOS (Apple Silicon) | [sachivji-macos-installer](https://github.com/dpurandare/AryaAI/actions/runs/39795565635/artifacts/12432903379) | 513 MB | [39795565635](https://github.com/dpurandare/AryaAI/actions/runs/39795565635) |
+| Linux | [sachivji-linux-installer](https://github.com/dpurandare/AryaAI/actions/runs/39795569414/artifacts/12434080902) | 706 MB | [39795569414](https://github.com/dpurandare/AryaAI/actions/runs/39795569414) |
 
-From a terminal instead (GitHub CLI, signed in): `gh run download 39554659097 -R dpurandare/AryaAI -n sachivji-windows-installer` (use `39554661914` / `sachivji-macos-installer` and `39554664793` / `sachivji-linux-installer` for the others).
+From a terminal instead (GitHub CLI, signed in): `gh run download 39795558273 -R dpurandare/AryaAI -n sachivji-windows-installer` (use `39795565635` / `sachivji-macos-installer` and `39795569414` / `sachivji-linux-installer` for the others).
 
 ## Where things are, per operating system
 
