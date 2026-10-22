@@ -15,6 +15,27 @@ For Deepak. Written 2026-10-20 for the `release/0.3.2` branch, version **0.3.2**
 
 Rough time: section A 15 min per OS, B to H about 60 min, I 15 min.
 
+## L. What is still to do (updated 2026-10-22)
+
+Nothing here is a failure; it is the list of what has not been run yet. Tick them off in the Results table (rows L1 to L12). **L1 to L3 need the NEXT build** (fixes made after `7aca87e`: #239, #240, #241); Claude will say when it is built and put its links in "The builds to test".
+
+| ID | Where | Steps | Expect |
+|---|---|---|---|
+| **L1** (#240) | next build, any OS | Settings > MCP servers: add `test_wiki` (see the appendix; its tools are not read-only). Export settings, remove the server, then Import the file. Do NOT restart. | The server is listed as **Connected · 3 tools** and the three `mcp__test_wiki__...` rows are in Settings > Auto-approve rules (Refresh list if needed). |
+| **L2** (#239) | next build, any OS | Click the provider/model text in the status bar: the box opens. Click somewhere else in the window (chat area, sidebar). Open it again and press Escape. Open it again and click the trigger once more. | The box closes on a click elsewhere, on Escape and on a second click of the trigger. Choosing a provider or model inside the box still works. |
+| **L3** (#241) | next build, Windows first | Add `test_wiki` with the script **alone** in a folder with no `node_modules` (the failure you saw). Then with a wrong path. Then with command `nodee`. | Short red status line with the cause: "Cannot find package ... npm install", "The file to run was not found", "The command was not found". A **Show details** link opens the command, the error and the server output; Reconnect after fixing connects it. |
+| **L4** (T14w) | Windows VM | Run T14w (section G). | Files moved to `resources/`, paths listed with `/`. |
+| **L5** (T28) | Windows VM | Run T28 (section I). | Workspace path shown; PowerShell syntax works. |
+| **L6** (T1, upgrade) | Windows VM | Run T1: install 0.3.2 over 0.3.1 (SmartScreen: More info, Run anyway). | Installs; the app starts; settings and chats are still there. |
+| **L7** (I) | Windows VM | Smoke tests T25 to T31 (section I). | As in the table of section I. |
+| **L8** (macOS) | Mac | Run T1 (dmg, `xattr -cr` if blocked) and T5 (`open -n -a Sachivji`). | As T1 and T5. |
+| **L9** (macOS) | Mac | Section K (R1 to R9). | As section K. |
+| **L10** (R1..R9) | Ubuntu 20.04 machine | Section K (R1 to R9). | As section K. |
+| **L11** (R1 odd) | any | Not a test: Deepak decides whether the varying greetings when several agents are pinned in turn in ONE chat are acceptable for 0.3.2 or need a fix. | Decision recorded. |
+| **L12** (T10) | any | Not a test: OK to use the stored OpenAI key for the greeting probe, or re-run T10 (`gpt-4o-mini`) by hand. | Result recorded. |
+
+---
+
 ## The builds to test
 
 Built from commit `7aca87e` on `release/0.3.2` (CI green on Windows, macOS and Linux, run 39554420985) on 2026-10-21, after the fixing cycle (#232 to #238). The first builds (`9ae657d`) were replaced and deleted. **They expire on 2026-11-04** (14 days); if a fix is made, the installers are rebuilt and these links are replaced. Downloading needs a GitHub login with access to the repository.
@@ -234,6 +255,18 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | R7 | Chart appears in the chat (#236) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
 | R8 | One-paragraph Word note, one call (#237) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
 | R9 | Workspace overview without internal folder or phantom templates (#238) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
+| L1 | Import connects the MCP server (#240) | | | |
+| L2 | Model picker closes outside (#239) | | | |
+| L3 | MCP startup error and Show details (#241) | | | |
+| L4 | Windows: shell files moved (T14w) | | | |
+| L5 | Windows: PowerShell (T28) | | | |
+| L6 | Windows: installer upgrade, SmartScreen (T1) | | | |
+| L7 | Windows: smoke tests (T25-T31) | | | |
+| L8 | macOS: dmg and single instance (T1, T5) | | | |
+| L9 | macOS: section K | | | |
+| L10 | Ubuntu 20.04: section K | | | |
+| L11 | Decision on R1 (varying greetings) | | | |
+| L12 | T10 greeting probe on gpt-4o-mini | | | |
 
 When everything is Pass (or the failures are fixed and re-tested), tell Claude: it will record the results in `TASKS.md` and `docs/manual_testing.md`, then ask for your go-ahead to merge, tag and build the draft release.
 
