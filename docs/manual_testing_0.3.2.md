@@ -236,3 +236,33 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | R9 | Workspace overview without internal folder or phantom templates (#238) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
 
 When everything is Pass (or the failures are fixed and re-tested), tell Claude: it will record the results in `TASKS.md` and `docs/manual_testing.md`, then ask for your go-ahead to merge, tag and build the draft release.
+
+## Appendix: a test MCP server whose tools need confirmation (Windows, Linux, Mac)
+
+Why: real servers such as Context7 declare all their tools read-only (`readOnlyHint: true`). Those tools never ask for confirmation, so they correctly have **no row** in Settings > Auto-approve rules. To test the rules table, the add / remove / import steps and the "Connected · N tools" status you need a server whose tools are **not** read-only. `scripts/manual-test-mcp-server.mjs` is one: three tools (`search_pages`, `list_pages`, `create_page`), none read-only, so all three get a row (`mcp__test_wiki__...`).
+
+**The catch:** the script imports the MCP SDK and `zod` from `../node_modules/...`, relative to the script. Copied alone to a machine without the repo's `node_modules`, `node` fails with `ERR_MODULE_NOT_FOUND`, exits at once and Sachivji shows **Error: MCP error -32000: Connection closed**. Node itself must be installed (Sachivji's bundled Node is not on your PATH).
+
+**Setup on a machine without the repo's `node_modules` (PowerShell shown; on Linux/Mac use `mkdir -p`, `cp`, forward slashes):**
+
+```
+mkdir C:\mcp-test\scripts
+cd C:\mcp-test
+npm init -y
+npm install @modelcontextprotocol/sdk zod
+copy <path to>\manual-test-mcp-server.mjs C:\mcp-test\scripts\
+node scripts\manual-test-mcp-server.mjs
+```
+
+The last command should sit silently waiting for input (no error); stop it with Ctrl+C. `node_modules` next to `scripts` is what the imports expect.
+
+**In Settings > MCP servers > Add MCP server:** name `test_wiki`, a one-line description, transport **Local (stdio)**, command `node`, arguments the full path of the script (`C:\mcp-test\scripts\manual-test-mcp-server.mjs`). Save.
+
+**Expected:** status **Connected · 3 tools**; in Auto-approve rules, after **Refresh list**, three rows tagged **MCP server: test_wiki** (`mcp__test_wiki__search_pages`, `__list_pages`, `__create_page`), each with the "server did not mark this tool read-only" warning. Remove the server: the rows disappear (a ticked rule moves to the "not available now" table). Export, remove, Import: the server and its rows come back **without a restart** (this needs a build with fix #240).
+
+**Troubleshooting:**
+
+| Status line | Meaning |
+|---|---|
+| Error: MCP error -32000: Connection closed | `node` exited at start: wrong path, `node` not installed, or `ERR_MODULE_NOT_FOUND` (run the script by hand to see which) |
+| Connected · 2 tools, no `mcp__` rows | the server is fine but its tools are read-only (e.g. Context7); nothing to confirm, no rule needed |
