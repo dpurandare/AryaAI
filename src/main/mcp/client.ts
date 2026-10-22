@@ -50,17 +50,52 @@ function defaultBundledNodeDir(): string | undefined {
   return undefined
 }
 
-function buildTransport(config: McpServerConfig, token: string | undefined, bundledNodeDir: string | undefined): Transport {
+const STDERR_HEAD_MAX = 1500
+
+function buildTransport(config: McpServerConfig, token: string | undefined, bundledNodeDir: string | undefined): { transport: Transport; stderrTail: () => string } {
   if (config.transport === 'stdio') {
-    return new StdioClientTransport({
+    const transport = new StdioClientTransport({
       command: config.command ?? '',
       args: config.args,
-      env: resolveStdioEnv(config.env, bundledNodeDir)
+      env: resolveStdioEnv(config.env, bundledNodeDir),
+      stderr: 'pipe'
     })
+    // Keep the start of what the server prints to stderr: when it dies at startup the first lines ("Cannot find module ...")
+    // are the clue and the stack trace after them is noise.
+    let head = ''
+    transport.stderr?.on('data', (chunk: Buffer | string) => {
+      if (head.length < STDERR_HEAD_MAX) head = (head + String(chunk)).slice(0, STDERR_HEAD_MAX)
+    })
+    return { transport, stderrTail: () => head.trim() }
   }
-  return new StreamableHTTPClientTransport(new URL(config.url ?? ''), {
+  const transport = new StreamableHTTPClientTransport(new URL(config.url ?? ''), {
     requestInit: token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
   })
+  return { transport, stderrTail: () => '' }
+}
+
+/**
+ * The status line for a server that failed to start. A bare "MCP error -32000: Connection closed" only says the process
+ * exited; this adds what the process printed and the usual cause, so the user can tell a wrong path from a missing package.
+ */
+export function explainStartupFailure(config: Pick<McpServerConfig, 'transport' | 'command' | 'args'>, message: string, stderrText: string): string {
+  if (config.transport !== 'stdio') return message
+  const parts = [message]
+  if (/ENOENT/.test(message)) {
+    parts.push(`The command "${config.command ?? ''}" was not found. Check that it is installed and spelled right (open a terminal and run it there).`)
+  } else if (stderrText) {
+    parts.push(`The server printed: ${stderrText.replace(/\s+/g, ' ').slice(0, 400)}`)
+    if (/Cannot find package|node_modules/.test(stderrText)) {
+      parts.push("A package the server needs is not installed where it runs. Install its dependencies (npm install) in the server's folder.")
+    } else if (/Cannot find module|MODULE_NOT_FOUND/.test(stderrText)) {
+      parts.push('The file to run was not found. Check the path in the arguments.')
+    }
+  } else if (/Connection closed|closed/i.test(message)) {
+    parts.push(
+      `The program exited at once without saying why. Run "${[config.command, ...(config.args ?? [])].filter(Boolean).join(' ')}" in a terminal to see the error; check the file path and that the program is installed.`
+    )
+  }
+  return parts.join(' ')
 }
 
 /** MCP tool content can include non-text parts; nothing in the app renders those yet, so they're summarized rather than dropped silently. */
@@ -130,8 +165,12 @@ export async function connectMcpServer(
   bundledNodeDir: string | undefined = defaultBundledNodeDir()
 ): Promise<{ client: Client; tools: Tool[] }> {
   const client = new Client({ name: 'sachiv', version: '0.3.2' })
-  const transport = buildTransport(config, token, bundledNodeDir)
-  await client.connect(transport)
+  const { transport, stderrTail } = buildTransport(config, token, bundledNodeDir)
+  try {
+    await client.connect(transport)
+  } catch (err) {
+    throw new Error(explainStartupFailure(config, err instanceof Error ? err.message : String(err), stderrTail()))
+  }
 
   const { tools: mcpTools } = await client.listTools()
   const tools = mcpTools.map((mcpTool) => wrapMcpTool(client, config.name, config.description, mcpTool))

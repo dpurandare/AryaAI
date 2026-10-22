@@ -27,7 +27,7 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
   StreamableHTTPClientTransport: FakeStreamableHttpTransport
 }))
 
-const { connectMcpServer, resolveStdioEnv, MCP_TOOL_DESCRIPTION_MAX } = await import('./client')
+const { connectMcpServer, resolveStdioEnv, explainStartupFailure, MCP_TOOL_DESCRIPTION_MAX } = await import('./client')
 
 const stdioConfig: McpServerConfig = {
   id: 's1',
@@ -173,5 +173,39 @@ describe('connectMcpServer', () => {
     mockCallTool.mockResolvedValue({ content: [{ type: 'text', text: 'boom' }], isError: true })
 
     await expect(tools[0].execute({}, {} as never)).rejects.toThrow('boom')
+  })
+})
+
+describe('explainStartupFailure (TASKS #241)', () => {
+  const cfg = { transport: 'stdio' as const, command: 'node', args: ['C:\\x\\server.mjs'] }
+
+  it('adds what the server printed and the usual fix for a missing package', () => {
+    const msg = explainStartupFailure(cfg, 'MCP error -32000: Connection closed', "Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'C:\\x\\node_modules\\zod'")
+    expect(msg).toContain('Connection closed')
+    expect(msg).toContain('The server printed: Error [ERR_MODULE_NOT_FOUND]')
+    expect(msg).toContain('npm install')
+  })
+
+  it('says the file was not found for a wrong path', () => {
+    const msg = explainStartupFailure(cfg, 'MCP error -32000: Connection closed', "Error: Cannot find module '/nonexistent.mjs'")
+    expect(msg).toContain('The file to run was not found')
+    expect(msg).not.toContain('npm install')
+  })
+
+  it('says the command was not found for ENOENT', () => {
+    expect(explainStartupFailure(cfg, 'spawn node ENOENT', '')).toContain('The command "node" was not found')
+  })
+
+  it('tells the user how to see the error when the server exits silently', () => {
+    expect(explainStartupFailure(cfg, 'MCP error -32000: Connection closed', '')).toContain('Run "node C:\\x\\server.mjs" in a terminal')
+  })
+
+  it('leaves http errors alone', () => {
+    expect(explainStartupFailure({ transport: 'http' }, 'HTTP 401', '')).toBe('HTTP 401')
+  })
+
+  it('connectMcpServer rethrows with the explanation', async () => {
+    mockConnect.mockRejectedValueOnce(new Error('MCP error -32000: Connection closed'))
+    await expect(connectMcpServer(stdioConfig, undefined)).rejects.toThrow(/Run "npx -y server-filesystem" in a terminal/)
   })
 })

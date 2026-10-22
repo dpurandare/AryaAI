@@ -98,6 +98,8 @@ MCP (Model Context Protocol) servers add tools from outside: a wiki, a knowledge
 Things to know:
 
 - Sachivji includes Node.js, so servers started with `npx` work without installing Node yourself.
+- If a server cannot start, its status line shows what the program printed and the likely cause (wrong file path, program not installed, missing packages); see [Troubleshooting](12-troubleshooting.md).
+- Tools a server declares read-only never ask for confirmation, so they have no row in Settings > Auto-approve rules.
 - Each connected server's tools belong to the **MCP Operator** specialist only. A server with many tools therefore adds nothing to other requests.
 - Text that comes from a server (its tool descriptions) is treated as untrusted third-party text and is shortened.
 - A server that stops working shows its error; use **Reconnect** to try again.
