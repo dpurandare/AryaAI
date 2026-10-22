@@ -182,7 +182,7 @@ describe('explainStartupFailure (TASKS #241)', () => {
   it('adds what the server printed and the usual fix for a missing package', () => {
     const msg = explainStartupFailure(cfg, 'MCP error -32000: Connection closed', "Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'C:\\x\\node_modules\\zod'")
     expect(msg).toContain('Connection closed')
-    expect(msg).toContain('The server printed: Error [ERR_MODULE_NOT_FOUND]')
+    expect(msg).toContain('The server printed an error (see Show details)')
     expect(msg).toContain('npm install')
   })
 
@@ -202,6 +202,13 @@ describe('explainStartupFailure (TASKS #241)', () => {
 
   it('leaves http errors alone', () => {
     expect(explainStartupFailure({ transport: 'http' }, 'HTTP 401', '')).toBe('HTTP 401')
+  })
+
+  it('connectMcpServer attaches the command and error as the detail', async () => {
+    mockConnect.mockRejectedValueOnce(new Error('MCP error -32000: Connection closed'))
+    const err = await connectMcpServer(stdioConfig, undefined).catch((e: unknown) => e)
+    expect((err as { detail: string }).detail).toContain('Command: npx -y server-filesystem')
+    expect((err as { detail: string }).detail).toContain('Error: MCP error -32000: Connection closed')
   })
 
   it('connectMcpServer rethrows with the explanation', async () => {

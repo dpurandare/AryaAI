@@ -1351,6 +1351,12 @@
               <span class="conn-name">
                 {server.name}
                 <span class="mcp-status" class:error={server.status === 'error'}>{mcpStatusLabel(server)}</span>
+                {#if server.status === 'error' && server.errorDetail}
+                  <details class="mcp-error-detail">
+                    <summary class="status">Show details</summary>
+                    <pre>{server.errorDetail}</pre>
+                  </details>
+                {/if}
               </span>
               <span class="conn-engine">{server.transport}</span>
               <button class="link-danger" onclick={() => startEditMcpServer(server)}>Edit</button>
@@ -2087,6 +2093,16 @@
     gap: 0.5rem;
   }
   /* #164 — one nested <details> per role inside the outer "Show tools by role" <details>. */
+  .mcp-error-detail pre {
+    margin: 4px 0 0;
+    padding: 8px;
+    max-height: 220px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-size: 12px;
+    user-select: text;
+  }
   .role-tools-group {
     margin: 0.4rem 0 0.4rem 0.75rem;
   }

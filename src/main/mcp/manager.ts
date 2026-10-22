@@ -7,6 +7,8 @@ import type { Client } from '@modelcontextprotocol/sdk/client'
 interface ManagedServer {
   status: McpServerStatus
   error?: string
+  /** Full technical text for a collapsible area (set when the failure came with one). */
+  errorDetail?: string
   toolNames: string[]
   client?: Client
 }
@@ -14,6 +16,7 @@ interface ManagedServer {
 export interface McpServerStatusInfo {
   status: McpServerStatus
   error?: string
+  errorDetail?: string
   toolCount: number
   toolNames: string[]
 }
@@ -74,7 +77,7 @@ export class McpManager {
   getStatus(id: string): McpServerStatusInfo | undefined {
     const managed = this.servers.get(id)
     if (!managed) return undefined
-    return { status: managed.status, error: managed.error, toolCount: managed.toolNames.length, toolNames: managed.toolNames }
+    return { status: managed.status, error: managed.error, errorDetail: managed.errorDetail, toolCount: managed.toolNames.length, toolNames: managed.toolNames }
   }
 
   private async connect(config: McpServerConfig, registry: ToolRegistry): Promise<void> {
@@ -88,6 +91,7 @@ export class McpManager {
       this.servers.set(config.id, {
         status: 'error',
         error: err instanceof Error ? err.message : String(err),
+        errorDetail: typeof (err as { detail?: unknown }).detail === 'string' ? (err as { detail: string }).detail : undefined,
         toolNames: []
       })
     }

@@ -429,6 +429,7 @@ export function registerIpcHandlers(): void {
         ...config,
         status: status?.status ?? 'connecting',
         error: status?.error,
+        errorDetail: status?.errorDetail,
         toolCount: status?.toolCount ?? 0
       }
     })

@@ -541,6 +541,8 @@ export interface McpServerDto {
   description?: string
   status: McpServerStatus
   error?: string
+  /** Command and the server's own output, shown in a collapsed area under the error. */
+  errorDetail?: string
   toolCount: number
 }
 

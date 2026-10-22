@@ -74,6 +74,16 @@ function buildTransport(config: McpServerConfig, token: string | undefined, bund
   return { transport, stderrTail: () => '' }
 }
 
+export class McpStartupError extends Error {
+  constructor(
+    message: string,
+    /** The full technical text for a collapsible area: the command that was run and everything the server printed. */
+    readonly detail: string
+  ) {
+    super(message)
+  }
+}
+
 /**
  * The status line for a server that failed to start. A bare "MCP error -32000: Connection closed" only says the process
  * exited; this adds what the process printed and the usual cause, so the user can tell a wrong path from a missing package.
@@ -84,7 +94,7 @@ export function explainStartupFailure(config: Pick<McpServerConfig, 'transport' 
   if (/ENOENT/.test(message)) {
     parts.push(`The command "${config.command ?? ''}" was not found. Check that it is installed and spelled right (open a terminal and run it there).`)
   } else if (stderrText) {
-    parts.push(`The server printed: ${stderrText.replace(/\s+/g, ' ').slice(0, 400)}`)
+    parts.push('The server printed an error (see Show details).')
     if (/Cannot find package|node_modules/.test(stderrText)) {
       parts.push("A package the server needs is not installed where it runs. Install its dependencies (npm install) in the server's folder.")
     } else if (/Cannot find module|MODULE_NOT_FOUND/.test(stderrText)) {
@@ -169,7 +179,11 @@ export async function connectMcpServer(
   try {
     await client.connect(transport)
   } catch (err) {
-    throw new Error(explainStartupFailure(config, err instanceof Error ? err.message : String(err), stderrTail()))
+    const raw = err instanceof Error ? err.message : String(err)
+    const stderrText = stderrTail()
+    const command = [config.command, ...(config.args ?? [])].filter(Boolean).join(' ')
+    const detail = [config.transport === 'stdio' ? `Command: ${command}` : '', `Error: ${raw}`, stderrText ? `Server output:\n${stderrText}` : ''].filter(Boolean).join('\n')
+    throw new McpStartupError(explainStartupFailure(config, raw, stderrText), detail)
   }
 
   const { tools: mcpTools } = await client.listTools()
