@@ -225,14 +225,14 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | T29 | Zoom shortcuts and remembered level | **Pass** | Linux (2026-10-21) | Deepak |
 | T30 | Theme toggle, Settings open/close | **Pass** | Linux (2026-10-21) | Deepak |
 | T31 | Planner pinned and Auto both answer | **Pass** (one odd point, in TASKS #232) | Linux (2026-10-21) | Deepak, gpt-4o-mini: both answered. Pinned Planner first said "I'm the Planner specialist, and my main abilities include breaking down requests into clear, actionable plans. However, comparing programming languages ... is outside my scope." and handed the question over (`[handoff: out_of_scope -> Researcher]`), after which the answer came. The hand-over is by design; the unprompted self-introduction is a side effect of the #215 greeting instruction |
-| R1 | Greeting shows tools, menu name, no generic close (#232) | | | |
-| R2 | No introduction on a non-greeting (#232) | | | |
-| R3 | Auto-approve table and Refresh feedback (#233) | | | |
-| R4 | Shell asks despite session auto-approve; protected warning (#234) | | | |
-| R5 | Outside-path warning; settings note (#234) | | | |
-| R6 | ~ expands; protected refused (#235) | | | |
-| R7 | Chart appears in the chat (#236) | | | |
-| R8 | One-paragraph Word note, one call (#237) | | | |
-| R9 | Workspace overview without internal folder or phantom templates (#238) | | | |
+| R1 | Greeting shows tools, menu name, no generic close (#232) | **Odd** | Windows 11 AMD64 VM (2026-10-22) | Deepak: works with each agent in a NEW chat; with several agents pinned one after another in the SAME chat the result varies (to investigate) |
+| R2 | No introduction on a non-greeting (#232) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
+| R3 | Auto-approve table and Refresh feedback (#233) | **Fail** | Windows 11 AMD64 VM (2026-10-22) | Deepak: MCP tools do not appear in the table, also after an app restart and after export / remove MCP / import / re-add. Earlier (0.3.1) they did. Cause not yet found (diagnosis pending: server connected? tool count? readOnly hints?) |
+| R4 | Shell asks despite session auto-approve; protected warning (#234) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
+| R5 | Outside-path warning; settings note (#234) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
+| R6 | ~ expands; protected refused (#235) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
+| R7 | Chart appears in the chat (#236) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
+| R8 | One-paragraph Word note, one call (#237) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
+| R9 | Workspace overview without internal folder or phantom templates (#238) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
 
 When everything is Pass (or the failures are fixed and re-tested), tell Claude: it will record the results in `TASKS.md` and `docs/manual_testing.md`, then ask for your go-ahead to merge, tag and build the draft release.
