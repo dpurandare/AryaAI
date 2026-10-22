@@ -23,6 +23,7 @@
   } = $props()
 
   let open = $state(false)
+  let rootEl: HTMLDivElement | undefined = $state()
   let models = $state<string[]>([])
   let loadingModels = $state(false)
   let modelsError = $state('')
@@ -61,9 +62,19 @@
   function commitManualModel(): void {
     if (manualModel.trim()) onChangeModel(manualModel.trim())
   }
+
+  // A click anywhere outside the picker (or Escape) closes the popover; clicks on the trigger are handled by its own toggle.
+  function onWindowPointerDown(e: PointerEvent): void {
+    if (open && rootEl && !rootEl.contains(e.target as Node)) open = false
+  }
+  function onWindowKeydown(e: KeyboardEvent): void {
+    if (open && e.key === 'Escape') open = false
+  }
 </script>
 
-<div class="model-picker">
+<svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} />
+
+<div class="model-picker" bind:this={rootEl}>
   <button class="trigger" onclick={() => (open = !open)}>
     <span class="dot"></span>
     {currentProviderName} · {model || 'no model set'}
