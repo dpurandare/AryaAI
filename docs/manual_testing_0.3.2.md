@@ -266,7 +266,7 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | L9 | macOS: section K | **Pass** | macOS (2026-10-27) | Deepak: R1 to R9 all pass |
 | L10 | Ubuntu 20.04: section K | **Not tested** | Ubuntu 20.04 (2026-10-27) | Deepak: the app does not run on this machine because of a library issue, so nothing can be tested. Not a 0.3.2 regression to be fixed in this release; cause not investigated |
 | L11 | Decision on R1 (varying greetings) | **Decided: no fix needed** | any (2026-10-27) | Deepak |
-| L12 | T10 greeting probe on gpt-4o-mini | **OK given** to use the stored OpenAI key (2026-10-27); probe not yet run | any | Deepak |
+| L12 | T10 greeting probe on gpt-4o-mini | **Odd** (partly Fail) | Linux, `scripts/greeting-probe.mts` with the OpenAI provider (2026-10-27) | Claude ran it with the stored key. 10 of 22 greeting replies pass the strict check; 0 of 11 non-greeting replies introduced themselves (#232 part works). Every role names itself. But on `Hello`, 8 of 11 replies end with the generic "How can I assist you today?" (Planner, History Analyst, Developer, Data Access, Data Processor, Page Creator, Email, MCP Operator) and 5 describe abilities without naming tools (History Analyst, Developer, Data Access, MCP Operator, Email). `What can you do?` is fuller and differs from `Hello` in all roles; most list tool names. So the prompt-only instruction is only partly followed by gpt-4o-mini |
 
 When everything is Pass (or the failures are fixed and re-tested), tell Claude: it will record the results in `TASKS.md` and `docs/manual_testing.md`, then ask for your go-ahead to merge, tag and build the draft release.
 
