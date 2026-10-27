@@ -257,7 +257,7 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | R9 | Workspace overview without internal folder or phantom templates (#238) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
 | L1 | Import connects the MCP server (#240) | | | |
 | L2 | Model picker closes outside (#239) | | | |
-| L3 | MCP startup error and Show details (#241) | | | |
+| L3 | MCP startup error and Show details (#241) | **Pass** | Windows 11 AMD64 VM (2026-10-27) | Deepak. Script alone gave ERR_MODULE_NOT_FOUND as expected; fixed with npm install in C:\mcp-test and Reconnect |
 | L4 | Windows: shell files moved (T14w) | | | |
 | L5 | Windows: PowerShell (T28) | | | |
 | L6 | Windows: installer upgrade, SmartScreen (T1) | | | |
