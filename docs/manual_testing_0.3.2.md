@@ -264,7 +264,7 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | L7 | Windows: smoke tests (T25-T31) | **Pass** | Windows 11 AMD64 VM (2026-10-27) | Deepak |
 | L8 | macOS: dmg and single instance (T1, T5) | **Pass** | macOS (2026-10-27) | Deepak |
 | L9 | macOS: section K | **Pass** | macOS (2026-10-27) | Deepak: R1 to R9 all pass |
-| L10 | Ubuntu 20.04: section K | | | |
+| L10 | Ubuntu 20.04: section K | **Not tested** | Ubuntu 20.04 (2026-10-27) | Deepak: the app does not run on this machine because of a library issue, so nothing can be tested. Not a 0.3.2 regression to be fixed in this release; cause not investigated |
 | L11 | Decision on R1 (varying greetings) | **Decided: no fix needed** | any (2026-10-27) | Deepak |
 | L12 | T10 greeting probe on gpt-4o-mini | **OK given** to use the stored OpenAI key (2026-10-27); probe not yet run | any | Deepak |
 
