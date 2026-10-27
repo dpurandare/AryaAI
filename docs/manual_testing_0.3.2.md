@@ -255,18 +255,18 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | R7 | Chart appears in the chat (#236) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
 | R8 | One-paragraph Word note, one call (#237) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
 | R9 | Workspace overview without internal folder or phantom templates (#238) | **Pass** | Windows 11 AMD64 VM (2026-10-22) | Deepak |
-| L1 | Import connects the MCP server (#240) | | | |
-| L2 | Model picker closes outside (#239) | | | |
-| L3 | MCP startup error and Show details (#241) | **Pass** | Windows 11 AMD64 VM (2026-10-27) | Deepak. Script alone gave ERR_MODULE_NOT_FOUND as expected; fixed with npm install in C:\mcp-test and Reconnect |
+| L1 | Import connects the MCP server (#240) | **Pass** | macOS (2026-10-27) | Deepak |
+| L2 | Model picker closes outside (#239) | **Pass** | macOS (2026-10-27) | Deepak |
+| L3 | MCP startup error and Show details (#241) | **Pass** | Windows 11 AMD64 VM and macOS (2026-10-27) | Deepak. Script alone gave ERR_MODULE_NOT_FOUND as expected; fixed with npm install in C:\mcp-test and Reconnect |
 | L4 | Windows: shell files moved (T14w) | | | |
 | L5 | Windows: PowerShell (T28) | | | |
 | L6 | Windows: installer upgrade, SmartScreen (T1) | | | |
 | L7 | Windows: smoke tests (T25-T31) | | | |
-| L8 | macOS: dmg and single instance (T1, T5) | | | |
-| L9 | macOS: section K | | | |
+| L8 | macOS: dmg and single instance (T1, T5) | **Pass** | macOS (2026-10-27) | Deepak |
+| L9 | macOS: section K | **Pass** | macOS (2026-10-27) | Deepak: R1 to R9 all pass |
 | L10 | Ubuntu 20.04: section K | | | |
-| L11 | Decision on R1 (varying greetings) | | | |
-| L12 | T10 greeting probe on gpt-4o-mini | | | |
+| L11 | Decision on R1 (varying greetings) | **Decided: no fix needed** | any (2026-10-27) | Deepak |
+| L12 | T10 greeting probe on gpt-4o-mini | **OK given** to use the stored OpenAI key (2026-10-27); probe not yet run | any | Deepak |
 
 When everything is Pass (or the failures are fixed and re-tested), tell Claude: it will record the results in `TASKS.md` and `docs/manual_testing.md`, then ask for your go-ahead to merge, tag and build the draft release.
 
