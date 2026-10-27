@@ -261,7 +261,7 @@ Tester: Deepak. Date: ____. Build: 0.3.2 from the Actions run: ____. Machine / O
 | L4 | Windows: shell files moved (T14w) | **Pass** | Windows 11 AMD64 VM, gpt-4o-mini (2026-10-27) | Deepak. First reported as Fail because the files showed no image; they hold the text `x` (dummy files), so that is expected. Test wording could be clearer |
 | L5 | Windows: PowerShell (T28) | **Pass** | Windows 11 AMD64 VM (2026-10-27) | Deepak |
 | L6 | Windows: installer upgrade, SmartScreen (T1) | **Pass** | Windows 11 AMD64 VM (2026-10-27) | Deepak |
-| L7 | Windows: smoke tests (T25-T31) | | | |
+| L7 | Windows: smoke tests (T25-T31) | **Pass** | Windows 11 AMD64 VM (2026-10-27) | Deepak |
 | L8 | macOS: dmg and single instance (T1, T5) | **Pass** | macOS (2026-10-27) | Deepak |
 | L9 | macOS: section K | **Pass** | macOS (2026-10-27) | Deepak: R1 to R9 all pass |
 | L10 | Ubuntu 20.04: section K | | | |
