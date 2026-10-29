@@ -128,6 +128,7 @@ The point names are only grouping labels I chose so related items are discussed 
 | 2026-10-19 | P4 | #203, #169 | **#203: 0.5.0 (detail). #169: 0.4.0.** | Deepak: "ok", "ok". |
 | 2026-10-19 | P5 | #196, #183, #197, #198, #85 | **#196: 0.4.0 (L), spike first. #183, #197, #198, #85: 0.5.0 (detail).** | Deepak: "should work and agree" (#196, with a design addition: images, graphs and sketches in a PDF are extracted to a sub-folder of the temporary location and referred to while reading); "Ok" (#183); "Ok" (templates family). Downloads: if the user directs a download it goes to `downloads/`; otherwise a PDF opened for one-time reading stays in transient storage. |
 | 2026-10-19 | P6 | #159, #134, #122, #135, #136 | **#159: 0.4.0 (M, opt-in, off by default, token budget in Settings). #134: 0.3.2 (S). #122, #135, #136: Parked, revisit after 0.5.0.** | Deepak: "Sounds good", "Ok, should do", "Fine for now, will revisit after 0.5.0". |
+| 2026-10-29 | 0.4.0 scope | #238 (recursive listing), #242, Ubuntu 20.04 | **Both #238 recursive listing (with the files block) and #242 (greeting enforcement in code) are in 0.4.0. Ubuntu 20.04 stays unsupported and is documented as such; no investigation of the missing library unless a specific request comes in.** 0.4.0 now has 10 items: Ollama block #214, #224, #225, #168; files block #228, #229, #216, #169, #238 (listing); #242. | Deepak: "Yes to both, document 20.04 as unsupported. If there is any specific request for this we will consider that later." |
 
 ### Release 0.3.2: implementation log (2026-10-20)
 

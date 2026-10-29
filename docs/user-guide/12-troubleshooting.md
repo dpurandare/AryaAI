@@ -13,6 +13,7 @@ Find the symptom, then try the fix. Sachivji does not keep a log file yet, so wh
 | **A message says "Sachivji is already running"** | Only one Sachivji can run per user account at a time. Another window is already open (look behind other windows, or in the taskbar or tray). Close it before starting a new one; click **OK** and this launch exits. Launching the app again while it is open just brings the open window forward. |
 | **After first run the provider list or first chat looks empty** | Close and reopen the app. Your settings were saved. If it persists, check **Settings > Provider API keys**. |
 | **Linux: "OS-native secure storage is not available"** | Saving a key needs a running secret-service keyring (GNOME Keyring, KWallet or similar, with `libsecret`). Start one, or choose the file option at first run (this is permanent). |
+| **Linux: the app does not start on Ubuntu 20.04 (or another distribution with glibc older than 2.34)** | Not supported. Sachivji needs Ubuntu 22.04 or newer (glibc 2.34 or newer); the installers do not run on older systems because of a library the app depends on. Use a newer system. |
 
 ## Keys, providers and models
 
