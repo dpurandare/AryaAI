@@ -48,7 +48,23 @@ export class OllamaProvider implements ModelProvider, EmbeddingProvider {
   }
 
   stream(request: CompletionRequest): AsyncIterable<StreamEvent> {
-    return streamOpenAICompatible(this.client, request)
+    // The local Ollama may simply not be running (#214): say so plainly instead of the SDK's bare "Connection error."
+    if (this.id !== 'ollama') return streamOpenAICompatible(this.client, request)
+    const inner = streamOpenAICompatible(this.client, request)
+    const root = this.rootURL
+    return (async function* () {
+      try {
+        yield* inner
+      } catch (err) {
+        const name = err instanceof Error ? err.name : ''
+        if (name === 'APIConnectionError' || name === 'APIConnectionTimeoutError') {
+          throw new Error(
+            `Ollama (local) is not running at ${root}. Start Ollama, or correct its address in Settings > Ollama (local chat), then send again. Nothing was switched to another model.`
+          )
+        }
+        throw err
+      }
+    })()
   }
 
   async embed(texts: string[], model: string): Promise<number[][]> {

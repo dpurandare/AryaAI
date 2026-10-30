@@ -2,6 +2,9 @@
   interface Provider {
     id: string
     displayName: string
+    /** #214: false = a local server that is not answering ("Ollama (local)" when Ollama is not running). */
+    available?: boolean
+    unavailableMessage?: string
   }
 
   let {
@@ -29,9 +32,9 @@
   let modelsError = $state('')
   let manualModel = $state('')
 
-  const currentProviderName = $derived(
-    providers.find((p) => p.id === providerId)?.displayName ?? providerId
-  )
+  const currentProvider = $derived(providers.find((p) => p.id === providerId))
+  const currentProviderName = $derived(currentProvider?.displayName ?? providerId)
+  const currentUnavailable = $derived(currentProvider?.available === false)
 
   $effect(() => {
     manualModel = model
@@ -45,6 +48,10 @@
     models = []
     modelsError = ''
     if (!key) return
+    if (currentUnavailable) {
+      modelsError = currentProvider?.unavailableMessage ?? `${currentProviderName} is not running.`
+      return
+    }
     loadingModels = true
     window.sachiv
       .listModels(id)
@@ -77,7 +84,7 @@
 <div class="model-picker" bind:this={rootEl}>
   <button class="trigger" onclick={() => (open = !open)}>
     <span class="dot"></span>
-    {currentProviderName} · {model || 'no model set'}
+    {currentProviderName}{currentUnavailable ? ' (not running)' : ''} · {model || 'no model set'}
   </button>
 
   {#if open}
@@ -89,7 +96,7 @@
           onchange={(e) => onChangeProvider((e.target as HTMLSelectElement).value)}
         >
           {#each providers as p (p.id)}
-            <option value={p.id}>{p.displayName}</option>
+            <option value={p.id}>{p.displayName}{p.available === false ? ' (not running)' : ''}</option>
           {/each}
         </select>
       </div>

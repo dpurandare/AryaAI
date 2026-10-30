@@ -5,6 +5,7 @@
   import { untrack } from 'svelte'
   import { refreshSummary, staleRuleNames, toolSummary } from '../auto-approve'
   import type { OllamaRuntimeState, RuntimeState } from '@shared/runtime'
+  import { OLLAMA_BASE_URL_SETTING_KEY, type OllamaChatStatus } from '@shared/ipc-contract'
 
   let {
     autoApproveRules,
@@ -15,6 +16,7 @@
     showTimestamps = true,
     leaveRequested = false,
     onApiKeyChanged,
+    onOllamaAddressChanged,
     onBack,
     onLeaveResolved,
     onToggleAutoApproveRule,
@@ -36,6 +38,8 @@
     leaveRequested?: boolean
     /** A provider's key was just saved — lets App.svelte refresh `hasKey`/model list when it's the currently active chat provider. */
     onApiKeyChanged: (providerId: string) => void
+    /** #214: the address of the user's own Ollama was saved or re-checked: the provider list should be re-read. */
+    onOllamaAddressChanged: () => void
     /** Header "Back to chat": leaves Settings, asking first if anything is unsaved. */
     onBack: () => void
     /** Answer to the leave prompt: `true` = go ahead and leave (discarding what's left), `false` = stay in Settings. */
@@ -514,7 +518,41 @@
     disabled: 'Turned off'
   }
 
-  // --- Bundled Ollama runtime (Windows sponsor build, TASKS #202) — `status === 'unavailable'`
+  // --- The user's own Ollama, used for local chat (TASKS #214).
+  let ollamaAddress = $state('')
+  let ollamaChat = $state<OllamaChatStatus | null>(null)
+  let ollamaChatBusy = $state(false)
+  let ollamaChatSaved = $state(false)
+
+  window.sachiv.getSetting(OLLAMA_BASE_URL_SETTING_KEY).then((v) => (ollamaAddress = v ?? ''))
+  async function checkOllamaChat(): Promise<void> {
+    ollamaChatBusy = true
+    try {
+      ollamaChat = await window.sachiv.checkOllamaChat()
+      onOllamaAddressChanged()
+    } finally {
+      ollamaChatBusy = false
+    }
+  }
+  void checkOllamaChat()
+  // Keeps the status honest while this page stays open (Ollama started or stopped meanwhile), without flicker.
+  $effect(() => {
+    const timer = setInterval(() => {
+      window.sachiv.checkOllamaChat().then((r) => {
+        if (ollamaChat?.reachable !== r.reachable) onOllamaAddressChanged()
+        ollamaChat = r
+      }).catch(() => {})
+    }, 10_000)
+    return () => clearInterval(timer)
+  })
+  async function saveOllamaAddress(): Promise<void> {
+    ollamaChatSaved = false
+    await window.sachiv.setSetting(OLLAMA_BASE_URL_SETTING_KEY, ollamaAddress.trim())
+    ollamaChatSaved = true
+    await checkOllamaChat()
+  }
+
+  // --- Bundled Ollama runtime (installers, TASKS #202) — `status === 'unavailable'`
   // on every other build/platform, including a win32 build without the bundled resource; the
   // section below is hidden entirely in that case, same as it never existing. Shown here (not
   // only during onboarding) so status/progress/retry stays visible after onboarding has already
@@ -1654,13 +1692,52 @@
       <p class="status">Checking…</p>
     {/if}
 
+    <hr />
+
+    <h2>Ollama (local chat)</h2>
+    <p class="status">
+      Local chat models come from your own Ollama, not from the one bundled with Sachivji (that one only does search embeddings).
+      Leave the address empty for <code>http://localhost:11434</code>, or enter an Ollama on another machine, for example
+      <code>http://192.168.1.20:11434</code>.
+    </p>
+    <input
+      type="text"
+      placeholder="http://localhost:11434"
+      value={ollamaAddress}
+      oninput={(e) => {
+        ollamaAddress = (e.target as HTMLInputElement).value
+        ollamaChatSaved = false
+      }}
+      onkeydown={(e) => e.key === 'Enter' && saveOllamaAddress()}
+    />
+    <div class="actions">
+      <button class="primary" disabled={ollamaChatBusy} onclick={saveOllamaAddress}>Save</button>
+      <button disabled={ollamaChatBusy} onclick={checkOllamaChat}>{ollamaChatBusy ? 'Checking…' : 'Check again'}</button>
+    </div>
+    {#if ollamaChat}
+      <p class="status" class:error={!ollamaChat.reachable}>
+        {#if ollamaChat.reachable}
+          ✓ Ollama is running at <code>{ollamaChat.address}</code>.{ollamaChatSaved ? ' Address saved.' : ''}
+        {:else}
+          ✗ {ollamaChat.error}
+        {/if}
+      </p>
+      {#if !ollamaChat.reachable}
+        <p class="status">
+          "Ollama (local)" is hidden from the model selection until Ollama answers (this page re-checks automatically). To use local
+          models, install Ollama from <code>ollama.com/download</code>, start it, and pull a model (for example
+          <code>ollama pull llama3.2</code>).
+        </p>
+      {/if}
+    {/if}
+
     {#if ollamaRuntime && ollamaRuntime.status !== 'unavailable'}
       <hr />
 
       <h2>Local embeddings (bundled Ollama)</h2>
       <p class="status">
-        A CPU-only Ollama server bundled with this install, used for local search-history embeddings with no
-        separate Ollama setup. Downloads the <code>nomic-embed-text</code> model (about 274MB) once, over the
+        A CPU-only Ollama server bundled with this install, used only for the search over past chats (embeddings), on its own port,
+        with no separate Ollama setup. It never takes the standard Ollama port. Downloads the <code>nomic-embed-text</code> model (about 274MB) once, over the
         network.
       </p>
       <p class="status" class:error={ollamaRuntime.status === 'failed'}>

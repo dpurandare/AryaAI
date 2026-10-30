@@ -51,6 +51,8 @@ import { formatToolInputForDisplay } from '../tool-input-display'
   interface Provider {
     id: string
     displayName: string
+    available?: boolean
+    unavailableMessage?: string
   }
 
   let {

@@ -17,6 +17,7 @@ import {
   type SaveEmailConnectionInput,
   type ContextWindowInfo,
   type ProviderDescriptor,
+  type OllamaChatStatus,
   type WebSearchProviderDescriptor,
   type McpServerDto,
   type SaveMcpServerInput,
@@ -141,6 +142,7 @@ const api = {
 
   getOllamaRuntimeState: (): Promise<OllamaRuntimeState | null> => ipcRenderer.invoke(IpcChannel.OllamaGetState),
   ensureOllamaRuntime: (): Promise<OllamaRuntimeState> => ipcRenderer.invoke(IpcChannel.OllamaEnsure),
+  checkOllamaChat: (): Promise<OllamaChatStatus> => ipcRenderer.invoke(IpcChannel.OllamaCheckChat),
   onOllamaRuntimeStateChanged: (callback: (state: OllamaRuntimeState) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, state: OllamaRuntimeState): void => callback(state)
     ipcRenderer.on(IpcChannel.OllamaStateChanged, listener)

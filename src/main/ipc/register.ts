@@ -26,7 +26,8 @@ import {
   type SettingsExportPayload,
   type SettingsExportResult,
   type SettingsImportPreviewResult,
-  type SettingsImportApplyResult
+  type SettingsImportApplyResult,
+  OLLAMA_BASE_URL_SETTING_KEY
 } from '@shared/ipc-contract'
 import { isValidRoleId, roleLabel, type AgentRole } from '@shared/agents'
 import type { RuntimeState } from '@shared/runtime'
@@ -64,7 +65,8 @@ import { McpManager } from '../mcp/manager'
 import { openDriver } from '../tools/db/driver-factory'
 import { buildSchemaSummary } from '../tools/db/schema-summary'
 import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
-import { createDefaultProviderRegistry, probeEmbeddingDimension, setBundledOllamaBaseUrl } from '../providers/setup'
+import { createDefaultProviderRegistry, getOllamaChatBaseUrl, probeEmbeddingDimension, setBundledOllamaBaseUrl, setOllamaChatBaseUrl } from '../providers/setup'
+import { OllamaAvailability } from '../providers/ollama-availability'
 import { createDefaultWebSearchProviderRegistry } from '../tools/web-search-providers'
 import type { Message, ModelProvider, ProviderOptions } from '../providers/types'
 import { exportSession } from '../sessions/export'
@@ -184,6 +186,7 @@ export const PYTHON_RUNTIME_DISABLED_SETTING_KEY = 'pythonRuntimeDisabled'
 
 const workspaceRuntime = new WorkspaceRuntime()
 const ollamaRuntime = new OllamaRuntime()
+const ollamaAvailability = new OllamaAvailability()
 
 function ensureRuntimeFor(root: string, opts: { repair?: boolean } = {}): Promise<RuntimeState> {
   return workspaceRuntime.ensureWorkspace(root, {
@@ -259,10 +262,11 @@ export function registerIpcHandlers(): void {
   })
   void ensureRuntimeFor(toolContext.workspaceGuard.root)
 
-  // Bundled Ollama (TASKS #202) — a strict no-op on every build except the Windows sponsor
-  // one (OllamaRuntime.ensure() resolves 'unavailable' immediately otherwise). Starting the
+  // Bundled Ollama (TASKS #202, #214) — embeddings only; a strict no-op on every build that does not ship it
+  // (OllamaRuntime.ensure() resolves 'unavailable' immediately otherwise). Chat uses the user's own Ollama. Starting the
   // server and pulling the embedding model can take a while on first run; the renderer
   // follows progress via OllamaStateChanged, same pattern as the Python runtime above.
+  setOllamaChatBaseUrl(getSetting(OLLAMA_BASE_URL_SETTING_KEY))
   ollamaRuntime.onChange((state) => {
     setBundledOllamaBaseUrl(state.baseUrl)
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IpcChannel.OllamaStateChanged, state)
@@ -323,16 +327,21 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.MessagesList, (_event, sessionId: string) => listMessages(sessionId))
   ipcMain.handle(IpcChannel.SessionsGetUsage, (_event, sessionId: string) => getUsage(sessionId))
 
-  ipcMain.handle(IpcChannel.ProvidersList, () =>
-    providerRegistry
+  ipcMain.handle(IpcChannel.ProvidersList, async () => {
+    // TASKS #214: the user's own Ollama is probed (short timeout, cached a few seconds) so the model selection can
+    // hide "Ollama (local)" while it is not running.
+    const ollama = await ollamaAvailability.check(getOllamaChatBaseUrl())
+    return providerRegistry
       .list()
       .map(({ id, displayName, requiresApiKey, supportsEmbeddings }) => ({
         id,
         displayName,
         requiresApiKey,
-        supportsEmbeddings
+        supportsEmbeddings,
+        ...(id === 'ollama' ? { available: ollama.reachable, unavailableMessage: ollama.error } : {})
       }))
-  )
+  })
+  ipcMain.handle(IpcChannel.OllamaCheckChat, () => ollamaAvailability.check(getOllamaChatBaseUrl(), true))
   ipcMain.handle(IpcChannel.WebSearchProvidersList, () =>
     webSearchProviderRegistry.list().map(({ id, displayName, requiresApiKey }) => ({ id, displayName, requiresApiKey }))
   )
@@ -358,9 +367,11 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IpcChannel.SettingsGet, (_event, key: string) => getSetting(key) ?? null)
-  ipcMain.handle(IpcChannel.SettingsSet, (_event, key: string, value: string) =>
+  ipcMain.handle(IpcChannel.SettingsSet, (_event, key: string, value: string) => {
     setSetting(key, value)
-  )
+    // TASKS #214: the address of the user's own Ollama takes effect at once, no restart.
+    if (key === OLLAMA_BASE_URL_SETTING_KEY) setOllamaChatBaseUrl(value)
+  })
 
   ipcMain.handle(IpcChannel.DataConnectionsList, () => listConnections())
   ipcMain.handle(IpcChannel.DataConnectionsSave, async (_event, input: SaveDataConnectionInput) => {

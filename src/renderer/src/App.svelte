@@ -708,6 +708,24 @@
     else showSettings = true
   }
 
+  /** #214: re-reads the provider list, which also re-probes the user's own Ollama (cached a few seconds in main). */
+  async function refreshProviders(): Promise<void> {
+    try {
+      providers = await window.sachiv.listProviders()
+    } catch {
+      // keep the list we have
+    }
+  }
+
+  // #214: "Ollama (local)" appears and disappears with Ollama itself, no restart needed.
+  $effect(() => {
+    const timer = setInterval(() => void refreshProviders(), 15_000)
+    return () => clearInterval(timer)
+  })
+
+  /** What the model picker offers: a provider that is down is hidden, except the one currently in use (shown as "not running"). */
+  const pickerProviders = $derived(providers.filter((p) => p.available !== false || p.id === providerId))
+
   async function initProvider(): Promise<void> {
     providers = await window.sachiv.listProviders()
     providerId = (await window.sachiv.getSetting('activeProviderId')) ?? 'openai'
@@ -940,6 +958,7 @@
         {showAnsweringModel}
         {showTimestamps}
         onApiKeyChanged={onProviderApiKeyChanged}
+        onOllamaAddressChanged={refreshProviders}
         onToggleAutoApproveRule={toggleAutoApproveTool}
         onRemoveAutoApproveRule={removeAutoApproveRule}
         onChangeTheme={changeThemeMode}
@@ -957,7 +976,7 @@
         onSend={sendMessage}
         onStop={stopGeneration}
         onSteer={steerGeneration}
-        {providers}
+        providers={pickerProviders}
         {providerId}
         model={currentModel}
         {hasKey}

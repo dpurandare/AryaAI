@@ -79,6 +79,8 @@ export const IpcChannel = {
   OllamaEnsure: 'ollama:ensure',
   /** Pushed from main whenever the bundled Ollama runtime's state changes. */
   OllamaStateChanged: 'ollama:state-changed',
+  /** TASKS #214: probe the user's own Ollama at the configured address (forced, not cached). */
+  OllamaCheckChat: 'ollama:check-chat',
 
   SecretStorageGetInfo: 'secret-storage:get-info',
   SecretStorageSwitchToFile: 'secret-storage:switch-to-file',
@@ -130,7 +132,22 @@ export interface ProviderDescriptor {
   requiresApiKey: boolean
   /** Whether this provider can be picked for the separate embedding-provider role (Settings > Search history) — independent of the chat provider. */
   supportsEmbeddings: boolean
+  /** TASKS #214: false when the provider is a local server that is not answering ('Ollama (local)' when Ollama is not running). Undefined = no such check applies. */
+  available?: boolean
+  /** Why `available` is false, in plain words. */
+  unavailableMessage?: string
 }
+
+/** TASKS #214: the result of probing the user's own Ollama (the chat address in Settings). */
+export interface OllamaChatStatus {
+  reachable: boolean
+  /** Root address that was probed, e.g. http://localhost:11434 */
+  address: string
+  error?: string
+}
+
+/** Settings key for the address of the user's own Ollama (TASKS #214); empty/absent = http://localhost:11434. */
+export const OLLAMA_BASE_URL_SETTING_KEY = 'ollamaBaseUrl'
 
 /** TASKS.md #161 — the web_search tool's own provider set, fetched via WebSearchProvidersList; a smaller shape than ProviderDescriptor since a web-search provider is just an id/displayName/requiresApiKey, no embeddings/model-list concept. */
 export interface WebSearchProviderDescriptor {

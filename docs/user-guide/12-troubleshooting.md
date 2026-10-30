@@ -30,7 +30,7 @@ Find the symptom, then try the fix. Sachivji does not keep a log file yet, so wh
 
 | Symptom | What to do |
 |---|---|
-| **Ollama (local) does not respond, or lists no chat models** | In the installers, "Ollama (local)" currently uses the small Ollama that comes with Sachivji (it only holds the embedding model), not your own Ollama, so your own models are not available there yet. When running from source, make sure Ollama is running and the model has been pulled. |
+| **Ollama (local) is missing from the model list, does not respond, or lists no chat models** | "Ollama (local)" uses your own Ollama, not the small one that comes with Sachivji (that one only does search). It is hidden while Ollama is not running. Open **Settings > Ollama (local chat)**: it says whether Ollama answers at the address and what to do. Install Ollama from ollama.com/download, start it, and pull a model (`ollama pull <model>`). If your Ollama runs on another computer, enter its address there (for example `http://192.168.1.20:11434`). The list updates by itself within about 15 seconds; no restart is needed. |
 | **A local model forgets things and the context meter shows a very small number (often about 4K)** | Ollama loads models with a small context window by default, whatever the model advertises. Create a custom model with a larger context (`num_ctx`) in an Ollama Modelfile and select that custom model instead. |
 | **A small local model ignores instructions or loops** | Local models vary a lot. Try a larger one, pin the right specialist, or ask for one small step at a time. |
 

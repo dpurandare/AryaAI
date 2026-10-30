@@ -78,9 +78,12 @@ A hand-maintained table used by the UI and the context logic: `contextWindowFor(
 
 Settings keys: `activeProviderId` (default `openai`) and `model:<providerId>` per provider. The API key comes from the secret store (`security/keychain.ts`, keyed by provider id). `runChat` resolves all three at the start of every turn and fails early, with a clear message, if one is missing.
 
-## Known limitation: the bundled Ollama
+## Ollama: chat and embeddings use different servers (TASKS #214)
 
-When the bundled Ollama server is running (all installers), `ipc/register.ts` calls `setBundledOllamaBaseUrl()` and `setup.ts` points **every** `ollama` provider instance (chat and embeddings) at it. The bundled server uses its own models folder (`<userData>/ollama-models`), so the user's own Ollama models are not reachable from an installer. This is tracked as TASKS #214 with options for a fix.
+- **Chat** ("Ollama (local)", id `ollama`) talks to the **user's own Ollama**. The address is the `ollamaBaseUrl` setting (empty = `http://localhost:11434`; it may be an Ollama on another machine). `setOllamaChatBaseUrl()` in `setup.ts` applies it at startup and whenever Settings writes the key (`SettingsSet` in `ipc/register.ts`), so no restart is needed.
+- **Embeddings** (`getEmbeddingProvider('ollama')`) use the **bundled** Ollama when it is running (`setBundledOllamaBaseUrl()`), otherwise the user's own Ollama. The bundled server holds only `nomic-embed-text` and never takes port 11434 (see [runtime and bundling](08-runtime-and-bundling.md)). The provider id was not renamed, so the search index stays valid.
+- **Availability.** `providers:list` probes the chat address (`providers/ollama-availability.ts`: `/api/version`, 1.5 s timeout, cached 5 s) and sets `available` / `unavailableMessage` on the `ollama` descriptor. The renderer hides an unavailable provider from the model picker (except the one in use, shown as "not running"), re-reads the list every 15 s, and Settings > Ollama (local chat) shows the address, the status and install instructions. `ollama:check-chat` forces a fresh probe.
+- **No silent switch.** If Ollama is down when a message is sent, `OllamaProvider.stream` throws a plain "Ollama (local) is not running at <address>" error; nothing falls back to another model (a visible fallback is TASKS #225).
 
 ## Adding a provider
 
