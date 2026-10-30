@@ -1882,6 +1882,8 @@ describe('Orchestrator (integration, mocked provider)', () => {
         loadedContextWindow: 131072,
         tokensUsed: 1000
       })
+      // 'name:tag' ids only count as local for the Ollama provider (#168), so this mock plays Ollama.
+      Object.defineProperty(provider, 'id', { value: 'ollama' })
       const orchestrator = new Orchestrator(
         provider,
         'gpt-oss:20b', // local-shaped id ("name:tag") — see model-metadata.ts's isLocalModelId
@@ -1971,6 +1973,8 @@ describe('Orchestrator (integration, mocked provider)', () => {
         loadedContextWindow: 131072,
         tokensUsed: 40000
       })
+      // 'name:tag' ids only count as local for the Ollama provider (#168), so this mock plays Ollama.
+      Object.defineProperty(provider, 'id', { value: 'ollama' })
       const orchestrator = new Orchestrator(
         provider,
         'gpt-oss:20b',

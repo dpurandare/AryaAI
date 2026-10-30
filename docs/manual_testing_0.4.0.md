@@ -41,6 +41,13 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | **225-4** | Same | Send "Say hello in five words." | A warning line appears right after your message: "Ollama (local) is not running, so this answer came from Anthropic claude-haiku-5-5. Your conversation was sent to Anthropic." Then the answer. Quit and reopen: the line is still in that chat. Start Ollama again: the next message goes to Ollama (status bar back to Ollama, no warning). |
 | **225-5** | Same, Ollama stopped | Untick the box (or choose "No fallback"), **Save**, send a message. | The status bar says "Ollama (local) (not running)"; the send fails with the plain "Ollama (local) is not running at …" message. Nothing is sent to the hosted provider. |
 
+## #168 Ollama Cloud usage is not shown as $0
+
+| ID | Where | Steps | Expect |
+|---|---|---|---|
+| **168-1** | Needs an Ollama Cloud key (skip if you have none) | Provider **Ollama Cloud**, model `gemma4:cloud` (or any `:cloud` model), send a message. | The meter at the bottom shows tokens (`Σ …`) but **no** `~$` cost (unknown), not `~$0.00`. |
+| **168-2** | Own Ollama with a local model | Provider **Ollama (local)**, any local model, send a message. | The meter shows `~$0.00` or no cost as before (local = free); the context window figure is unchanged. |
+
 ## Results
 
 | ID | Item | Pass / Fail / Odd | Model / OS | Notes |
@@ -61,3 +68,5 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 225-3 | Status bar shows the fallback model | | | |
 | 225-4 | Warning line kept in the chat; back to Ollama when it returns | | | |
 | 225-5 | No fallback = plain error, nothing sent | | | |
+| 168-1 | Ollama Cloud shows no $0 | | | |
+| 168-2 | Local Ollama unchanged | | | |

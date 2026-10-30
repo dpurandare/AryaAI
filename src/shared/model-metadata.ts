@@ -10,7 +10,13 @@
 // Ollama model ids are the only ones shaped "name:tag" (e.g. "gpt-oss:20b")
 // across all 4 providers. Checked first everywhere below, or a local model
 // like "gpt-oss:20b" would wrongly match the cloud "gpt-" prefix.
-function isLocalModelId(model: string): boolean {
+//
+// TASKS #168: Ollama Cloud uses the same "name:tag" shape ("gemma4:cloud") for models that are hosted and billed, so the
+// shape alone must not mean "free and local". Callers that know the provider pass its id; only the local one ('ollama', or
+// unknown for callers that cannot tell) can be local. Cloud ids then fall through to the unknown-model defaults (cost unknown,
+// estimated window), not to a made-up price.
+function isLocalModelId(model: string, providerId?: string): boolean {
+  if (providerId !== undefined && providerId !== 'ollama') return false
   return /^[\w.-]+:[\w.]+$/.test(model)
 }
 
@@ -58,8 +64,8 @@ export interface ContextWindowInfo {
   isEstimate: boolean
 }
 
-export function contextWindowFor(model: string): ContextWindowInfo {
-  if (isLocalModelId(model)) return { tokens: DEFAULT_LOCAL_CONTEXT_WINDOW, isEstimate: true }
+export function contextWindowFor(model: string, providerId?: string): ContextWindowInfo {
+  if (isLocalModelId(model, providerId)) return { tokens: DEFAULT_LOCAL_CONTEXT_WINDOW, isEstimate: true }
   const match = CONTEXT_WINDOWS.find((entry) => model.startsWith(entry.prefix))
   return match ? { tokens: match.tokens, isEstimate: false } : { tokens: DEFAULT_CONTEXT_WINDOW, isEstimate: true }
 }
@@ -114,8 +120,8 @@ const DEFAULT_LOCAL_MAX_OUTPUT_TOKENS = 32_768
 /** Conservative fallback for a cloud model id this table doesn't recognize — matches this app's original flat value, kept as the safe floor for exactly the case it was always used for (an unknown model), not as the default for every model as it used to be. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 4_096
 
-export function maxOutputTokensFor(model: string): ContextWindowInfo {
-  if (isLocalModelId(model)) return { tokens: DEFAULT_LOCAL_MAX_OUTPUT_TOKENS, isEstimate: true }
+export function maxOutputTokensFor(model: string, providerId?: string): ContextWindowInfo {
+  if (isLocalModelId(model, providerId)) return { tokens: DEFAULT_LOCAL_MAX_OUTPUT_TOKENS, isEstimate: true }
   const match = MAX_OUTPUT_TOKENS.find((entry) => model.startsWith(entry.prefix))
   return match ? { tokens: match.tokens, isEstimate: false } : { tokens: DEFAULT_MAX_OUTPUT_TOKENS, isEstimate: true }
 }
@@ -151,14 +157,14 @@ const PRICES: PriceEntry[] = [
   { prefix: 'gemini-pro', input: 1.25, output: 10 }
 ]
 
-export function pricePerMillionTokens(model: string): { input: number; output: number } | undefined {
-  if (isLocalModelId(model)) return { input: 0, output: 0 } // local compute, genuinely free
+export function pricePerMillionTokens(model: string, providerId?: string): { input: number; output: number } | undefined {
+  if (isLocalModelId(model, providerId)) return { input: 0, output: 0 } // local compute, genuinely free
   const match = PRICES.find((entry) => model.startsWith(entry.prefix))
   return match ? { input: match.input, output: match.output } : undefined
 }
 
-export function estimateCost(model: string, inputTokens: number, outputTokens: number): number | undefined {
-  const price = pricePerMillionTokens(model)
+export function estimateCost(model: string, inputTokens: number, outputTokens: number, providerId?: string): number | undefined {
+  const price = pricePerMillionTokens(model, providerId)
   if (!price) return undefined
   return (inputTokens * price.input + outputTokens * price.output) / 1_000_000
 }

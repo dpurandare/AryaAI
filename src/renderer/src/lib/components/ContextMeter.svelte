@@ -4,12 +4,15 @@
 
   let {
     model,
+    providerId,
     inputTokens,
     outputTokens,
     contextTokens = null,
     contextWindow: liveContextWindow = null
   }: {
     model: string
+    /** The provider of `model`: needed because Ollama Cloud ids look like local ones ("gemma4:cloud") but are billed (#168). */
+    providerId?: string
     /** Summed over every request this session: what was sent and received, which is what costs money. */
     inputTokens: number
     outputTokens: number
@@ -20,9 +23,9 @@
   } = $props()
 
   const totalTokens = $derived(inputTokens + outputTokens)
-  const contextWindow = $derived(liveContextWindow ?? contextWindowFor(model))
+  const contextWindow = $derived(liveContextWindow ?? contextWindowFor(model, providerId))
   const warning = $derived(contextWarning(contextTokens, contextWindow.tokens))
-  const cost = $derived(estimateCost(model, inputTokens, outputTokens))
+  const cost = $derived(estimateCost(model, inputTokens, outputTokens, providerId))
 </script>
 
 <span

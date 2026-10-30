@@ -30,7 +30,7 @@ function fakeProvider(
   configuredContextWindow?: (model: string) => Promise<number | undefined>
 ): ModelProvider {
   return {
-    id: 'fake',
+    id: 'ollama',
     displayName: 'Fake',
     listModels: async () => [],
     stream: async function* () {},

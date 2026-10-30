@@ -525,7 +525,7 @@ export async function resolveContextWindow(model: string, provider: ModelProvide
   if (loaded !== undefined) return { tokens: loaded, isEstimate: false }
   const configured = await provider.configuredContextWindow?.(model)
   if (configured !== undefined) return { tokens: configured, isEstimate: false }
-  return contextWindowFor(model)
+  return contextWindowFor(model, provider.id)
 }
 
 export interface SlidingWindowResult {

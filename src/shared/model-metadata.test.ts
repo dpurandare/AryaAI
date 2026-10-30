@@ -107,3 +107,21 @@ describe('estimateCost', () => {
     expect(estimateCost('some-future-model', 100, 100)).toBeUndefined()
   })
 })
+
+describe('Ollama Cloud ids are not mistaken for free local models (#168)', () => {
+  it('a tag-shaped id is free and local for Ollama (or when the provider is unknown)', () => {
+    expect(estimateCost('gemma4:e4b', 1_000_000, 1_000_000)).toBe(0)
+    expect(estimateCost('gemma4:e4b', 1_000_000, 1_000_000, 'ollama')).toBe(0)
+  })
+
+  it('the same shape on Ollama Cloud has an unknown cost, never $0, with or without a hyphen in the tag', () => {
+    expect(estimateCost('gemma4:cloud', 1000, 1000, 'ollama-cloud')).toBeUndefined()
+    expect(estimateCost('gpt-oss:120b-cloud', 1000, 1000, 'ollama-cloud')).toBeUndefined()
+    expect(pricePerMillionTokens('qwen3.5:cloud', 'ollama-cloud')).toBeUndefined()
+  })
+
+  it('the context window and output ceiling for a cloud id are estimates from the general defaults, not the local ones', () => {
+    expect(contextWindowFor('gemma4:cloud', 'ollama-cloud')).toEqual(contextWindowFor('some-unknown-model'))
+    expect(maxOutputTokensFor('gemma4:cloud', 'ollama-cloud')).toEqual(maxOutputTokensFor('some-unknown-model'))
+  })
+})

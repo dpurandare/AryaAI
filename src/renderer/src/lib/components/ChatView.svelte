@@ -460,6 +460,12 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     if (toolDisplayMode !== 'shown') return
     toolBlockOverride[segmentId] = !isThinkingBlockExpanded(segmentId)
   }
+
+  /** What the usage meter prices: while a consented fallback answers for a down Ollama (#225), that fallback model, not the idle local one (which would show $0). */
+  const meterModel = $derived.by(() => {
+    const fallback = providers.find((p) => p.id === providerId)?.fallback
+    return fallback ? { model: fallback.model, providerId: fallback.providerId } : { model, providerId }
+  })
 </script>
 
 <svelte:window onpointerdown={onWindowPointerDown} />
@@ -854,7 +860,8 @@ import { formatToolInputForDisplay } from '../tool-input-display'
         </div>
         {#if model}
           <ContextMeter
-            {model}
+            model={meterModel.model}
+            providerId={meterModel.providerId}
             inputTokens={sessionUsage.inputTokens}
             outputTokens={sessionUsage.outputTokens}
             {contextTokens}

@@ -1300,9 +1300,9 @@ export class Orchestrator {
    * history trimming before the Orchestrator is even constructed.
    */
   private async resolveMaxOutputTokens(conversation: Message[]): Promise<number> {
-    const ceiling = maxOutputTokensFor(this.model).tokens
+    const ceiling = maxOutputTokensFor(this.model, this.provider.id).tokens
     const loaded = await this.provider.loadedContextWindow?.(this.model)
-    const windowTokens = loaded ?? contextWindowFor(this.model).tokens
+    const windowTokens = loaded ?? contextWindowFor(this.model, this.provider.id).tokens
     const used = await this.provider.countTokens(conversation, this.model)
     const overhead = await overheadTokens(
       { system: this.buildOrchestratorSystemPrompt(), tools: toToolDefs(this.defaultTools) },
