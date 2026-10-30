@@ -360,7 +360,7 @@ const MAX_KEPT_RESULTS_PER_TOOL = 3
  * that entirely (every reworded query would get its own never-full bucket).
  */
 const RESOURCE_KEY_ARGS: Readonly<Record<string, readonly string[]>> = {
-  list_directory: ['path'],
+  list_directory: ['path', 'depth'],
   find_files: ['path', 'pattern']
 }
 

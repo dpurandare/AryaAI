@@ -64,6 +64,7 @@ export function buildEnvironment(input: EnvironmentInput): string {
   out.push(folder('exports', 'files exported for the user (the Export Settings dialog opens here)'))
   out.push(folder('tmp', 'scratch files (the SACHIV_TMP environment variable in scripts), cleaned up after a few days'))
   out.push(folder('templates', "the user's own templates, read as input"))
+  out.push('To show what is in the workspace, call list_directory with depth 2 or 3 (one call, folders and files).')
   out.push('A new file of a known type is filed in the matching folder even when only a bare name is given.')
   out.push("A full path in the user's message (for example a file dropped on the message box) is the file to use: read it with the file tools (outside the workspace the user is asked once per folder). Copy it into tmp/ with the shell only when a script has to run on it.")
   out.push('In scripts and shell commands a bare file name lands in the workspace root: save charts and images to resources/, documents and notes to documents/, .csv/.json data to data/, downloads to downloads/, exports to exports/, scratch to tmp/, and never leave generated files loose in the root.')

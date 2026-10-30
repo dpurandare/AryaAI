@@ -141,13 +141,15 @@ const CEILINGS = {
   // file-export behavior (writes to a file instead of "gets truncated") — 9970 -> 9983. Deliberate, not drift.
   // 2026-10-31 (TASKS #169): find_in_files is a new tool (~205 tokens, kept lean: six parameters, fixed caps) - routerToolSchemas 11190 -> 11290,
   // routerBare 12920 -> 13080, role:coding 3400 -> 3610, registry total 10027 -> 10240. Deliberate.
-  routerToolSchemas: 11290,
-  routerBare: 13080,
-  slimRouterToolSchemas: 2390,
+  // 2026-10-31 (TASKS #238): list_directory gained `depth` (~20 tokens, in every router and four roles) - routerToolSchemas 11290 -> 11320, routerBare 13080 -> 13110,
+  // slimRouterToolSchemas 2390 -> 2420, routerCore 1008 -> 1040, role:coding 3610 -> 3640, role:document-creator 2440 -> 2455, registry total 10240 -> 10270. Deliberate.
+  routerToolSchemas: 11320,
+  routerBare: 13110,
+  slimRouterToolSchemas: 2420,
   // Raised to match routerPrompt's #211 bump above — 4156 measured, ceiling raised to 4220.
   slimRouterBare: 4220,
   // 2026-10-31 (TASKS #228): write_file's description names the new data/ folder and the bare .md/.txt/.csv/.json rules (~17 tokens) - 990 -> 1008. Deliberate.
-  routerCore: 1008,
+  routerCore: 1040,
   // TASKS.md #179: the planning prompt's compound-step rule now explicitly says not to plan an MCP
   // Operator step AND a Research/web step for one domain-knowledge question up front (found live — a
   // pure definitional question got both, and web ran right after the wiki already gave a complete
@@ -173,10 +175,10 @@ const CEILINGS = {
   // wrapping an already-working script in a brand-new throwaway one, then not cleaning up the leftover
   // helper file it had noticed but left behind. New rule: edit the SAME script for a follow-up, and clean
   // up any genuinely one-off helper file yourself. 3191 -> 3342. Deliberate growth, not drift.
-  'role:coding': 3610,
+  'role:coding': 3640,
   'role:data': 2860,
   'role:data-processor': 2230,
-  'role:document-creator': 2440,
+  'role:document-creator': 2455,
   'role:configurator': 1430,
   // TASKS.md #176: a weak/irrelevant search snippet (a table fragment, a citation) got reported as
   // real domain knowledge found, instead of retrying or reading further — 390 -> 514. Deliberate.
@@ -310,6 +312,7 @@ describe('per-tool schema budget', () => {
     // count (TASKS #202 follow-up: fixes a 20-call loop found live) - 10000 -> 10009. Deliberate.
     // 2026-10-31 (TASKS #228): the same write_file description (~17 tokens) - 10009 -> 10027. Deliberate.
     // 2026-10-31 (TASKS #169): find_in_files added (~205 tokens) - 10027 -> 10240. Deliberate.
-    expect(total).toBeLessThanOrEqual(10240)
+    // 2026-10-31 (TASKS #238): list_directory `depth` - 10240 -> 10270. Deliberate.
+    expect(total).toBeLessThanOrEqual(10270)
   })
 })

@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, extname } from 'node:path'
+import { dirname, extname, join } from 'node:path'
 import { isInsideWorkspace, resolveReadable, resolveWritableNewOutside } from '../security/external-access'
 import type { Tool } from './types'
 import { INTERNAL_FOLDER, resolveNewFilePath, workspaceRelativePath } from './workspace-layout'
@@ -72,19 +72,62 @@ export const readFileTool: Tool = {
   }
 }
 
+/** TASKS #238: `list_directory` with a depth. */
+const MAX_LIST_DEPTH = 3
+const MAX_LIST_ENTRIES = 200
+/** Shown as entries but not opened when listing several levels: dependency and build noise, scratch space and Sachivji's own clones. */
+const NOT_EXPANDED = new Set(['node_modules', '.git', 'venv', '.venv', '__pycache__', 'dist', 'out', 'build', '.cache', 'tmp', '.sachiv-clones'])
+
+/**
+ * A multi-level listing in the same one-entry-per-line form as the single level (`dir  name` / `file  name`), the names relative to the
+ * listed folder with `/`, each folder followed by what is in it (folders first, then files, at every level). Capped, and the cap and the
+ * folders left closed are stated, so a short listing is never mistaken for a complete one.
+ */
+async function listTree(root: string, depth: number): Promise<string> {
+  const lines: string[] = []
+  const closed: string[] = []
+  let total = 0
+  async function visit(dir: string, rel: string, level: number): Promise<void> {
+    let entries
+    try {
+      entries = (await readdir(dir, { withFileTypes: true })).filter((e) => e.name !== INTERNAL_FOLDER)
+    } catch {
+      return
+    }
+    const sorted = [...entries].sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    for (const e of sorted) {
+      const name = rel ? `${rel}/${e.name}` : e.name
+      total++
+      if (lines.length < MAX_LIST_ENTRIES) lines.push(`${e.isDirectory() ? 'dir ' : 'file'}  ${name}`)
+      if (!e.isDirectory()) continue
+      if (NOT_EXPANDED.has(e.name)) closed.push(name)
+      else if (level < depth) await visit(join(dir, e.name), name, level + 1)
+    }
+  }
+  await visit(root, '', 1)
+  if (total === 0) return '(empty directory)'
+  const notes: string[] = []
+  if (total > lines.length) notes.push(`${total - lines.length} more entries not shown: list a subfolder, or use a smaller depth`)
+  if (closed.length > 0) notes.push(`not opened: ${closed.join(', ')} (list one directly if needed)`)
+  return notes.length > 0 ? `${lines.join('\n')}\n(${notes.join('; ')})` : lines.join('\n')
+}
+
 export const listDirectoryTool: Tool = {
   name: 'list_directory',
   description: 'List files and subdirectories at a path in the workspace, or an absolute folder elsewhere (the user is asked first).',
   inputSchema: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: 'Relative to the workspace root, or absolute (default: root)' }
+      path: { type: 'string', description: 'Relative to the workspace root, or absolute (default: root)' },
+      depth: { type: 'number', description: 'Levels, 1-3 (default 1); 2-3 for an overview' }
     }
   },
   mutates: false,
   externalPaths: (input) => [{ path: String(input.path ?? '.'), access: 'read' }],
   async execute(input, ctx) {
     const path = resolveReadable(ctx, String(input.path ?? '.'))
+    const depth = Math.min(MAX_LIST_DEPTH, Math.max(1, Math.trunc(Number(input.depth ?? 1)) || 1))
+    if (depth > 1) return listTree(path, depth)
     const entries = (await readdir(path, { withFileTypes: true })).filter((e) => e.name !== INTERNAL_FOLDER)
     if (entries.length === 0) return '(empty directory)'
     return entries

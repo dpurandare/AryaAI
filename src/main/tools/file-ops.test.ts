@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import { listDirectoryTool, readFileTool, writeFileTool } from './file-ops'
@@ -180,6 +180,73 @@ describe('file-ops tools', () => {
     it('lists a nested path', async () => {
       await writeFileTool.execute({ path: 'sub/b.dat', content: '2' }, ctx)
       expect(await listDirectoryTool.execute({ path: 'sub' }, ctx)).toBe('file  b.dat')
+    })
+
+    describe('with a depth (#238)', () => {
+      beforeEach(async () => {
+        for (const rel of ['code/a.py', 'code/lib/util.py', 'code/lib/deep/x.py', 'documents/r.docx', 'top.dat']) {
+          await mkdir(join(root, dirname(rel)), { recursive: true })
+          await writeFile(join(root, rel), 'x')
+        }
+      })
+
+      it('depth 1 (or none) is the unchanged one-level listing', async () => {
+        const plain = await listDirectoryTool.execute({}, ctx)
+        expect(await listDirectoryTool.execute({ depth: 1 }, ctx)).toBe(plain)
+        expect(plain).toBe('dir   code\ndir   documents\nfile  top.dat')
+      })
+
+      it('depth 2 lists each folder followed by its contents, names relative to the listed folder with /', async () => {
+        const out = await listDirectoryTool.execute({ depth: 2 }, ctx)
+        expect(out.split('\n')).toEqual([
+          'dir   code',
+          'dir   code/lib',
+          'file  code/a.py',
+          'dir   documents',
+          'file  documents/r.docx',
+          'file  top.dat'
+        ])
+      })
+
+      it('depth 3 goes one level further, and depth is capped at 3', async () => {
+        const three = await listDirectoryTool.execute({ depth: 3 }, ctx)
+        expect(three).toContain('dir   code/lib/deep')
+        expect(three).toContain('file  code/lib/util.py')
+        expect(three).not.toContain('x.py')
+        expect(await listDirectoryTool.execute({ depth: 99 }, ctx)).toBe(three)
+        expect(await listDirectoryTool.execute({ depth: 'abc' }, ctx)).toBe(await listDirectoryTool.execute({}, ctx))
+      })
+
+      it('shows but does not open venv, node_modules, .git, tmp and the clones folder, and says so', async () => {
+        for (const d of ['venv/lib', 'node_modules/x', 'tmp/scratch', '.git/objects']) await mkdir(join(root, d), { recursive: true })
+        await writeFile(join(root, 'venv/lib/big.py'), 'x')
+        const out = await listDirectoryTool.execute({ depth: 3 }, ctx)
+        for (const d of ['dir   venv', 'dir   node_modules', 'dir   tmp', 'dir   .git']) expect(out).toContain(d)
+        expect(out).not.toContain('big.py')
+        expect(out).toContain('not opened: ')
+        expect(out).toContain('venv')
+      })
+
+      it("never shows Sachivji's own .sachiv-handoff folder at any level", async () => {
+        await mkdir(join(root, 'code', '.sachiv-handoff'), { recursive: true })
+        await mkdir(join(root, '.sachiv-handoff', 't'), { recursive: true })
+        expect(await listDirectoryTool.execute({ depth: 3 }, ctx)).not.toContain('.sachiv-handoff')
+      })
+
+      it('caps a very long listing at 200 entries and states how many more there are', async () => {
+        await mkdir(join(root, 'many'), { recursive: true })
+        for (let i = 0; i < 250; i++) await writeFile(join(root, 'many', `f${String(i).padStart(3, '0')}.dat`), 'x')
+        const out = await listDirectoryTool.execute({ depth: 2 }, ctx)
+        expect(out.split('\n').filter((l) => l.startsWith('file  many/')).length).toBeLessThan(250)
+        expect(out).toMatch(/\(\d+ more entries not shown: list a subfolder, or use a smaller depth\)/)
+      })
+
+      it('reports an empty directory, and a nested start path gives names relative to it', async () => {
+        await mkdir(join(root, 'empty'))
+        expect(await listDirectoryTool.execute({ path: 'empty', depth: 2 }, ctx)).toBe('(empty directory)')
+        const out = await listDirectoryTool.execute({ path: 'code', depth: 2 }, ctx)
+        expect(out.split('\n')).toEqual(['dir   lib', 'dir   lib/deep', 'file  lib/util.py', 'file  a.py'])
+      })
     })
   })
 })

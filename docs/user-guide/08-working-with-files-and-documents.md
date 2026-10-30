@@ -51,6 +51,7 @@ You can also allow a folder **in advance**: Settings > Folders outside the works
 Ask the assistant to look at, find or create files by name:
 
 - "What files are in my `data` folder?"
+- "What is in my workspace?" (the assistant lists two or three levels of folders and files in one go; it does not open `venv`, `node_modules`, `.git`, `tmp` and similar folders, and says so. A very long list is cut at 200 entries and the assistant says how many more there are.)
 - "Find every `.csv` under the workspace."
 - "Which files mention `invoice_total`?" or "Find every TODO in my code" (the Developer searches the **text inside** files; it works on Windows too and skips binary files, files over 1 MB, `node_modules`, `.git` and anything in `.gitignore`. A long result is cut after 30 files / 5 matches per file, and the assistant says how many more there are).
 - "Read `notes/standup.txt` and summarise it in three bullets."

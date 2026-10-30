@@ -85,6 +85,14 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | **169-3** | A workspace with a file whose word appears more than 5 times | "Search for `the` in documents/." | At most 5 matches per file shown, with "(N more match(es) in this file not shown)"; with many files "stopped after 30 files…, narrow the path, glob or pattern". The assistant narrows the search instead of claiming that is all. |
 | **169-4** | Auto mode | "Search my notes for the word budget." | The router hands the search to the Developer (or reads the files itself); either way no error about a missing tool. |
 
+## #238 Overview of the workspace in one call
+
+| ID | Where | Steps | Expect |
+|---|---|---|---|
+| **238-1** | Any model | "What is in my workspace? List the folders and what is inside them." | One `list_directory` call with depth 2 or 3 (see the tool calls with Ctrl+O / Cmd+O); the reply names the real subfolders and files, not only the top level, and does not invent a `templates/` that is not there. |
+| **238-2** | A workspace with `venv/` and `tmp/` | Same question. | `venv`, `tmp` (and `node_modules`, `.git` if present) are named as folders but their contents are not listed; the reply may say they were not opened. No `.sachiv-handoff`. |
+| **238-3** | A workspace with a folder of 200+ files | "List everything under documents/ with depth 2." | The list stops at 200 entries and says how many more there are; the assistant offers to list a subfolder. |
+
 ## Results
 
 | ID | Item | Pass / Fail / Odd | Model / OS | Notes |
@@ -124,3 +132,6 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 169-2 | Works on Windows, context lines | | | |
 | 169-3 | Caps stated honestly | | | |
 | 169-4 | Reachable in Auto mode | | | |
+| 238-1 | Overview in one call | | | |
+| 238-2 | Noise folders not opened | | | |
+| 238-3 | Long list capped and stated | | | |
