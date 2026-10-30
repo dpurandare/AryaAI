@@ -208,4 +208,19 @@ describe('OllamaProvider', () => {
     await expect(collect(new OllamaProvider().stream(req))).rejects.toThrow(/Ollama \(local\) is not running at http:\/\/localhost:11434/)
     await expect(collect(new OllamaProvider('https://ollama.com/v1', 'k', 'ollama-cloud', 'Ollama Cloud').stream(req))).rejects.toThrow(/Connection error/)
   })
+
+  it('modelDigest reads the digest from /api/tags, matching the bare name to :latest (#224)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ models: [{ name: 'other:1b', digest: 'x' }, { name: 'nomic-embed-text:latest', digest: 'abc123' }] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const p = new OllamaProvider('http://localhost:11450/v1')
+    expect(await p.modelDigest('nomic-embed-text')).toBe('abc123')
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:11450/api/tags')
+    expect(await p.modelDigest('missing')).toBeUndefined()
+    fetchMock.mockRejectedValue(new Error('down'))
+    expect(await p.modelDigest('nomic-embed-text')).toBeUndefined()
+    vi.unstubAllGlobals()
+  })
 })

@@ -11,6 +11,11 @@ const STILL_BUILDING_MESSAGE =
   "(the history index is still building (nothing indexed yet) — try again shortly, or answer " +
   'from the current conversation only. Tell the user plainly rather than guessing.)'
 
+const MODEL_CHANGED_MESSAGE =
+  '(the embedding model was updated or reinstalled since the history index was built - same name, different weights - ' +
+  'so the index needs to be rebuilt before it can be searched again. Tell the user plainly, and suggest ' +
+  'clicking "Rebuild index" in Settings > Search history.)'
+
 const NEEDS_REBUILD_MESSAGE =
   '(the history index was built with a different embedding model than is currently configured ' +
   'and needs to be rebuilt before it can be searched again. Tell the user plainly, and suggest ' +
@@ -50,7 +55,7 @@ export const searchHistoryTool: Tool = {
     const limit = Math.min(MAX_LIMIT, Math.max(1, Number(input.limit) || DEFAULT_LIMIT))
 
     const state = getIndexState()
-    if (state.kind === 'needs-rebuild') return NEEDS_REBUILD_MESSAGE
+    if (state.kind === 'needs-rebuild') return state.cause === 'model-changed' ? MODEL_CHANGED_MESSAGE : NEEDS_REBUILD_MESSAGE
     // Already known-broken from a real prior attempt (see indexer.ts's
     // lastEmbedFailureReason) — no need to re-probe reachability below,
     // it would just fail identically.

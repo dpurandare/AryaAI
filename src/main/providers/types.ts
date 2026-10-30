@@ -102,4 +102,9 @@ export interface ModelProvider {
 export interface EmbeddingProvider {
   readonly id: string
   embed(texts: string[], model: string): Promise<number[][]>
+  /**
+   * TASKS #224: an identifier of the model's actual weights (Ollama's digest), when the server can report it.
+   * `undefined` when unknown or unsupported; the search index uses it to notice that the model behind a name changed.
+   */
+  modelDigest?(model: string): Promise<string | undefined>
 }

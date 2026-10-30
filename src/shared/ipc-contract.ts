@@ -181,6 +181,8 @@ export interface SearchHistoryStatusDto {
   total: number
   /** Only set when `state` is 'unavailable' — the most recent embed attempt's error message. */
   reason?: string
+  /** Only set when `state` is 'needs-rebuild' because the model's weights changed under the same name (#224); absent when the configuration changed. */
+  cause?: 'model-changed'
 }
 
 export interface SessionDto {

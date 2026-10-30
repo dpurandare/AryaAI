@@ -20,6 +20,15 @@ What changed: the Ollama that comes with the installers serves only the search e
 | **214-8** | Installer build, search over past chats | Settings > Search history shows the status; ask for something from an earlier chat ("search my history for …"). | Search still works; the index status is ready and no rebuild is requested. |
 | **214-9** | Clean machine or after deleting the app data folder (first run) | First run, step "Local embeddings". | The embedding model downloads and the step turns Ready (the bundled server is on its new port). |
 
+## #224 Search index notices a changed embedding model
+
+What changed: the app remembers which weights of `nomic-embed-text` built the search index. If the model keeps its name but its contents change (reinstall, newer Ollama), the index asks for a rebuild instead of silently searching worse.
+
+| ID | Where | Steps | Expect |
+|---|---|---|---|
+| **224-1** | Any OS, an installer build with some chats already indexed (Settings > Search history shows "N / N messages indexed") | Update to this build and restart. | Still "N / N messages indexed": an existing index is **not** flagged (it adopts the current model as its baseline). Search for something from an old chat still works. |
+| **224-2** | Same, with your own Ollama as the embedding provider (Settings > Search history) | Replace the model's contents under the same name: stop using the old one with `ollama rm nomic-embed-text`, then `ollama pull nomic-embed-text` only if the newer version differs, or create a different model under that name (`ollama cp nomic-embed-text:latest backup`, then `ollama create nomic-embed-text -f <a Modelfile with FROM mxbai-embed-large>`); restart Sachivji. | Settings > Search history says the embedding model was updated or reinstalled and needs a rebuild; asking the assistant to search past chats says the same; new messages are not added. **Rebuild index** fixes it. (Hard to trigger by hand: if you cannot, mark N/A, it is covered by automated tests.) |
+
 ## Results
 
 | ID | Item | Pass / Fail / Odd | Model / OS | Notes |
@@ -33,3 +42,5 @@ What changed: the Ollama that comes with the installers serves only the search e
 | 214-7 | Bundled port never 11434 | | | |
 | 214-8 | Search history still works | | | |
 | 214-9 | First run embeddings | | | |
+| 224-1 | Existing index not flagged after upgrade | | | |
+| 224-2 | Changed model flagged, rebuild fixes | | | |

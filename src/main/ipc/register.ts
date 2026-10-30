@@ -35,7 +35,7 @@ import { createSession, listSessions, deleteSession, getSession, updateSessionTi
 import { insertMessage, listMessages } from '../db/messages'
 import { externalAccess } from '../security/external-access-store'
 import { previousAnswerText } from '../agents/previous-answer'
-import { enqueueMessage, getEmbeddingConfig, getIndexState, rebuildIndex, runBackfill } from '../search-history/indexer'
+import { enqueueMessage, getEmbeddingConfig, getIndexState, rebuildIndex, runBackfill, verifyEmbeddingDigest } from '../search-history/indexer'
 import { getSetting, setSetting } from '../db/settings'
 import { addUsage, getUsage } from '../db/usage'
 import type { StreamEvent } from '../../shared/protocol'
@@ -269,6 +269,7 @@ export function registerIpcHandlers(): void {
   setOllamaChatBaseUrl(getSetting(OLLAMA_BASE_URL_SETTING_KEY))
   ollamaRuntime.onChange((state) => {
     setBundledOllamaBaseUrl(state.baseUrl)
+    if (state.status === 'ready') void verifyEmbeddingDigest()
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IpcChannel.OllamaStateChanged, state)
   })
   void ollamaRuntime.ensure()
@@ -300,6 +301,9 @@ export function registerIpcHandlers(): void {
 
   // Fire-and-forget, same reasoning as MCP connect above — catches up any
   // messages missing from the search_history index without blocking startup.
+  // #224: first notice if the embedding model's weights changed since the index was built (no-op while the
+  // server is not up yet; the bundled one re-runs this when it becomes ready, below).
+  void verifyEmbeddingDigest()
   runBackfill().catch((err: unknown) => {
     console.error('search_history: backfill failed:', err)
   })
@@ -570,7 +574,8 @@ export function registerIpcHandlers(): void {
       state: state.kind,
       indexed: state.kind === 'ready' ? state.indexed : 0,
       total: state.kind === 'ready' ? state.total : 0,
-      reason: state.kind === 'unavailable' ? state.reason : undefined
+      reason: state.kind === 'unavailable' ? state.reason : undefined,
+      cause: state.kind === 'needs-rebuild' ? state.cause : undefined
     }
   })
   ipcMain.handle(IpcChannel.SearchHistoryRebuildIndex, () => rebuildIndex())

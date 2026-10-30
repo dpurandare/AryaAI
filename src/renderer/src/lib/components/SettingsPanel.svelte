@@ -947,6 +947,9 @@
   function searchHistoryStatusLabel(): string {
     if (!searchHistoryStatus) return 'Loading...'
     if (searchHistoryStatus.state === 'needs-rebuild') {
+      if (searchHistoryStatus.cause === 'model-changed') {
+        return 'The embedding model was updated or reinstalled since the index was built (same name, different weights) — the index needs a rebuild before search works again.'
+      }
       return 'Embedding model changed — index needs a rebuild before search works again.'
     }
     if (searchHistoryStatus.state === 'unavailable') {

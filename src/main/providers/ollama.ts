@@ -72,6 +72,19 @@ export class OllamaProvider implements ModelProvider, EmbeddingProvider {
     return response.data.map((item) => item.embedding)
   }
 
+  /** The digest Ollama reports for an installed model (`/api/tags`), or undefined when it is unknown or the server cannot be reached. */
+  async modelDigest(model: string): Promise<string | undefined> {
+    try {
+      const res = await fetch(`${this.rootURL}/api/tags`)
+      if (!res.ok) return undefined
+      const data = (await res.json()) as { models?: { name?: string; model?: string; digest?: string }[] }
+      const wanted = model.includes(':') ? [model] : [model, `${model}:latest`]
+      return data.models?.find((m) => wanted.includes(m.name ?? '') || wanted.includes(m.model ?? ''))?.digest
+    } catch {
+      return undefined
+    }
+  }
+
   /**
    * Reads the model's *actually loaded* context length from `/api/ps` —
    * only currently-loaded (in-VRAM) models are listed there, so this

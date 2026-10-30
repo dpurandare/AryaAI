@@ -42,13 +42,15 @@ vi.mock('../providers/setup', () => ({
 }))
 
 const { setDbPath, getDb } = await import('../db')
-const { setSetting } = await import('../db/settings')
+const { setSetting, getSetting } = await import('../db/settings')
 const { createSession } = await import('../db/sessions')
 const { insertMessage } = await import('../db/messages')
 const {
   enqueueMessage,
   runBackfill,
   rebuildIndex,
+  verifyEmbeddingDigest,
+  EMBEDDING_DIGEST_SETTING_KEY,
   getIndexState,
   getEmbeddingConfig,
   searchIndex,
@@ -337,6 +339,57 @@ describe('search-history indexer', () => {
       enqueueMessage(succeeding.id, session.id, succeeding.content)
       await new Promise((r) => setTimeout(r, 0))
       expect(getIndexState()).toEqual({ kind: 'ready', indexed: 1, total: 2 })
+    })
+  })
+
+  describe('embedding model digest guard (TASKS #224)', () => {
+    async function withDigest(digest: string | undefined): Promise<void> {
+      const { getEmbeddingProvider } = await import('../providers/setup')
+      vi.mocked(getEmbeddingProvider).mockImplementation(
+        () =>
+          ({
+            id: 'fake',
+            embed: vi.fn(async (texts: string[]) => texts.map((t) => VECTORS[t] ?? [0, 0, 0, 1])),
+            modelDigest: vi.fn(async () => digest)
+          }) as never
+      )
+    }
+
+    it('remembers the digest that built the index, flags a changed digest as needs-rebuild, and a rebuild clears it', async () => {
+      await withDigest('sha-A')
+      const session = createSession('S1')
+      insertMessage(session.id, 'user', [{ type: 'text', text: 'revenue was 4.2 million' }])
+      await runBackfill()
+      expect(getSetting(EMBEDDING_DIGEST_SETTING_KEY)).toBe('sha-A')
+      expect(getIndexState()).toEqual({ kind: 'ready', indexed: 1, total: 1 })
+
+      await withDigest('sha-B') // reinstalled: same name, different weights
+      await verifyEmbeddingDigest()
+      expect(getIndexState()).toEqual({ kind: 'needs-rebuild', cause: 'model-changed' })
+
+      // New messages are not added to the old index while the model differs.
+      insertMessage(session.id, 'assistant', [{ type: 'text', text: 'revenue is now 5.1 million' }])
+      await runBackfill()
+      expect(getDb().prepare('SELECT COUNT(*) AS n FROM message_embeddings').get()).toEqual({ n: 1 })
+
+      await rebuildIndex()
+      expect(getSetting(EMBEDDING_DIGEST_SETTING_KEY)).toBe('sha-B')
+      expect(getIndexState()).toEqual({ kind: 'ready', indexed: 2, total: 2 })
+    })
+
+    it('adopts the current digest for an index built before the guard existed, and ignores an unknown digest', async () => {
+      await withDigest(undefined)
+      const session = createSession('S1')
+      insertMessage(session.id, 'user', [{ type: 'text', text: 'revenue was 4.2 million' }])
+      await runBackfill()
+      expect(getSetting(EMBEDDING_DIGEST_SETTING_KEY)).toBe('')
+      await verifyEmbeddingDigest() // server cannot report one: nothing changes
+      expect(getIndexState()).toEqual({ kind: 'ready', indexed: 1, total: 1 })
+
+      await withDigest('sha-A')
+      await verifyEmbeddingDigest()
+      expect(getSetting(EMBEDDING_DIGEST_SETTING_KEY)).toBe('sha-A')
+      expect(getIndexState()).toEqual({ kind: 'ready', indexed: 1, total: 1 })
     })
   })
 })

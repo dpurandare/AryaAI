@@ -1,5 +1,5 @@
 import { getDb } from '../db'
-import { getSetting } from '../db/settings'
+import { getSetting, setSetting } from '../db/settings'
 import { getApiKey } from '../security/keychain'
 import { getEmbeddingProvider } from '../providers/setup'
 import { extractSearchableText } from './extract-text'
@@ -8,6 +8,8 @@ import type { ContentBlock } from '@shared/protocol'
 
 export const EMBEDDING_PROVIDER_SETTING_KEY = 'embeddingProviderId'
 export const EMBEDDING_MODEL_SETTING_KEY = 'embeddingModel'
+/** TASKS #224: the digest of the embedding model's weights when the index was built (empty/absent = unknown). No schema change: app_settings is a flat key-value table. */
+export const EMBEDDING_DIGEST_SETTING_KEY = 'embeddingIndexDigest'
 
 // Ollama, local, no API key, no setup — works out of the box.
 const DEFAULT_EMBEDDING_PROVIDER_ID = 'ollama'
@@ -49,7 +51,7 @@ function getIndexMeta(): IndexMetaRow | undefined {
 export type IndexState =
   | { kind: 'empty' }
   | { kind: 'ready'; indexed: number; total: number }
-  | { kind: 'needs-rebuild' }
+  | { kind: 'needs-rebuild'; cause?: 'model-changed' }
   | { kind: 'unavailable'; reason: string }
 
 /**
@@ -76,6 +78,41 @@ function recordEmbedSuccess(): void {
   lastEmbedFailureReason = undefined
 }
 
+/**
+ * TASKS #224: set when the model behind the configured name is no longer the one that built the index (a
+ * reinstall or another Ollama pulled different weights under the same name). Vectors from the two would not
+ * be comparable, so nothing new is added to the index and search asks for a rebuild instead of degrading silently.
+ */
+let digestMismatch = false
+let lastDigestCheckAt = 0
+const DIGEST_RECHECK_MS = 5 * 60_000
+
+/**
+ * Compares the digest the embedding server reports now with the one stored when the index was built. Adopts the
+ * current digest when none is stored yet (an index built before #224: the best available assumption). Best effort:
+ * an unreachable server or a provider that cannot report a digest changes nothing. Never throws.
+ */
+export async function verifyEmbeddingDigest(): Promise<void> {
+  try {
+    const meta = getIndexMeta()
+    const config = getEmbeddingConfig()
+    if (!meta || meta.provider_id !== config.providerId || meta.model !== config.model) return
+    const provider = getEmbeddingProvider(config.providerId, getApiKey(config.providerId))
+    const current = await provider.modelDigest?.(config.model)
+    if (!current) return
+    lastDigestCheckAt = Date.now()
+    const stored = getSetting(EMBEDDING_DIGEST_SETTING_KEY)
+    if (!stored) {
+      setSetting(EMBEDDING_DIGEST_SETTING_KEY, current)
+      digestMismatch = false
+    } else {
+      digestMismatch = stored !== current
+    }
+  } catch {
+    // keep the previous verdict
+  }
+}
+
 export function getIndexState(): IndexState {
   const meta = getIndexMeta()
   const config = getEmbeddingConfig()
@@ -85,6 +122,7 @@ export function getIndexState(): IndexState {
   if (meta.provider_id !== config.providerId || meta.model !== config.model) {
     return { kind: 'needs-rebuild' }
   }
+  if (digestMismatch) return { kind: 'needs-rebuild', cause: 'model-changed' }
   const { indexed } = getDb().prepare('SELECT COUNT(*) AS indexed FROM message_embeddings').get() as {
     indexed: number
   }
@@ -127,6 +165,8 @@ async function embedAndStoreChunks(
   if (meta && (meta.provider_id !== providerId || meta.model !== model)) {
     return false
   }
+  if (meta && Date.now() - lastDigestCheckAt > DIGEST_RECHECK_MS) await verifyEmbeddingDigest()
+  if (meta && digestMismatch) return false
 
   const db = getDb()
   // Cheap pre-check, not itself the idempotency guarantee (a real
@@ -150,6 +190,11 @@ async function embedAndStoreChunks(
     db.prepare(
       'INSERT INTO embedding_index_meta (id, provider_id, model, dimension, created_at) VALUES (1, ?, ?, ?, ?)'
     ).run(providerId, model, vectors[0].length, now)
+    // #224: remember which weights built this index (best effort; unknown stays unknown).
+    const digest = await provider.modelDigest?.(model).catch(() => undefined)
+    setSetting(EMBEDDING_DIGEST_SETTING_KEY, digest ?? '')
+    digestMismatch = false
+    lastDigestCheckAt = Date.now()
   }
 
   const insertEmbedding = db.prepare(
@@ -344,6 +389,8 @@ export async function rebuildIndex(): Promise<void> {
   db.exec('DELETE FROM message_chunks')
   db.exec('DELETE FROM message_embeddings')
   db.exec('DELETE FROM embedding_index_meta')
+  setSetting(EMBEDDING_DIGEST_SETTING_KEY, '')
+  digestMismatch = false
   await runBackfill()
 }
 

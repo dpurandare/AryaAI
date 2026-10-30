@@ -65,6 +65,7 @@ Open **Settings > Search History Embedding** to see and change it:
 |---|---|
 | "Search history disabled — …model not found" | The embedding model has not been downloaded. Check **Settings > Local embeddings** (see [Install and first run](02-install-and-first-run.md)), fix it, then click **Rebuild index**. |
 | "Embedding model changed — index needs a rebuild" | You changed the provider or model. Click **Rebuild index**. |
+| "The embedding model was updated or reinstalled since the index was built…" | The model kept its name but its contents changed (for example after reinstalling Sachivji or updating Ollama), so old and new fingerprints cannot be compared. Click **Rebuild index**. Until then no new messages are added to the index and the assistant tells you the index needs a rebuild. |
 | "0 / 0 messages indexed" on a fresh install | Nothing has been indexed yet. Send a message, or wait a moment for the startup catch-up. |
 | The assistant says the history is not available | The embedding service could not be reached. Check Settings, and your network if you use a cloud provider. |
 | Results look unrelated | There may be nothing relevant in your history. Ask a narrower question, or name the topic and roughly when you discussed it. |
