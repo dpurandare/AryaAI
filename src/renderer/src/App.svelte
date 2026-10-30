@@ -733,6 +733,17 @@
     }
   }
 
+  // #229: a file dropped anywhere else in the window must not make Electron navigate to it (which would replace the app with the file).
+  $effect(() => {
+    const stop = (e: DragEvent): void => e.preventDefault()
+    window.addEventListener('dragover', stop)
+    window.addEventListener('drop', stop)
+    return () => {
+      window.removeEventListener('dragover', stop)
+      window.removeEventListener('drop', stop)
+    }
+  })
+
   // #214: "Ollama (local)" appears and disappears with Ollama itself, no restart needed.
   $effect(() => {
     void refreshSearchStatus()

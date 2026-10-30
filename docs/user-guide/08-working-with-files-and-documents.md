@@ -10,6 +10,10 @@ The default workspace is the folder `Sachivji Workspace` inside your Documents f
 
 File, shell, git and cloud tools are confined to this folder. The assistant cannot change files elsewhere on your computer.
 
+### Dropping a file into the chat
+
+Drag a file from your file manager onto the message box. Sachivji adds the file's **full path** to your message (in quotes when it contains spaces); it does not upload or paste the contents. Several files are added one per line. Then say what you want: "Summarise this", "Turn this into an Excel sheet". The assistant reads the file from where it is. For a file outside the workspace you are asked once per folder, like any other file outside it; if a script has to work on the file, the assistant copies it into `tmp/` first (copies there are deleted after about 7 days). A folder can be dropped too. Dropping a file anywhere else in the window does nothing.
+
 ### Where new files go
 
 When the assistant creates a file, Sachivji decides the folder from the file type and puts it there, whatever path the assistant asked for:

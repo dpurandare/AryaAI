@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import {
   IpcChannel,
@@ -203,6 +203,15 @@ const api = {
   getSecretStorageInfo: (): Promise<SecretStorageInfo> => ipcRenderer.invoke(IpcChannel.SecretStorageGetInfo),
   switchSecretStorageToFile: (): Promise<SecretStorageInfo> =>
     ipcRenderer.invoke(IpcChannel.SecretStorageSwitchToFile),
+
+  /** TASKS #229: the full path of a file dropped onto the window (Electron no longer exposes `File.path`); '' when the item is not a file on disk. */
+  getPathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
+  },
 
   /** Print-page-only: tells the hidden window's caller (see sessions/export.ts) the transcript has actually finished rendering and it's safe to call printToPDF. */
   notifyPrintReady: (): void => ipcRenderer.send(IpcChannel.PrintReady)

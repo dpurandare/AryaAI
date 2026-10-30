@@ -57,6 +57,16 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | **228-3** | Any model | "Create a folder myapp with a README.md and a package.json containing {} inside it." | `myapp/README.md` and `myapp/package.json` stay in `myapp/` (not split into documents/ and data/). |
 | **228-4** | Developer role | "Write a Python script that saves a list of 3 numbers to numbers.json and a table to table.csv in the current folder, then run it." (bare names in the script) | After the run the root has no loose `numbers.json` or `table.csv` only if four or more files were scattered; with just these two they stay where the script wrote them (the existing rule: one or two requested outputs stay). Mark Pass if that matches. |
 
+## #229 Drag a file into the chat to add its path
+
+| ID | Where | Steps | Expect |
+|---|---|---|---|
+| **229-1** | Every OS | Drag a file (for example a PDF or a text file with a space in its name) from the file manager over the message box. | The box shows a coloured outline while you hold the file over it. |
+| **229-2** | Same | Drop it. | The file's **full path** is in the message box (in quotes if it has spaces), not its contents. Type "Summarise this" after it and send: the assistant asks permission to read a file outside the workspace (once per folder) and then reads it. |
+| **229-3** | Same | Drop two files at once, then one more later. | One path per line; the later one is added after what is already typed. |
+| **229-4** | Same | Drop a file on the chat transcript or the sidebar (not the message box). | Nothing happens and the app does not change to show the file. While a turn is running, a drop on the message box goes into the steering note. |
+| **229-5** | Windows | Drop a file from Explorer. | The path is a Windows path (`C:\Users\…`), quoted if it has spaces. |
+
 ## Results
 
 | ID | Item | Pass / Fail / Odd | Model / OS | Notes |
@@ -83,3 +93,8 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 228-2 | Bare .md/.csv/.json filed by type | | | |
 | 228-3 | Project files with a folder stay together | | | |
 | 228-4 | Script outputs (existing rule unchanged) | | | |
+| 229-1 | Drop target outline | | | |
+| 229-2 | Full path inserted; assistant reads it | | | |
+| 229-3 | Several files, appended | | | |
+| 229-4 | Drop elsewhere does nothing; steering note | | | |
+| 229-5 | Windows path | | | |

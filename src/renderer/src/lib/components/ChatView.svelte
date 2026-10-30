@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { insertDroppedPaths } from '../dropped-paths'
   import { tick } from 'svelte'
   import ModelPicker from './ModelPicker.svelte'
   import ContextMeter from './ContextMeter.svelte'
@@ -143,6 +144,27 @@ import { formatToolInputForDisplay } from '../tool-input-display'
   } = $props()
 
   let draft = $state('')
+  /** #229: true while a file is dragged over the message area, to show the drop target. */
+  let dropActive = $state(false)
+
+  function hasFiles(e: DragEvent): boolean {
+    return Array.from(e.dataTransfer?.types ?? []).includes('Files')
+  }
+  function onComposerDragOver(e: DragEvent): void {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+    dropActive = true
+  }
+  /** #229: a dropped file inserts its full path (not its contents) into the message being typed (or the steering note while a turn runs). */
+  function onComposerDrop(e: DragEvent): void {
+    dropActive = false
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    const paths = Array.from(e.dataTransfer?.files ?? []).map((f) => window.sachiv.getPathForFile(f))
+    if (sending) steerDraft = insertDroppedPaths(steerDraft, paths)
+    else draft = insertDroppedPaths(draft, paths)
+  }
   /** TASKS.md #158: separate from `draft` so an in-progress note doesn't clobber (or get clobbered by) the
    * next real message's own draft, which the composer reverts to showing the moment `sending` goes false. */
   let steerDraft = $state('')
@@ -744,7 +766,15 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     onpointerdown={startComposerResize}
   ></div>
 
-  <div class="composer-area">
+  <div
+    class="composer-area"
+    class:drop-active={dropActive}
+    role="group"
+    aria-label="Message area (drop a file here to add its path)"
+    ondragover={onComposerDragOver}
+    ondragleave={() => (dropActive = false)}
+    ondrop={onComposerDrop}
+  >
     {#if pendingConfirm}
       <ToolConfirmDialog
         toolUseId={pendingConfirm.toolUseId}
@@ -1278,6 +1308,10 @@ import { formatToolInputForDisplay } from '../tool-input-display'
   .composer-area {
     padding: 0.75rem 1.25rem 0.6rem;
     border-top: 1px solid var(--border);
+  }
+  .composer-area.drop-active .composer {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent);
   }
   .composer {
     display: flex;
