@@ -64,7 +64,7 @@ Choose **Tavily** (paste its key; a free account gives a monthly allowance of se
 ![Settings: Workspace, Python runtime and Local embeddings](images/settings-workspace.png)
 
 - **Workspace folder.** The folder that file, shell, git and cloud-CLI tools are confined to. Type or paste a path and click **Save**.
-- **Folders outside the workspace.** Folders you allowed with *Always* in the confirmation. Remove one to be asked again. Access is read-only. See [Working with files and documents](08-working-with-files-and-documents.md).
+- **Folders outside the workspace.** Folders you allowed with *Always* in the confirmation, or added here with **Add folder…** (or **Add Downloads / Desktop / Documents**). Protected places and your whole home folder cannot be added. Remove one to be asked again. Access is read-only. See [Working with files and documents](08-working-with-files-and-documents.md).
 
 ## Python runtime
 

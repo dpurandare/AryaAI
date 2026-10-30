@@ -684,6 +684,8 @@ A **folder you allow** is readable by the file tools; nothing outside is ever ed
 | 14.1 | "Read the file `~/Desktop/sachiv-outside-test/note.txt` and tell me what it says." (use the full path) | A dialog **"Allow access outside the workspace?"** naming the folder, with *Remember this folder* (once / this session / always). Approve with "this session": the file is read and quoted correctly. |
 | 14.2 | Ask for a second file in the same folder, same chat | **No** prompt; it is read. |
 | 14.3 | In a **new** chat, ask for the same folder again | Prompted again (the session grant does not carry over). Choose **Always**; Settings > Workspace > "Folders outside the workspace" now lists it. |
+| 14.3a | (0.4.0, #216) Settings > Folders outside the workspace > **Add folder…**, choose a folder (for example Downloads) | It is listed at once; asking the assistant to read a file in it works with **no prompt**. A one-click **Add Downloads / Desktop / Documents** button disappears once that folder is listed. |
+| 14.3b | (0.4.0, #216) **Add folder…** and choose your home folder, then `~/.ssh` | Both refused with a plain message (too broad; protected). Nothing is added. Adding a folder already in the list, or one inside it, says so and adds nothing. |
 | 14.4 | Remove it there, ask again | Prompted again. |
 | 14.5 | Deny a prompt | The tool does not run; the assistant says access was refused, and does not try to get around it with another tool without telling you. |
 | 14.6 | Turn on **Auto-approve tool calls for this session**, then ask for a folder you never allowed | **Still prompted** — folder access is never auto-approved. |

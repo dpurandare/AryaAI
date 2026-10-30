@@ -18,6 +18,8 @@ import {
   type ContextWindowInfo,
   type ProviderDescriptor,
   type OllamaChatStatus,
+  type ExternalFolderAddResult,
+  type ExternalFolderSuggestion,
   type WebSearchProviderDescriptor,
   type McpServerDto,
   type SaveMcpServerInput,
@@ -156,6 +158,9 @@ const api = {
   listTools: (): Promise<ToolDescriptor[]> => ipcRenderer.invoke(IpcChannel.ToolsList),
   listExternalFolders: (): Promise<string[]> => ipcRenderer.invoke(IpcChannel.ExternalFoldersList),
   removeExternalFolder: (folder: string): Promise<void> => ipcRenderer.invoke(IpcChannel.ExternalFoldersRemove, folder),
+  /** #216: with no argument opens the native folder picker; with a path (a suggestion) checks and adds it directly. */
+  addExternalFolder: (folder?: string): Promise<ExternalFolderAddResult> => ipcRenderer.invoke(IpcChannel.ExternalFoldersAdd, folder),
+  listExternalFolderSuggestions: (): Promise<ExternalFolderSuggestion[]> => ipcRenderer.invoke(IpcChannel.ExternalFoldersSuggestions),
   listToolsByRole: (): Promise<RoleToolsDto[]> => ipcRenderer.invoke(IpcChannel.ToolsListByRole),
 
   getContextWindow: (): Promise<ContextWindowInfo | null> => ipcRenderer.invoke(IpcChannel.ContextWindowGet),

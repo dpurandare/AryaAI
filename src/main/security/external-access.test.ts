@@ -92,4 +92,47 @@ describe('external access', () => {
     access.grant('s1', outside, 'always')
     expect(() => resolveWritableNewOutside(ctxOf(access), fresh)).toThrow(/needs the user's confirmation/)
   })
+
+  describe('granting a folder up front (#216)', () => {
+    it('adds a real folder as an Always grant the file tools then honour with no prompt', async () => {
+      const result = access.addAlways(outside, root)
+      expect(result).toEqual({ ok: true, folder: outside })
+      expect(always).toEqual([outside])
+      expect(resolveReadable(ctxOf(access), join(outside, 'a.txt'))).toBe(join(outside, 'a.txt'))
+    })
+
+    it('refuses a path that is not an existing folder', () => {
+      expect(access.checkGrantFolder(join(outside, 'a.txt'), root)).toMatchObject({ ok: false, reason: 'not-a-folder' })
+      expect(access.checkGrantFolder(join(outside, 'nope'), root)).toMatchObject({ ok: false, reason: 'not-a-folder' })
+    })
+
+    it('refuses protected places (the blocked list still wins)', async () => {
+      const ssh = join(home, '.ssh')
+      const a2 = new ExternalAccess({ getAlways: () => always, setAlways: (l) => (always = l), home, exists: () => true, isDirectory: () => true })
+      expect(a2.checkGrantFolder(ssh, root)).toMatchObject({ ok: false, reason: 'blocked' })
+      expect(a2.checkGrantFolder(join(ssh, 'keys'), root)).toMatchObject({ ok: false, reason: 'blocked' })
+      expect(always).toEqual([])
+    })
+
+    it('refuses the home folder, anything above it and a filesystem root as too broad', () => {
+      const a2 = new ExternalAccess({ getAlways: () => always, setAlways: (l) => (always = l), home, exists: () => true, isDirectory: () => true })
+      expect(a2.checkGrantFolder(home, root)).toMatchObject({ ok: false, reason: 'too-broad' })
+      expect(a2.checkGrantFolder(join(home, '..'), root)).toMatchObject({ ok: false, reason: 'too-broad' })
+      expect(a2.checkGrantFolder(join(home, 'Documents'), root)).toMatchObject({ ok: true })
+    })
+
+    it('says so for the workspace itself or a folder inside it', async () => {
+      await mkdir(join(root, 'docs'))
+      expect(access.checkGrantFolder(root, root)).toMatchObject({ ok: false, reason: 'inside-workspace' })
+      expect(access.checkGrantFolder(join(root, 'docs'), root)).toMatchObject({ ok: false, reason: 'inside-workspace' })
+    })
+
+    it('does not add a duplicate or a folder an earlier grant already covers, and names the covering folder', async () => {
+      access.addAlways(outside, root)
+      await mkdir(join(outside, 'inner'))
+      expect(access.addAlways(outside, root)).toMatchObject({ ok: false, reason: 'already-granted', coveredBy: outside })
+      expect(access.addAlways(join(outside, 'inner'), root)).toMatchObject({ ok: false, reason: 'already-granted', coveredBy: outside })
+      expect(always).toEqual([outside])
+    })
+  })
 })

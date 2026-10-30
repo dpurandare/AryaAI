@@ -67,6 +67,15 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | **229-4** | Same | Drop a file on the chat transcript or the sidebar (not the message box). | Nothing happens and the app does not change to show the file. While a turn is running, a drop on the message box goes into the steering note. |
 | **229-5** | Windows | Drop a file from Explorer. | The path is a Windows path (`C:\Users\…`), quoted if it has spaces. |
 
+## #216 Allow a folder outside the workspace in advance
+
+| ID | Where | Steps | Expect |
+|---|---|---|---|
+| **216-1** | Every OS | Settings > Folders outside the workspace > **Add folder…**, pick a folder (for example Downloads). | The native folder picker opens; the folder is listed straight away. Ask the assistant "List the files in <that folder>": no permission prompt, it works. |
+| **216-2** | Same | Click **Add Documents** (a suggestion button). Then look at the buttons. | Documents is listed and its button is gone. |
+| **216-3** | Same | **Add folder…** and pick your home folder; then `.ssh` (or `.aws`) inside it; then a folder inside one already listed. | Home: refused as too broad. `.ssh`: refused as protected. A subfolder of a listed one: "already covered by …". Nothing is added in any of the three. |
+| **216-4** | Same | **Remove** a listed folder, ask the assistant to read a file in it. | Prompted again, as before. |
+
 ## Results
 
 | ID | Item | Pass / Fail / Odd | Model / OS | Notes |
@@ -98,3 +107,7 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 229-3 | Several files, appended | | | |
 | 229-4 | Drop elsewhere does nothing; steering note | | | |
 | 229-5 | Windows path | | | |
+| 216-1 | Add folder via picker, no prompt afterwards | | | |
+| 216-2 | Suggestion buttons | | | |
+| 216-3 | Home / protected / covered refused | | | |
+| 216-4 | Remove restores the prompt | | | |

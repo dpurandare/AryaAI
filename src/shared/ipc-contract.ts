@@ -88,6 +88,9 @@ export const IpcChannel = {
   ToolsList: 'tools:list',
   ExternalFoldersList: 'external-folders:list',
   ExternalFoldersRemove: 'external-folders:remove',
+  /** TASKS #216: grant a folder up front (native folder picker, or a suggested path). */
+  ExternalFoldersAdd: 'external-folders:add',
+  ExternalFoldersSuggestions: 'external-folders:suggestions',
   ToolsListByRole: 'tools:list-by-role',
 
   ContextWindowGet: 'context-window:get',
@@ -152,6 +155,20 @@ export interface OllamaChatStatus {
 export const FALLBACK_PROVIDER_SETTING_KEY = 'fallbackProviderId'
 export const FALLBACK_MODEL_SETTING_KEY = 'fallbackModel'
 export const FALLBACK_CONSENT_SETTING_KEY = 'fallbackConsent'
+
+/** TASKS #216: the outcome of Settings > Folders outside the workspace > Add folder. */
+export interface ExternalFolderAddResult {
+  status: 'added' | 'cancelled' | 'refused'
+  folder?: string
+  /** Set when `status` is 'refused': the reason in plain words. */
+  message?: string
+}
+
+/** A usual folder offered as a one-click addition. */
+export interface ExternalFolderSuggestion {
+  label: string
+  path: string
+}
 
 /** Settings key for the address of the user's own Ollama (TASKS #214); empty/absent = http://localhost:11434. */
 export const OLLAMA_BASE_URL_SETTING_KEY = 'ollamaBaseUrl'

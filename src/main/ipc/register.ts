@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import type { WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -30,7 +30,9 @@ import {
   OLLAMA_BASE_URL_SETTING_KEY,
   FALLBACK_PROVIDER_SETTING_KEY,
   FALLBACK_MODEL_SETTING_KEY,
-  FALLBACK_CONSENT_SETTING_KEY
+  FALLBACK_CONSENT_SETTING_KEY,
+  type ExternalFolderAddResult,
+  type ExternalFolderSuggestion
 } from '@shared/ipc-contract'
 import { isValidRoleId, roleLabel, type AgentRole } from '@shared/agents'
 import type { RuntimeState } from '@shared/runtime'
@@ -534,6 +536,31 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IpcChannel.ExternalFoldersList, (): string[] => externalAccess.listAlways())
   ipcMain.handle(IpcChannel.ExternalFoldersRemove, (_event, folder: string): void => externalAccess.revokeAlways(folder))
+  ipcMain.handle(IpcChannel.ExternalFoldersAdd, async (event, folder?: string): Promise<ExternalFolderAddResult> => {
+    if (!toolContext) return { status: 'refused', message: 'Sachivji is still starting.' }
+    let chosen = folder
+    if (!chosen) {
+      const window = BrowserWindow.fromWebContents(event.sender)
+      const options = { title: 'Choose a folder the assistant may read', defaultPath: app.getPath('home'), properties: ['openDirectory' as const] }
+      const picked = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+      if (picked.canceled || picked.filePaths.length === 0) return { status: 'cancelled' }
+      chosen = picked.filePaths[0]
+    }
+    const result = externalAccess.addAlways(chosen, toolContext.workspaceGuard.root)
+    return result.ok ? { status: 'added', folder: result.folder } : { status: 'refused', message: result.message }
+  })
+  ipcMain.handle(IpcChannel.ExternalFoldersSuggestions, (): ExternalFolderSuggestion[] => {
+    if (!toolContext) return []
+    const usual: Array<[string, 'downloads' | 'desktop' | 'documents']> = [['Downloads', 'downloads'], ['Desktop', 'desktop'], ['Documents', 'documents']]
+    return usual.flatMap(([label, key]) => {
+      try {
+        const path = app.getPath(key)
+        return externalAccess.checkGrantFolder(path, toolContext!.workspaceGuard.root).ok ? [{ label, path }] : []
+      } catch {
+        return []
+      }
+    })
+  })
 
   ipcMain.handle(IpcChannel.ToolsList, (): ToolDescriptor[] =>
     toolRegistry

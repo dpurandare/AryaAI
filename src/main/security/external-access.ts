@@ -46,6 +46,10 @@ function isUnder(abs: string, folder: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 
+export type GrantFolderCheck =
+  | { ok: true; folder: string }
+  | { ok: false; reason: 'not-a-folder' | 'blocked' | 'too-broad' | 'inside-workspace' | 'already-granted'; message: string; coveredBy?: string }
+
 export interface ExternalAccessDeps {
   getAlways(): string[]
   setAlways(folders: string[]): void
@@ -114,6 +118,41 @@ export class ExternalAccess {
 
   listAlways(): string[] {
     return this.deps.getAlways()
+  }
+
+  /**
+   * TASKS #216: may the user grant `chosen` up front (Settings > Add folder)? It becomes the same read-only "Always" grant a prompt would create,
+   * so the protected list still wins at read time; this only keeps nonsense out of the list: a missing folder, a protected place, a place so broad
+   * that granting it would expose the protected ones' neighbours (the home folder or anything above it, a drive or filesystem root), the
+   * workspace itself, and a folder an earlier grant already covers.
+   */
+  checkGrantFolder(chosen: string, workspaceRoot: string): GrantFolderCheck {
+    const abs = resolve(expandHome(chosen, this.home))
+    if (!this.exists(abs) || !this.isDirectory(abs)) {
+      return { ok: false, reason: 'not-a-folder', message: `"${chosen}" is not a folder that exists.` }
+    }
+    if (this.isBlocked(abs)) {
+      return { ok: false, reason: 'blocked', message: `"${abs}" is a protected location (credentials, keys, system or Sachivji's own data) and can never be shared with the assistant.` }
+    }
+    const home = resolve(this.home)
+    if (dirname(abs) === abs || isUnder(home, abs)) {
+      return { ok: false, reason: 'too-broad', message: `"${abs}" is too broad: it contains your whole home folder. Choose a specific folder inside it, such as Documents or Downloads.` }
+    }
+    if (isUnder(abs, resolve(workspaceRoot))) {
+      return { ok: false, reason: 'inside-workspace', message: `"${abs}" is inside the workspace, which the assistant can already use.` }
+    }
+    const covering = this.deps.getAlways().find((f) => isUnder(abs, f))
+    if (covering) {
+      return { ok: false, reason: 'already-granted', message: covering === abs ? `"${abs}" is already in the list.` : `"${abs}" is already covered by "${covering}".`, coveredBy: covering }
+    }
+    return { ok: true, folder: abs }
+  }
+
+  /** Validates and grants `chosen` for good; the outcome says which. */
+  addAlways(chosen: string, workspaceRoot: string): GrantFolderCheck {
+    const check = this.checkGrantFolder(chosen, workspaceRoot)
+    if (check.ok) this.deps.setAlways([...this.deps.getAlways(), check.folder])
+    return check
   }
 
   revokeAlways(folder: string): void {

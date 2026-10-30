@@ -5,6 +5,7 @@
   import { untrack } from 'svelte'
   import { refreshSummary, staleRuleNames, toolSummary } from '../auto-approve'
   import type { OllamaRuntimeState, RuntimeState } from '@shared/runtime'
+  import type { ExternalFolderSuggestion } from '@shared/ipc-contract'
   import { FALLBACK_CONSENT_SETTING_KEY, FALLBACK_MODEL_SETTING_KEY, FALLBACK_PROVIDER_SETTING_KEY, OLLAMA_BASE_URL_SETTING_KEY, type OllamaChatStatus } from '@shared/ipc-contract'
 
   let {
@@ -475,6 +476,28 @@
   async function removeExternalFolder(folder: string): Promise<void> {
     await window.sachiv.removeExternalFolder(folder)
     await loadExternalFolders()
+    await loadExternalSuggestions()
+  }
+  // #216: grant a folder up front instead of waiting for the in-chat prompt.
+  let externalSuggestions = $state<ExternalFolderSuggestion[]>([])
+  let externalAddMessage = $state('')
+  let externalAddBusy = $state(false)
+  async function loadExternalSuggestions(): Promise<void> {
+    externalSuggestions = await window.sachiv.listExternalFolderSuggestions()
+  }
+  loadExternalSuggestions()
+  async function addExternalFolder(folder?: string): Promise<void> {
+    externalAddBusy = true
+    externalAddMessage = ''
+    try {
+      const result = await window.sachiv.addExternalFolder(folder)
+      if (result.status === 'added') externalAddMessage = `Added ${result.folder}.`
+      else if (result.status === 'refused') externalAddMessage = result.message ?? 'That folder cannot be added.'
+      await loadExternalFolders()
+      await loadExternalSuggestions()
+    } finally {
+      externalAddBusy = false
+    }
   }
 
   async function saveWorkspaceRoot(): Promise<void> {
@@ -1666,8 +1689,18 @@
     <p class="status">
       File tools can read a folder outside the workspace only after you allow it in a prompt — read only; Sachivji
       never edits or deletes files there, and saving a new file there asks every time. Folders you chose
-      &ldquo;Always&rdquo; for are listed here; remove one to be asked again.
+      &ldquo;Always&rdquo; for in a prompt, or add here, are listed; remove one to be asked again. Credentials, keys,
+      system folders and Sachivji's own data can never be added, and neither can your whole home folder.
     </p>
+    <div class="actions">
+      <button disabled={externalAddBusy} onclick={() => addExternalFolder()}>Add folder…</button>
+      {#each externalSuggestions as s (s.path)}
+        <button disabled={externalAddBusy} onclick={() => addExternalFolder(s.path)} title={s.path}>Add {s.label}</button>
+      {/each}
+    </div>
+    {#if externalAddMessage}
+      <p class="status">{externalAddMessage}</p>
+    {/if}
     {#if externalFolders.length === 0}
       <p class="status">None.</p>
     {:else}
