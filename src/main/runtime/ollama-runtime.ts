@@ -7,8 +7,9 @@ import { app } from 'electron'
 import type { OllamaRuntimeState } from '@shared/runtime'
 
 /**
- * The bundled, CPU-only Ollama runtime shipped with the Windows sponsor build (TASKS #202):
- * starts `ollama.exe serve` from the packaged resources, waits for it to answer, then pulls the
+ * The bundled, CPU-only Ollama runtime shipped in the installers (TASKS #202, #214). It serves ONLY the
+ * embedding model that powers search over past chats, on its own port (11450 to 11455, never 11434); chat
+ * uses the user's own Ollama. It starts `ollama serve` from the packaged resources, waits for it to answer, then pulls the
  * `nomic-embed-text` embedding model over the network (not bundled — it's fetched here instead,
  * so the installer itself stays small) and re-creates it in place with the context-size fix
  * `models/ModelFileNomicEmbed` documents (the model's published default, 8192, exceeds its real
@@ -30,9 +31,11 @@ const execFileAsync = promisify(execFile)
 const EMBEDDING_MODEL = 'nomic-embed-text'
 const HEALTH_TIMEOUT_MS = 20_000
 const HEALTH_POLL_MS = 300
-const DEFAULT_PORT = 11434
-/** Tried in order if the default is already bound — e.g. the sponsor already runs their own Ollama for something else. */
-const PORT_FALLBACKS = [11435, 11436, 11437, 11438]
+/**
+ * TASKS #214: the bundled server only ever serves embeddings and must never take Ollama's standard port
+ * (11434), which belongs to the user's own Ollama. First free port of this range wins.
+ */
+const PORTS = [11450, 11451, 11452, 11453, 11454, 11455]
 
 export interface OllamaServerHandle {
   kill(): void
@@ -145,10 +148,10 @@ export function defaultOllamaRuntimeDeps(): OllamaRuntimeDeps {
 }
 
 async function pickPort(deps: Pick<OllamaRuntimeDeps, 'isPortFree'>): Promise<number> {
-  for (const port of [DEFAULT_PORT, ...PORT_FALLBACKS]) {
+  for (const port of PORTS) {
     if (await deps.isPortFree(port)) return port
   }
-  throw new Error(`No free port found for the bundled Ollama server (tried ${DEFAULT_PORT}, ${PORT_FALLBACKS.join(', ')}).`)
+  throw new Error(`No free port found for the bundled Ollama server (tried ${PORTS[0]} to ${PORTS[PORTS.length - 1]}).`)
 }
 
 export class OllamaRuntime {
@@ -194,7 +197,7 @@ export class OllamaRuntime {
     const { deps } = this
     const exe = deps.bundledExe()
     if (!exe) {
-      return this.set({ status: 'unavailable', message: 'Bundled Ollama is only included in the Windows sponsor build.' })
+      return this.set({ status: 'unavailable', message: 'The bundled Ollama (used only for search over past chats) is included in the installers, not in development runs.' })
     }
 
     this.set({ status: 'starting', message: 'Starting the bundled Ollama runtime…' })

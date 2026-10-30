@@ -8,12 +8,10 @@ import { ProviderRegistry } from './registry'
 import type { EmbeddingProvider } from './types'
 
 /**
- * Set once the bundled Windows-sponsor-build Ollama server (TASKS #202) is confirmed healthy,
- * so every 'ollama' provider instance below — both the registry's and `getEmbeddingProvider`'s
- * own, separate construction of one — points at its actual port instead of assuming the
- * default `localhost:11434`. `undefined` (the initial value) on every other build/platform,
- * where nothing bundled exists and the old default is exactly right. Not used for
- * 'ollama-cloud', which always targets ollama.com regardless.
+ * TASKS #214: the bundled Ollama (installers only) serves EMBEDDINGS ONLY, on its own port. Set once that server is
+ * confirmed healthy, so `getEmbeddingProvider('ollama')` points at it. `undefined` (the initial value) where nothing
+ * bundled exists, where the old default `localhost:11434` is right. Chat never uses it: the 'ollama' chat provider
+ * talks to the user's own Ollama (below). Not used for 'ollama-cloud', which always targets ollama.com.
  */
 let bundledOllamaBaseUrl: string | undefined
 
@@ -21,8 +19,24 @@ export function setBundledOllamaBaseUrl(baseUrl: string | undefined): void {
   bundledOllamaBaseUrl = baseUrl
 }
 
-function ollamaChatBaseUrl(): string | undefined {
+function bundledEmbeddingBaseUrl(): string | undefined {
   return bundledOllamaBaseUrl ? `${bundledOllamaBaseUrl}/v1` : undefined
+}
+
+/**
+ * The address of the user's own Ollama, used by the 'ollama' chat provider (`undefined` = the default
+ * `http://localhost:11434/v1`). Accepts the root address ("http://host:11434") or the OpenAI-compatible one
+ * ("…/v1"). It may point to an Ollama on another machine.
+ */
+let ollamaChatBaseUrl: string | undefined
+
+export function setOllamaChatBaseUrl(address: string | undefined): void {
+  const trimmed = address?.trim().replace(/\/+$/, '')
+  ollamaChatBaseUrl = trimmed ? (trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`) : undefined
+}
+
+export function getOllamaChatBaseUrl(): string {
+  return ollamaChatBaseUrl ?? 'http://localhost:11434/v1'
 }
 
 export function createDefaultProviderRegistry(): ProviderRegistry {
@@ -53,10 +67,8 @@ export function createDefaultProviderRegistry(): ProviderRegistry {
     displayName: 'Ollama (local)',
     requiresApiKey: false,
     supportsEmbeddings: true,
-    create: () => {
-      const baseUrl = ollamaChatBaseUrl()
-      return baseUrl ? new OllamaProvider(baseUrl) : new OllamaProvider()
-    }
+    // Chat: always the user's own Ollama, never the bundled embeddings-only server (#214).
+    create: () => new OllamaProvider(getOllamaChatBaseUrl())
   })
   registry.register({
     id: 'ollama-cloud',
@@ -99,8 +111,9 @@ export function getEmbeddingProvider(providerId: string, apiKey?: string): Embed
     case 'google':
       return new GoogleProvider(apiKey!)
     case 'ollama': {
-      const baseUrl = ollamaChatBaseUrl()
-      return baseUrl ? new OllamaProvider(baseUrl) : new OllamaProvider()
+      // Embeddings: the bundled server when there is one (it holds nomic-embed-text), otherwise the user's own Ollama.
+      const baseUrl = bundledEmbeddingBaseUrl()
+      return baseUrl ? new OllamaProvider(baseUrl) : new OllamaProvider(getOllamaChatBaseUrl())
     }
     case 'ollama-cloud':
       return new OllamaProvider('https://ollama.com/v1', apiKey!, 'ollama-cloud', 'Ollama Cloud')

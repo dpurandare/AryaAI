@@ -58,8 +58,8 @@ export interface OllamaRuntimeState {
   /** Human-readable, shown in Settings and onboarding. Always set. */
   message: string
   /** `http://127.0.0.1:<port>` once the server is confirmed healthy — the port the bundled
-   * server actually bound (not always the default 11434: picked to avoid colliding with an
-   * Ollama the sponsor already runs for their own purposes). */
+   * server actually bound: the first free port of 11450 to 11455, never Ollama's standard 11434
+   * (that one belongs to the user's own Ollama, which serves chat). */
   baseUrl?: string
   /** Set while status is `'pulling-model'`; omitted once the pull finishes either way. */
   modelPullProgress?: { completed: number; total: number }

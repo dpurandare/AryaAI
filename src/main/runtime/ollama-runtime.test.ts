@@ -36,7 +36,7 @@ function harness(
 ): Harness {
   const bundledExe = 'bundledExe' in opts ? opts.bundledExe : EXE
   const modelfilePath = 'modelfilePath' in opts ? opts.modelfilePath : MODELFILE
-  const portsFree = opts.portsFree ?? new Set([11434])
+  const portsFree = opts.portsFree ?? new Set([11450])
   const spawnCalls: Harness['spawnCalls'] = []
   const applyCalls: Harness['applyCalls'] = []
   let killed = false
@@ -85,16 +85,23 @@ describe('OllamaRuntime', () => {
     expect(seen[2].modelPullProgress).toEqual({ completed: 50, total: 100 })
     expect(seen[3].modelPullProgress).toEqual({ completed: 100, total: 100 })
     expect(final.status).toBe('ready')
-    expect(final.baseUrl).toBe('http://127.0.0.1:11434')
-    expect(h.spawnCalls).toEqual([{ exe: EXE, port: 11434, modelsDir: MODELS_DIR }])
-    expect(h.applyCalls).toEqual([{ exe: EXE, baseUrl: 'http://127.0.0.1:11434', modelfilePath: MODELFILE }])
+    expect(final.baseUrl).toBe('http://127.0.0.1:11450')
+    expect(h.spawnCalls).toEqual([{ exe: EXE, port: 11450, modelsDir: MODELS_DIR }])
+    expect(h.applyCalls).toEqual([{ exe: EXE, baseUrl: 'http://127.0.0.1:11450', modelfilePath: MODELFILE }])
   })
 
-  it('falls back to the next free port when the default is already in use (e.g. the sponsor runs their own Ollama)', async () => {
-    const h = harness({ portsFree: new Set([11436]) })
+  it('falls back to the next free port of 11450 to 11455 when the first is in use', async () => {
+    const h = harness({ portsFree: new Set([11453]) })
     const final = await new OllamaRuntime(h.deps).ensure()
-    expect(final.baseUrl).toBe('http://127.0.0.1:11436')
-    expect(h.spawnCalls[0].port).toBe(11436)
+    expect(final.baseUrl).toBe('http://127.0.0.1:11453')
+    expect(h.spawnCalls[0].port).toBe(11453)
+  })
+
+  it("never takes Ollama's standard port 11434, even when it is the only free one (#214)", async () => {
+    const h = harness({ portsFree: new Set([11434, 11435]) })
+    const final = await new OllamaRuntime(h.deps).ensure()
+    expect(final.status).toBe('failed')
+    expect(h.spawnCalls).toHaveLength(0)
   })
 
   it('fails cleanly, killing the server, when none of the tried ports are free', async () => {
@@ -117,7 +124,7 @@ describe('OllamaRuntime', () => {
     const final = await new OllamaRuntime(h.deps).ensure()
     expect(final.status).toBe('failed')
     expect(final.message).toContain('disk full')
-    expect(final.baseUrl).toBe('http://127.0.0.1:11434')
+    expect(final.baseUrl).toBe('http://127.0.0.1:11450')
   })
 
   it('skips applyModelfile and goes straight to ready when no modelfile is bundled', async () => {
