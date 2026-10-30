@@ -99,7 +99,9 @@ export async function walk(
   relFromSearch: string,
   workspacePrefix: string,
   ignorePatterns: RegExp[],
-  result: WalkResult
+  result: WalkResult,
+  /** A folder to leave out entirely (a protected location inside a folder the user allowed): never listed, never opened. */
+  skipDir?: (absDir: string) => boolean
 ): Promise<void> {
   if (result.truncated) return
   let entries
@@ -119,7 +121,8 @@ export async function walk(
     if (entry.isDirectory()) {
       if (DEFAULT_IGNORED_DIRS.has(entry.name)) continue
       if (ignorePatterns.some((p) => p.test(workspaceRelPath) || p.test(entry.name))) continue
-      await walk(join(absDir, entry.name), relPath, workspacePrefix, ignorePatterns, result)
+      if (skipDir?.(join(absDir, entry.name))) continue
+      await walk(join(absDir, entry.name), relPath, workspacePrefix, ignorePatterns, result, skipDir)
     } else if (entry.isFile()) {
       if (ignorePatterns.some((p) => p.test(workspaceRelPath) || p.test(entry.name))) continue
       result.files.push(relPath)
@@ -157,7 +160,7 @@ export const findFilesTool: Tool = {
 
     const workspacePrefix = outside ? searchPath.split(sep).join('/') : workspaceRelativePath(ctx.workspaceGuard.root, searchPath)
     const result: WalkResult = { files: [], scanned: 0, truncated: false }
-    await walk(searchPath, '', workspacePrefix, ignorePatterns, result)
+    await walk(searchPath, '', workspacePrefix, ignorePatterns, result, outside ? (dir) => ctx.externalAccess?.isBlocked(dir) ?? false : undefined)
 
     // Matched against the search-root-relative path (what `pattern` describes), then re-prefixed to the
     // workspace root for display — the output must be directly usable as read_file/write_file's own `path` input.

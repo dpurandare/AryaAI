@@ -40,4 +40,14 @@ describe('OllamaAvailability (#214)', () => {
     await a.check('http://other:1/v1')
     expect(f).toHaveBeenCalledTimes(4)
   })
+
+  it('peek returns the last result for that address without probing, and nothing for an address never probed', async () => {
+    const f = vi.fn().mockResolvedValue(ok())
+    const a = new OllamaAvailability(f)
+    expect(a.peek('http://h:1/v1')).toBeUndefined()
+    await a.check('http://h:1/v1')
+    expect(a.peek('http://h:1/v1')).toEqual({ reachable: true, address: 'http://h:1' })
+    expect(a.peek('http://other:1/v1')).toBeUndefined()
+    expect(f).toHaveBeenCalledTimes(1)
+  })
 })

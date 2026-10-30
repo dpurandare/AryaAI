@@ -24,7 +24,14 @@ export const PROTECTED_UNDER_HOME: readonly string[] = [
   'Library/Keychains',
   'Library/Cookies',
   'Library/Application Support/Sachivji',
-  'Library/Application Support/Sachiv'
+  'Library/Application Support/Sachiv',
+  // Sachivji's own data folder (database, stored credentials) on Linux and Windows: .config/<app> and %APPDATA% / %LOCALAPPDATA%.
+  '.config/Sachivji',
+  '.config/Sachiv',
+  'AppData/Roaming/Sachivji',
+  'AppData/Roaming/Sachiv',
+  'AppData/Local/Sachivji',
+  'AppData/Local/Sachiv'
 ]
 export const PROTECTED_ABSOLUTE: readonly string[] = ['/etc', '/private/etc', '/var/db', '/System', '/Library/Keychains']
 

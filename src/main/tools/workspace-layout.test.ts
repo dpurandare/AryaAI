@@ -31,6 +31,15 @@ describe('classifyManagedFolder', () => {
     expect(classifyManagedFolder('answer.json')).toBe('data')
   })
 
+  it('files project manifests with the code, and treats ./name like a bare name (#228 review)', () => {
+    expect(classifyManagedFolder('package.json')).toBe('code')
+    expect(classifyManagedFolder('requirements.txt')).toBe('code')
+    expect(classifyManagedFolder('tsconfig.json')).toBe('code')
+    expect(classifyManagedFolder('myapp/package.json')).toBeNull()
+    expect(classifyManagedFolder('./notes.md')).toBe('documents')
+    expect(classifyManagedFolder('./sales.csv')).toBe('data')
+  })
+
   it('leaves .md/.txt/.csv/.json alone when the name has a directory part: it belongs to the project it is in (#228)', () => {
     expect(classifyManagedFolder('myapp/README.md')).toBeNull()
     expect(classifyManagedFolder('myapp/package.json')).toBeNull()

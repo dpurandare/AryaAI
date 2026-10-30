@@ -19,6 +19,7 @@ const VECTORS: Record<string, number[]> = {
 let embedShouldFail = false
 
 vi.mock('../providers/setup', () => ({
+  embeddingServerSettled: vi.fn(() => true),
   getEmbeddingProvider: vi.fn(() => ({
     id: 'fake',
     embed: vi.fn(async (texts: string[]) => {

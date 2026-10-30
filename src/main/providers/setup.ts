@@ -19,6 +19,21 @@ export function setBundledOllamaBaseUrl(baseUrl: string | undefined): void {
   bundledOllamaBaseUrl = baseUrl
 }
 
+let bundledOllamaPending = false
+
+/** TASKS #224: true while the bundled Ollama is starting or pulling its model, i.e. embeddings do not yet have their server. */
+export function setBundledOllamaPending(pending: boolean): void {
+  bundledOllamaPending = pending
+}
+
+/**
+ * Whether the server `getEmbeddingProvider(providerId)` would use is the final one. While the bundled Ollama is still starting, 'ollama' embeddings
+ * would go to the user's own Ollama instead, which may hold a different `nomic-embed-text`: nothing should be indexed, and no digest read or adopted, against it.
+ */
+export function embeddingServerSettled(providerId: string): boolean {
+  return providerId !== 'ollama' || !bundledOllamaPending
+}
+
 function bundledEmbeddingBaseUrl(): string | undefined {
   return bundledOllamaBaseUrl ? `${bundledOllamaBaseUrl}/v1` : undefined
 }

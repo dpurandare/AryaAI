@@ -70,7 +70,7 @@ import { McpManager } from '../mcp/manager'
 import { openDriver } from '../tools/db/driver-factory'
 import { buildSchemaSummary } from '../tools/db/schema-summary'
 import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
-import { createDefaultProviderRegistry, getOllamaChatBaseUrl, probeEmbeddingDimension, setBundledOllamaBaseUrl, setOllamaChatBaseUrl } from '../providers/setup'
+import { createDefaultProviderRegistry, getOllamaChatBaseUrl, probeEmbeddingDimension, setBundledOllamaBaseUrl, setBundledOllamaPending, setOllamaChatBaseUrl } from '../providers/setup'
 import { OllamaAvailability } from '../providers/ollama-availability'
 import { fallbackNotice, usableFallback } from '../providers/fallback'
 import { createDefaultWebSearchProviderRegistry } from '../tools/web-search-providers'
@@ -275,7 +275,9 @@ export function registerIpcHandlers(): void {
   setOllamaChatBaseUrl(getSetting(OLLAMA_BASE_URL_SETTING_KEY))
   ollamaRuntime.onChange((state) => {
     setBundledOllamaBaseUrl(state.baseUrl)
-    if (state.status === 'ready') void verifyEmbeddingDigest()
+    setBundledOllamaPending(state.status === 'starting' || state.status === 'pulling-model')
+    // #224: the embedding server is final now: compare its digest, then catch up anything that waited for it.
+    if (state.status === 'ready') void verifyEmbeddingDigest().then(() => runBackfill()).catch(() => undefined)
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IpcChannel.OllamaStateChanged, state)
   })
   void ollamaRuntime.ensure()
@@ -351,7 +353,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.ProvidersList, async () => {
     // TASKS #214: the user's own Ollama is probed (short timeout, cached a few seconds) so the model selection can
     // hide "Ollama (local)" while it is not running.
-    const ollama = await ollamaAvailability.check(getOllamaChatBaseUrl())
+    // Never hold the provider list up for a slow or dead address: wait a moment for a fresh answer, else use the last known one
+    // (the probe keeps running and fills the cache for the next refresh). Unknown = not hidden.
+    const address = getOllamaChatBaseUrl()
+    const fresh = await Promise.race([ollamaAvailability.check(address), new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 400))])
+    const ollama = fresh ?? ollamaAvailability.peek(address) ?? { reachable: true, address, error: undefined }
     return providerRegistry
       .list()
       .map(({ id, displayName, requiresApiKey, supportsEmbeddings }) => ({

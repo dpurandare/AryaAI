@@ -135,6 +135,10 @@ export class ExternalAccess {
       return { ok: false, reason: 'blocked', message: `"${abs}" is a protected location (credentials, keys, system or Sachivji's own data) and can never be shared with the assistant.` }
     }
     const home = resolve(this.home)
+    const containsProtected = [...BLOCKED_ABSOLUTE, ...BLOCKED_UNDER_HOME.map((b) => join(home, b))].find((b) => isUnder(b, abs))
+    if (containsProtected) {
+      return { ok: false, reason: 'too-broad', message: `"${abs}" is too broad: it contains a protected location (${containsProtected}). Choose a more specific folder inside it.` }
+    }
     if (dirname(abs) === abs || isUnder(home, abs)) {
       return { ok: false, reason: 'too-broad', message: `"${abs}" is too broad: it contains your whole home folder. Choose a specific folder inside it, such as Documents or Downloads.` }
     }

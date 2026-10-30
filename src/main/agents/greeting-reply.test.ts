@@ -3,9 +3,11 @@ import { classifyGreeting, enforceGreetingReply, stripGenericClosing } from './g
 
 describe('classifyGreeting (#242)', () => {
   it('recognises a bare greeting and a "what can you do" question, and nothing else', () => {
-    for (const t of ['Hello', 'hello!', 'Hi there', 'hey', 'Good morning', 'Hello Planner', 'namaste']) expect(classifyGreeting(t), t).toBe('greeting')
+    for (const t of ['Hello', 'hello!', 'Hi there', 'hey', 'Good morning', 'namaste', 'Hello everyone', 'hey, team!']) expect(classifyGreeting(t), t).toBe('greeting')
+    expect(classifyGreeting('Hello Planner', 'Planner')).toBe('greeting')
+    expect(classifyGreeting('Hello Planner')).toBeUndefined() // another name is not a greeting word
     for (const t of ['What can you do?', 'what can you do', 'Which tools do you have?', 'who are you?', 'What do you do?']) expect(classifyGreeting(t), t).toBe('capabilities')
-    for (const t of ['Hello, please summarise report.pdf', 'Compare Python and Rust in two sentences.', 'hi can you read a.txt', '', 'What can you do with my Q3 sales file and how long would it take?']) {
+    for (const t of ['Hello, please summarise report.pdf', 'Compare Python and Rust in two sentences.', 'hi can you read a.txt', '', 'What can you do with my Q3 sales file and how long would it take?', 'hey explain recursion', 'hi summarise report', 'yo run tests', 'what are you doing?', 'what are you looking at']) {
       expect(classifyGreeting(t), t).toBeUndefined()
     }
     expect(classifyGreeting('Hello\nplease do X')).toBeUndefined()

@@ -24,7 +24,7 @@ const MAX_FILE_BYTES = 1_000_000
 const SNIFF_BYTES = 4096
 const MAX_PATTERN_CHARS = 500
 /** A pathological minified line could make a regex slow; longer lines are matched on their first part only. */
-const MAX_TESTED_LINE_CHARS = 5_000
+const MAX_TESTED_LINE_CHARS = 2_000
 const MAX_SHOWN_LINE_CHARS = 240
 
 /** Fixed on purpose: the model rarely needs to change them, and every schema word is paid for on every request (prompt-budget.test.ts). */
@@ -42,7 +42,19 @@ function shown(line: string): string {
   return text.replace(/\s+$/, '')
 }
 
+/**
+ * A regular expression runs synchronously in the main process and cannot be interrupted, so the classic runaway shapes are refused up front:
+ * a group that itself contains a repeat and is repeated again, such as `(a+)+`, `(.*)*x` or `(\w+\s?)+$`. A heuristic, not a proof (alternations
+ * like `(a|a)*` get through), which is why lines are also cut short before testing and regex is off unless the model asks for it.
+ */
+export function looksCatastrophic(pattern: string): boolean {
+  return /\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d*,\d*\})/.test(pattern)
+}
+
 function buildMatcher(pattern: string, isRegex: boolean, caseSensitive: boolean): RegExp {
+  if (isRegex && looksCatastrophic(pattern)) {
+    throw new Error('it repeats a group that already repeats (like (a+)+), which can hang the search; write it without the nested repeat.')
+  }
   const source = isRegex ? pattern : pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return new RegExp(source, caseSensitive ? '' : 'i')
 }
@@ -135,7 +147,7 @@ export const findInFilesTool: Tool = {
     const workspacePrefix = outside ? searchPath.split(sep).join('/') : workspaceRelativePath(ctx.workspaceGuard.root, searchPath)
 
     const listing: WalkResult = { files: [], scanned: 0, truncated: false }
-    await walk(searchPath, '', workspacePrefix, ignorePatterns, listing)
+    await walk(searchPath, '', workspacePrefix, ignorePatterns, listing, outside ? (dir) => ctx.externalAccess?.isBlocked(dir) ?? false : undefined)
     const candidates = listing.files.filter((rel) => fileGlob.test(rel)).sort()
 
     const hits: FileHits[] = []

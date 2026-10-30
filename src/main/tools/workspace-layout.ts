@@ -20,8 +20,11 @@ export const MANAGED_FOLDERS: readonly ManagedFolder[] = ['code', 'documents', '
 /** Where files fetched for the user are saved (a workspace folder, not the operating system's Downloads folder). TASKS #228. */
 export const DOWNLOADS_DIR = 'downloads'
 
+/** Where exports go by default (the Export Settings dialog opens here); created when needed. */
+export const EXPORTS_DIR = 'exports'
+
 /** Every conventional folder created with the workspace; the ones a tool writes to by name (not by file type) are the last two. */
-export const WORKSPACE_FOLDERS: readonly string[] = [...MANAGED_FOLDERS, 'downloads', 'exports']
+export const WORKSPACE_FOLDERS: readonly string[] = [...MANAGED_FOLDERS, DOWNLOADS_DIR, EXPORTS_DIR]
 
 /**
  * Pre-existing, special-purpose folders that predate this convention and must
@@ -61,6 +64,11 @@ const RESOURCE_EXTENSIONS = new Set([
  */
 const BARE_NAME_DOCUMENT_EXTENSIONS = new Set(['md', 'txt'])
 const BARE_NAME_DATA_EXTENSIONS = new Set(['csv', 'tsv', 'json'])
+/** Project manifest files: they go with the code they describe (`code/`), not into `data/` or `documents/`, or `npm install` / `pip install -r` would not find them. */
+const PROJECT_FILE_NAMES = new Set([
+  'package.json', 'package-lock.json', 'tsconfig.json', 'jsconfig.json', 'composer.json', 'deno.json', 'manifest.json',
+  'requirements.txt', 'constraints.txt', 'cmakelists.txt'
+])
 
 /** `null` means "no managed folder for this extension" — stays at the workspace root, or wherever it already is. */
 export function classifyManagedFolder(pathOrFilename: string): ManagedFolder | null {
@@ -68,7 +76,10 @@ export function classifyManagedFolder(pathOrFilename: string): ManagedFolder | n
   if (CODE_EXTENSIONS.has(ext)) return 'code'
   if (DOCUMENT_EXTENSIONS.has(ext)) return 'documents'
   if (RESOURCE_EXTENSIONS.has(ext)) return 'resources'
-  const bare = !pathOrFilename.includes('/') && !pathOrFilename.includes('\\')
+  // `./notes.csv` is as bare as `notes.csv`.
+  const name = pathOrFilename.replace(/^(\.[/\\])+/, '')
+  const bare = !name.includes('/') && !name.includes('\\')
+  if (bare && PROJECT_FILE_NAMES.has(name.toLowerCase())) return 'code'
   if (bare && BARE_NAME_DOCUMENT_EXTENSIONS.has(ext)) return 'documents'
   if (bare && BARE_NAME_DATA_EXTENSIONS.has(ext)) return 'data'
   return null
@@ -129,9 +140,6 @@ export function resolveNewFilePath(workspaceGuard: WorkspaceGuard, relPath: stri
 export function workspaceRelativePath(root: string, absPath: string): string {
   return relative(root, absPath).split(sep).join('/')
 }
-
-/** Where exports go by default (the Export Settings dialog opens here); created when needed. */
-export const EXPORTS_DIR = 'exports'
 
 /** Where scripts put scratch and intermediate files (page images, crops, temp data). Cleared automatically after a while — see `pruneScratchDir`. */
 export const SCRATCH_DIR = 'tmp'

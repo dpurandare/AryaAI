@@ -35,6 +35,7 @@ const VECTORS: Record<string, number[]> = {
 }
 
 vi.mock('../providers/setup', () => ({
+  embeddingServerSettled: vi.fn(() => true),
   getEmbeddingProvider: vi.fn(() => ({
     id: 'fake',
     embed: vi.fn(async (texts: string[]) => texts.map((t) => VECTORS[t] ?? [0, 0, 0, 1]))
@@ -374,6 +375,30 @@ describe('search-history indexer', () => {
 
       await rebuildIndex()
       expect(getSetting(EMBEDDING_DIGEST_SETTING_KEY)).toBe('sha-B')
+      expect(getIndexState()).toEqual({ kind: 'ready', indexed: 2, total: 2 })
+    })
+
+    it('does not read, adopt or index against a server that is not final yet (the bundled Ollama still starting)', async () => {
+      await withDigest('sha-A')
+      const session = createSession('S1')
+      insertMessage(session.id, 'user', [{ type: 'text', text: 'revenue was 4.2 million' }])
+      await runBackfill()
+      expect(getSetting(EMBEDDING_DIGEST_SETTING_KEY)).toBe('sha-A')
+
+      const { embeddingServerSettled } = await import('../providers/setup')
+      vi.mocked(embeddingServerSettled).mockReturnValue(false)
+      try {
+        await withDigest('sha-OTHER') // what the user's own Ollama would report meanwhile
+        await verifyEmbeddingDigest()
+        expect(getIndexState()).toEqual({ kind: 'ready', indexed: 1, total: 1 }) // no false "model changed"
+        insertMessage(session.id, 'assistant', [{ type: 'text', text: 'revenue is now 5.1 million' }])
+        await runBackfill()
+        expect(getDb().prepare('SELECT COUNT(*) AS n FROM message_embeddings').get()).toEqual({ n: 1 }) // nothing indexed yet
+      } finally {
+        vi.mocked(embeddingServerSettled).mockReturnValue(true)
+      }
+      await withDigest('sha-A')
+      await runBackfill()
       expect(getIndexState()).toEqual({ kind: 'ready', indexed: 2, total: 2 })
     })
 

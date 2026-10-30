@@ -202,8 +202,9 @@ describe('OllamaProvider', () => {
   })
 
   it('says plainly that Ollama is not running when the connection fails (#214), only for the local provider', async () => {
-    const connErr = Object.assign(new Error('Connection error.'), { name: 'APIConnectionError' })
-    mockCreate.mockRejectedValue(connErr)
+    // The real SDK error: `name` stays 'Error', only the class name says what it is (checked against openai 7.10 on 2026-10-31).
+    class APIConnectionError extends Error {}
+    mockCreate.mockRejectedValue(new APIConnectionError('Connection error.'))
     const req = { model: 'm', messages: [], tools: [] } as never
     await expect(collect(new OllamaProvider().stream(req))).rejects.toThrow(/Ollama \(local\) is not running at http:\/\/localhost:11434/)
     await expect(collect(new OllamaProvider('https://ollama.com/v1', 'k', 'ollama-cloud', 'Ollama Cloud').stream(req))).rejects.toThrow(/Connection error/)

@@ -83,15 +83,17 @@ const NOT_EXPANDED = new Set(['node_modules', '.git', 'venv', '.venv', '__pycach
  * listed folder with `/`, each folder followed by what is in it (folders first, then files, at every level). Capped, and the cap and the
  * folders left closed are stated, so a short listing is never mistaken for a complete one.
  */
-async function listTree(root: string, depth: number): Promise<string> {
+async function listTree(root: string, depth: number, skipDir?: (absDir: string) => boolean): Promise<string> {
   const lines: string[] = []
   const closed: string[] = []
   let total = 0
   async function visit(dir: string, rel: string, level: number): Promise<void> {
     let entries
     try {
-      entries = (await readdir(dir, { withFileTypes: true })).filter((e) => e.name !== INTERNAL_FOLDER)
-    } catch {
+      entries = (await readdir(dir, { withFileTypes: true })).filter((e) => e.name !== INTERNAL_FOLDER && !(e.isDirectory() && skipDir?.(join(dir, e.name))))
+    } catch (err) {
+      // The listed folder itself must fail loudly (a missing or unreadable folder is not an empty one); a subfolder that cannot be read is just skipped.
+      if (level === 1) throw err
       return
     }
     const sorted = [...entries].sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
@@ -127,7 +129,7 @@ export const listDirectoryTool: Tool = {
   async execute(input, ctx) {
     const path = resolveReadable(ctx, String(input.path ?? '.'))
     const depth = Math.min(MAX_LIST_DEPTH, Math.max(1, Math.trunc(Number(input.depth ?? 1)) || 1))
-    if (depth > 1) return listTree(path, depth)
+    if (depth > 1) return listTree(path, depth, isInsideWorkspace(ctx, String(input.path ?? '.')) ? undefined : (dir) => ctx.externalAccess?.isBlocked(dir) ?? false)
     const entries = (await readdir(path, { withFileTypes: true })).filter((e) => e.name !== INTERNAL_FOLDER)
     if (entries.length === 0) return '(empty directory)'
     return entries

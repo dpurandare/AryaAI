@@ -26,6 +26,12 @@ export class OllamaAvailability {
     private readonly now: () => number = Date.now
   ) {}
 
+  /** The last result for this address, however old, or undefined if it has never been probed. Never waits. */
+  peek(baseUrl: string): OllamaReachability | undefined {
+    const address = rootOf(baseUrl)
+    return this.cache?.key === address ? this.cache.value : undefined
+  }
+
   /** `force` skips the cache (Settings "Check again"). Never rejects. */
   async check(baseUrl: string, force = false): Promise<OllamaReachability> {
     const address = rootOf(baseUrl)

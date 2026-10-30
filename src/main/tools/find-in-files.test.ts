@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { ExternalAccess } from '../security/external-access'
 import { WorkspaceGuard } from '../security/workspace-guard'
 import { findInFilesTool } from './find-in-files'
 import type { ToolContext } from './types'
@@ -117,5 +118,31 @@ describe('find_in_files (#169)', () => {
   it('is read-only and declares the folder it reads so the outside-folder prompt applies', () => {
     expect(findInFilesTool.mutates).toBe(false)
     expect(findInFilesTool.externalPaths?.({ path: '/somewhere' }, ctx)).toEqual([{ path: '/somewhere', access: 'read' }])
+  })
+
+  it('refuses a regular expression that repeats a repeating group (it could hang the app) but accepts ordinary ones (review of 0.4.0)', async () => {
+    await put(root, 'a.txt', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!\n')
+    for (const bad of ['(a+)+$', '(.*)*x', '(\\w+\\s?)+$', '(a*){2,}b']) {
+      await expect(run({ pattern: bad, regex: true })).rejects.toThrow(/repeats a group that already repeats/)
+    }
+    expect(await run({ pattern: 'a+!', regex: true })).toContain('1 match(es)')
+    expect(await run({ pattern: '(ab)+c|a{2,5}', regex: true })).toContain('a.txt')
+  })
+
+  it('does not search into a protected folder inside a folder the user allowed (review of 0.4.0)', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'sachiv-fif-out-'))
+    try {
+      await put(outside, 'notes.txt', 'secret-word here\n')
+      await put(outside, 'gcloud/creds.txt', 'secret-word here\n')
+      const access = new ExternalAccess({ getAlways: () => [outside], setAlways: () => undefined, home: join(tmpdir(), 'fake-home') })
+      const blocked = join(outside, 'gcloud')
+      const guarded = { ...access, isBlocked: (p: string) => p === blocked || p.startsWith(blocked + sep) } as unknown as ExternalAccess
+      const c = { ...ctx, externalAccess: Object.assign(Object.create(Object.getPrototypeOf(access)), access, { isBlocked: guarded.isBlocked }) } as ToolContext
+      const out = (await findInFilesTool.execute({ pattern: 'secret-word', path: outside }, c)) as string
+      expect(out).toContain('notes.txt')
+      expect(out).not.toContain('creds.txt')
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
   })
 })

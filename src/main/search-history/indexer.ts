@@ -1,7 +1,7 @@
 import { getDb } from '../db'
 import { getSetting, setSetting } from '../db/settings'
 import { getApiKey } from '../security/keychain'
-import { getEmbeddingProvider } from '../providers/setup'
+import { embeddingServerSettled, getEmbeddingProvider } from '../providers/setup'
 import { extractSearchableText } from './extract-text'
 import { chunkText } from './chunk-text'
 import type { ContentBlock } from '@shared/protocol'
@@ -97,6 +97,7 @@ export async function verifyEmbeddingDigest(): Promise<void> {
     const meta = getIndexMeta()
     const config = getEmbeddingConfig()
     if (!meta || meta.provider_id !== config.providerId || meta.model !== config.model) return
+    if (!embeddingServerSettled(config.providerId)) return // the bundled server is still starting: not the server that will be used
     const provider = getEmbeddingProvider(config.providerId, getApiKey(config.providerId))
     const current = await provider.modelDigest?.(config.model)
     if (!current) return
@@ -165,6 +166,8 @@ async function embedAndStoreChunks(
   if (meta && (meta.provider_id !== providerId || meta.model !== model)) {
     return false
   }
+  // The bundled Ollama is still starting: 'ollama' would resolve to the user's own server and put vectors of other weights into this index. Try again later.
+  if (!embeddingServerSettled(providerId)) return false
   if (meta && Date.now() - lastDigestCheckAt > DIGEST_RECHECK_MS) await verifyEmbeddingDigest()
   if (meta && digestMismatch) return false
 

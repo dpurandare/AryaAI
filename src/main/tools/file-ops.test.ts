@@ -241,6 +241,11 @@ describe('file-ops tools', () => {
         expect(out).toMatch(/\(\d+ more entries not shown: list a subfolder, or use a smaller depth\)/)
       })
 
+      it('fails loudly for a folder that does not exist, as depth 1 does, instead of calling it empty (review of 0.4.0)', async () => {
+        await expect(listDirectoryTool.execute({ path: 'nope', depth: 2 }, ctx)).rejects.toThrow(/ENOENT/)
+        await expect(listDirectoryTool.execute({ path: 'nope' }, ctx)).rejects.toThrow(/ENOENT/)
+      })
+
       it('reports an empty directory, and a nested start path gives names relative to it', async () => {
         await mkdir(join(root, 'empty'))
         expect(await listDirectoryTool.execute({ path: 'empty', depth: 2 }, ctx)).toBe('(empty directory)')

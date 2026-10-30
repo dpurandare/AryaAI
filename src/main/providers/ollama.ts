@@ -17,6 +17,16 @@ import type { CompletionRequest, EmbeddingProvider, Message, ModelProvider, Stre
  * this one class serves both, distinguished only by the constructor args
  * `providers/setup.ts` passes in for each registered provider id.
  */
+/**
+ * The OpenAI SDK's connection errors leave `name` as 'Error' (only the constructor's name says what they are), so both are checked.
+ * Checking `instanceof` would need the SDK's class, which a mocked SDK in tests does not have.
+ */
+function isConnectionError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const names = new Set(['APIConnectionError', 'APIConnectionTimeoutError'])
+  return names.has(err.name) || names.has(err.constructor.name)
+}
+
 export class OllamaProvider implements ModelProvider, EmbeddingProvider {
   readonly id: string
   readonly displayName: string
@@ -56,8 +66,7 @@ export class OllamaProvider implements ModelProvider, EmbeddingProvider {
       try {
         yield* inner
       } catch (err) {
-        const name = err instanceof Error ? err.name : ''
-        if (name === 'APIConnectionError' || name === 'APIConnectionTimeoutError') {
+        if (isConnectionError(err)) {
           throw new Error(
             `Ollama (local) is not running at ${root}. Start Ollama, or correct its address in Settings > Ollama (local chat), then send again. Nothing was switched to another model.`
           )

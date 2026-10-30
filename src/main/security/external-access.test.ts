@@ -135,4 +135,16 @@ describe('external access', () => {
       expect(always).toEqual([outside])
     })
   })
+
+  describe('folders that contain a protected place (review of 0.4.0)', () => {
+    it('refuses ~/.config and ~/Library as too broad, because they contain protected folders, but accepts a harmless sibling', () => {
+      const a2 = new ExternalAccess({ getAlways: () => always, setAlways: (l) => (always = l), home, exists: () => true, isDirectory: () => true })
+      expect(a2.checkGrantFolder(join(home, '.config'), root)).toMatchObject({ ok: false, reason: 'too-broad' })
+      expect(a2.checkGrantFolder(join(home, 'Library'), root)).toMatchObject({ ok: false, reason: 'too-broad' })
+      expect(a2.checkGrantFolder(join(home, 'AppData'), root)).toMatchObject({ ok: false, reason: 'too-broad' })
+      expect(a2.checkGrantFolder(join(home, '.config', 'Sachivji'), root)).toMatchObject({ ok: false, reason: 'blocked' })
+      expect(a2.checkGrantFolder(join(home, 'AppData', 'Roaming', 'Sachivji'), root)).toMatchObject({ ok: false, reason: 'blocked' })
+      expect(a2.checkGrantFolder(join(home, '.config', 'someapp'), root)).toMatchObject({ ok: true })
+    })
+  })
 })

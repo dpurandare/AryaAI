@@ -1189,7 +1189,7 @@ export class Orchestrator {
       const systemPrompt = agent.systemPrompt + this.buildForcedModeNotice(pinned) + background
       const before = conversation.length
       // TASKS #242: a pure greeting (or "what can you do?") to a pinned specialist is checked and corrected in code, whatever the model did.
-      const greetingKind = classifyGreeting(latestMessageText(conversation))
+      const greetingKind = classifyGreeting(latestMessageText(conversation), this.labelOf(pinned))
       const pinnedLoop = this.runLoop(systemPrompt, agent.tools, conversation, state, pinned, [], true)
       const outcome = greetingKind
         ? yield* this.enforceGreeting(pinnedLoop, greetingKind, agent.tools.map((t) => t.name), this.labelOf(pinned))
@@ -1957,21 +1957,30 @@ export class Orchestrator {
     let text = ''
     let usedTool = false
     let outcome: { text: string; isError: boolean }
-    for (;;) {
-      const next = await inner.next()
-      if (next.done) {
-        outcome = next.value
-        break
+    try {
+      for (;;) {
+        const next = await inner.next()
+        if (next.done) {
+          outcome = next.value
+          break
+        }
+        const ev = next.value
+        if (ev.kind === 'stream' && ev.event.type === 'text_delta') {
+          holding = true
+          text += ev.event.text
+        }
+        if (ev.kind === 'message' && ev.content.some((b) => b.type === 'tool_use')) usedTool = true
+        if (ev.kind === 'stream' && (ev.event.type === 'tool_use_start' || ev.event.type === 'tool_use_delta')) usedTool = true
+        if (holding) held.push(ev)
+        else yield ev
       }
-      const ev = next.value
-      if (ev.kind === 'stream' && ev.event.type === 'text_delta') {
-        holding = true
-        text += ev.event.text
-      }
-      if (ev.kind === 'message' && ev.content.some((b) => b.type === 'tool_use')) usedTool = true
-      if (ev.kind === 'stream' && (ev.event.type === 'tool_use_start' || ev.event.type === 'tool_use_delta')) usedTool = true
-      if (holding) held.push(ev)
-      else yield ev
+    } catch (err) {
+      // The turn failed after some text was held back: show what there is (uncorrected) rather than lose it, then fail as before.
+      for (const ev of held) yield ev
+      throw err
+    } finally {
+      // Stopped early (or failed): let the inner loop run its own cleanup. A no-op when it has already finished.
+      await inner.return({ text, isError: true })
     }
     const corrected = text && !usedTool && !outcome.isError ? enforceGreetingReply(text, kind, toolNames, label) : text
     let emitted = false

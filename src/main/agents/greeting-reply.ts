@@ -7,15 +7,30 @@
 
 export type GreetingKind = 'greeting' | 'capabilities'
 
-const GREETING = /^(hi|hello|hey|hiya|hola|namaste|howdy|yo|greetings|good\s+(morning|afternoon|evening)|hi there|hello there|hey there)(\s+\w+){0,2}\s*[!.,?]*$/i
-const CAPABILITIES =
-  /^(please\s+)?((what|which)\s+(can|could)\s+you\s+do|what\s+do\s+you\s+do|what\s+(are\s+)?your\s+(abilities|capabilities|skills)|(what|which)\s+tools\s+(do\s+you\s+have|can\s+you\s+use|are\s+available)|who\s+are\s+you|what\s+are\s+you|what\s+is\s+your\s+role)\b[^.!]{0,25}[?!.]*$/i
+const GREETING_WORD = '(?:hi|hello|hey|hiya|hola|namaste|howdy|yo|greetings|good\\s+(?:morning|afternoon|evening)|hi\\s+there|hello\\s+there|hey\\s+there)'
+/** Words that may follow a greeting without making it a request ("Hello everyone", "Hey Sachivji"); the specialist's own name is added per call. */
+const GREETING_ADDRESS = ['there', 'everyone', 'all', 'team', 'again', 'sachivji', 'assistant', 'friend', 'buddy', 'bot', 'mate']
+const CAPABILITIES = new RegExp(
+  '^(?:please\\s+)?(?:' +
+    [
+      'what\\s+(?:can|could)\\s+you\\s+do(?:\\s+(?:for\\s+me|here|to\\s+help))?',
+      'what\\s+do\\s+you\\s+do',
+      'what\\s+(?:are\\s+)?your\\s+(?:abilities|capabilities|skills)',
+      '(?:what|which)\\s+tools\\s+(?:do\\s+you\\s+have|can\\s+you\\s+use|are\\s+available)(?:\\s+to\\s+you)?',
+      'who\\s+are\\s+you',
+      'what\\s+are\\s+you',
+      'what\\s+is\\s+your\\s+role'
+    ].join('|') +
+    ')\\s*[?!.]*$',
+  'i'
+)
 
 /** Whether a user message is only a greeting, or only a question about what the specialist can do; anything else is real work and is never touched. */
-export function classifyGreeting(userText: string): GreetingKind | undefined {
+export function classifyGreeting(userText: string, specialistLabel = ''): GreetingKind | undefined {
   const text = userText.trim()
   if (text.length === 0 || text.length > 60 || text.includes('\n')) return undefined
-  if (GREETING.test(text)) return 'greeting'
+  const address = [...GREETING_ADDRESS, ...specialistLabel.toLowerCase().split(/\s+/).filter(Boolean)].map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  if (new RegExp(`^${GREETING_WORD}(?:[\\s,]+(?:${address}))?\\s*[!.,?]*$`, 'i').test(text)) return 'greeting'
   if (CAPABILITIES.test(text)) return 'capabilities'
   return undefined
 }
