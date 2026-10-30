@@ -1,3 +1,4 @@
+import { classifyGreeting, enforceGreetingReply, type GreetingKind } from './greeting-reply'
 import { basename, dirname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ContentBlock, Message, StreamEvent } from '@shared/protocol'
@@ -1187,7 +1188,12 @@ export class Orchestrator {
       const background = setAsideOtherSpecialistsReplies(conversation, pinned, (r) => this.labelOf(r)).background
       const systemPrompt = agent.systemPrompt + this.buildForcedModeNotice(pinned) + background
       const before = conversation.length
-      const outcome = yield* this.runLoop(systemPrompt, agent.tools, conversation, state, pinned, [], true)
+      // TASKS #242: a pure greeting (or "what can you do?") to a pinned specialist is checked and corrected in code, whatever the model did.
+      const greetingKind = classifyGreeting(latestMessageText(conversation))
+      const pinnedLoop = this.runLoop(systemPrompt, agent.tools, conversation, state, pinned, [], true)
+      const outcome = greetingKind
+        ? yield* this.enforceGreeting(pinnedLoop, greetingKind, agent.tools.map((t) => t.name), this.labelOf(pinned))
+        : yield* pinnedLoop
       // A pinned specialist that says the request is not its job hands it back to the orchestrator, which delegates it (the user
       // pinned an agent to talk to it, not to be told to change the selector). Only when it did no work first: a request it
       // already acted on stays with it. Its short "not mine" reply stays in the transcript; the orchestrator answers below it.
@@ -1934,6 +1940,65 @@ export class Orchestrator {
    * awareness to name the right specialist and point the user back to the
    * mode picker, instead of claiming no other agents exist.
    */
+  /**
+   * TASKS #242: runs `inner` (a pinned specialist's turn that answers a bare greeting) and releases its events with the reply corrected by
+   * `enforceGreetingReply`. Streaming is held back from the first text to the end of the turn (a greeting is a few lines, so nothing is lost),
+   * then one corrected `text_delta` replaces the model's, and the persisted assistant text is replaced the same way. A turn that used a tool, or
+   * produced no text, is released unchanged: only a plain greeting reply is rewritten.
+   */
+  private async *enforceGreeting(
+    inner: AsyncGenerator<OrchestratorEvent, { text: string; isError: boolean }>,
+    kind: GreetingKind,
+    toolNames: readonly string[],
+    label: string
+  ): AsyncGenerator<OrchestratorEvent, { text: string; isError: boolean }> {
+    const held: OrchestratorEvent[] = []
+    let holding = false
+    let text = ''
+    let usedTool = false
+    let outcome: { text: string; isError: boolean }
+    for (;;) {
+      const next = await inner.next()
+      if (next.done) {
+        outcome = next.value
+        break
+      }
+      const ev = next.value
+      if (ev.kind === 'stream' && ev.event.type === 'text_delta') {
+        holding = true
+        text += ev.event.text
+      }
+      if (ev.kind === 'message' && ev.content.some((b) => b.type === 'tool_use')) usedTool = true
+      if (ev.kind === 'stream' && (ev.event.type === 'tool_use_start' || ev.event.type === 'tool_use_delta')) usedTool = true
+      if (holding) held.push(ev)
+      else yield ev
+    }
+    const corrected = text && !usedTool && !outcome.isError ? enforceGreetingReply(text, kind, toolNames, label) : text
+    let emitted = false
+    for (const ev of held) {
+      if (ev.kind === 'stream' && ev.event.type === 'text_delta') {
+        if (!emitted) {
+          emitted = true
+          yield { kind: 'stream', event: { ...ev.event, text: corrected } }
+        }
+        continue
+      }
+      if (ev.kind === 'message' && ev.role === 'assistant' && corrected !== text) {
+        let replaced = false
+        const content = ev.content.flatMap((b): ContentBlock[] => {
+          if (b.type !== 'text') return [b]
+          if (replaced) return []
+          replaced = true
+          return [{ ...b, text: corrected }]
+        })
+        yield { ...ev, content }
+        continue
+      }
+      yield ev
+    }
+    return { ...outcome, text: corrected !== text ? corrected : outcome.text }
+  }
+
   private buildForcedModeNotice(currentRole: AgentRole): string {
     const others = [...this.agents.values()]
       .filter((a) => a.role !== currentRole)

@@ -73,4 +73,4 @@ You can add roles of your own: a specialist with your instructions and a short l
 - **One job per request works best** for small models. For a long job, ask for a plan first.
 - **Use the right size of model.** Specialists inherit your chosen model. A hard multi-step job benefits from a stronger one (see [Providers and keys](03-providers-and-keys.md)).
 - **Watch the labels.** If a reply was written by a specialist that surprised you, you can ask the assistant to redo it with the one you meant.
-- **Not sure what a specialist does?** Pick it in the Agent selector and send "Hello". It replies with its role and what it can do. If it does not, ask "What can you do?".
+- **Not sure what a specialist does?** Pick it in the Agent selector and send "Hello". It replies with its role, what it can do and its main tools (Sachivji makes sure of this even with a small model; the reply appears all at once). If it does not, ask "What can you do?".

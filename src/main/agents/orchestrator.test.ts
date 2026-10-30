@@ -604,6 +604,44 @@ describe('Orchestrator (integration, mocked provider)', () => {
     expect(finalStop).toEqual({ type: 'message_stop', stopReason: 'end_turn' })
   })
 
+  describe('a pinned specialist\'s greeting is corrected in code (TASKS #242)', () => {
+    const run = async (replyText: string, userText: string) => {
+      const registry = buildRegistry()
+      const agents = createAgents(registry)
+      const provider = new MockProvider([{ text: replyText, stopReason: 'end_turn' }])
+      const orchestrator = new Orchestrator(provider, 'mock-model', agents, 'You are Sachivji.', registry.list(), autoApprove(), ctx, signal, { planningEnabled: false })
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: userText }] }], 'coding')
+      const streamed = events.flatMap((e) => (e.kind === 'stream' && e.event.type === 'text_delta' ? [e.event.text] : [])).join('')
+      const persisted = events.flatMap((e) => (e.kind === 'message' && e.role === 'assistant' ? e.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])) : [])).join('')
+      return { events, streamed, persisted }
+    }
+
+    it('removes a generic closing offer and appends the tools when the reply names none, in the stream and in the saved message', async () => {
+      const { streamed, persisted, events } = await run("I'm Developer. I write and run code. How can I assist you today?", 'Hello')
+      for (const text of [streamed, persisted]) {
+        expect(text).toContain("I'm Developer. I write and run code.")
+        expect(text).not.toMatch(/assist you today/i)
+        expect(text).toContain('My tools: read_file')
+        expect(text.trim().endsWith('.')).toBe(true)
+      }
+      expect(events.filter((e) => e.kind === 'stream' && e.event.type === 'text_delta')).toHaveLength(1)
+      expect(events.filter((e) => e.kind === 'stream' && e.event.type === 'message_stop')).toHaveLength(1)
+    })
+
+    it('leaves a good greeting untouched', async () => {
+      const good = "I'm Developer. My tools: read_file, write_file, shell_execute and python_run."
+      const { streamed, persisted } = await run(good, 'Hello')
+      expect(streamed).toBe(good)
+      expect(persisted).toBe(good)
+    })
+
+    it('never rewrites an answer to a real request, even one that ends with an offer', async () => {
+      const answer = 'Python is dynamic; Rust is compiled. How can I assist you today?'
+      const { streamed } = await run(answer, 'Compare Python and Rust in two sentences.')
+      expect(streamed).toBe(answer)
+    })
+  })
+
   it('a pinned specialist is told to state its role and abilities when greeted, from its own manifest text and tools — TASKS #215', async () => {
     const registry = buildRegistry()
     const agents = createAgents(registry)

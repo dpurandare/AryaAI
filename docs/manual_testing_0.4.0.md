@@ -93,6 +93,13 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | **238-2** | A workspace with `venv/` and `tmp/` | Same question. | `venv`, `tmp` (and `node_modules`, `.git` if present) are named as folders but their contents are not listed; the reply may say they were not opened. No `.sachiv-handoff`. |
 | **238-3** | A workspace with a folder of 200+ files | "List everything under documents/ with depth 2." | The list stops at 200 entries and says how many more there are; the assistant offers to list a subfolder. |
 
+## #242 Greeting of a pinned specialist enforced in code
+
+| ID | Where | Steps | Expect |
+|---|---|---|---|
+| **242-1** | `gpt-4o-mini` (and any other model), each specialist pinned in a NEW chat | `Hello`, then `What can you do?` (as R1 / T10 in the 0.3.2 test doc). | The reply to `Hello`: the menu name, what it does, **its tools named** ("My tools: …" at the end if the model forgot), and **no** "How can I assist you today?". The reply to `What can you do?` is fuller and also names the specialist and its tools. The reply appears all at once rather than word by word. |
+| **242-2** | Same | Pin a specialist and send a real request such as `Compare Python and Rust in two sentences.` | A normal answer; no introduction, nothing appended or removed. |
+
 ## Results
 
 | ID | Item | Pass / Fail / Odd | Model / OS | Notes |
@@ -135,3 +142,5 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 238-1 | Overview in one call | | | |
 | 238-2 | Noise folders not opened | | | |
 | 238-3 | Long list capped and stated | | | |
+| 242-1 | Greeting complete on every specialist | | | |
+| 242-2 | Real requests untouched | | | |
