@@ -136,6 +136,8 @@ export interface ProviderDescriptor {
   available?: boolean
   /** Why `available` is false, in plain words. */
   unavailableMessage?: string
+  /** TASKS #225: set when this provider is down AND a consented cloud fallback would answer instead (shown in the status bar). */
+  fallback?: { providerId: string; displayName: string; model: string }
 }
 
 /** TASKS #214: the result of probing the user's own Ollama (the chat address in Settings). */
@@ -145,6 +147,11 @@ export interface OllamaChatStatus {
   address: string
   error?: string
 }
+
+/** TASKS #225: the cloud model that answers when "Ollama (local)" is the chat provider and is not running; consent must be 'true'. */
+export const FALLBACK_PROVIDER_SETTING_KEY = 'fallbackProviderId'
+export const FALLBACK_MODEL_SETTING_KEY = 'fallbackModel'
+export const FALLBACK_CONSENT_SETTING_KEY = 'fallbackConsent'
 
 /** Settings key for the address of the user's own Ollama (TASKS #214); empty/absent = http://localhost:11434. */
 export const OLLAMA_BASE_URL_SETTING_KEY = 'ollamaBaseUrl'

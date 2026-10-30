@@ -16,7 +16,7 @@ Open Settings from the menu at your name in the lower left, then **Settings**. T
 | Email accounts | Accounts the assistant can send from | None |
 | Workspace | The workspace folder; folders outside it that you allowed | Documents/Sachivji Workspace |
 | Python runtime | The Python environment for scripts | Ready after first run |
-| Ollama (local chat) | The address of your own Ollama, whether it answers, install help | `http://localhost:11434` |
+| Ollama (local chat) | The address of your own Ollama, whether it answers, install help; an optional hosted fallback model for when Ollama is not running | `http://localhost:11434`; no fallback |
 | Local embeddings (bundled Ollama) | The small embedding server that comes with Sachivji (search over past chats only) | Ready after first run |
 | Roles | Your own specialist roles | None |
 | Tools by role | Reference: every tool each specialist has | (read-only) |

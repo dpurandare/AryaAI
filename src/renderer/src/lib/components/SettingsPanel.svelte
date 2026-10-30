@@ -5,7 +5,7 @@
   import { untrack } from 'svelte'
   import { refreshSummary, staleRuleNames, toolSummary } from '../auto-approve'
   import type { OllamaRuntimeState, RuntimeState } from '@shared/runtime'
-  import { OLLAMA_BASE_URL_SETTING_KEY, type OllamaChatStatus } from '@shared/ipc-contract'
+  import { FALLBACK_CONSENT_SETTING_KEY, FALLBACK_MODEL_SETTING_KEY, FALLBACK_PROVIDER_SETTING_KEY, OLLAMA_BASE_URL_SETTING_KEY, type OllamaChatStatus } from '@shared/ipc-contract'
 
   let {
     autoApproveRules,
@@ -550,6 +550,39 @@
     await window.sachiv.setSetting(OLLAMA_BASE_URL_SETTING_KEY, ollamaAddress.trim())
     ollamaChatSaved = true
     await checkOllamaChat()
+  }
+
+  // --- Fallback model for when Ollama (local) is not running (TASKS #225).
+  let fallbackProviderId = $state('')
+  let fallbackModel = $state('')
+  let fallbackConsent = $state(false)
+  let fallbackModels = $state<string[]>([])
+  let fallbackSaved = $state(false)
+  /** Hosted providers only, and only those that already have a key: a second local model would not help when Ollama itself is down. */
+  const fallbackCandidates = $derived(providers.filter((p) => p.requiresApiKey && Boolean(providerKeyPreviews[p.id])))
+  const fallbackProviderName = $derived(providers.find((p) => p.id === fallbackProviderId)?.displayName ?? fallbackProviderId)
+
+  Promise.all([
+    window.sachiv.getSetting(FALLBACK_PROVIDER_SETTING_KEY),
+    window.sachiv.getSetting(FALLBACK_MODEL_SETTING_KEY),
+    window.sachiv.getSetting(FALLBACK_CONSENT_SETTING_KEY)
+  ]).then(([p, m, c]) => {
+    fallbackProviderId = p ?? ''
+    fallbackModel = m ?? ''
+    fallbackConsent = c === 'true'
+  })
+  $effect(() => {
+    const id = fallbackProviderId
+    fallbackModels = []
+    if (!id) return
+    window.sachiv.listModels(id).then((list) => (fallbackModels = list)).catch(() => {})
+  })
+  async function saveFallback(): Promise<void> {
+    await window.sachiv.setSetting(FALLBACK_PROVIDER_SETTING_KEY, fallbackProviderId)
+    await window.sachiv.setSetting(FALLBACK_MODEL_SETTING_KEY, fallbackModel.trim())
+    await window.sachiv.setSetting(FALLBACK_CONSENT_SETTING_KEY, fallbackConsent && fallbackProviderId && fallbackModel.trim() ? 'true' : 'false')
+    fallbackSaved = true
+    onOllamaAddressChanged()
   }
 
   // --- Bundled Ollama runtime (installers, TASKS #202) — `status === 'unavailable'`
@@ -1730,6 +1763,66 @@
           "Ollama (local)" is hidden from the model selection until Ollama answers (this page re-checks automatically). To use local
           models, install Ollama from <code>ollama.com/download</code>, start it, and pull a model (for example
           <code>ollama pull llama3.2</code>).
+        </p>
+      {/if}
+    {/if}
+
+    <h3>If Ollama is not running</h3>
+    <p class="status">
+      Optional. When "Ollama (local)" is your chat model and Ollama is not running, this hosted model can answer that one message instead of
+      an error. It is used for that message only: your chat model setting does not change, and the next message tries Ollama again. The
+      chat always shows a line saying it happened. <strong>The conversation is sent to the provider you choose here.</strong>
+    </p>
+    {#if fallbackCandidates.length === 0}
+      <p class="status">No hosted provider has an API key yet. Add one under Provider API keys above to choose a fallback.</p>
+    {:else}
+      <select
+        value={fallbackProviderId}
+        onchange={(e) => {
+          fallbackProviderId = (e.target as HTMLSelectElement).value
+          fallbackModel = ''
+          fallbackSaved = false
+        }}
+      >
+        <option value="">No fallback</option>
+        {#each fallbackCandidates as p (p.id)}
+          <option value={p.id}>{p.displayName}</option>
+        {/each}
+      </select>
+      {#if fallbackProviderId}
+        <input
+          type="text"
+          list="fallback-models"
+          placeholder="Model, e.g. claude-haiku-5-5"
+          value={fallbackModel}
+          oninput={(e) => {
+            fallbackModel = (e.target as HTMLInputElement).value
+            fallbackSaved = false
+          }}
+        />
+        <datalist id="fallback-models">
+          {#each fallbackModels as m (m)}<option value={m}></option>{/each}
+        </datalist>
+        <label class="tool-rule">
+          <input
+            type="checkbox"
+            checked={fallbackConsent}
+            onchange={(e) => {
+              fallbackConsent = (e.target as HTMLInputElement).checked
+              fallbackSaved = false
+            }}
+          />
+          <span class="conn-name">I understand that my conversation is sent to {fallbackProviderName} when this fallback is used</span>
+        </label>
+      {/if}
+      <div class="actions">
+        <button class="primary" onclick={saveFallback}>Save</button>
+      </div>
+      {#if fallbackSaved}
+        <p class="status">
+          {fallbackProviderId && fallbackModel.trim() && fallbackConsent
+            ? `Saved. ${fallbackProviderName} ${fallbackModel.trim()} will answer when Ollama is not running.`
+            : 'Saved. The fallback is off (it needs a provider, a model and the tick box).'}
         </p>
       {/if}
     {/if}

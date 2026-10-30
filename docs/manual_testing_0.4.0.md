@@ -29,6 +29,18 @@ What changed: the app remembers which weights of `nomic-embed-text` built the se
 | **224-1** | Any OS, an installer build with some chats already indexed (Settings > Search history shows "N / N messages indexed") | Update to this build and restart. | Still "N / N messages indexed": an existing index is **not** flagged (it adopts the current model as its baseline). Search for something from an old chat still works. |
 | **224-2** | Same, with your own Ollama as the embedding provider (Settings > Search history) | Replace the model's contents under the same name: stop using the old one with `ollama rm nomic-embed-text`, then `ollama pull nomic-embed-text` only if the newer version differs, or create a different model under that name (`ollama cp nomic-embed-text:latest backup`, then `ollama create nomic-embed-text -f <a Modelfile with FROM mxbai-embed-large>`); restart Sachivji. | A banner at the top says searching past chats needs a rebuild (Go to Settings opens Settings; × hides it until the next start). Settings > Search history says the embedding model was updated or reinstalled and needs a rebuild; asking the assistant to search past chats says the same; new messages are not added. **Rebuild index** fixes it. (Hard to trigger by hand: if you cannot, mark N/A, it is covered by automated tests.) |
 
+## #225 Hosted fallback model when Ollama (local) is not running
+
+What changed: optionally, a hosted model answers a message when "Ollama (local)" is your chat model and Ollama is not running. Needs a provider that has an API key, a model, and a tick box (consent). The chat always shows a line, and the active provider is never changed.
+
+| ID | Where | Steps | Expect |
+|---|---|---|---|
+| **225-1** | Any OS | Settings > Ollama (local chat) > **If Ollama is not running**: pick a hosted provider (for example Anthropic) and a model (`claude-haiku-5-5`). Do **not** tick the box. **Save**. | The provider list only shows providers that already have a key; "Saved. The fallback is off (it needs a provider, a model and the tick box)." |
+| **225-2** | Same | Tick the box (the text names the provider), **Save**. | "Saved. Anthropic claude-haiku-5-5 will answer when Ollama is not running." |
+| **225-3** | Ollama (local) is the active provider; stop Ollama | Wait up to 15 seconds and look at the status bar. | It reads `Anthropic · claude-haiku-5-5 · fallback for Ollama (local)` (not "(not running)"). |
+| **225-4** | Same | Send "Say hello in five words." | A warning line appears right after your message: "Ollama (local) is not running, so this answer came from Anthropic claude-haiku-5-5. Your conversation was sent to Anthropic." Then the answer. Quit and reopen: the line is still in that chat. Start Ollama again: the next message goes to Ollama (status bar back to Ollama, no warning). |
+| **225-5** | Same, Ollama stopped | Untick the box (or choose "No fallback"), **Save**, send a message. | The status bar says "Ollama (local) (not running)"; the send fails with the plain "Ollama (local) is not running at …" message. Nothing is sent to the hosted provider. |
+
 ## Results
 
 | ID | Item | Pass / Fail / Odd | Model / OS | Notes |
@@ -44,3 +56,8 @@ What changed: the app remembers which weights of `nomic-embed-text` built the se
 | 214-9 | First run embeddings | | | |
 | 224-1 | Existing index not flagged after upgrade | | | |
 | 224-2 | Changed model flagged, rebuild fixes | | | |
+| 225-1 | Fallback choices limited to providers with a key; off without the tick | | | |
+| 225-2 | Fallback saved with consent | | | |
+| 225-3 | Status bar shows the fallback model | | | |
+| 225-4 | Warning line kept in the chat; back to Ollama when it returns | | | |
+| 225-5 | No fallback = plain error, nothing sent | | | |

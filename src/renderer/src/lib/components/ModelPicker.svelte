@@ -5,6 +5,7 @@
     /** #214: false = a local server that is not answering ("Ollama (local)" when Ollama is not running). */
     available?: boolean
     unavailableMessage?: string
+    fallback?: { providerId: string; displayName: string; model: string }
   }
 
   let {
@@ -35,6 +36,8 @@
   const currentProvider = $derived(providers.find((p) => p.id === providerId))
   const currentProviderName = $derived(currentProvider?.displayName ?? providerId)
   const currentUnavailable = $derived(currentProvider?.available === false)
+  /** #225: the provider is down but a consented cloud fallback will answer: show what will actually answer, not an error. */
+  const currentFallback = $derived(currentUnavailable ? currentProvider?.fallback : undefined)
 
   $effect(() => {
     manualModel = model
@@ -84,7 +87,7 @@
 <div class="model-picker" bind:this={rootEl}>
   <button class="trigger" onclick={() => (open = !open)}>
     <span class="dot"></span>
-    {currentProviderName}{currentUnavailable ? ' (not running)' : ''} · {model || 'no model set'}
+    {#if currentFallback}{currentFallback.displayName} · {currentFallback.model} · fallback for {currentProviderName}{:else}{currentProviderName}{currentUnavailable ? ' (not running)' : ''} · {model || 'no model set'}{/if}
   </button>
 
   {#if open}

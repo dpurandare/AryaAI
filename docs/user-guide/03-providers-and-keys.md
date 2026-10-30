@@ -12,7 +12,7 @@ Sachivji does not include an AI model of its own. You connect it to a provider, 
 | **Groq** | Yes | Hosted open models; free tiers have strict rate limits. |
 | **Mistral** | Yes | Mistral models. |
 | **Ollama Cloud** | Yes | Models hosted by Ollama. |
-| **Ollama (local)** | No | Models running through your own Ollama, on this computer or another one. Install Ollama from ollama.com/download, start it and pull a model. If Ollama is not running, "Ollama (local)" is hidden from the model selection until it is. The address is in **Settings > Ollama (local chat)** (empty means `http://localhost:11434`). The Ollama that comes with Sachivji is used only for search over past chats, not for chat. |
+| **Ollama (local)** | No | Models running through your own Ollama, on this computer or another one. Install Ollama from ollama.com/download, start it and pull a model. If Ollama is not running, "Ollama (local)" is hidden from the model selection until it is. The address is in **Settings > Ollama (local chat)** (empty means `http://localhost:11434`). The Ollama that comes with Sachivji is used only for search over past chats, not for chat. Optionally, **Settings > Ollama (local chat) > If Ollama is not running** names a hosted model (with its key already added) that answers a message when Ollama is down; it needs a tick box confirming that the conversation is sent to that provider, and the chat always shows a line saying it happened. |
 
 For hosted providers, create an API key on the provider's own website (in the account's API keys section). Usage is billed by the provider, not by Sachivji.
 

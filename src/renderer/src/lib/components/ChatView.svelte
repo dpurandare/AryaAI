@@ -53,6 +53,7 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     displayName: string
     available?: boolean
     unavailableMessage?: string
+    fallback?: { providerId: string; displayName: string; model: string }
   }
 
   let {

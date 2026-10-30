@@ -27,7 +27,10 @@ import {
   type SettingsExportResult,
   type SettingsImportPreviewResult,
   type SettingsImportApplyResult,
-  OLLAMA_BASE_URL_SETTING_KEY
+  OLLAMA_BASE_URL_SETTING_KEY,
+  FALLBACK_PROVIDER_SETTING_KEY,
+  FALLBACK_MODEL_SETTING_KEY,
+  FALLBACK_CONSENT_SETTING_KEY
 } from '@shared/ipc-contract'
 import { isValidRoleId, roleLabel, type AgentRole } from '@shared/agents'
 import type { RuntimeState } from '@shared/runtime'
@@ -67,6 +70,7 @@ import { buildSchemaSummary } from '../tools/db/schema-summary'
 import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
 import { createDefaultProviderRegistry, getOllamaChatBaseUrl, probeEmbeddingDimension, setBundledOllamaBaseUrl, setOllamaChatBaseUrl } from '../providers/setup'
 import { OllamaAvailability } from '../providers/ollama-availability'
+import { fallbackNotice, usableFallback } from '../providers/fallback'
 import { createDefaultWebSearchProviderRegistry } from '../tools/web-search-providers'
 import type { Message, ModelProvider, ProviderOptions } from '../providers/types'
 import { exportSession } from '../sessions/export'
@@ -331,6 +335,17 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.MessagesList, (_event, sessionId: string) => listMessages(sessionId))
   ipcMain.handle(IpcChannel.SessionsGetUsage, (_event, sessionId: string) => getUsage(sessionId))
 
+  const currentFallback = () =>
+    usableFallback(
+      {
+        providerId: getSetting(FALLBACK_PROVIDER_SETTING_KEY),
+        model: getSetting(FALLBACK_MODEL_SETTING_KEY),
+        consent: getSetting(FALLBACK_CONSENT_SETTING_KEY) === 'true'
+      },
+      (id) => providerRegistry.get(id),
+      (id) => Boolean(getApiKey(id))
+    )
+
   ipcMain.handle(IpcChannel.ProvidersList, async () => {
     // TASKS #214: the user's own Ollama is probed (short timeout, cached a few seconds) so the model selection can
     // hide "Ollama (local)" while it is not running.
@@ -342,7 +357,9 @@ export function registerIpcHandlers(): void {
         displayName,
         requiresApiKey,
         supportsEmbeddings,
-        ...(id === 'ollama' ? { available: ollama.reachable, unavailableMessage: ollama.error } : {})
+        ...(id === 'ollama'
+          ? { available: ollama.reachable, unavailableMessage: ollama.error, fallback: ollama.reachable ? undefined : currentFallback() }
+          : {})
       }))
   })
   ipcMain.handle(IpcChannel.OllamaCheckChat, () => ollamaAvailability.check(getOllamaChatBaseUrl(), true))
@@ -741,8 +758,26 @@ async function runChat(
   forcedRole: AgentRole | null,
   signal: AbortSignal
 ): Promise<void> {
-  const providerId = getSetting(ACTIVE_PROVIDER_KEY) ?? DEFAULT_PROVIDER_ID
-  const model = getSetting(modelSettingKey(providerId))
+  let providerId = getSetting(ACTIVE_PROVIDER_KEY) ?? DEFAULT_PROVIDER_ID
+  let model = getSetting(modelSettingKey(providerId))
+  // TASKS #225: the user's own Ollama is down and a consented cloud fallback is configured: it answers THIS turn only (the
+  // active provider is not changed), and the chat says so below. Without one, the plain "not running" error comes from the provider.
+  let usedFallback: ReturnType<typeof usableFallback>
+  if (providerId === 'ollama' && !(await ollamaAvailability.check(getOllamaChatBaseUrl())).reachable) {
+    usedFallback = usableFallback(
+      {
+        providerId: getSetting(FALLBACK_PROVIDER_SETTING_KEY),
+        model: getSetting(FALLBACK_MODEL_SETTING_KEY),
+        consent: getSetting(FALLBACK_CONSENT_SETTING_KEY) === 'true'
+      },
+      (id) => providerRegistry.get(id),
+      (id) => Boolean(getApiKey(id))
+    )
+    if (usedFallback) {
+      providerId = usedFallback.providerId
+      model = usedFallback.model
+    }
+  }
   const apiKey = getApiKey(providerId)
   const descriptor = providerRegistry.get(providerId)
 
@@ -821,6 +856,13 @@ async function runChat(
   conversation.push({ role: 'user', content: [{ type: 'text', text }] })
   const userMessage = insertMessage(sessionId, 'user', [{ type: 'text', text }])
   enqueueMessage(userMessage.id, sessionId, userMessage.content)
+  if (usedFallback) {
+    // Never silent (#225): a cloud fallback sends the conversation off the machine.
+    const message = fallbackNotice(usedFallback)
+    emit(sender, { streamId, sessionId, event: { type: 'warning', message } })
+    const record = insertMessage(sessionId, 'assistant', [{ type: 'warning', message }])
+    enqueueMessage(record.id, sessionId, record.content)
+  }
 
   // "Asked and answered" — only once, only from a session's actual first exchange (the title guard
   // above). Found live (2026-10-01): doing this at the END of the turn instead meant a turn that got
