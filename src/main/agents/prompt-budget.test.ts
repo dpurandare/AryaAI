@@ -139,8 +139,10 @@ const CEILINGS = {
   routerPrompt: 1850,
   // TASKS.md #172 (continued again): db_execute_sql's description reworded to describe the large-result
   // file-export behavior (writes to a file instead of "gets truncated") — 9970 -> 9983. Deliberate, not drift.
-  routerToolSchemas: 11190,
-  routerBare: 12920,
+  // 2026-10-31 (TASKS #169): find_in_files is a new tool (~205 tokens, kept lean: six parameters, fixed caps) - routerToolSchemas 11190 -> 11290,
+  // routerBare 12920 -> 13080, role:coding 3400 -> 3610, registry total 10027 -> 10240. Deliberate.
+  routerToolSchemas: 11290,
+  routerBare: 13080,
   slimRouterToolSchemas: 2390,
   // Raised to match routerPrompt's #211 bump above — 4156 measured, ceiling raised to 4220.
   slimRouterBare: 4220,
@@ -171,7 +173,7 @@ const CEILINGS = {
   // wrapping an already-working script in a brand-new throwaway one, then not cleaning up the leftover
   // helper file it had noticed but left behind. New rule: edit the SAME script for a follow-up, and clean
   // up any genuinely one-off helper file yourself. 3191 -> 3342. Deliberate growth, not drift.
-  'role:coding': 3400,
+  'role:coding': 3610,
   'role:data': 2860,
   'role:data-processor': 2230,
   'role:document-creator': 2440,
@@ -307,6 +309,7 @@ describe('per-tool schema budget', () => {
     // 2026-10-12: mcp_list_connections now reports each connected server's actual tool names, not just a
     // count (TASKS #202 follow-up: fixes a 20-call loop found live) - 10000 -> 10009. Deliberate.
     // 2026-10-31 (TASKS #228): the same write_file description (~17 tokens) - 10009 -> 10027. Deliberate.
-    expect(total).toBeLessThanOrEqual(10027)
+    // 2026-10-31 (TASKS #169): find_in_files added (~205 tokens) - 10027 -> 10240. Deliberate.
+    expect(total).toBeLessThanOrEqual(10240)
   })
 })

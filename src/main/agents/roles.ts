@@ -337,6 +337,7 @@ export function createAgents(registry: ToolRegistry, userRoles: readonly RoleFil
             'read_file',
             'list_directory',
             'find_files',
+            'find_in_files',
             'write_file',
             'shell_execute',
             'python_run',

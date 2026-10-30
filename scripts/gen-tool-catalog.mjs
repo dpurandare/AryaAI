@@ -26,6 +26,7 @@ const DESCRIPTIONS = {
   read_file: 'Reads a text file.',
   list_directory: 'Lists the files and folders in a directory.',
   find_files: 'Finds files by name pattern under a folder.',
+  find_in_files: 'Searches the text inside files (like grep) under a folder.',
   shell_execute: 'Runs a shell command in the workspace.',
   python_run: 'Runs Python code in the workspace\'s own Python environment (charts, data, Word and Excel files).',
   git_exec: 'Runs git commands on the workspace repository (read-only commands need no confirmation).',

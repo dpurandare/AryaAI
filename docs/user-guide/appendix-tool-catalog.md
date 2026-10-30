@@ -45,6 +45,7 @@ Writes AND runs code (Python in the workspace venv), edits files, uses git, clou
 | `read_file` | Reads a text file. | No |
 | `list_directory` | Lists the files and folders in a directory. | No |
 | `find_files` | Finds files by name pattern under a folder. | No |
+| `find_in_files` | Searches the text inside files (like grep) under a folder. | No |
 | `write_file` | Creates or overwrites a text file in the workspace. | Yes, asks first |
 | `shell_execute` | Runs a shell command in the workspace. | Yes, asks first |
 | `python_run` | Runs Python code in the workspace's own Python environment (charts, data, Word and Excel files). | Yes, asks first |

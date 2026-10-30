@@ -14,7 +14,7 @@ import { EXCLUDED_FOLDERS, INTERNAL_FOLDER, workspaceRelativePath } from './work
 
 /** Directories never descended into, regardless of `.gitignore` — the usual noise plus this project's own
  * `EXCLUDED_FOLDERS` (workspace-layout.ts), reused rather than duplicated so the two lists can't drift apart. */
-const DEFAULT_IGNORED_DIRS = new Set([
+export const DEFAULT_IGNORED_DIRS = new Set([
   ...EXCLUDED_FOLDERS,
   INTERNAL_FOLDER,
   'node_modules',
@@ -28,7 +28,7 @@ const DEFAULT_IGNORED_DIRS = new Set([
   '.cache'
 ])
 
-const MAX_ENTRIES_SCANNED = 20_000
+export const MAX_ENTRIES_SCANNED = 20_000
 
 /**
  * Converts a glob pattern (`**`, `*`, `?` only — not full glob syntax) into
@@ -37,7 +37,7 @@ const MAX_ENTRIES_SCANNED = 20_000
  * `*` matches within one path segment only, `?` matches one non-separator
  * character. Everything else is escaped literally.
  */
-function globToRegExp(pattern: string): RegExp {
+export function globToRegExp(pattern: string): RegExp {
   let out = ''
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i]
@@ -67,7 +67,7 @@ function globToRegExp(pattern: string): RegExp {
  * actually show up in practice; anything more exotic is silently not
  * excluded (fails open, never hides a real file the user didn't ask to hide).
  */
-async function readGitignorePatterns(workspaceRoot: string): Promise<RegExp[]> {
+export async function readGitignorePatterns(workspaceRoot: string): Promise<RegExp[]> {
   try {
     const text = await readFile(join(workspaceRoot, '.gitignore'), 'utf-8')
     return text
@@ -81,7 +81,7 @@ async function readGitignorePatterns(workspaceRoot: string): Promise<RegExp[]> {
   }
 }
 
-interface WalkResult {
+export interface WalkResult {
   /** Relative to the SEARCH root (what the user's `pattern` matches against), not the workspace root. */
   files: string[]
   scanned: number
@@ -94,7 +94,7 @@ interface WalkResult {
  * `''`, searching at the root) — carried separately only so `.gitignore` patterns, which are always relative to
  * the workspace root regardless of where the search started, can be checked against the right path.
  */
-async function walk(
+export async function walk(
   absDir: string,
   relFromSearch: string,
   workspacePrefix: string,

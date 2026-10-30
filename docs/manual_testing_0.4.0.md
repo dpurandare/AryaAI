@@ -76,6 +76,15 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | **216-3** | Same | **Add folder…** and pick your home folder; then `.ssh` (or `.aws`) inside it; then a folder inside one already listed. | Home: refused as too broad. `.ssh`: refused as protected. A subfolder of a listed one: "already covered by …". Nothing is added in any of the three. |
 | **216-4** | Same | **Remove** a listed folder, ask the assistant to read a file in it. | Prompted again, as before. |
 
+## #169 Search inside files (`find_in_files`)
+
+| ID | Where | Steps | Expect |
+|---|---|---|---|
+| **169-1** | Developer role (pin it), any OS, a workspace with some code or text files | "Which files in the workspace mention the word `import`? Use find_in_files." | A list of `file` then indented `line: text` matches, a count line ("N match(es) in M file(s) … searched K file(s)"); no `.png`/`.docx` in it. |
+| **169-2** | Windows especially | "Find every TODO in my code and show one line of context." | Works on Windows with no `grep` installed; context lines are shown with a `-` after the line number. |
+| **169-3** | A workspace with a file whose word appears more than 5 times | "Search for `the` in documents/." | At most 5 matches per file shown, with "(N more match(es) in this file not shown)"; with many files "stopped after 30 files…, narrow the path, glob or pattern". The assistant narrows the search instead of claiming that is all. |
+| **169-4** | Auto mode | "Search my notes for the word budget." | The router hands the search to the Developer (or reads the files itself); either way no error about a missing tool. |
+
 ## Results
 
 | ID | Item | Pass / Fail / Odd | Model / OS | Notes |
@@ -111,3 +120,7 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 216-2 | Suggestion buttons | | | |
 | 216-3 | Home / protected / covered refused | | | |
 | 216-4 | Remove restores the prompt | | | |
+| 169-1 | Matches listed with file and line, binary skipped | | | |
+| 169-2 | Works on Windows, context lines | | | |
+| 169-3 | Caps stated honestly | | | |
+| 169-4 | Reachable in Auto mode | | | |

@@ -51,7 +51,7 @@ Passed to every call. The important members:
 
 | Folder or file | Tools |
 |---|---|
-| `file-ops.ts`, `find-files.ts` | `read_file`, `write_file`, `list_directory`, `find_files` |
+| `file-ops.ts`, `find-files.ts`, `find-in-files.ts` | `read_file`, `write_file`, `list_directory`, `find_files`, `find_in_files` |
 | `shell.ts`, `python-run.ts`, `python-env.ts`, `cloud-cli.ts`, `cli-tool.ts`, `git.ts`, `github-cli.ts` | `shell_execute`, `python_run`, `aws_cli`, `azure_cli`, `gcloud_cli`, `git_exec`, `git_clone_repo`, `github_cli` |
 | `db/` | `db_*` (connections, schema, SQL, row lookups, saved queries) |
 | `api/` | `api_*` (connections, introspect, call, status) |

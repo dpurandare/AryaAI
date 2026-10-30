@@ -25,6 +25,7 @@ import {
   dbSaveQueryTool
 } from './db'
 import { findFilesTool } from './find-files'
+import { findInFilesTool } from './find-in-files'
 import { listDirectoryTool, readFileTool, writeFileTool } from './file-ops'
 import { gitCloneRepoTool, gitExecTool } from './git'
 import { githubCliTool } from './github-cli'
@@ -88,6 +89,7 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(readFileTool)
   registry.register(listDirectoryTool)
   registry.register(findFilesTool)
+  registry.register(findInFilesTool)
   registry.register(writeFileTool)
   registry.register(createEnvironmentTool({ appVersion: () => { try { return app.getVersion() } catch { return undefined } } }))
   registry.register(shellExecuteTool)
