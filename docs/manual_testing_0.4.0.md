@@ -4,6 +4,20 @@ For Deepak. Started 2026-10-30 on the `release/0.4.0` branch. The general regres
 
 Test IDs here start with the TASKS number of the item (for example **214-1**).
 
+## The builds to test
+
+Built from commit `ec770a5` on `release/0.4.0` (version 0.4.0; CI green on Windows, macOS and Linux, run [41081530745](https://github.com/dpurandare/AryaAI/actions/runs/41081530745)) on 2026-10-30, after all ten items were coded and the whole-branch review fixes were applied. **These expire on 2026-11-13** (14 days); if a fix is made, the installers are rebuilt and these links are replaced. Downloading needs a GitHub login with access to the repository. Nothing is published: the sponsor gets a build only when you publish the draft release.
+
+| OS | Artifact (zip containing the installer) | Size | Run |
+|---|---|---|---|
+| Windows | [sachivji-windows-installer](https://github.com/dpurandare/AryaAI/actions/runs/41082172227/artifacts/12989862908) | 273 MB | [41082172227](https://github.com/dpurandare/AryaAI/actions/runs/41082172227) |
+| macOS (Apple Silicon) | [sachivji-macos-installer](https://github.com/dpurandare/AryaAI/actions/runs/41082176544/artifacts/12990212206) | 490 MB | [41082176544](https://github.com/dpurandare/AryaAI/actions/runs/41082176544) |
+| Linux | [sachivji-linux-installer](https://github.com/dpurandare/AryaAI/actions/runs/41082181312/artifacts/12990017401) | 678 MB | [41082181312](https://github.com/dpurandare/AryaAI/actions/runs/41082181312) |
+
+From a terminal instead (GitHub CLI, signed in): `gh run download 41082172227 -R dpurandare/AryaAI -n sachivji-windows-installer` (use `41082176544` / `sachivji-macos-installer` and `41082181312` / `sachivji-linux-installer` for the others). Install over 0.3.2 (the upgrade keeps settings and chats); the workspace gets the new folders `data/`, `downloads/` and `exports/` at first start.
+
+**Which machine tests what.** Linux: everything. Windows VM: 214-7 (netstat), 229-5 (Explorer drop), 169-2, 216, 228 and the upgrade over 0.3.2. Mac: 229, 216 (the picker), 214 (Ollama as a Mac app). Ubuntu 20.04 is not supported (the app does not start there). Items needing a hosted key: 225 (fallback), 168-1 (Ollama Cloud, skip without a key), 242-1 (`gpt-4o-mini`).
+
 ## #214 Ollama: embeddings-only bundled server, your own Ollama for chat
 
 What changed: the Ollama that comes with the installers serves only the search embeddings, on its own port (11450 to 11455, never 11434). "Ollama (local)" chat uses **your own** Ollama (address in Settings, default `http://localhost:11434`) and is hidden from the model selection while Ollama is not running.
