@@ -303,6 +303,15 @@ Option (a) as first described would have sent chat to the user's own Ollama and 
 
 **Recommendation (Claude, revised 2026-10-19).** Since the fallback is necessary to avoid errors, bring it forward to **0.4.0, size M**: a Settings choice of the fallback model (provider and model, possibly cloud), used only when the selected local Ollama is not reachable; a visible warning in the chat each time it is used, naming the model and saying the conversation is going there; if no fallback is configured, a clear error and no silent switch. The deeper automatic-selection ideas stay in `docs/auto_model_selection.md`.
 
+**#225 design proposal (2026-10-30, for Deepak's approval; builds on the #214 availability check).**
+
+1. **Where it is set.** Settings > Ollama (local chat), a new block "If Ollama is not running": a provider list (only providers that already have a key configured, Ollama itself excluded), a model box (same model list as the picker), and a tick box "I understand that my conversation is sent to this provider when the fallback is used". **Off by default; nothing is saved as active until the tick box is on.** No fallback configured = today's behaviour (the plain "Ollama (local) is not running" error).
+2. **When it triggers.** Only when the chat provider of the turn is "Ollama (local)" and the #214 probe says it is not answering at the moment the message is sent. The fallback is used for **that turn only**; the active provider and model stay as the user set them, so nothing is switched for good and the next message tries Ollama again.
+3. **How the user is told, every time.** A warning line in the chat before the answer, kept in the history: "Ollama (local) is not running, so this answer came from <Provider> <model>. Your conversation was sent to <Provider>." The answer's label (the "answering model" line, if shown) names the fallback model. A cloud fallback never runs without the tick box.
+4. **Edge cases.** The fallback provider fails or has no key: the same plain error, naming both. Ollama dies in the middle of a turn: the turn fails with the plain error (no mid-turn switch; the next send uses the fallback). The fallback needs its own context window, which `prepareConversation` already gets from the model it is given. Costs of the fallback turn are counted under the fallback model (usage is already per provider and model).
+5. **Out of scope** (stays for 0.5.0 with `docs/auto_model_selection.md`): fallback for other providers' outages, choosing a fallback by task, a fallback chain.
+6. **Size.** M: settings (3 keys: `fallbackProviderId`, `fallbackModel`, `fallbackConsent`), a pure `resolveChatProvider()` in main with tests, the warning event, the Settings block, guides, test steps.
+
 ### P2: item details and recommendations (written 2026-10-19, before presenting; ALL DECIDED, see the decision log)
 
 #### #140: record why a planning reply was empty
