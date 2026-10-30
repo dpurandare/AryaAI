@@ -59,6 +59,6 @@ Pushing a tag is outward-facing (it starts three platform builds and creates a d
 ## 5. Release sequence (from `docs/release_triage.md`)
 
 - **0.3.2:** 12 items (defects and small enhancements).
-- **0.4.0:** the Ollama block and the files block (#214, #224, #225, #168, #228, #229, #216, #169).
+- **0.4.0:** the Ollama block (#214, #224, #225, #168), the files block (#228, #229, #216, #169, and #238's recursive listing) and #242 (greeting enforcement), 10 items. The full list with status is `docs/releases/0.4.0.md`.
 - **0.4.1:** PDF reader (#196), Microsoft 365 email (#79), Anthropic extended thinking (#159), search (#189, #190). #79 starts early: the administrator's registration steps are written first so the sponsor's IT administrator can act while the code is built. Whether #217 ships alone as a point release is decided after 0.4.0.
 - **0.5.0:** design and detail work.
