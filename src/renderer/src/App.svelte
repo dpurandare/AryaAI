@@ -717,9 +717,29 @@
     }
   }
 
+  /**
+   * #224: the search index was built with other weights than the embedding model has now (same name, e.g. after a reinstall).
+   * Nothing else would tell a user who never opens Settings > Search history, so a dismissible banner does. Dismissal lasts
+   * until the app restarts; a rebuild clears the cause for good.
+   */
+  let searchRebuildNeeded = $state(false)
+  let searchRebuildDismissed = $state(false)
+  async function refreshSearchStatus(): Promise<void> {
+    try {
+      const status = await window.sachiv.getSearchHistoryStatus()
+      searchRebuildNeeded = status.state === 'needs-rebuild' && status.cause === 'model-changed'
+    } catch {
+      // keep what we know
+    }
+  }
+
   // #214: "Ollama (local)" appears and disappears with Ollama itself, no restart needed.
   $effect(() => {
-    const timer = setInterval(() => void refreshProviders(), 15_000)
+    void refreshSearchStatus()
+    const timer = setInterval(() => {
+      void refreshProviders()
+      void refreshSearchStatus()
+    }, 15_000)
     return () => clearInterval(timer)
   })
 
@@ -908,6 +928,13 @@
     <button class="dismiss" onclick={() => (updateAvailable = null)} aria-label="Dismiss">×</button>
   </div>
 {/if}
+{#if searchRebuildNeeded && !searchRebuildDismissed && !showSettings}
+  <div class="update-banner">
+    <span>The embedding model changed since your chat history was indexed, so searching past chats needs a rebuild.</span>
+    <button class="banner-link" onclick={() => (showSettings = true)}>Go to Settings</button>
+    <button class="dismiss" onclick={() => (searchRebuildDismissed = true)} aria-label="Dismiss">×</button>
+  </div>
+{/if}
 <main
   class:sidebar-collapsed={sidebarCollapsed}
   style={sidebarCollapsed ? undefined : `grid-template-columns: ${sidebarWidth}px 4px 1fr`}
@@ -1053,6 +1080,16 @@
     color: #fff;
     text-decoration: underline;
     font-weight: 600;
+  }
+  .update-banner .banner-link {
+    border: none;
+    background: none;
+    color: #fff;
+    text-decoration: underline;
+    font-weight: 600;
+    font-size: inherit;
+    cursor: pointer;
+    padding: 0;
   }
   .update-banner .dismiss {
     margin-left: auto;
