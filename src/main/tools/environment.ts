@@ -57,13 +57,15 @@ export function buildEnvironment(input: EnvironmentInput): string {
   const present = input.workspaceExists ?? ((rel: string) => exists(join(root, rel)))
   const folder = (name: string, purpose: string): string => `- ${name}/ : ${purpose}${present(name) ? '' : ' (not created yet)'}`
   out.push(folder('code', 'scripts and source you write'))
-  out.push(folder('documents', 'Word, Excel, PowerPoint and PDF files you produce'))
+  out.push(folder('documents', 'Word, Excel, PowerPoint and PDF files you produce, and notes (.md, .txt)'))
   out.push(folder('resources', 'pictures, charts and other media'))
+  out.push(folder('data', 'data files you produce (.csv, .json)'))
+  out.push(folder('downloads', 'files you download for the user'))
   out.push(folder('exports', 'files exported for the user (the Export Settings dialog opens here)'))
   out.push(folder('tmp', 'scratch files (the SACHIV_TMP environment variable in scripts), cleaned up after a few days'))
   out.push(folder('templates', "the user's own templates, read as input"))
   out.push('A new file of a known type is filed in the matching folder even when only a bare name is given.')
-  out.push('In scripts and shell commands a bare file name lands in the workspace root: save charts and images to resources/, documents to documents/, scratch to tmp/, and never leave generated files loose in the root.')
+  out.push('In scripts and shell commands a bare file name lands in the workspace root: save charts and images to resources/, documents and notes to documents/, .csv/.json data to data/, downloads to downloads/, exports to exports/, scratch to tmp/, and never leave generated files loose in the root.')
 
   out.push('\nOutside the workspace: reading a file in another folder needs the user\'s permission, asked per folder; creating a new file there asks every time; credentials and system folders are never reachable.')
   if (input.allowedFolders?.length) out.push(`Folders the user allowed for good: ${input.allowedFolders.join(', ')}`)

@@ -21,20 +21,20 @@ describe('file-ops tools', () => {
 
   describe('write_file', () => {
     it('creates a file with the given content', async () => {
-      const result = await writeFileTool.execute({ path: 'note.txt', content: 'hello' }, ctx)
-      expect(result).toContain('note.txt')
-      expect(await readFile(join(root, 'note.txt'), 'utf-8')).toBe('hello')
+      const result = await writeFileTool.execute({ path: 'note.dat', content: 'hello' }, ctx)
+      expect(result).toContain('note.dat')
+      expect(await readFile(join(root, 'note.dat'), 'utf-8')).toBe('hello')
     })
 
     it('creates parent directories as needed', async () => {
-      await writeFileTool.execute({ path: 'a/b/c.txt', content: 'nested' }, ctx)
-      expect(await readFile(join(root, 'a', 'b', 'c.txt'), 'utf-8')).toBe('nested')
+      await writeFileTool.execute({ path: 'a/b/c.dat', content: 'nested' }, ctx)
+      expect(await readFile(join(root, 'a', 'b', 'c.dat'), 'utf-8')).toBe('nested')
     })
 
     it('overwrites an existing file', async () => {
-      await writeFileTool.execute({ path: 'note.txt', content: 'first' }, ctx)
-      await writeFileTool.execute({ path: 'note.txt', content: 'second' }, ctx)
-      expect(await readFile(join(root, 'note.txt'), 'utf-8')).toBe('second')
+      await writeFileTool.execute({ path: 'note.dat', content: 'first' }, ctx)
+      await writeFileTool.execute({ path: 'note.dat', content: 'second' }, ctx)
+      expect(await readFile(join(root, 'note.dat'), 'utf-8')).toBe('second')
     })
 
     it('refuses to write outside the workspace', async () => {
@@ -66,7 +66,7 @@ describe('file-ops tools', () => {
     })
 
     it('still writes ordinary text formats, including ones that live under documents/ or resources/', async () => {
-      for (const path of ['notes.md', 'data.csv', 'script.py', 'diagram.svg', 'page.html']) {
+      for (const path of ['notes.md', 'data.csv', 'data.json', 'script.py', 'diagram.svg', 'page.html']) {
         await expect(writeFileTool.execute({ path, content: 'text' }, ctx)).resolves.toContain('Wrote')
       }
     })
@@ -76,8 +76,8 @@ describe('file-ops tools', () => {
     })
 
     it('describes the write for the confirmation dialog', () => {
-      expect(writeFileTool.describe?.({ path: 'note.txt', content: 'hello' })).toBe(
-        'Write 5 characters to "note.txt"'
+      expect(writeFileTool.describe?.({ path: 'note.dat', content: 'hello' })).toBe(
+        'Write 5 characters to "note.dat"'
       )
     })
 
@@ -110,8 +110,8 @@ describe('file-ops tools', () => {
     })
 
     it('an unclassified extension stays at the given (root-relative) path, unaffected', async () => {
-      const result = await writeFileTool.execute({ path: 'note.txt', content: 'hello' }, ctx)
-      expect(result).toBe('Wrote 5 characters to note.txt.')
+      const result = await writeFileTool.execute({ path: 'note.dat', content: 'hello' }, ctx)
+      expect(result).toBe('Wrote 5 characters to note.dat.')
     })
 
     it('overwriting a code file that already exists elsewhere writes back there, not into code/', async () => {
@@ -133,8 +133,8 @@ describe('file-ops tools', () => {
 
   describe('read_file', () => {
     it('reads back a written file', async () => {
-      await writeFileTool.execute({ path: 'note.txt', content: 'hello' }, ctx)
-      expect(await readFileTool.execute({ path: 'note.txt' }, ctx)).toBe('hello')
+      await writeFileTool.execute({ path: 'note.dat', content: 'hello' }, ctx)
+      expect(await readFileTool.execute({ path: 'note.dat' }, ctx)).toBe('hello')
     })
 
     it('refuses to read outside the workspace', async () => {
@@ -145,8 +145,8 @@ describe('file-ops tools', () => {
 
     it('rejects a file over the read-size limit', async () => {
       const big = 'x'.repeat(200_001)
-      await writeFileTool.execute({ path: 'big.txt', content: big }, ctx)
-      await expect(readFileTool.execute({ path: 'big.txt' }, ctx)).rejects.toThrow(
+      await writeFileTool.execute({ path: 'big.dat', content: big }, ctx)
+      await expect(readFileTool.execute({ path: 'big.dat' }, ctx)).rejects.toThrow(
         /over the 200000-byte read limit/
       )
     })
@@ -158,18 +158,18 @@ describe('file-ops tools', () => {
 
   describe('list_directory', () => {
     it('lists files and subdirectories', async () => {
-      await writeFileTool.execute({ path: 'a.txt', content: '1' }, ctx)
-      await writeFileTool.execute({ path: 'sub/b.txt', content: '2' }, ctx)
+      await writeFileTool.execute({ path: 'a.dat', content: '1' }, ctx)
+      await writeFileTool.execute({ path: 'sub/b.dat', content: '2' }, ctx)
       const listing = await listDirectoryTool.execute({}, ctx)
-      expect(listing).toContain('file  a.txt')
+      expect(listing).toContain('file  a.dat')
       expect(listing).toContain('dir   sub')
     })
 
     it("never shows Sachivji's own .sachiv-handoff folder (TASKS #238)", async () => {
-      await writeFileTool.execute({ path: 'a.txt', content: '1' }, ctx)
+      await writeFileTool.execute({ path: 'a.dat', content: '1' }, ctx)
       await mkdir(join(root, '.sachiv-handoff', 'turn1'), { recursive: true })
       const listing = await listDirectoryTool.execute({}, ctx)
-      expect(listing).toContain('file  a.txt')
+      expect(listing).toContain('file  a.dat')
       expect(listing).not.toContain('.sachiv-handoff')
     })
 
@@ -178,8 +178,8 @@ describe('file-ops tools', () => {
     })
 
     it('lists a nested path', async () => {
-      await writeFileTool.execute({ path: 'sub/b.txt', content: '2' }, ctx)
-      expect(await listDirectoryTool.execute({ path: 'sub' }, ctx)).toBe('file  b.txt')
+      await writeFileTool.execute({ path: 'sub/b.dat', content: '2' }, ctx)
+      expect(await listDirectoryTool.execute({ path: 'sub' }, ctx)).toBe('file  b.dat')
     })
   })
 })

@@ -154,14 +154,14 @@ describe('python_run', () => {
       expect(few).not.toContain('Moved')
       expect(existsSync(join(root, 'answer.json'))).toBe(true)
 
-      const code = 'import os\nfor i in range(5):\n    open(f"page_{i}.png","w").write("x")\nopen("scratch.csv","w").write("a")\nprint(os.environ["SACHIV_TMP"])'
+      const code = 'import os\nfor i in range(5):\n    open(f"page_{i}.png","w").write("x")\nopen("scratch.dat","w").write("a")\nprint(os.environ["SACHIV_TMP"])'
       const bulk = await pythonRunTool.execute({ code }, ctx)
       expect(bulk).toMatch(/Moved 6 file\(s\) the script left in the workspace root: page_0\.png -> resources\/page_0\.png/)
-      expect(bulk).toContain('scratch.csv -> tmp/scratch.csv')
+      expect(bulk).toContain('scratch.dat -> tmp/scratch.dat')
       expect(bulk).toContain(join(root, 'tmp')) // SACHIV_TMP points at the scratch folder
       expect(existsSync(join(root, 'page_0.png'))).toBe(false)
       expect(existsSync(join(root, 'resources', 'page_4.png'))).toBe(true)
-      expect(existsSync(join(root, 'tmp', 'scratch.csv'))).toBe(true)
+      expect(existsSync(join(root, 'tmp', 'scratch.dat'))).toBe(true)
     })
 
     runIt('reports a failing script with its exit code and traceback (not as a tool error), so the model can fix it', async () => {

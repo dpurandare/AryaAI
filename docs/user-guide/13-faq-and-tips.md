@@ -15,7 +15,7 @@ Memory search can (after the one-time model download). Hosted providers, web sea
 Only partly today. Memory search works fully on your computer, but chatting with your own local Ollama models is not available from the installers yet (see the known limitation in [Providers and keys](03-providers-and-keys.md)). When run from source, a local Ollama model works, at the cost of speed and quality, and your messages stay on your computer.
 
 **Where are my files?**
-In the workspace folder (by default `Sachivji Workspace` in Documents), in `code/`, `documents/` and `resources/`. See [Working with files and documents](08-working-with-files-and-documents.md).
+In the workspace folder (by default `Sachivji Workspace` in Documents), in `code/`, `documents/`, `resources/` and `data/` (downloads in `downloads/`, exports in `exports/`). See [Working with files and documents](08-working-with-files-and-documents.md).
 
 **Can it change files anywhere on my computer?**
 No. It works inside the workspace. Outside it, it can only read folders you allow. See [Security and privacy](11-security-and-privacy.md).

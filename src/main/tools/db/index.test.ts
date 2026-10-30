@@ -114,7 +114,7 @@ describe('db_* tools', () => {
     expect(result).toContain('Sample (first 5 of 302)')
     expect(result).not.toContain('user-299') // the bulk of the data is not in the returned text at all
 
-    const pathMatch = result.match(/resources\/db_export_[a-f0-9]+\.json/)
+    const pathMatch = result.match(/data\/db_export_[a-f0-9]+\.json/)
     expect(pathMatch).toBeTruthy()
     const written = JSON.parse(await readFile(join(dir, pathMatch![0]), 'utf-8'))
     expect(written).toHaveLength(302) // the full result really is in the file

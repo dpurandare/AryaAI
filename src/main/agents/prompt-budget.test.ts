@@ -144,7 +144,8 @@ const CEILINGS = {
   slimRouterToolSchemas: 2390,
   // Raised to match routerPrompt's #211 bump above — 4156 measured, ceiling raised to 4220.
   slimRouterBare: 4220,
-  routerCore: 990,
+  // 2026-10-31 (TASKS #228): write_file's description names the new data/ folder and the bare .md/.txt/.csv/.json rules (~17 tokens) - 990 -> 1008. Deliberate.
+  routerCore: 1008,
   // TASKS.md #179: the planning prompt's compound-step rule now explicitly says not to plan an MCP
   // Operator step AND a Research/web step for one domain-knowledge question up front (found live — a
   // pure definitional question got both, and web ran right after the wiki already gave a complete
@@ -305,6 +306,7 @@ describe('per-tool schema budget', () => {
     // 2026-10-10: api_create_connection gained `apiKeyIn` (NewsAPI.ai only reads its key from the URL query; the Configurator had no way to say so) - 9990 -> 10000. Deliberate.
     // 2026-10-12: mcp_list_connections now reports each connected server's actual tool names, not just a
     // count (TASKS #202 follow-up: fixes a 20-call loop found live) - 10000 -> 10009. Deliberate.
-    expect(total).toBeLessThanOrEqual(10009)
+    // 2026-10-31 (TASKS #228): the same write_file description (~17 tokens) - 10009 -> 10027. Deliberate.
+    expect(total).toBeLessThanOrEqual(10027)
   })
 })

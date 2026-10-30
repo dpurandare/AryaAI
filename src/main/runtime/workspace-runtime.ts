@@ -4,7 +4,7 @@ import { mkdir, readFile, rm, statfs, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { RuntimeState } from '@shared/runtime'
 import { WORKSPACE_VENV_DIR, workspaceVenvBinDir } from '../tools/python-env'
-import { MANAGED_FOLDERS } from '../tools/workspace-layout'
+import { WORKSPACE_FOLDERS } from '../tools/workspace-layout'
 
 /**
  * The managed workspace runtime (design-discussion.md section 4.3): Python is a
@@ -313,7 +313,7 @@ export class WorkspaceRuntime {
     const { deps } = this
     try {
       await deps.mkdirp(root)
-      for (const folder of MANAGED_FOLDERS) await deps.mkdirp(pathFor(deps.platform).join(root, folder))
+      for (const folder of WORKSPACE_FOLDERS) await deps.mkdirp(pathFor(deps.platform).join(root, folder))
     } catch (err) {
       return this.set(root, {
         status: 'failed',

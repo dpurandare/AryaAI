@@ -187,15 +187,15 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
     const turns: ScriptedTurn[] = [
       // Round 1 (outer, agentRole undefined): delegate to coding.
-      { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.txt' } }] },
+      { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.dat' } }] },
       // Round 2 (nested, agentRole coding): call write_file.
       {
         toolCalls: [
-          { id: 'call_write', name: 'write_file', input: { path: 'hello.txt', content: 'hello from test' } }
+          { id: 'call_write', name: 'write_file', input: { path: 'hello.dat', content: 'hello from test' } }
         ]
       },
       // Round 3 (nested, agentRole coding): specialist's own wrap-up text, end_turn.
-      { text: 'I wrote hello.txt.', stopReason: 'end_turn' },
+      { text: 'I wrote hello.dat.', stopReason: 'end_turn' },
       // Round 4 (outer, agentRole undefined): orchestrator's final reply, end_turn.
       { text: 'The Coding specialist wrote the file.', stopReason: 'end_turn' }
     ]
@@ -213,7 +213,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     )
 
     const conversation: Message[] = [
-      { role: 'user', content: [{ type: 'text', text: 'Please write hello.txt for me.' }] }
+      { role: 'user', content: [{ type: 'text', text: 'Please write hello.dat for me.' }] }
     ]
     const events = await collect(orchestrator, conversation)
 
@@ -223,7 +223,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     // if that snapshot were wrong the mock provider would still tolerate a
     // malformed conversation, but the file write is proof the whole chain
     // actually executed to completion.
-    expect(await readFile(join(root, 'hello.txt'), 'utf-8')).toBe('hello from test')
+    expect(await readFile(join(root, 'hello.dat'), 'utf-8')).toBe('hello from test')
 
     const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
 
@@ -273,7 +273,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
       return { approved: true, input: request.input }
     }
     const provider = new MockProvider([
-      { toolCalls: [{ id: 'call_write', name: 'write_file', input: { path: 'direct.txt', content: 'no delegate' } }] },
+      { toolCalls: [{ id: 'call_write', name: 'write_file', input: { path: 'direct.dat', content: 'no delegate' } }] },
       { text: 'Wrote it directly.', stopReason: 'end_turn' }
     ])
     const orchestrator = new Orchestrator(
@@ -287,12 +287,12 @@ describe('Orchestrator (integration, mocked provider)', () => {
       signal
     )
 
-    const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'write direct.txt' }] }])
+    const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'write direct.dat' }] }])
 
     // Real confirmation actually ran — not silently bypassed just because
     // this call didn't go through a delegate_to_x tool first.
-    expect(confirmCalls).toEqual([{ name: 'write_file', input: { path: 'direct.txt', content: 'no delegate' } }])
-    expect(await readFile(join(root, 'direct.txt'), 'utf-8')).toBe('no delegate')
+    expect(confirmCalls).toEqual([{ name: 'write_file', input: { path: 'direct.dat', content: 'no delegate' } }])
+    expect(await readFile(join(root, 'direct.dat'), 'utf-8')).toBe('no delegate')
 
     const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
     const writeStart = streamEvents.find((e) => e.type === 'tool_use_start' && e.name === 'write_file')
@@ -352,7 +352,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     const registry = buildRegistry()
     const agents = createAgents(registry)
     const provider = new MockProvider([
-      { toolCalls: [{ id: 'call_write', name: 'write_file', input: { path: 'denied.txt', content: 'x' } }] },
+      { toolCalls: [{ id: 'call_write', name: 'write_file', input: { path: 'denied.dat', content: 'x' } }] },
       { text: 'Understood, not writing it.', stopReason: 'end_turn' }
     ])
     const denyAll: (request: ToolConfirmRequest) => Promise<ConfirmDecision> = async () => ({
@@ -370,13 +370,13 @@ describe('Orchestrator (integration, mocked provider)', () => {
     )
 
     const events = await collect(orchestrator, [
-      { role: 'user', content: [{ type: 'text', text: 'write denied.txt' }] }
+      { role: 'user', content: [{ type: 'text', text: 'write denied.dat' }] }
     ])
     const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
     const result = streamEvents.find((e) => e.type === 'tool_result')
 
     expect(result).toMatchObject({ type: 'tool_result', isError: true, content: '[Rejected by user] The user denied this tool call.' })
-    await expect(readFile(join(root, 'denied.txt'), 'utf-8')).rejects.toThrow()
+    await expect(readFile(join(root, 'denied.dat'), 'utf-8')).rejects.toThrow()
   })
 
   it('a denial inside a delegated (nested) specialist still resolves the whole run, not just its own round', async () => {
@@ -384,11 +384,11 @@ describe('Orchestrator (integration, mocked provider)', () => {
     const agents = createAgents(registry)
     const turns: ScriptedTurn[] = [
       // Round 1 (outer, agentRole undefined): delegate to coding.
-      { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.txt' } }] },
+      { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.dat' } }] },
       // Round 2 (nested, agentRole coding): call write_file — denied below.
       {
         toolCalls: [
-          { id: 'call_write', name: 'write_file', input: { path: 'hello.txt', content: 'hello from test' } }
+          { id: 'call_write', name: 'write_file', input: { path: 'hello.dat', content: 'hello from test' } }
         ]
       },
       // Round 3 (nested, agentRole coding): specialist sees the denial, wraps up.
@@ -413,10 +413,10 @@ describe('Orchestrator (integration, mocked provider)', () => {
     )
 
     const events = await collect(orchestrator, [
-      { role: 'user', content: [{ type: 'text', text: 'Please write hello.txt for me.' }] }
+      { role: 'user', content: [{ type: 'text', text: 'Please write hello.dat for me.' }] }
     ])
 
-    await expect(readFile(join(root, 'hello.txt'), 'utf-8')).rejects.toThrow()
+    await expect(readFile(join(root, 'hello.dat'), 'utf-8')).rejects.toThrow()
 
     const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
     const writeResult = streamEvents.find((e) => e.type === 'tool_result' && e.toolUseId === 'call_write')
@@ -569,7 +569,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     const registry = buildRegistry()
     const agents = createAgents(registry)
     const provider = new MockProvider([
-      { toolCalls: [{ id: 'call_write', name: 'write_file', input: { path: 'forced.txt', content: 'forced' } }] },
+      { toolCalls: [{ id: 'call_write', name: 'write_file', input: { path: 'forced.dat', content: 'forced' } }] },
       { text: 'Done.', stopReason: 'end_turn' }
     ])
     const orchestrator = new Orchestrator(
@@ -585,7 +585,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
 
     const events = await collect(
       orchestrator,
-      [{ role: 'user', content: [{ type: 'text', text: 'write forced.txt' }] }],
+      [{ role: 'user', content: [{ type: 'text', text: 'write forced.dat' }] }],
       'coding'
     )
     const streamEvents = events.filter((e) => e.kind === 'stream').map((e) => e.event)
@@ -593,7 +593,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     expect(streamEvents.some((e) => e.type === 'tool_use_start' && e.name === 'delegate_to_coding')).toBe(false)
     const writeStart = streamEvents.find((e) => e.type === 'tool_use_start' && e.name === 'write_file')
     expect(writeStart).toMatchObject({ agentRole: 'coding' })
-    expect(await readFile(join(root, 'forced.txt'), 'utf-8')).toBe('forced')
+    expect(await readFile(join(root, 'forced.dat'), 'utf-8')).toBe('forced')
 
     // Regression test for a live-found bug: in forced-role mode the TOP-LEVEL
     // call itself carries an agentRole (for the "Coding agent" chip above),
@@ -633,7 +633,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // usage TWICE (matching real providers' cumulative-repeat behavior) —
       // a naive sum would double-count it.
       {
-        toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.txt' } }],
+        toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.dat' } }],
         usage: { inputTokens: 100, outputTokens: 10 }
       },
       // Round 2 (nested, coding): specialist's own reply — its usage must
@@ -655,7 +655,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
     )
 
     const events = await collect(orchestrator, [
-      { role: 'user', content: [{ type: 'text', text: 'Please write hello.txt for me.' }] }
+      { role: 'user', content: [{ type: 'text', text: 'Please write hello.dat for me.' }] }
     ])
     const usageEvents = events
       .filter((e) => e.kind === 'stream' && e.event.type === 'usage')
@@ -2509,10 +2509,10 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // final text-only turn the fix's wrap-up call should reach.
       const registry = buildRegistry()
       const agents = createAgents(registry)
-      await writeFileTool.execute({ path: 'note.txt', content: 'real gathered content' }, ctx)
+      await writeFileTool.execute({ path: 'note.dat', content: 'real gathered content' }, ctx)
 
       const toolCallTurn: ScriptedTurn = {
-        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
+        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.dat' } }],
         stopReason: 'tool_use'
       }
       const turns: ScriptedTurn[] = Array.from({ length: MAX_TOTAL_ROUNDS }, () => toolCallTurn)
@@ -2560,10 +2560,10 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // never wrapped into a message at all, which isn't what this is checking.
       const registry = buildRegistry()
       const agents = createAgents(registry)
-      await writeFileTool.execute({ path: 'note.txt', content: 'x' }, ctx)
+      await writeFileTool.execute({ path: 'note.dat', content: 'x' }, ctx)
 
       const toolCallTurn: ScriptedTurn = {
-        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
+        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.dat' } }],
         stopReason: 'tool_use'
       }
       const turns: ScriptedTurn[] = [
@@ -2618,10 +2618,10 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // gets its own fresh pool.
       const registry = buildRegistry()
       const agents = createAgents(registry)
-      await writeFileTool.execute({ path: 'note.txt', content: 'x' }, ctx)
+      await writeFileTool.execute({ path: 'note.dat', content: 'x' }, ctx)
 
       const toolCallTurn: ScriptedTurn = {
-        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
+        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.dat' } }],
         stopReason: 'tool_use'
       }
       const turns: ScriptedTurn[] = [
@@ -2673,10 +2673,10 @@ describe('Orchestrator (integration, mocked provider)', () => {
       // just because it needed one round more than the budget allowed.
       const registry = buildRegistry()
       const agents = createAgents(registry)
-      await writeFileTool.execute({ path: 'note.txt', content: 'x' }, ctx)
+      await writeFileTool.execute({ path: 'note.dat', content: 'x' }, ctx)
 
       const toolCallTurn: ScriptedTurn = {
-        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
+        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.dat' } }],
         stopReason: 'tool_use'
       }
       const turns: ScriptedTurn[] = [
@@ -2726,10 +2726,10 @@ describe('Orchestrator (integration, mocked provider)', () => {
     it('proceeds to the normal wrap-up stub if the user chooses to stop when asked', async () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
-      await writeFileTool.execute({ path: 'note.txt', content: 'x' }, ctx)
+      await writeFileTool.execute({ path: 'note.dat', content: 'x' }, ctx)
 
       const toolCallTurn: ScriptedTurn = {
-        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
+        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.dat' } }],
         stopReason: 'tool_use'
       }
       const turns: ScriptedTurn[] = [
@@ -2763,10 +2763,10 @@ describe('Orchestrator (integration, mocked provider)', () => {
     it('a genuine user Stop while the continue-or-stop question is pending resolves it as "stop" immediately', async () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
-      await writeFileTool.execute({ path: 'note.txt', content: 'x' }, ctx)
+      await writeFileTool.execute({ path: 'note.dat', content: 'x' }, ctx)
 
       const toolCallTurn: ScriptedTurn = {
-        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.txt' } }],
+        toolCalls: [{ id: 'call', name: 'read_file', input: { path: 'note.dat' } }],
         stopReason: 'tool_use'
       }
       const turns: ScriptedTurn[] = Array.from({ length: MAX_TOTAL_ROUNDS }, () => toolCallTurn)
@@ -4215,12 +4215,12 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
       for (let i = 1; i <= 5; i++) {
-        await writeFileTool.execute({ path: `file${i}.txt`, content: `content-${i}` }, ctx)
+        await writeFileTool.execute({ path: `file${i}.dat`, content: `content-${i}` }, ctx)
       }
 
       const turns: ScriptedTurn[] = [
         ...Array.from({ length: 5 }, (_, i) => ({
-          toolCalls: [{ id: `call${i + 1}`, name: 'read_file', input: { path: `file${i + 1}.txt` } }],
+          toolCalls: [{ id: `call${i + 1}`, name: 'read_file', input: { path: `file${i + 1}.dat` } }],
           stopReason: 'tool_use' as const
         })),
         { text: 'Done.', stopReason: 'end_turn' }
@@ -4625,7 +4625,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
       const turns: ScriptedTurn[] = [
-        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.txt' } }] },
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.dat' } }] },
         { thinking: 'planning the write', text: 'Writing the file now.', stopReason: 'end_turn' },
         { text: 'The specialist is done.', stopReason: 'end_turn' }
       ]
@@ -4642,7 +4642,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
         { planningEnabled: false }
       )
 
-      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'write hello.txt' }] }])
+      const events = await collect(orchestrator, [{ role: 'user', content: [{ type: 'text', text: 'write hello.dat' }] }])
       const taggedThinking = events.find(
         (e) => e.kind === 'stream' && e.event.type === 'thinking_delta' && e.event.agentRole === 'coding'
       )
@@ -4663,19 +4663,19 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
       await writeFileTool.execute(
-        { path: 'r1.txt', content: 'https://a.com https://b.com https://c.com' },
+        { path: 'r1.dat', content: 'https://a.com https://b.com https://c.com' },
         ctx
       )
       // Exact same 3 sources as r1 — should collapse.
       await writeFileTool.execute(
-        { path: 'r2.txt', content: 'https://a.com https://b.com https://c.com' },
+        { path: 'r2.dat', content: 'https://a.com https://b.com https://c.com' },
         ctx
       )
       // Completely different sources — should NOT collapse.
-      await writeFileTool.execute({ path: 'r3.txt', content: 'https://x.com https://y.com' }, ctx)
+      await writeFileTool.execute({ path: 'r3.dat', content: 'https://x.com https://y.com' }, ctx)
 
       const turns: ScriptedTurn[] = [
-        ...['r1.txt', 'r2.txt', 'r3.txt'].map((path, i) => ({
+        ...['r1.dat', 'r2.dat', 'r3.dat'].map((path, i) => ({
           toolCalls: [{ id: `call${i + 1}`, name: 'read_file', input: { path } }],
           stopReason: 'tool_use' as const
         })),
@@ -4712,18 +4712,18 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const registry = buildRegistry()
       const agents = createAgents(registry)
       await writeFileTool.execute(
-        { path: 'r1.txt', content: 'https://a.com https://b.com https://c.com' },
+        { path: 'r1.dat', content: 'https://a.com https://b.com https://c.com' },
         ctx
       )
       // Only 1 of 3 URLs (a) already seen — 33% overlap, well below the 70%
       // threshold — a genuinely different result, not a reworded retry.
       await writeFileTool.execute(
-        { path: 'r2.txt', content: 'https://a.com https://x.com https://z.com' },
+        { path: 'r2.dat', content: 'https://a.com https://x.com https://z.com' },
         ctx
       )
 
       const turns: ScriptedTurn[] = [
-        ...['r1.txt', 'r2.txt'].map((path, i) => ({
+        ...['r1.dat', 'r2.dat'].map((path, i) => ({
           toolCalls: [{ id: `call${i + 1}`, name: 'read_file', input: { path } }],
           stopReason: 'tool_use' as const
         })),
@@ -4810,7 +4810,7 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const agents = isolate(createAgents(registry), 'coding')
 
       const turns: ScriptedTurn[] = [
-        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.txt' } }] },
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'write hello.dat' } }] },
         { text: 'Done.', stopReason: 'end_turn' }, // nested isolated round
         { text: 'The Coding specialist wrote the file.', stopReason: 'end_turn' } // outer final
       ]
@@ -4829,31 +4829,31 @@ describe('Orchestrator (integration, mocked provider)', () => {
       const conversation: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'EARLIER-CONTEXT-MARKER: my favorite color is blue' }] },
         { role: 'assistant', content: [{ type: 'text', text: 'Noted!' }] },
-        { role: 'user', content: [{ type: 'text', text: 'Please write hello.txt for me.' }] }
+        { role: 'user', content: [{ type: 'text', text: 'Please write hello.dat for me.' }] }
       ]
       await collect(orchestrator, conversation)
 
       // provider.requests[0] is the outer round; [1] is the isolated delegate's own round.
       const nestedRequestText = JSON.stringify(provider.requests[1].messages)
       expect(nestedRequestText).not.toContain('EARLIER-CONTEXT-MARKER')
-      expect(nestedRequestText).toContain('write hello.txt')
+      expect(nestedRequestText).toContain('write hello.dat')
     })
 
     it('gets its own fresh, independently-capped round budget — not the shared MAX_TOTAL_ROUNDS pool', async () => {
       const registry = buildRegistry()
       const agents = isolate(createAgents(registry), 'coding', 5)
-      await writeFile(join(root, 'note.txt'), 'hi', 'utf-8')
+      await writeFile(join(root, 'note.dat'), 'hi', 'utf-8')
 
       const turns: ScriptedTurn[] = [
         // 3 outer rounds first, so the shared state.roundsUsed is already
         // well past 0 by the time delegation happens.
-        { toolCalls: [{ id: 'r1', name: 'read_file', input: { path: 'note.txt' } }] },
-        { toolCalls: [{ id: 'r2', name: 'read_file', input: { path: 'note.txt' } }] },
-        { toolCalls: [{ id: 'r3', name: 'read_file', input: { path: 'note.txt' } }] },
+        { toolCalls: [{ id: 'r1', name: 'read_file', input: { path: 'note.dat' } }] },
+        { toolCalls: [{ id: 'r2', name: 'read_file', input: { path: 'note.dat' } }] },
+        { toolCalls: [{ id: 'r3', name: 'read_file', input: { path: 'note.dat' } }] },
         // Outer round 4: delegate.
-        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'read note.txt twice' } }] },
+        { toolCalls: [{ id: 'call_delegate', name: 'delegate_to_coding', input: { task: 'read note.dat twice' } }] },
         // Isolated delegate's own round 1 and 2.
-        { toolCalls: [{ id: 'r4', name: 'read_file', input: { path: 'note.txt' } }] },
+        { toolCalls: [{ id: 'r4', name: 'read_file', input: { path: 'note.dat' } }] },
         { text: 'Read it twice.', stopReason: 'end_turn' },
         // Outer final.
         { text: 'Done.', stopReason: 'end_turn' }

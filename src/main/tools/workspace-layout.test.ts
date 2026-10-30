@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WorkspaceGuard } from '../security/workspace-guard'
-import { LOOSE_FILE_SWEEP_THRESHOLD, classifyManagedFolder, pruneScratchDir, resolveNewFilePath, tidyRootStrays, workspaceRelativePath } from './workspace-layout'
+import { LOOSE_FILE_SWEEP_THRESHOLD, classifyManagedFolder, pruneScratchDir, resolveNewFilePath, tidyRootStrays, workspaceRelativePath, WORKSPACE_FOLDERS } from './workspace-layout'
 import { existsSync } from 'node:fs'
 import { utimes } from 'node:fs/promises'
 
@@ -18,9 +18,29 @@ describe('classifyManagedFolder', () => {
   })
 
   it('returns null for extensions with no managed folder', () => {
-    expect(classifyManagedFolder('notes.txt')).toBeNull()
-    expect(classifyManagedFolder('data.csv')).toBeNull()
+    expect(classifyManagedFolder('notes.dat')).toBeNull()
+    expect(classifyManagedFolder('table.parquet')).toBeNull()
     expect(classifyManagedFolder('noextension')).toBeNull()
+  })
+
+  it('files a BARE .md/.txt name under documents/ and a bare .csv/.tsv/.json name under data/ (#228)', () => {
+    expect(classifyManagedFolder('notes.md')).toBe('documents')
+    expect(classifyManagedFolder('notes.TXT')).toBe('documents')
+    expect(classifyManagedFolder('sales.csv')).toBe('data')
+    expect(classifyManagedFolder('sales.tsv')).toBe('data')
+    expect(classifyManagedFolder('answer.json')).toBe('data')
+  })
+
+  it('leaves .md/.txt/.csv/.json alone when the name has a directory part: it belongs to the project it is in (#228)', () => {
+    expect(classifyManagedFolder('myapp/README.md')).toBeNull()
+    expect(classifyManagedFolder('myapp/package.json')).toBeNull()
+    expect(classifyManagedFolder('a\\b\\data.csv')).toBeNull()
+    // unambiguous kinds are still filed wherever they are named
+    expect(classifyManagedFolder('myapp/main.py')).toBe('code')
+  })
+
+  it('treats downloads/ and exports/ as explicit choices, like the managed folders (#228)', () => {
+    expect(WORKSPACE_FOLDERS).toEqual(['code', 'documents', 'resources', 'data', 'downloads', 'exports'])
   })
 })
 
@@ -43,8 +63,8 @@ describe('resolveNewFilePath', () => {
   })
 
   it('leaves an unclassified extension at the given path', () => {
-    const absPath = resolveNewFilePath(guard, 'notes.txt')
-    expect(relative(root, absPath)).toBe('notes.txt')
+    const absPath = resolveNewFilePath(guard, 'notes.dat')
+    expect(relative(root, absPath)).toBe('notes.dat')
   })
 
   it('does not double-nest a path the model already placed under a managed folder', () => {
@@ -71,6 +91,17 @@ describe('resolveNewFilePath', () => {
 
   it('respects the workspace boundary', () => {
     expect(() => resolveNewFilePath(guard, '../escape.py')).toThrow(/workspace boundary/)
+  })
+
+  it('files a new bare notes.md under documents/ and a bare sales.csv under data/, but not myapp/README.md (#228)', () => {
+    expect(workspaceRelativePath(root, resolveNewFilePath(guard, 'notes.md'))).toBe('documents/notes.md')
+    expect(workspaceRelativePath(root, resolveNewFilePath(guard, 'sales.csv'))).toBe('data/sales.csv')
+    expect(workspaceRelativePath(root, resolveNewFilePath(guard, 'myapp/README.md'))).toBe('myapp/README.md')
+  })
+
+  it('keeps an explicit downloads/ or exports/ path where it is (#228)', () => {
+    expect(workspaceRelativePath(root, resolveNewFilePath(guard, 'downloads/report.pdf'))).toBe('downloads/report.pdf')
+    expect(workspaceRelativePath(root, resolveNewFilePath(guard, 'exports/out.json'))).toBe('exports/out.json')
   })
 
   it('leaves a new file under tmp/ where it was asked for', () => {
@@ -106,11 +137,19 @@ describe('tidyRootStrays and pruneScratchDir', () => {
   })
 
   it('files a bulk by the managed-folder convention, anything else to tmp/, and numbers a clash', async () => {
-    await make('a.png', 'b.docx', 'c.py', 'd.csv', 'e.csv')
+    await make('a.png', 'b.docx', 'c.py', 'd.csv', 'e.dat', 'f.md')
     await mkdir(join(root, 'tmp'), { recursive: true })
-    await writeFile(join(root, 'tmp', 'd.csv'), 'older')
-    const moved = await tidyRootStrays(root, ['a.png', 'b.docx', 'c.py', 'd.csv', 'e.csv'])
-    expect(moved.map((m) => `${m.from}>${m.to}`)).toEqual(['a.png>resources/a.png', 'b.docx>documents/b.docx', 'c.py>code/c.py', 'd.csv>tmp/d-2.csv', 'e.csv>tmp/e.csv'])
+    await mkdir(join(root, 'data'), { recursive: true })
+    await writeFile(join(root, 'data', 'd.csv'), 'older')
+    const moved = await tidyRootStrays(root, ['a.png', 'b.docx', 'c.py', 'd.csv', 'e.dat', 'f.md'])
+    expect(moved.map((m) => `${m.from}>${m.to}`)).toEqual([
+      'a.png>resources/a.png',
+      'b.docx>documents/b.docx',
+      'c.py>code/c.py',
+      'd.csv>data/d-2.csv',
+      'e.dat>tmp/e.dat',
+      'f.md>documents/f.md'
+    ])
     expect(existsSync(join(root, 'resources', 'a.png'))).toBe(true)
     expect(existsSync(join(root, 'a.png'))).toBe(false)
   })

@@ -5,16 +5,23 @@ import type { WorkspaceGuard } from '../security/workspace-guard'
 
 /**
  * Where a newly-created file of a given kind belongs, per explicit user
- * request (2026-09-23): code the agent generates in `code/`, office/document
- * output in `documents/`, images/video/icons in `resources/`, everything
- * else at the workspace root. Enforced here — in the tools that actually
+ * request (2026-09-23, extended 2026-10-19 for 0.4.0, TASKS #228): code the agent generates in `code/`, office/document
+ * output (and bare .md/.txt notes) in `documents/`, images/video/icons in `resources/`, bare .csv/.tsv/.json data files in
+ * `data/`, everything else at the workspace root. `downloads/` (files fetched for the user) and `exports/` (exports) are
+ * folders tools write to by name, not by file type. Enforced here — in the tools that actually
  * create files — rather than only asked of the model in a prompt, matching
  * this app's own general approach to reliability (a model-followed
  * convention is a suggestion; a path computed in code is a guarantee).
  */
-export type ManagedFolder = 'code' | 'documents' | 'resources'
+export type ManagedFolder = 'code' | 'documents' | 'resources' | 'data'
 
-export const MANAGED_FOLDERS: readonly ManagedFolder[] = ['code', 'documents', 'resources']
+export const MANAGED_FOLDERS: readonly ManagedFolder[] = ['code', 'documents', 'resources', 'data']
+
+/** Where files fetched for the user are saved (a workspace folder, not the operating system's Downloads folder). TASKS #228. */
+export const DOWNLOADS_DIR = 'downloads'
+
+/** Every conventional folder created with the workspace; the ones a tool writes to by name (not by file type) are the last two. */
+export const WORKSPACE_FOLDERS: readonly string[] = [...MANAGED_FOLDERS, 'downloads', 'exports']
 
 /**
  * Pre-existing, special-purpose folders that predate this convention and must
@@ -47,12 +54,23 @@ const RESOURCE_EXTENSIONS = new Set([
   'mp4', 'mov', 'avi', 'mkv', 'webm', 'mp3', 'wav', 'ogg', 'flac', 'm4a'
 ])
 
+/**
+ * TASKS #228: extensions that mean different things depending on context. A bare `notes.md` or `sales.csv` is a generated
+ * document or data file, but `myapp/README.md` or `myapp/package.json` belongs to the project it is in. So these are only
+ * filed when the name has NO directory part; with a directory the author has already said where it goes.
+ */
+const BARE_NAME_DOCUMENT_EXTENSIONS = new Set(['md', 'txt'])
+const BARE_NAME_DATA_EXTENSIONS = new Set(['csv', 'tsv', 'json'])
+
 /** `null` means "no managed folder for this extension" — stays at the workspace root, or wherever it already is. */
 export function classifyManagedFolder(pathOrFilename: string): ManagedFolder | null {
   const ext = extname(pathOrFilename).slice(1).toLowerCase()
   if (CODE_EXTENSIONS.has(ext)) return 'code'
   if (DOCUMENT_EXTENSIONS.has(ext)) return 'documents'
   if (RESOURCE_EXTENSIONS.has(ext)) return 'resources'
+  const bare = !pathOrFilename.includes('/') && !pathOrFilename.includes('\\')
+  if (bare && BARE_NAME_DOCUMENT_EXTENSIONS.has(ext)) return 'documents'
+  if (bare && BARE_NAME_DATA_EXTENSIONS.has(ext)) return 'data'
   return null
 }
 
@@ -61,7 +79,7 @@ function isUnderFolder(workspaceRelativePath: string, folder: string): boolean {
 }
 
 function isAlreadyUnderAManagedFolder(workspaceRelativePath: string): boolean {
-  return MANAGED_FOLDERS.some((folder) => isUnderFolder(workspaceRelativePath, folder))
+  return WORKSPACE_FOLDERS.some((folder) => isUnderFolder(workspaceRelativePath, folder))
 }
 
 function isUnderAnExcludedFolder(workspaceRelativePath: string): boolean {
@@ -127,7 +145,7 @@ export interface MovedFile {
  * Keeps the workspace root clean after a script run. Scripts run with the workspace root as their working directory,
  * so a bare `open('page_0.png', 'wb')` lands there — found live: one scanned-passport session left 120 loose images
  * in the root. Every NEW file a run left directly in the root is moved by the same convention file tools already use
- * (documents/, code/, resources/), and anything that fits none of them goes to `tmp/`. Files the script put in a
+ * (documents/, code/, resources/, data/), and anything that fits none of them goes to `tmp/`. Files the script put in a
  * folder itself, hidden files and files that already existed are never touched. A name that is taken gets a numbered
  * suffix. Best-effort per file: a failed move leaves that file where it was.
  *

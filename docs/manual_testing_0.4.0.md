@@ -48,6 +48,15 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | **168-1** | Needs an Ollama Cloud key (skip if you have none) | Provider **Ollama Cloud**, model `gemma4:cloud` (or any `:cloud` model), send a message. | The meter at the bottom shows tokens (`Σ …`) but **no** `~$` cost (unknown), not `~$0.00`. |
 | **168-2** | Own Ollama with a local model | Provider **Ollama (local)**, any local model, send a message. | The meter shows `~$0.00` or no cost as before (local = free); the context window figure is unchanged. |
 
+## #228 One table decides where generated files go
+
+| ID | Where | Steps | Expect |
+|---|---|---|---|
+| **228-1** | Any OS, an existing workspace | Start the build, then look in the workspace folder. | New empty folders `data/`, `downloads/` and `exports/` exist next to `code/`, `documents/`, `resources/`. Nothing of yours moved. |
+| **228-2** | Any model | "Save the text `meeting notes` in a file called notes.md." then "Save the lines `a,b` and `1,2` as sales.csv." then "Save {\"x\": 1} as answer.json." | `documents/notes.md`, `data/sales.csv`, `data/answer.json`; the replies give those paths (not the bare names). |
+| **228-3** | Any model | "Create a folder myapp with a README.md and a package.json containing {} inside it." | `myapp/README.md` and `myapp/package.json` stay in `myapp/` (not split into documents/ and data/). |
+| **228-4** | Developer role | "Write a Python script that saves a list of 3 numbers to numbers.json and a table to table.csv in the current folder, then run it." (bare names in the script) | After the run the root has no loose `numbers.json` or `table.csv` only if four or more files were scattered; with just these two they stay where the script wrote them (the existing rule: one or two requested outputs stay). Mark Pass if that matches. |
+
 ## Results
 
 | ID | Item | Pass / Fail / Odd | Model / OS | Notes |
@@ -70,3 +79,7 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 225-5 | No fallback = plain error, nothing sent | | | |
 | 168-1 | Ollama Cloud shows no $0 | | | |
 | 168-2 | Local Ollama unchanged | | | |
+| 228-1 | New folders created, nothing moved | | | |
+| 228-2 | Bare .md/.csv/.json filed by type | | | |
+| 228-3 | Project files with a folder stay together | | | |
+| 228-4 | Script outputs (existing rule unchanged) | | | |

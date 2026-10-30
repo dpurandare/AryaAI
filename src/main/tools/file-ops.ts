@@ -99,7 +99,7 @@ export const writeFileTool: Tool = {
   description:
     'Create or overwrite a UTF-8 text file inside the workspace (an absolute path elsewhere may only create a NEW file, confirmed). A brand-new file is placed ' +
     "automatically by kind — code (.py/.js/.ts/.sh/.sql/...) under code/, an office/document format " +
-    "under documents/, an image/video/icon under resources/, anything else at the workspace root — " +
+    "or a bare .md/.txt name under documents/, an image/video/icon under resources/, a bare .csv/.json name under data/, anything else at the root — " +
     'regardless of the path given; the result message states the real path actually used. Overwriting ' +
     'a file that already exists always writes back to wherever it already is, never relocates it. ' +
     'Text only: it refuses binary formats (.docx/.xlsx/.pptx/.pdf/images/archives) — use the office_*, ' +
@@ -132,7 +132,7 @@ export const writeFileTool: Tool = {
     await writeFile(path, content, 'utf-8')
     const saved = workspaceRelativePath(ctx.workspaceGuard.root, path)
     const asked = String(input.path ?? '').replace(/\\/g, '/').replace(/^\.\//, '')
-    // A new file of a known type is filed under code/, documents/ or resources/. Say so in words a model acts on: a bare
+    // A new file of a known type is filed under code/, documents/, resources/ or data/. Say so in words a model acts on: a bare
     // "Wrote … to code/x.sh" was ignored and the next step ran the path it had asked for.
     const moved = asked && saved !== asked ? ` New files of this type are filed under ${saved.split('/')[0]}/ — use "${saved}" (not "${asked}") for every later step, such as running or reading it.` : ''
     return `Wrote ${content.length} characters to ${saved}.${moved}`

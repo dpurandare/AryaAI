@@ -17,15 +17,19 @@ When the assistant creates a file, Sachivji decides the folder from the file typ
 | Folder | What goes in it | File types |
 |---|---|---|
 | `code/` | Scripts and source files | `.py`, `.js`, `.ts`, `.sh`, `.sql`, `.html`, `.css`, `.yaml` and other code or configuration files |
-| `documents/` | Office and document files | `.docx`, `.xlsx`, `.pptx`, `.pdf`, `.odt`, `.rtf` and similar |
+| `documents/` | Office and document files, and notes | `.docx`, `.xlsx`, `.pptx`, `.pdf`, `.odt`, `.rtf` and similar; a plain `.md` or `.txt` file |
 | `resources/` | Images, audio and video | `.png`, `.jpg`, `.gif`, `.svg`, `.mp4`, `.mp3` and similar |
+| `data/` | Data files | a plain `.csv`, `.tsv` or `.json` file |
 | the workspace root | Everything else you ask it to save | other file types |
+
+A `.md`, `.txt`, `.csv`, `.tsv` or `.json` file is filed in `documents/` or `data/` only when it is saved **by name alone** (for example `notes.md` or `sales.csv`). With a folder in the name (`myapp/README.md`, `myapp/package.json`) it stays where you said, because it belongs to that project.
 
 Other folders have special roles and are left alone:
 
 - `templates/` holds your own Word and PowerPoint templates (see below).
 - `venv/` is the Python environment (do not edit it).
-- `exports/` is where the **Export Settings** dialog opens by default (created when needed). You can still choose any other folder in the dialog.
+- `downloads/` is where files the assistant downloads for you are saved (this is a folder in the workspace, not your computer's Downloads folder).
+- `exports/` is where the **Export Settings** dialog opens by default. You can still choose any other folder in the dialog.
 - `tmp/` is scratch space for temporary files that scripts and the assistant produce along the way (page images, crops, research notes, intermediate data). **Files in `tmp/` are deleted automatically after about 7 days**, so never keep anything you need there. Take what you want to keep and move it to `documents/` or `resources/`. Also, when a script or a shell command leaves four or more new loose files in the workspace root, Sachivji files them under `documents/`, `code/` or `resources/` by type, and anything else goes to `tmp/`. One or two files stay where the script wrote them, because they are usually what you asked for. The assistant is also told to save charts and images to `resources/`, documents to `documents/` and scratch files to `tmp/` instead of leaving them in the root.
 - `.sachiv-handoff/` is a hidden folder where the assistant saves the data that one step found (database rows, parsed files, search results), so the next step or a script can read it from a file instead of retyping it. Folders in it older than about 7 days are deleted automatically.
 - `.sachiv-clones/` is a hidden folder that holds git repositories the assistant downloads to inspect (see the git tools). Each clone has its own folder. Nothing deletes them for you, so you can delete the folder when you are done, and it is safe to delete.

@@ -58,9 +58,9 @@ export async function formatQueryResult(result: DbQueryResult, workspaceRoot: st
     // defensive fallback must still be honest rather than silently dropping the rest of the data.
     return `${result.rowCount} row(s) — too large to show inline and no workspace available to export to.\n${sampleText}`
   }
-  const relPath = `resources/db_export_${randomUUID().slice(0, 8)}.json`
+  const relPath = `data/db_export_${randomUUID().slice(0, 8)}.json`
   try {
-    await mkdir(path.join(workspaceRoot, 'resources'), { recursive: true })
+    await mkdir(path.join(workspaceRoot, 'data'), { recursive: true })
     await writeFile(path.join(workspaceRoot, relPath), JSON.stringify(result.rows, null, 2), 'utf-8')
     return (
       `${result.rowCount} row(s) — too large to show inline. Full result written to ${relPath}: read it ` +
