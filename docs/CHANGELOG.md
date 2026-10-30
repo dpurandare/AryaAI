@@ -8,7 +8,36 @@ version is still `0`.
 
 ## [Unreleased]
 
-## [0.3.2] - not yet released
+## [0.4.0] - not yet released
+
+Details, with a short description of every change, in [`docs/releases/0.4.0.md`](releases/0.4.0.md).
+
+### Added
+
+- Settings > Ollama (local chat): the address of your own Ollama (it may be on another machine), whether it answers, and install help. "Ollama (local)" disappears from the model list while Ollama is not running and returns by itself; sending while it is down gives a plain error (#214).
+- An optional hosted fallback model: when "Ollama (local)" is the chat provider and Ollama is not running, the chosen hosted model answers that one message, with your recorded consent, a line in the chat each time, and the status bar showing it (#225).
+- The search index remembers which weights of the embedding model built it and, if the model changes under the same name, asks for a rebuild (a banner, Settings and the assistant say so) instead of searching worse without telling you (#224).
+- Drag a file onto the message box to add its full path to the message (#229).
+- Settings > Folders outside the workspace > **Add folder…** and one-click **Add Downloads / Desktop / Documents** grant read-only access in advance; protected places, the home folder and duplicates are refused (#216).
+- New tool `find_in_files`: searches the text inside files (like `grep -r`), cross-platform, skipping binary and large files, with stated caps (#169).
+- `list_directory` takes a `depth` (1 to 3) for an overview of the workspace in one call (#238).
+- New workspace folders `data/`, `downloads/` and `exports/`; a bare `.md`/`.txt` file is filed in `documents/` and a bare `.csv`/`.tsv`/`.json` file in `data/` (#228).
+
+### Changed
+
+- The Ollama that comes with the installers now serves search embeddings only, on its own port (11450 to 11455, never 11434), so it cannot get in the way of your own Ollama (#214).
+- A pinned specialist's reply to a bare greeting or "what can you do?" is checked in code: a generic closing offer is removed, its tools are named and its name is given if the model left them out. The reply appears all at once (#242).
+- Database results too large for the chat are written to `data/` instead of `resources/` (#228).
+
+### Fixed
+
+- Ollama Cloud models such as `gemma4:cloud` are no longer shown as free ($0) in the usage meter; their cost is unknown (#168).
+
+### Tests
+
+- `scripts/greeting-probe.mts` takes a provider id, so the greeting check can run against a hosted model.
+
+## [0.3.2] - 2026-10-27
 
 Details, with a short description of every change, in [`docs/releases/0.3.2.md`](releases/0.3.2.md).
 

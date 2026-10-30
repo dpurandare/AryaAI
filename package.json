@@ -1,6 +1,6 @@
 {
   "name": "sachivji",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Sachivji — your local-first, multi-agent AI companion.",
   "main": "./out/main/index.js",
   "private": true,
