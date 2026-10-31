@@ -33,6 +33,7 @@ Details, with a short description of every change, in [`docs/releases/0.4.0.md`]
 
 ### Fixed
 
+- **Rebuild index** (Settings > Search history) first checks that the embedding server answers and, if it does not, stops with a message and deletes nothing. Before, it emptied the index and then failed quietly when the server was down (found on the Windows VM in 0.4.0 testing; #244 part).
 - MCP tools of a server whose name contains a space or another character OpenAI and Anthropic reject in a tool name (for example "Context7 MCP", or a tool called `files.read`) made every request of the pinned MCP Operator fail with 400 "does not match pattern". Those characters now become `_` in the name the model sees (found in 0.4.0 test 242-1).
 - A pinned specialist whose name starts with a word that appears in its reply ("Data Access", "Data Processor") is now told to say its name; the check used only the first word (found in 0.4.0 test 242-1).
 - Settings > Search history: the embedding-model list for "Ollama (local)" now comes from the server embeddings really use (the bundled one), not from your own Ollama, so it no longer fails when your Ollama is stopped. If the list cannot be fetched but a model is already saved, a neutral note is shown instead of a red error (found in 0.4.0 testing).

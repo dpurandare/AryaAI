@@ -382,7 +382,38 @@ export async function runBackfill(): Promise<void> {
   }
 }
 
+/** How long the pre-rebuild check waits for the embedding server (a cold model load can take a while). */
+const REBUILD_PROBE_TIMEOUT_MS = 30_000
+
+/**
+ * TASKS #244 (0.4.0): a rebuild deletes the whole index first. With the embedding server down that left an EMPTY index and only a console line
+ * (seen on the Windows VM: "24 / 48 indexed", Rebuild index, nothing on port 11450). So it first makes sure one embedding call works with the
+ * configured provider and model, and refuses, deleting nothing, when it does not.
+ */
+async function assertEmbeddingServerAnswers(): Promise<void> {
+  const config = getEmbeddingConfig()
+  if (!embeddingServerSettled(config.providerId)) {
+    throw new Error('Rebuild cancelled: the local embedding server is still starting. Nothing was deleted; wait a moment and try again.')
+  }
+  try {
+    const provider = getEmbeddingProvider(config.providerId, getApiKey(config.providerId))
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`no answer within ${REBUILD_PROBE_TIMEOUT_MS / 1000} seconds`)), REBUILD_PROBE_TIMEOUT_MS)
+    })
+    try {
+      await Promise.race([provider.embed(['test'], config.model), timeout])
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    throw new Error(`Rebuild cancelled: the embedding server did not answer (${reason}). Nothing was deleted; the search index is as it was. Check that it is running, then try again.`)
+  }
+}
+
 export async function rebuildIndex(): Promise<void> {
+  await assertEmbeddingServerAnswers()
   const db = getDb()
   // message_vectors is the pre-chunking table — nothing reads it anymore,
   // this just cleans up the now-vestigial artifact for anyone who rebuilds

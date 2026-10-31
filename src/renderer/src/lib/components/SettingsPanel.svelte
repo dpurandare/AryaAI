@@ -857,6 +857,7 @@
   let savingEmbeddingKey = $state(false)
   let searchHistoryStatus = $state<SearchHistoryStatusDto | null>(null)
   let rebuildingIndex = $state(false)
+  let rebuildError = $state('')
 
   // --- Model picker + live dimension probe (TASKS.md #162) ---
   // Mirrors ModelPicker.svelte's own listModels-with-manual-fallback pattern exactly, for every
@@ -1013,9 +1014,13 @@
 
   async function rebuildSearchHistoryIndex(): Promise<void> {
     rebuildingIndex = true
+    rebuildError = ''
     try {
       await window.sachiv.rebuildSearchHistoryIndex()
       await loadSearchHistoryStatus()
+    } catch (err) {
+      // The main process refuses (and deletes nothing) when the embedding server does not answer; its message is the explanation. Electron prefixes it.
+      rebuildError = (err instanceof Error ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
     } finally {
       rebuildingIndex = false
     }
@@ -1402,6 +1407,7 @@
         {rebuildingIndex ? 'Rebuilding...' : 'Rebuild index'}
       </button>
     </div>
+    {#if rebuildError}<p class="status error">{rebuildError}</p>{/if}
 
     <hr />
 

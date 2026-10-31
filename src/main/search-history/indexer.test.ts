@@ -291,6 +291,30 @@ describe('search-history indexer', () => {
     expect(getIndexState()).toEqual({ kind: 'ready', indexed: 1, total: 1 })
   })
 
+  it('rebuildIndex refuses, and deletes nothing, when the embedding server does not answer (#244)', async () => {
+    const session = createSession('S1')
+    insertMessage(session.id, 'user', [{ type: 'text', text: 'revenue was 4.2 million' }])
+    await runBackfill()
+    expect(getIndexState()).toEqual({ kind: 'ready', indexed: 1, total: 1 })
+
+    const setup = await import('../providers/setup')
+    vi.mocked(setup.getEmbeddingProvider).mockReturnValueOnce({
+      id: 'fake',
+      embed: vi.fn(async () => {
+        throw new Error('connect ECONNREFUSED 127.0.0.1:11450')
+      })
+    })
+    await expect(rebuildIndex()).rejects.toThrow(/Rebuild cancelled: the embedding server did not answer \(connect ECONNREFUSED 127\.0\.0\.1:11450\).*Nothing was deleted/)
+    expect(getIndexState()).toEqual({ kind: 'ready', indexed: 1, total: 1 })
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM message_chunks').get()).toEqual({ n: 1 })
+  })
+
+  it('rebuildIndex refuses while the bundled server is still starting', async () => {
+    const setup = await import('../providers/setup')
+    vi.mocked(setup.embeddingServerSettled).mockReturnValueOnce(false)
+    await expect(rebuildIndex()).rejects.toThrow(/still starting.*Nothing was deleted/)
+  })
+
   // Placed last in this file deliberately: lastEmbedFailureReason is
   // process-wide module state (see indexer.ts), not reset by this file's
   // beforeEach (which only resets the DB). The final test below ends on a
