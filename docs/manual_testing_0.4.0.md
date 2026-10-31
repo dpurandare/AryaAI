@@ -133,11 +133,11 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 214-10 | Embedding-model list from the bundled server | Fail | Linux | Build `ec770a5` lists the chat models of your own Ollama; fixed in `ff4338b`; retest on the rebuilt installer |
 | 224-1 | Existing index not flagged after upgrade | Pass | Linux | 318 / 318 indexed after the update, no rebuild requested |
 | 224-2 | Changed model flagged, rebuild fixes | Pass | Linux (run by Claude) | Run in an isolated copy of the installed app (`/opt/Sachivji`, own user-data dir, a copy of your database and model with the saved fingerprint changed, debug port 9333). Banner "The embedding model changed since your chat history was indexed…" + Go to Settings; Settings said "updated or reinstalled … needs a rebuild"; Rebuild index ended at 318 / 318 indexed, banner gone, fingerprint back to the real value. Not a manual test: Claude runs it |
-| 225-1 | Fallback choices limited to providers with a key; off without the tick | | | |
-| 225-2 | Fallback saved with consent | | | |
-| 225-3 | Status bar shows the fallback model | | | |
-| 225-4 | Warning line kept in the chat; back to Ollama when it returns | | | |
-| 225-5 | No fallback = plain error, nothing sent | | | |
+| 225-1 | Fallback choices limited to providers with a key; off without the tick | Pass | Linux (run by Claude; Anthropic key used with Deepak's OK) | Provider list showed only Anthropic, OpenAI, Google (those with keys); box unticked gave "Saved. The fallback is off (it needs a provider, a model and the tick box)." |
+| 225-2 | Fallback saved with consent | Pass | Linux (run by Claude; Anthropic key used with Deepak's OK) | "Saved. Anthropic claude-haiku-5-5 will answer when Ollama is not running." |
+| 225-3 | Status bar shows the fallback model | Pass | Linux (run by Claude; Anthropic key used with Deepak's OK) | Status bar: "Anthropic · claude-haiku-5-5 · fallback for Ollama (local)" (not "(not running)") |
+| 225-4 | Warning line kept in the chat; back to Ollama when it returns | Pass | Linux (run by Claude; Anthropic key used with Deepak's OK) | Warning line right after the message, then "Hello there, friend. Good to see you!" (saved with model anthropic:claude-haiku-5-5); the warning line survived a restart; with Ollama reachable again the status bar went back to Ollama and the next message went to Ollama with no warning. Cosmetic odd point: while live, the warning line carried the label of the selected Ollama model ("ollama:qwen3.5:9b-mlx"); after a restart it has none |
+| 225-5 | No fallback = plain error, nothing sent | Pass | Linux (run by Claude; Anthropic key used with Deepak's OK) | Untick + Save, Ollama unreachable: status bar "Ollama (local) (not running)"; send gave "Ollama (local) is not running at http://127.0.0.1:11499 … Nothing was switched"; no Anthropic message was created |
 | 168-1 | Ollama Cloud shows no $0 | | | |
 | 168-2 | Local Ollama unchanged | | | |
 | 228-1 | New folders created, nothing moved | | Windows VM | |
