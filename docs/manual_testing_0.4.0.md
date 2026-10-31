@@ -156,10 +156,10 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 229-3 | Several files, appended | Pass | Linux (Deepak) | |
 | 229-4 | Drop elsewhere does nothing; steering note | Pass | Linux (Deepak) | |
 | 229-5 | Windows path | | Windows VM | |
-| 216-1 | Add folder via picker, no prompt afterwards | Linux: Pass | Linux (Deepak); Windows VM open | |
-| 216-2 | Suggestion buttons | Linux: Pass | Linux (Deepak); Windows VM open | |
-| 216-3 | Home / protected / covered refused | Linux: Pass | Linux (Deepak); Windows VM open | |
-| 216-4 | Remove restores the prompt | Linux: Pass | Linux (Deepak); Windows VM open | |
+| 216-1 | Add folder via picker, no prompt afterwards | Pass on Linux and Windows | Linux (Deepak); Windows VM (Deepak) | |
+| 216-2 | Suggestion buttons | Pass on Linux and Windows | Linux (Deepak); Windows VM (Deepak) | |
+| 216-3 | Home / protected / covered refused | Pass on Linux and Windows | Linux (Deepak); Windows VM (Deepak) | |
+| 216-4 | Remove restores the prompt | Pass on Linux and Windows | Linux (Deepak); Windows VM (Deepak) | |
 | 169-1 | Matches listed with file and line, binary skipped | Pass | Linux (Deepak) | |
 | 169-2 | Works on Windows, context lines | Pass | Windows VM (Deepak) | |
 | 169-3 | Caps stated honestly | Pass | Linux (Deepak) | |
