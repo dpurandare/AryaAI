@@ -144,10 +144,10 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 228-2 | Bare .md/.csv/.json filed by type | Linux: Pass | Linux (run by Claude); Windows VM open | claude-haiku-5-5: documents/notes.md (text `meeting notes`), data/sales.csv, data/answer.json; replies named the folders. (First try without the backticks: the model asked for the text, my wording, not a defect) |
 | 228-3 | Project files with a folder stay together | Linux: Pass | Linux (run by Claude); Windows VM open | myapp/README.md and myapp/package.json ({}) stayed together in myapp/ |
 | 228-4 | Script outputs (existing rule unchanged) | Pass | Linux (run by Claude, isolated copy of the installed app, scratch workspace) | python_run created numbers.json and table.csv; with just two outputs they stayed in the root (existing rule) |
-| 229-1 | Drop target outline | | | |
-| 229-2 | Full path inserted; assistant reads it | | | |
-| 229-3 | Several files, appended | | | |
-| 229-4 | Drop elsewhere does nothing; steering note | | | |
+| 229-1 | Drop target outline | Pass | Linux (Deepak) | |
+| 229-2 | Full path inserted; assistant reads it | Pass | Linux (Deepak) | |
+| 229-3 | Several files, appended | Pass | Linux (Deepak) | |
+| 229-4 | Drop elsewhere does nothing; steering note | Pass | Linux (Deepak) | |
 | 229-5 | Windows path | | Windows VM | |
 | 216-1 | Add folder via picker, no prompt afterwards | | Windows VM | |
 | 216-2 | Suggestion buttons | | Windows VM | |
