@@ -117,6 +117,12 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | **242-1** | `gpt-4o-mini` (and any other model), each specialist pinned in a NEW chat | `Hello`, then `What can you do?` (as R1 / T10 in the 0.3.2 test doc). | The reply to `Hello`: the menu name, what it does, **its tools named** ("My tools: …" at the end if the model forgot), and **no** "How can I assist you today?". The reply to `What can you do?` is fuller and also names the specialist and its tools. The reply appears all at once rather than word by word. |
 | **242-2** | Same | Pin a specialist and send a real request such as `Compare Python and Rust in two sentences.` | A normal answer; no introduction, nothing appended or removed. |
 
+## #243 A rejected API key is shown (first part)
+
+| ID | Where | Steps | Expect |
+|---|---|---|---|
+| **243-1** | Any OS, any hosted provider | With a provider whose key is wrong or expired (or save a deliberately wrong key), open the model selection at the bottom, then open Settings. | The model selection says "<Provider> rejected this API key. It may have expired, been revoked or be wrong. Enter a new key to continue." with an "Enter a new key for <Provider>…" button, not an empty box with "Couldn't list models". Settings shows the same line under that provider's key as soon as it opens, without clicking Save. A provider that is merely unreachable does not get this message. |
+
 ## Results
 
 | ID | Item | Pass / Fail / Odd | Model / OS | Notes |
@@ -162,3 +168,4 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 238-3 | Long list capped and stated | Pass (tool); Odd (model wording) | Linux (run by Claude, isolated copy of the installed app); claude-haiku-5-5 | 260 files under documents/: output had exactly 200 entries and "(61 more entries not shown: list a subfolder, or use a smaller depth)". The model said "cut off after about 108 entries" and did not offer a subfolder listing |
 | 242-1 | Greeting complete on every specialist | Fail on ec770a5; fixed | Linux (run by Claude, isolated copy of the installed app); gpt-4o-mini | All 10 specialists, Hello + What can you do?, no generic closing, tools shown, replies in one piece. Two defects: (1) Data Access and Data Processor did not name themselves on "What can you do?" (the code only checked the first word, "Data"); (2) MCP Operator failed with 400 "Invalid tools[4].function.name" because the server is named "Context7 MCP" (space). Both fixed in code; probe with the new code: 22 of 22 good. Retest on the rebuilt installer |
 | 242-2 | Real requests untouched | Pass | Linux (run by Claude, isolated copy of the installed app); gpt-4o-mini | Developer, Researcher, Data Access: normal answers to "Compare Python and Rust in two sentences.", no introduction; probe: 11 of 11 roles no introduction |
+| 243-1 | Rejected key shown in the model selection and Settings | Pass | Linux (run by Claude, dev build in a throwaway profile, bogus Anthropic key, real 401 from Anthropic) | Model selection and Settings both showed the message; the Settings line appeared without clicking Save. Not run on the rebuilt installer yet |

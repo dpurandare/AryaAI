@@ -4,6 +4,7 @@
   import type { ThemeMode } from '../theme'
   import { untrack } from 'svelte'
   import { refreshSummary, staleRuleNames, toolSummary } from '../auto-approve'
+  import { isKeyRejectedMessage, keyRejectedNotice } from '@shared/provider-errors'
   import type { OllamaRuntimeState, RuntimeState } from '@shared/runtime'
   import type { ExternalFolderSuggestion } from '@shared/ipc-contract'
   import { FALLBACK_CONSENT_SETTING_KEY, FALLBACK_MODEL_SETTING_KEY, FALLBACK_PROVIDER_SETTING_KEY, OLLAMA_BASE_URL_SETTING_KEY, type OllamaChatStatus } from '@shared/ipc-contract'
@@ -69,7 +70,27 @@
     )
     providerKeyPreviews = Object.fromEntries(entries)
   }
-  loadProviderKeyPreviews()
+  loadProviderKeyPreviews().then(recheckSavedKeys)
+
+  /** TASKS #243: a saved key that has since expired or been revoked looks fine until something fails. When Settings opens, ask each provider that has a
+      key for its model list (the same lightest call the save runs) and flag only the ones that REJECT the key; a provider that is merely unreachable is left alone. */
+  async function recheckSavedKeys(): Promise<void> {
+    await Promise.all(
+      providers
+        .filter((p) => p.requiresApiKey && providerKeyPreviews[p.id])
+        .map(async (p) => {
+          try {
+            await window.sachiv.listModels(p.id)
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err)
+            if (isKeyRejectedMessage(message) && providerKeyStatus[p.id] === undefined) {
+              providerKeyStatus[p.id] = 'invalid'
+              providerKeyError[p.id] = message
+            }
+          }
+        })
+    )
+  }
 
   /** Saves the key, then makes a real `listModels` call against the provider — the lightest authenticated endpoint every adapter already
       implements — so a bad key is caught immediately instead of surfacing later mid-chat. */
@@ -1176,7 +1197,11 @@
               {:else if providerKeyStatus[provider.id] === 'valid'}
                 ✓ Key verified — {provider.displayName} accepted it.
               {:else if providerKeyStatus[provider.id] === 'invalid'}
-                ✗ Key rejected{providerKeyError[provider.id] ? `: ${providerKeyError[provider.id]}` : ''}
+                {#if isKeyRejectedMessage(providerKeyError[provider.id])}
+                  ✗ {keyRejectedNotice(provider.displayName)}
+                {:else}
+                  ✗ Key rejected{providerKeyError[provider.id] ? `: ${providerKeyError[provider.id]}` : ''}
+                {/if}
               {:else if providerKeyStatus[provider.id] === 'save-error'}
                 ✗ Could not save the key{providerKeyError[provider.id] ? `: ${providerKeyError[provider.id]}` : ''}
               {/if}
@@ -1338,7 +1363,9 @@
       </select>
     {:else}
       {#if embeddingModelsError}
-        {#if embeddingModelDraft.trim()}
+        {#if isKeyRejectedMessage(embeddingModelsError)}
+          <p class="status error">{keyRejectedNotice(embeddingCapableProviders.find((p) => p.id === embeddingProviderId)?.displayName ?? embeddingProviderId)}</p>
+        {:else if embeddingModelDraft.trim()}
           <p class="status">The model list isn't available right now. The model below stays in use; type another name to change it.</p>
         {:else}
           <p class="status error">Couldn't list models — enter one manually.</p>

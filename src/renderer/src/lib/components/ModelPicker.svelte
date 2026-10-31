@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isKeyRejectedMessage, keyRejectedNotice } from '@shared/provider-errors'
   interface Provider {
     id: string
     displayName: string
@@ -126,7 +127,22 @@
           </select>
         </div>
       {:else}
-        {#if modelsError}<p class="hint error">Couldn't list models — enter one manually.</p>{/if}
+        {#if modelsError}
+          {#if isKeyRejectedMessage(modelsError)}
+            <p class="hint error">{keyRejectedNotice(currentProviderName)}</p>
+            <button
+              class="link"
+              onclick={() => {
+                open = false
+                onNeedKey()
+              }}
+            >
+              Enter a new key for {currentProviderName}...
+            </button>
+          {:else}
+            <p class="hint error">Couldn't list models — enter one manually.</p>
+          {/if}
+        {/if}
         <input
           type="text"
           placeholder="model id"

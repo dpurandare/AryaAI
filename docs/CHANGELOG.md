@@ -14,6 +14,7 @@ Details, with a short description of every change, in [`docs/releases/0.4.0.md`]
 
 ### Added
 
+- When a provider rejects a saved API key (expired, revoked or wrong), the model picker says so and offers "Enter a new key…" instead of an empty list, and Settings flags the key as soon as it opens (and in the search-embedding model list), with one plain message: "Anthropic rejected this API key. It may have expired, been revoked or be wrong." (#243, first part; found in 0.4.0 testing when a key expired on the Windows VM).
 - Settings > Ollama (local chat): the address of your own Ollama (it may be on another machine), whether it answers, and install help. "Ollama (local)" disappears from the model list while Ollama is not running and returns by itself; sending while it is down gives a plain error (#214).
 - An optional hosted fallback model: when "Ollama (local)" is the chat provider and Ollama is not running, the chosen hosted model answers that one message, with your recorded consent, a line in the chat each time, and the status bar showing it (#225).
 - The search index remembers which weights of the embedding model built it and, if the model changes under the same name, asks for a rebuild (a banner, Settings and the assistant say so) instead of searching worse without telling you (#224).
