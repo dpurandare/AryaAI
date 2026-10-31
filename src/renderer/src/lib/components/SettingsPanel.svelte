@@ -1135,7 +1135,7 @@
       <span class="conn-name">Show which model answered each message</span>
     </label>
     <p class="status">
-      Show how long each reply took and when it finished ("Took 1m 20s · done 4:05 PM"), called out in red if
+      Show how long each reply took and when it finished ("Took 1m 20s · done 4:05 PM · Oct 15, 2026"), called out in red if
       anything in that turn errored — plus a plain timestamp next to a tool or thinking block once you expand
       it. On by default. Errors always show their time, even with this off.
     </p>

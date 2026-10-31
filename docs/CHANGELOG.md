@@ -25,6 +25,7 @@ Details, with a short description of every change, in [`docs/releases/0.4.0.md`]
 
 ### Changed
 
+- The "Took … · done …" line under a reply now also shows the date ("done 5:42 PM · Oct 15, 2026"), so it is clear when old work was done.
 - The Ollama that comes with the installers now serves search embeddings only, on its own port (11450 to 11455, never 11434), so it cannot get in the way of your own Ollama (#214).
 - A pinned specialist's reply to a bare greeting or "what can you do?" is checked in code: a generic closing offer is removed, its tools are named and its name is given if the model left them out. The reply appears all at once (#242).
 - Database results too large for the chat are written to `data/` instead of `resources/` (#228).

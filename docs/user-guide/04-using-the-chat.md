@@ -83,7 +83,7 @@ Under **Tool output** in the status bar you can choose how much of the behind-th
 
 ![Tool output set to shown](images/tool-output-shown.png)
 
-You can also click an individual tool block to expand or collapse just that one. The choice is remembered between sessions. Under **Settings > Transcript** you can switch on the answering model's name and each reply's timestamp and duration ("Took 1m 20s · done 4:05 PM"; errors are marked in red).
+You can also click an individual tool block to expand or collapse just that one. The choice is remembered between sessions. Under **Settings > Transcript** you can switch on the answering model's name and each reply's timestamp and duration ("Took 1m 20s · done 4:05 PM · Oct 15, 2026"; errors are marked in red).
 
 ## Stopping
 

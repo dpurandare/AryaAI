@@ -41,7 +41,7 @@ Choose **Light**, **Dark** or **System**. System follows your computer's setting
 ## Transcript
 
 - **Show which model answered each message.** Useful when you switch models mid-conversation. Off by default.
-- **Show message timestamps.** Shows how long each reply took and when it finished ("Took 1m 20s · done 4:05 PM"), in red if anything in that turn errored, and a plain timestamp beside a tool or reasoning block once you expand it. On by default. Errors always show their time.
+- **Show message timestamps.** Shows how long each reply took and when it finished ("Took 1m 20s · done 4:05 PM · Oct 15, 2026"), in red if anything in that turn errored, and a plain timestamp beside a tool or reasoning block once you expand it. On by default. Errors always show their time.
 
 ## Provider API keys
 

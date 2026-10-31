@@ -421,6 +421,12 @@ import { formatToolInputForDisplay } from '../tool-input-display'
     return new Date(epochMs).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
   }
 
+  /** `8:54 PM · Oct 15, 2026` — the turn summary also gives the date, so it is clear when old work was done. */
+  function formatClockDate(epochMs: number): string {
+    const date = new Date(epochMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    return `${formatClockTime(epochMs)} · ${date}`
+  }
+
   /** `4m 41s` / `41s` / `1h 4m` — same shape as Claude Code's own status line ("Cogitated for 4m 41s"). */
   function formatDuration(ms: number): string {
     const totalSeconds = Math.max(0, Math.round(ms / 1000))
@@ -746,9 +752,9 @@ import { formatToolInputForDisplay } from '../tool-input-display'
           {#if start?.createdAt && (showTimestamps || turnEndedInError(message))}
             <div class="turn-summary" class:error={turnEndedInError(message)}>
               {#if showTimestamps}
-                Took {formatDuration(message.createdAt - start.createdAt)} · done {formatClockTime(message.createdAt)}
+                Took {formatDuration(message.createdAt - start.createdAt)} · done {formatClockDate(message.createdAt)}
               {:else}
-                Error · {formatClockTime(message.createdAt)}
+                Error · {formatClockDate(message.createdAt)}
               {/if}
             </div>
           {/if}
