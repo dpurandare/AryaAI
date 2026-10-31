@@ -127,7 +127,7 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 214-5 | Wrong / empty address | Pass | Linux | |
 | 214-6 | Ollama on the network | Pass | Linux | |
 | 214-7 | Bundled port never 11434 | Linux: Pass (11434 yours, 11450 bundled, checked with ss and ps) | Linux done; Windows VM open | |
-| 214-8 | Search history still works | Fail | Linux | The request "Search my history for any work related to Prime Numbers" came back as its own best match (relevance 0.79). Fixed on the branch (the current request is excluded from the search); needs the rebuilt installer to re-test |
+| 214-8 | Search history still works | Fail | Linux | The request "Search my history for any work related to Prime Numbers" came back as its own best match (relevance 0.79). Fixed on the branch (the current request is excluded from the search); needs the rebuilt installer to re-test. Second query, "Did you do any work related to Current Political situation in recent past?": the search DID find the essay session (relevance 0.83, twice) but the model (gpt-oss-custom, 20B on CPU) ignored it, searched files instead and answered "no new work": a weak-model answer, not a retrieval failure. Re-test with a stronger model |
 | 214-9 | First run embeddings | | | |
 | 224-1 | Existing index not flagged after upgrade | | | |
 | 224-2 | Changed model flagged, rebuild fixes | | | |
