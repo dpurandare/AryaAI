@@ -143,7 +143,7 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 228-1 | New folders created, nothing moved | Pass on Linux and Windows | Linux (run by Claude); Windows VM (Deepak) | Scratch workspace laid out like 0.3.2 (code/, documents/, resources/ + 3 loose files): data/, downloads/ and exports/ created; the 3 files did not move |
 | 228-2 | Bare .md/.csv/.json filed by type | Pass on Linux and Windows | Linux (run by Claude); Windows VM (Deepak) | claude-haiku-5-5: documents/notes.md (text `meeting notes`), data/sales.csv, data/answer.json; replies named the folders. (First try without the backticks: the model asked for the text, my wording, not a defect) |
 | 228-3 | Project files with a folder stay together | Pass on Linux and Windows | Linux (run by Claude); Windows VM (Deepak) | myapp/README.md and myapp/package.json ({}) stayed together in myapp/ |
-| 228-4 | Script outputs (existing rule unchanged) | Pass | Linux (run by Claude, isolated copy of the installed app, scratch workspace) | python_run created numbers.json and table.csv; with just two outputs they stayed in the root (existing rule) |
+| 228-4 | Script outputs (existing rule unchanged) | Pass on Linux and Windows | Linux (run by Claude); Windows VM (Deepak) |python_run created numbers.json and table.csv; with just two outputs they stayed in the root (existing rule); Windows: numbers.json and table.csv stayed in the root, which is the existing rule (Deepak accepted it 2026-10-31; no rule change) |
 | 229-1 | Drop target outline | Pass | Linux (Deepak) | |
 | 229-2 | Full path inserted; assistant reads it | Pass | Linux (Deepak) | |
 | 229-3 | Several files, appended | Pass | Linux (Deepak) | |
