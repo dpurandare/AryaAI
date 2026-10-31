@@ -44,7 +44,7 @@ What changed: the app remembers which weights of `nomic-embed-text` built the se
 | ID | Where | Steps | Expect |
 |---|---|---|---|
 | **224-1** | Any OS, an installer build with some chats already indexed (Settings > Search history shows "N / N messages indexed") | Update to this build and restart. | Still "N / N messages indexed": an existing index is **not** flagged (it adopts the current model as its baseline). Search for something from an old chat still works. |
-| **224-2** | Linux installer build; Sachivji closed | **Do not swap models in your own Ollama or pick another model in Settings** (with "Ollama (local)" the embeddings run on the bundled server, which holds only `nomic-embed-text`; any other name gives "404 model … not found"). Instead: quit Sachivji; copy `~/.config/Sachivji/sachiv.db*` somewhere safe; change the saved fingerprint (Claude does this: `UPDATE app_settings SET value='0000…' WHERE key='embeddingIndexDigest'`); start Sachivji. | A banner at the top says searching past chats needs a rebuild (Go to Settings opens Settings; × hides it until the next start). Settings > Search history says the embedding model was updated or reinstalled and needs a rebuild; asking the assistant to search past chats says the same; new messages are not added. **Rebuild index** fixes it and the banner goes. |
+| **224-2** | Run by Claude in an isolated copy; not a manual test. Linux installer build; Sachivji closed | **Do not swap models in your own Ollama or pick another model in Settings** (with "Ollama (local)" the embeddings run on the bundled server, which holds only `nomic-embed-text`; any other name gives "404 model … not found"). Instead: quit Sachivji; copy `~/.config/Sachivji/sachiv.db*` somewhere safe; change the saved fingerprint (Claude does this: `UPDATE app_settings SET value='0000…' WHERE key='embeddingIndexDigest'`); start Sachivji. | A banner at the top says searching past chats needs a rebuild (Go to Settings opens Settings; × hides it until the next start). Settings > Search history says the embedding model was updated or reinstalled and needs a rebuild; asking the assistant to search past chats says the same; new messages are not added. **Rebuild index** fixes it and the banner goes. |
 
 ## #225 Hosted fallback model when Ollama (local) is not running
 
@@ -132,7 +132,7 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 214-9 | First run embeddings | | | |
 | 214-10 | Embedding-model list from the bundled server | Fail | Linux | Build `ec770a5` lists the chat models of your own Ollama; fixed in `ff4338b`; retest on the rebuilt installer |
 | 224-1 | Existing index not flagged after upgrade | Pass | Linux | 318 / 318 indexed after the update, no rebuild requested |
-| 224-2 | Changed model flagged, rebuild fixes | | | |
+| 224-2 | Changed model flagged, rebuild fixes | Pass | Linux (run by Claude) | Run in an isolated copy of the installed app (`/opt/Sachivji`, own user-data dir, a copy of your database and model with the saved fingerprint changed, debug port 9333). Banner "The embedding model changed since your chat history was indexed…" + Go to Settings; Settings said "updated or reinstalled … needs a rebuild"; Rebuild index ended at 318 / 318 indexed, banner gone, fingerprint back to the real value. Not a manual test: Claude runs it |
 | 225-1 | Fallback choices limited to providers with a key; off without the tick | | | |
 | 225-2 | Fallback saved with consent | | | |
 | 225-3 | Status bar shows the fallback model | | | |
