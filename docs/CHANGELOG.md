@@ -33,6 +33,7 @@ Details, with a short description of every change, in [`docs/releases/0.4.0.md`]
 
 - Ollama Cloud models such as `gemma4:cloud` are no longer shown as free ($0) in the usage meter; their cost is unknown (#168).
 - `search_history` no longer returns the user's own request (the message that started the current turn) as the best match for itself, which made "search my history for X" report the question as its own history (found in 0.4.0 test 214-8).
+- `search_history` results are easier for a model to use: they start with the names and dates of the matching sessions, a text found twice in one session is shown once, and a very short hit (a heading) is extended with the text that follows it in the same message (found in 0.4.0 test 214-8).
 - `read_file` refuses binary files (.docx, .xlsx, .pptx, .pdf, images, archives) and names the tool that reads them (`office_read_document`, `xlsx_read`, `show_media`), instead of returning thousands of characters of garbage that were then also indexed for search (found in 0.4.0 test 214-8).
 
 ### Tests

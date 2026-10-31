@@ -399,6 +399,12 @@ export async function rebuildIndex(): Promise<void> {
 
 // --- Search ---
 
+/** The text of the chunks that follow `chunkId` in the same message, in order (at most `count`). Used to give a very short hit, such as a heading, the text it heads. */
+export function chunksAfter(messageId: string, chunkId: number, count: number): string[] {
+  const rows = getDb().prepare('SELECT chunk_text FROM message_chunks WHERE message_id = ? AND id > ? ORDER BY id LIMIT ?').all(messageId, chunkId, count) as { chunk_text: string }[]
+  return rows.map((r) => r.chunk_text)
+}
+
 /**
  * The user message that started the current turn: the newest `user` message of the session that carries typed text (tool results are also stored
  * as `user` messages, but have no text block). `search_history` leaves it out: a request such as "search my history for X" is already indexed by
@@ -418,6 +424,7 @@ export function latestUserTextMessageId(sessionId: string): string | undefined {
 }
 
 export interface SearchHit {
+  chunkId: number
   messageId: string
   sessionId: string
   sessionTitle: string
@@ -427,6 +434,7 @@ export interface SearchHit {
 }
 
 interface SearchRow {
+  chunk_id: number
   message_id: string
   session_id: string
   title: string
@@ -486,7 +494,7 @@ export async function searchIndex(query: string, limit: number, excludeMessageId
          SELECT rowid, distance FROM message_chunk_vectors
          WHERE embedding MATCH ? AND k = ?
        )
-       SELECT mc.message_id, mc.session_id, s.title, mc.created_at, mc.chunk_text, knn.distance
+       SELECT mc.id AS chunk_id, mc.message_id, mc.session_id, s.title, mc.created_at, mc.chunk_text, knn.distance
        FROM knn
        JOIN message_chunks mc ON mc.id = knn.rowid
        JOIN sessions s ON s.id = mc.session_id
@@ -497,6 +505,7 @@ export async function searchIndex(query: string, limit: number, excludeMessageId
     .all(vectorToBuffer(queryVector), overFetch, MAX_DISTANCE, excludeMessageId ?? '', limit) as SearchRow[]
 
   return rows.map((row) => ({
+    chunkId: row.chunk_id,
     messageId: row.message_id,
     sessionId: row.session_id,
     sessionTitle: row.title,

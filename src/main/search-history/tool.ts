@@ -1,9 +1,12 @@
-import { getEmbeddingConfig, getIndexState, latestUserTextMessageId, searchIndex } from './indexer'
+import { chunksAfter, getEmbeddingConfig, getIndexState, latestUserTextMessageId, searchIndex } from './indexer'
 import { getEmbeddingProvider } from '../providers/setup'
 import { getApiKey } from '../security/keychain'
 import type { Tool } from '../tools/types'
 
 const SEARCH_HISTORY_EXCERPT_MAX_CHARS = 800
+/** A hit shorter than this is extended with the chunks that follow it in the same message. */
+const SHORT_HIT_CHARS = 300
+const MAX_FOLLOWING_CHUNKS = 3
 const DEFAULT_LIMIT = 5
 const MAX_LIMIT = 10
 
@@ -84,14 +87,35 @@ export const searchHistoryTool: Tool = {
 
     if (hits.length === 0) return '(no relevant past conversations found for that query.)'
 
-    return hits
+    // The same text found twice in one session (e.g. a heading repeated by a revised answer) is shown once.
+    const seen = new Set<string>()
+    const unique = hits.filter((hit) => {
+      const key = `${hit.sessionId}\u0000${hit.text}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+
+    const sessions = new Map<string, string>()
+    for (const hit of unique) if (!sessions.has(hit.sessionId)) sessions.set(hit.sessionId, `"${hit.sessionTitle}" (${new Date(hit.createdAt).toISOString().slice(0, 10)})`)
+    const header = `Matches come from ${sessions.size} past session${sessions.size === 1 ? '' : 's'}: ${[...sessions.values()].join('; ')}. A session title that fits the question is itself evidence of that earlier work.\n`
+
+    return header + unique
       .map((hit) => {
         const relevance = (1 - hit.distance).toFixed(2)
         const date = new Date(hit.createdAt).toISOString().slice(0, 10)
-        const excerpt = hit.text.slice(0, SEARCH_HISTORY_EXCERPT_MAX_CHARS)
+        // A very short hit (a heading, a one-line reply) says little alone: add the text that follows it in the same message.
+        let text = hit.text
+        if (text.length < SHORT_HIT_CHARS) {
+          for (const next of chunksAfter(hit.messageId, hit.chunkId, MAX_FOLLOWING_CHUNKS)) {
+            if (text.length >= SHORT_HIT_CHARS) break
+            text += `\n${next}`
+          }
+        }
+        const excerpt = text.slice(0, SEARCH_HISTORY_EXCERPT_MAX_CHARS)
         return `<historical_result session="${hit.sessionTitle}" date="${date}" relevance="${relevance}">\n${excerpt}\n</historical_result>`
       })
       .join('\n') +
-      '\n(Note: these are past statements — any configuration or availability they mention may have changed since; verify current state with a live tool.)'
+      '\n(Note: these are past statements - any configuration or availability they mention may have changed since; verify current state with a live tool.)'
   }
 }

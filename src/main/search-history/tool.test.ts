@@ -122,6 +122,28 @@ describe('search_history tool', () => {
     expect(result).not.toContain('what did I say about sales?')
   })
 
+  it('names the matching sessions up front and extends a very short hit with what follows it (0.4.0 test 214-8)', async () => {
+    const other = createSession('Essay on Europe')
+    insertMessage(other.id, 'assistant', [{ type: 'text', text: 'revenue was 4.2 million\n\nThe second paragraph says more about the same thing and goes on for a while.' }])
+    const current = createSession('S current')
+    await runBackfill()
+
+    const result = await searchHistoryTool.execute({ query: 'query' }, ctxFor(current.id))
+    expect(result).toContain('Matches come from 1 past session: "Essay on Europe"')
+    expect(result).toContain('The second paragraph says more')
+  })
+
+  it('shows the same text found twice in one session only once', async () => {
+    const other = createSession('Essay on Europe')
+    insertMessage(other.id, 'assistant', [{ type: 'text', text: 'revenue was 4.2 million' }])
+    insertMessage(other.id, 'assistant', [{ type: 'text', text: 'revenue was 4.2 million' }])
+    const current = createSession('S current')
+    await runBackfill()
+
+    const result = await searchHistoryTool.execute({ query: 'query' }, ctxFor(current.id))
+    expect(result.match(/<historical_result/g)).toHaveLength(1)
+  })
+
   it('throws on an empty query', async () => {
     const session = createSession('S1')
     await expect(searchHistoryTool.execute({ query: '  ' }, ctxFor(session.id))).rejects.toThrow('No query given.')
