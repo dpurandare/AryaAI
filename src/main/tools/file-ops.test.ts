@@ -137,6 +137,13 @@ describe('file-ops tools', () => {
       expect(await readFileTool.execute({ path: 'note.dat' }, ctx)).toBe('hello')
     })
 
+    it('refuses a binary format and names the tool that reads it (0.4.0 test 214-8)', async () => {
+      await expect(readFileTool.execute({ path: 'documents/hello.docx' }, ctx)).rejects.toThrow(/office_read_document/)
+      await expect(readFileTool.execute({ path: 'data/Q1.XLSX' }, ctx)).rejects.toThrow(/xlsx_read/)
+      await expect(readFileTool.execute({ path: 'chart.png' }, ctx)).rejects.toThrow(/show_media/)
+      await expect(readFileTool.execute({ path: 'paper.pdf' }, ctx)).rejects.toThrow(/no PDF reader/)
+    })
+
     it('refuses to read outside the workspace', async () => {
       await expect(readFileTool.execute({ path: '../outside.txt' }, ctx)).rejects.toThrow(
         /outside the workspace/

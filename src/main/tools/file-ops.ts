@@ -52,6 +52,45 @@ function assertTextWritable(requestedPath: string): void {
   }
 }
 
+/**
+ * The read side of the same guard: `read_file` returns UTF-8 text, so a binary file would come back as thousands of characters of garbage
+ * (found live, 0.4.0 test 214-8: `read_file documents/hello.docx` returned 17,666 characters of ZIP bytes, which then also got indexed for
+ * search). Refused by extension, naming the tool that does read that format. Formats with no reader say so.
+ */
+const NO_READER_HINT = 'there is no reader for this format; extract the text with a script run by shell_execute or python_run'
+const IMAGE_READ_HINT = 'it is an image; show it to the user with show_media (its pixels cannot be read here)'
+const BINARY_READ_HINTS: Record<string, string> = {
+  '.docx': 'use office_read_document',
+  '.pptx': 'use office_read_document',
+  '.xlsx': 'use xlsx_read',
+  '.xlsm': 'use xlsx_read',
+  '.pdf': 'there is no PDF reader yet; if a Python library is available, extract the text with a script run by shell_execute or python_run',
+  '.doc': 'there is no reader for this old Word format; ask the user to save it as .docx',
+  '.xls': 'there is no reader for this old Excel format; ask the user to save it as .xlsx',
+  '.ppt': 'there is no reader for this old PowerPoint format; ask the user to save it as .pptx',
+  '.odt': NO_READER_HINT,
+  '.ods': NO_READER_HINT,
+  '.odp': NO_READER_HINT,
+  '.png': IMAGE_READ_HINT,
+  '.jpg': IMAGE_READ_HINT,
+  '.jpeg': IMAGE_READ_HINT,
+  '.gif': IMAGE_READ_HINT,
+  '.bmp': IMAGE_READ_HINT,
+  '.webp': IMAGE_READ_HINT,
+  '.ico': IMAGE_READ_HINT,
+  '.tiff': IMAGE_READ_HINT,
+  '.zip': 'it is an archive; list or extract it with a script run by shell_execute',
+  '.gz': 'it is an archive; list or extract it with a script run by shell_execute'
+}
+
+function assertTextReadable(requestedPath: string): void {
+  const ext = extname(requestedPath).toLowerCase()
+  const hint = BINARY_READ_HINTS[ext]
+  if (hint) {
+    throw new Error(`read_file reads UTF-8 text only, and a ${ext} file is binary, so it would come back as garbage - nothing was read. Instead: ${hint}.`)
+  }
+}
+
 export const readFileTool: Tool = {
   name: 'read_file',
   description: 'Read a UTF-8 text file and return its contents. Inside the workspace, or an absolute path elsewhere (the user is asked first; read only).',
@@ -63,6 +102,7 @@ export const readFileTool: Tool = {
   mutates: false,
   externalPaths: (input) => [{ path: String(input.path ?? ''), access: 'read' }],
   async execute(input, ctx) {
+    assertTextReadable(String(input.path ?? ''))
     const path = resolveReadable(ctx, String(input.path ?? ''))
     const info = await stat(path)
     if (info.size > MAX_READ_BYTES) {
