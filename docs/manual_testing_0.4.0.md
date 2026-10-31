@@ -139,11 +139,11 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 225-4 | Warning line kept in the chat; back to Ollama when it returns | Pass | Linux (run by Claude; Anthropic key used with Deepak's OK) | Warning line right after the message, then "Hello there, friend. Good to see you!" (saved with model anthropic:claude-haiku-5-5); the warning line survived a restart; with Ollama reachable again the status bar went back to Ollama and the next message went to Ollama with no warning. Cosmetic odd point: while live, the warning line carried the label of the selected Ollama model ("ollama:qwen3.5:9b-mlx"); after a restart it has none |
 | 225-5 | No fallback = plain error, nothing sent | Pass | Linux (run by Claude; Anthropic key used with Deepak's OK) | Untick + Save, Ollama unreachable: status bar "Ollama (local) (not running)"; send gave "Ollama (local) is not running at http://127.0.0.1:11499 … Nothing was switched"; no Anthropic message was created |
 | 168-1 | Ollama Cloud shows no $0 | | | |
-| 168-2 | Local Ollama unchanged | | | |
-| 228-1 | New folders created, nothing moved | | Windows VM | |
-| 228-2 | Bare .md/.csv/.json filed by type | | Windows VM | |
-| 228-3 | Project files with a folder stay together | | Windows VM | |
-| 228-4 | Script outputs (existing rule unchanged) | | | |
+| 168-2 | Local Ollama unchanged | Pass | Linux (run by Claude, isolated copy of the installed app, scratch workspace) | Ollama (local) qwen3.5:0.8b-custom: meter `ctx 13.8K / 262.1K · Σ 13.8K`, no `~$` cost, window figure unchanged (262.1K) |
+| 228-1 | New folders created, nothing moved | Linux: Pass | Linux (run by Claude); Windows VM open | Scratch workspace laid out like 0.3.2 (code/, documents/, resources/ + 3 loose files): data/, downloads/ and exports/ created; the 3 files did not move |
+| 228-2 | Bare .md/.csv/.json filed by type | Linux: Pass | Linux (run by Claude); Windows VM open | claude-haiku-5-5: documents/notes.md (text `meeting notes`), data/sales.csv, data/answer.json; replies named the folders. (First try without the backticks: the model asked for the text, my wording, not a defect) |
+| 228-3 | Project files with a folder stay together | Linux: Pass | Linux (run by Claude); Windows VM open | myapp/README.md and myapp/package.json ({}) stayed together in myapp/ |
+| 228-4 | Script outputs (existing rule unchanged) | Pass | Linux (run by Claude, isolated copy of the installed app, scratch workspace) | python_run created numbers.json and table.csv; with just two outputs they stayed in the root (existing rule) |
 | 229-1 | Drop target outline | | | |
 | 229-2 | Full path inserted; assistant reads it | | | |
 | 229-3 | Several files, appended | | | |
