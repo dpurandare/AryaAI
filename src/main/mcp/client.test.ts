@@ -104,6 +104,14 @@ describe('connectMcpServer', () => {
     )
   })
 
+  it('turns characters a provider rejects in a tool name into underscores (server "Context7 MCP", tool "files.read")', async () => {
+    const { mcpFunctionName } = await import('./client')
+    expect(mcpFunctionName('Context7 MCP', 'query-docs')).toBe('mcp__Context7_MCP__query-docs')
+    expect(mcpFunctionName('fs', 'files.read')).toBe('mcp__fs__files_read')
+    expect(mcpFunctionName('x'.repeat(40), 'y'.repeat(40))).toHaveLength(64)
+    expect(mcpFunctionName('a b', 'c d')).toMatch(/^[a-zA-Z0-9_-]+$/)
+  })
+
   it('namespaces discovered tool names by server name', async () => {
     mockListTools.mockResolvedValue({
       tools: [{ name: 'read_file', description: 'reads a file', inputSchema: { type: 'object' } }]

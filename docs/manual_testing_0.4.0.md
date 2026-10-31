@@ -157,8 +157,8 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 169-2 | Works on Windows, context lines | | Windows VM | |
 | 169-3 | Caps stated honestly | Pass | Linux (Deepak) | |
 | 169-4 | Reachable in Auto mode | Pass | Linux (Deepak) | |
-| 238-1 | Overview in one call | | | |
-| 238-2 | Noise folders not opened | | | |
-| 238-3 | Long list capped and stated | | | |
-| 242-1 | Greeting complete on every specialist | | | |
-| 242-2 | Real requests untouched | | | |
+| 238-1 | Overview in one call | Pass | Linux (run by Claude, isolated copy of the installed app); claude-haiku-5-5 | First call `list_directory path . depth 3` gave the overview; the reply named the real folders and files, no invented `templates/`. The model then made many further per-folder calls (it wanted detail beyond the 200-entry cap), so "one call" held for the overview only |
+| 238-2 | Noise folders not opened | Pass | Linux (run by Claude, isolated copy of the installed app); claude-haiku-5-5 | `.git`, `node_modules`, `tmp`, `venv` shown as folders and listed as "not opened"; no `.sachiv-handoff` |
+| 238-3 | Long list capped and stated | Pass (tool); Odd (model wording) | Linux (run by Claude, isolated copy of the installed app); claude-haiku-5-5 | 260 files under documents/: output had exactly 200 entries and "(61 more entries not shown: list a subfolder, or use a smaller depth)". The model said "cut off after about 108 entries" and did not offer a subfolder listing |
+| 242-1 | Greeting complete on every specialist | Fail on ec770a5; fixed | Linux (run by Claude, isolated copy of the installed app); gpt-4o-mini | All 10 specialists, Hello + What can you do?, no generic closing, tools shown, replies in one piece. Two defects: (1) Data Access and Data Processor did not name themselves on "What can you do?" (the code only checked the first word, "Data"); (2) MCP Operator failed with 400 "Invalid tools[4].function.name" because the server is named "Context7 MCP" (space). Both fixed in code; probe with the new code: 22 of 22 good. Retest on the rebuilt installer |
+| 242-2 | Real requests untouched | Pass | Linux (run by Claude, isolated copy of the installed app); gpt-4o-mini | Developer, Researcher, Data Access: normal answers to "Compare Python and Rust in two sentences.", no introduction; probe: 11 of 11 roles no introduction |

@@ -72,8 +72,9 @@ export function stripGenericClosing(reply: string): string {
 export function enforceGreetingReply(reply: string, kind: GreetingKind, toolNames: readonly string[], label?: string): string {
   let text = stripGenericClosing(reply)
   // The specialist must call itself by its Agent-menu name; a reply that never does (typical for "what can you do?") gets it said up front.
-  const firstWord = label?.trim().split(/\s+/)[0]?.toLowerCase()
-  if (label && firstWord && !text.toLowerCase().includes(firstWord)) text = `I'm ${label}. ${text}`
+  // The whole name is checked: the first word alone ("Data" of "Data Access" and "Data Processor") turns up in any reply about data.
+  const fullName = label?.trim().toLowerCase()
+  if (label && fullName && !text.toLowerCase().includes(fullName)) text = `I'm ${label}. ${text}`
   if (toolNames.length > 0 && !toolNames.some((name) => text.includes(name))) {
     const listed = kind === 'greeting' ? toolNames.slice(0, 8) : toolNames
     const more = kind === 'greeting' && toolNames.length > listed.length ? ', and more' : ''

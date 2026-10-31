@@ -59,4 +59,10 @@ describe('enforceGreetingReply (#242)', () => {
     const named = "I'm Developer. I write code with shell_execute."
     expect(enforceGreetingReply(named, 'greeting', ['shell_execute'], 'Developer')).toBe(named)
   })
+
+  it('names the specialist when the reply only shares a first word with its name (0.4.0 test 242-1: Data Access, Data Processor)', () => {
+    const out = enforceGreetingReply('I can explore and query databases and work with data in tables.', 'capabilities', [], 'Data Access')
+    expect(out).toBe("I'm Data Access. I can explore and query databases and work with data in tables.")
+    expect(enforceGreetingReply("I'm Data Access. I query databases.", 'capabilities', [], 'Data Access')).toBe("I'm Data Access. I query databases.")
+  })
 })

@@ -32,6 +32,8 @@ Details, with a short description of every change, in [`docs/releases/0.4.0.md`]
 
 ### Fixed
 
+- MCP tools of a server whose name contains a space or another character OpenAI and Anthropic reject in a tool name (for example "Context7 MCP", or a tool called `files.read`) made every request of the pinned MCP Operator fail with 400 "does not match pattern". Those characters now become `_` in the name the model sees (found in 0.4.0 test 242-1).
+- A pinned specialist whose name starts with a word that appears in its reply ("Data Access", "Data Processor") is now told to say its name; the check used only the first word (found in 0.4.0 test 242-1).
 - Settings > Search history: the embedding-model list for "Ollama (local)" now comes from the server embeddings really use (the bundled one), not from your own Ollama, so it no longer fails when your Ollama is stopped. If the list cannot be fetched but a model is already saved, a neutral note is shown instead of a red error (found in 0.4.0 testing).
 - Ollama Cloud models such as `gemma4:cloud` are no longer shown as free ($0) in the usage meter; their cost is unknown (#168).
 - `search_history` no longer returns the user's own request (the message that started the current turn) as the best match for itself, which made "search my history for X" report the question as its own history (found in 0.4.0 test 214-8).
