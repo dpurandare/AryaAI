@@ -153,10 +153,10 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 216-2 | Suggestion buttons | Linux: Pass | Linux (Deepak); Windows VM open | |
 | 216-3 | Home / protected / covered refused | Linux: Pass | Linux (Deepak); Windows VM open | |
 | 216-4 | Remove restores the prompt | Linux: Pass | Linux (Deepak); Windows VM open | |
-| 169-1 | Matches listed with file and line, binary skipped | | | |
+| 169-1 | Matches listed with file and line, binary skipped | Pass | Linux (Deepak) | |
 | 169-2 | Works on Windows, context lines | | Windows VM | |
-| 169-3 | Caps stated honestly | | | |
-| 169-4 | Reachable in Auto mode | | | |
+| 169-3 | Caps stated honestly | Pass | Linux (Deepak) | |
+| 169-4 | Reachable in Auto mode | Pass | Linux (Deepak) | |
 | 238-1 | Overview in one call | | | |
 | 238-2 | Noise folders not opened | | | |
 | 238-3 | Long list capped and stated | | | |
