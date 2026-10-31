@@ -126,7 +126,7 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 214-4 | Settings status, auto recovery | Pass | Linux | |
 | 214-5 | Wrong / empty address | Pass | Linux | |
 | 214-6 | Ollama on the network | Pass | Linux | |
-| 214-7 | Bundled port never 11434 | | Windows VM | |
+| 214-7 | Bundled port never 11434 | Linux: Pass (11434 yours, 11450 bundled, checked with ss and ps) | Linux done; Windows VM open | |
 | 214-8 | Search history still works | | | |
 | 214-9 | First run embeddings | | | |
 | 224-1 | Existing index not flagged after upgrade | | | |
