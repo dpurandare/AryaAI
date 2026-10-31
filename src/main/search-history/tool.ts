@@ -1,4 +1,4 @@
-import { getEmbeddingConfig, getIndexState, searchIndex } from './indexer'
+import { getEmbeddingConfig, getIndexState, latestUserTextMessageId, searchIndex } from './indexer'
 import { getEmbeddingProvider } from '../providers/setup'
 import { getApiKey } from '../security/keychain'
 import type { Tool } from '../tools/types'
@@ -49,7 +49,7 @@ export const searchHistoryTool: Tool = {
     required: ['query']
   },
   mutates: false,
-  async execute(input) {
+  async execute(input, ctx) {
     const query = String(input.query ?? '').trim()
     if (!query) throw new Error('No query given.')
     const limit = Math.min(MAX_LIMIT, Math.max(1, Number(input.limit) || DEFAULT_LIMIT))
@@ -77,7 +77,7 @@ export const searchHistoryTool: Tool = {
 
     let hits
     try {
-      hits = await searchIndex(query, limit)
+      hits = await searchIndex(query, limit, latestUserTextMessageId(ctx.currentSessionId))
     } catch (err) {
       return notReachableMessage(err)
     }

@@ -399,6 +399,24 @@ export async function rebuildIndex(): Promise<void> {
 
 // --- Search ---
 
+/**
+ * The user message that started the current turn: the newest `user` message of the session that carries typed text (tool results are also stored
+ * as `user` messages, but have no text block). `search_history` leaves it out: a request such as "search my history for X" is already indexed by
+ * the time the tool runs, and would otherwise come back as the best match for itself (found live, 0.4.0 test 214-8).
+ */
+export function latestUserTextMessageId(sessionId: string): string | undefined {
+  const rows = getDb().prepare("SELECT id, content FROM messages WHERE session_id = ? AND role = 'user' ORDER BY rowid DESC LIMIT 50").all(sessionId) as { id: string; content: string }[]
+  for (const row of rows) {
+    try {
+      const blocks = JSON.parse(row.content) as { type?: string; text?: string }[]
+      if (blocks.some((b) => b.type === 'text' && typeof b.text === 'string' && b.text.trim())) return row.id
+    } catch {
+      // unreadable row: skip it
+    }
+  }
+  return undefined
+}
+
 export interface SearchHit {
   messageId: string
   sessionId: string
@@ -455,7 +473,7 @@ const MAX_DISTANCE = 0.5
  * `limit` wasn't otherwise satisfied — fewer, better results beat a full
  * quota diluted with noise.
  */
-export async function searchIndex(query: string, limit: number): Promise<SearchHit[]> {
+export async function searchIndex(query: string, limit: number, excludeMessageId?: string): Promise<SearchHit[]> {
   const config = getEmbeddingConfig()
   const apiKey = getApiKey(config.providerId)
   const provider = getEmbeddingProvider(config.providerId, apiKey)
@@ -472,11 +490,11 @@ export async function searchIndex(query: string, limit: number): Promise<SearchH
        FROM knn
        JOIN message_chunks mc ON mc.id = knn.rowid
        JOIN sessions s ON s.id = mc.session_id
-       WHERE knn.distance <= ?
+       WHERE knn.distance <= ? AND mc.message_id <> ?
        ORDER BY knn.distance ASC
        LIMIT ?`
     )
-    .all(vectorToBuffer(queryVector), overFetch, MAX_DISTANCE, limit) as SearchRow[]
+    .all(vectorToBuffer(queryVector), overFetch, MAX_DISTANCE, excludeMessageId ?? '', limit) as SearchRow[]
 
   return rows.map((row) => ({
     messageId: row.message_id,

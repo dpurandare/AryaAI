@@ -98,6 +98,30 @@ describe('search_history tool', () => {
     expect(result).toContain('revenue was 4.2 million')
   })
 
+  it('does not return the message that started this turn as a match for itself (0.4.0 test 214-8)', async () => {
+    const current = createSession('S current')
+    // The user's request is saved and indexed before the tool runs; its text is the query.
+    insertMessage(current.id, 'user', [{ type: 'text', text: 'revenue was 4.2 million' }])
+    await runBackfill()
+
+    const result = await searchHistoryTool.execute({ query: 'query' }, ctxFor(current.id))
+    expect(result).toContain('no relevant past conversations')
+    expect(result).not.toContain('<historical_result')
+  })
+
+  it('still finds an EARLIER user message of the same session, and ignores tool results when picking the current one', async () => {
+    const current = createSession('S current')
+    insertMessage(current.id, 'user', [{ type: 'text', text: 'revenue was 4.2 million' }])
+    insertMessage(current.id, 'assistant', [{ type: 'text', text: 'noted' }])
+    insertMessage(current.id, 'user', [{ type: 'text', text: 'what did I say about sales?' }])
+    insertMessage(current.id, 'user', [{ type: 'tool_result', toolUseId: 't1', content: 'x' }])
+    await runBackfill()
+
+    const result = await searchHistoryTool.execute({ query: 'query' }, ctxFor(current.id))
+    expect(result).toContain('revenue was 4.2 million')
+    expect(result).not.toContain('what did I say about sales?')
+  })
+
   it('throws on an empty query', async () => {
     const session = createSession('S1')
     await expect(searchHistoryTool.execute({ query: '  ' }, ctxFor(session.id))).rejects.toThrow('No query given.')

@@ -32,6 +32,7 @@ Details, with a short description of every change, in [`docs/releases/0.4.0.md`]
 ### Fixed
 
 - Ollama Cloud models such as `gemma4:cloud` are no longer shown as free ($0) in the usage meter; their cost is unknown (#168).
+- `search_history` no longer returns the user's own request (the message that started the current turn) as the best match for itself, which made "search my history for X" report the question as its own history (found in 0.4.0 test 214-8).
 
 ### Tests
 
