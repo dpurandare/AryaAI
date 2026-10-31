@@ -16,6 +16,8 @@ Built from commit `ec770a5` on `release/0.4.0` (version 0.4.0; CI green on Windo
 
 From a terminal instead (GitHub CLI, signed in): `gh run download 41082172227 -R dpurandare/AryaAI -n sachivji-windows-installer` (use `41082176544` / `sachivji-macos-installer` and `41082181312` / `sachivji-linux-installer` for the others). Install over 0.3.2 (the upgrade keeps settings and chats); the workspace gets the new folders `data/`, `downloads/` and `exports/` at first start.
 
+**How to install.** Install **on top of** the existing app; do not remove it first (the upgrade keeps settings and chats, and the upgrade itself is part of the test). Linux: `sudo apt install ./<file>.deb` upgrades the installed app in place (the `.AppImage` runs separately and is not an upgrade). Windows: run the new Setup over 0.3.2. Exception: **214-9** (first run) needs a clean start, so do it **last**: quit the app, move the app data folder aside (do not delete it), start the app and check the first-run steps.
+
 **Which machine tests what.** Decision 2026-10-31: **Linux tests everything except the rows marked "Windows VM"** in the results table below (the Mac is not tested separately; it is expected to behave like Linux). Windows VM: install over 0.3.2 (the upgrade), 214-7 (netstat), 169-2 (no `grep` installed), 216-1 to 216-4 (Windows paths, `AppData` as a protected place), 228-1 to 228-3 (backslash paths) and 229-5 (Explorer drop). Ubuntu 20.04 is not supported (the app does not start there). Items needing a hosted key: 225 (fallback), 168-1 (Ollama Cloud, skip without a key), 242-1 (`gpt-4o-mini`).
 
 ## #214 Ollama: embeddings-only bundled server, your own Ollama for chat
