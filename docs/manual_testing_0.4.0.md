@@ -124,8 +124,8 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 214-2 | Hidden when Ollama stops | Pass | Linux | |
 | 214-3 | Plain error on send | Pass | Linux | First attempt had Ollama running (not stopped) and a slow 20B CPU model, so no error; redone after systemctl stop: Pass |
 | 214-4 | Settings status, auto recovery | Pass | Linux | |
-| 214-5 | Wrong / empty address | | | |
-| 214-6 | Ollama on the network | | | |
+| 214-5 | Wrong / empty address | Pass | Linux | |
+| 214-6 | Ollama on the network | Pass | Linux | |
 | 214-7 | Bundled port never 11434 | | Windows VM | |
 | 214-8 | Search history still works | | | |
 | 214-9 | First run embeddings | | | |
