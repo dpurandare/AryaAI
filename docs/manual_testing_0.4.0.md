@@ -16,7 +16,7 @@ Built from commit `ec770a5` on `release/0.4.0` (version 0.4.0; CI green on Windo
 
 From a terminal instead (GitHub CLI, signed in): `gh run download 41082172227 -R dpurandare/AryaAI -n sachivji-windows-installer` (use `41082176544` / `sachivji-macos-installer` and `41082181312` / `sachivji-linux-installer` for the others). Install over 0.3.2 (the upgrade keeps settings and chats); the workspace gets the new folders `data/`, `downloads/` and `exports/` at first start.
 
-**Which machine tests what.** Linux: everything. Windows VM: 214-7 (netstat), 229-5 (Explorer drop), 169-2, 216, 228 and the upgrade over 0.3.2. Mac: 229, 216 (the picker), 214 (Ollama as a Mac app). Ubuntu 20.04 is not supported (the app does not start there). Items needing a hosted key: 225 (fallback), 168-1 (Ollama Cloud, skip without a key), 242-1 (`gpt-4o-mini`).
+**Which machine tests what.** Decision 2026-10-31: **Linux tests everything except the rows marked "Windows VM"** in the results table below (the Mac is not tested separately; it is expected to behave like Linux). Windows VM: install over 0.3.2 (the upgrade), 214-7 (netstat), 169-2 (no `grep` installed), 216-1 to 216-4 (Windows paths, `AppData` as a protected place), 228-1 to 228-3 (backslash paths) and 229-5 (Explorer drop). Ubuntu 20.04 is not supported (the app does not start there). Items needing a hosted key: 225 (fallback), 168-1 (Ollama Cloud, skip without a key), 242-1 (`gpt-4o-mini`).
 
 ## #214 Ollama: embeddings-only bundled server, your own Ollama for chat
 
@@ -124,7 +124,7 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 214-4 | Settings status, auto recovery | | | |
 | 214-5 | Wrong / empty address | | | |
 | 214-6 | Ollama on the network | | | |
-| 214-7 | Bundled port never 11434 | | | |
+| 214-7 | Bundled port never 11434 | | Windows VM | |
 | 214-8 | Search history still works | | | |
 | 214-9 | First run embeddings | | | |
 | 224-1 | Existing index not flagged after upgrade | | | |
@@ -136,21 +136,21 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 225-5 | No fallback = plain error, nothing sent | | | |
 | 168-1 | Ollama Cloud shows no $0 | | | |
 | 168-2 | Local Ollama unchanged | | | |
-| 228-1 | New folders created, nothing moved | | | |
-| 228-2 | Bare .md/.csv/.json filed by type | | | |
-| 228-3 | Project files with a folder stay together | | | |
+| 228-1 | New folders created, nothing moved | | Windows VM | |
+| 228-2 | Bare .md/.csv/.json filed by type | | Windows VM | |
+| 228-3 | Project files with a folder stay together | | Windows VM | |
 | 228-4 | Script outputs (existing rule unchanged) | | | |
 | 229-1 | Drop target outline | | | |
 | 229-2 | Full path inserted; assistant reads it | | | |
 | 229-3 | Several files, appended | | | |
 | 229-4 | Drop elsewhere does nothing; steering note | | | |
-| 229-5 | Windows path | | | |
-| 216-1 | Add folder via picker, no prompt afterwards | | | |
-| 216-2 | Suggestion buttons | | | |
-| 216-3 | Home / protected / covered refused | | | |
-| 216-4 | Remove restores the prompt | | | |
+| 229-5 | Windows path | | Windows VM | |
+| 216-1 | Add folder via picker, no prompt afterwards | | Windows VM | |
+| 216-2 | Suggestion buttons | | Windows VM | |
+| 216-3 | Home / protected / covered refused | | Windows VM | |
+| 216-4 | Remove restores the prompt | | Windows VM | |
 | 169-1 | Matches listed with file and line, binary skipped | | | |
-| 169-2 | Works on Windows, context lines | | | |
+| 169-2 | Works on Windows, context lines | | Windows VM | |
 | 169-3 | Caps stated honestly | | | |
 | 169-4 | Reachable in Auto mode | | | |
 | 238-1 | Overview in one call | | | |
