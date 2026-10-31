@@ -160,7 +160,7 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 216-3 | Home / protected / covered refused | Linux: Pass | Linux (Deepak); Windows VM open | |
 | 216-4 | Remove restores the prompt | Linux: Pass | Linux (Deepak); Windows VM open | |
 | 169-1 | Matches listed with file and line, binary skipped | Pass | Linux (Deepak) | |
-| 169-2 | Works on Windows, context lines | | Windows VM | |
+| 169-2 | Works on Windows, context lines | Pass | Windows VM (Deepak) | |
 | 169-3 | Caps stated honestly | Pass | Linux (Deepak) | |
 | 169-4 | Reachable in Auto mode | Pass | Linux (Deepak) | |
 | 238-1 | Overview in one call | Pass | Linux (run by Claude, isolated copy of the installed app); claude-haiku-5-5 | First call `list_directory path . depth 3` gave the overview; the reply named the real folders and files, no invented `templates/`. The model then made many further per-folder calls (it wanted detail beyond the 200-entry cap), so "one call" held for the overview only |
