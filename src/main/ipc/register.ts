@@ -70,7 +70,7 @@ import { McpManager } from '../mcp/manager'
 import { openDriver } from '../tools/db/driver-factory'
 import { buildSchemaSummary } from '../tools/db/schema-summary'
 import { SavedQueryToolManager } from '../tools/db/saved-query-manager'
-import { createDefaultProviderRegistry, getOllamaChatBaseUrl, probeEmbeddingDimension, setBundledOllamaBaseUrl, setBundledOllamaPending, setOllamaChatBaseUrl } from '../providers/setup'
+import { createDefaultProviderRegistry, getEmbeddingProvider, getOllamaChatBaseUrl, probeEmbeddingDimension, setBundledOllamaBaseUrl, setBundledOllamaPending, setOllamaChatBaseUrl } from '../providers/setup'
 import { OllamaAvailability } from '../providers/ollama-availability'
 import { fallbackNotice, usableFallback } from '../providers/fallback'
 import { createDefaultWebSearchProviderRegistry } from '../tools/web-search-providers'
@@ -383,7 +383,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.ProvidersGetApiKeyPreview, (_event, providerId: string) =>
     getApiKeyPreview(providerId) ?? null
   )
-  ipcMain.handle(IpcChannel.ProvidersListModels, async (_event, providerId: string) => {
+  ipcMain.handle(IpcChannel.ProvidersListModels, async (_event, providerId: string, purpose?: 'embedding') => {
+    // TASKS #214: Ollama embeddings run on the bundled server, so Settings' embedding-model list must come from there, not from the user's own Ollama (which may be stopped or hold other models).
+    if (purpose === 'embedding' && providerId === 'ollama') return (await getEmbeddingProvider('ollama').listModels?.()) ?? []
     const descriptor = providerRegistry.get(providerId)
     if (!descriptor) {
       throw new Error(`Unknown provider "${providerId}".`)

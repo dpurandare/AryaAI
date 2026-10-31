@@ -107,4 +107,6 @@ export interface EmbeddingProvider {
    * `undefined` when unknown or unsupported; the search index uses it to notice that the model behind a name changed.
    */
   modelDigest?(model: string): Promise<string | undefined>
+  /** The models this server offers, when it can list them (Settings' embedding-model dropdown). */
+  listModels?(): Promise<string[]>
 }

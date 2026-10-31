@@ -874,7 +874,7 @@
     if (!embeddingHasKey) return
     embeddingModelsLoading = true
     try {
-      embeddingModels = await window.sachiv.listModels(embeddingProviderId)
+      embeddingModels = await window.sachiv.listModels(embeddingProviderId, 'embedding')
     } catch (err) {
       embeddingModelsError = err instanceof Error ? err.message : String(err)
     } finally {
@@ -1337,7 +1337,13 @@
         {/each}
       </select>
     {:else}
-      {#if embeddingModelsError}<p class="status error">Couldn't list models — enter one manually.</p>{/if}
+      {#if embeddingModelsError}
+        {#if embeddingModelDraft.trim()}
+          <p class="status">The model list isn't available right now. The model below stays in use; type another name to change it.</p>
+        {:else}
+          <p class="status error">Couldn't list models — enter one manually.</p>
+        {/if}
+      {/if}
       <input
         placeholder="Model (e.g. nomic-embed-text)"
         bind:value={embeddingModelDraft}

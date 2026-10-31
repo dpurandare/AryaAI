@@ -32,6 +32,7 @@ Details, with a short description of every change, in [`docs/releases/0.4.0.md`]
 
 ### Fixed
 
+- Settings > Search history: the embedding-model list for "Ollama (local)" now comes from the server embeddings really use (the bundled one), not from your own Ollama, so it no longer fails when your Ollama is stopped. If the list cannot be fetched but a model is already saved, a neutral note is shown instead of a red error (found in 0.4.0 testing).
 - Ollama Cloud models such as `gemma4:cloud` are no longer shown as free ($0) in the usage meter; their cost is unknown (#168).
 - `search_history` no longer returns the user's own request (the message that started the current turn) as the best match for itself, which made "search my history for X" report the question as its own history (found in 0.4.0 test 214-8).
 - `search_history` results are easier for a model to use: they start with the names and dates of the matching sessions, a text found twice in one session is shown once, and a very short hit (a heading) is extended with the text that follows it in the same message (found in 0.4.0 test 214-8).

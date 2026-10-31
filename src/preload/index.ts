@@ -80,8 +80,9 @@ const api = {
     ipcRenderer.invoke(IpcChannel.ProvidersHasApiKey, providerId),
   getApiKeyPreview: (providerId: string): Promise<string | null> =>
     ipcRenderer.invoke(IpcChannel.ProvidersGetApiKeyPreview, providerId),
-  listModels: (providerId: string): Promise<string[]> =>
-    ipcRenderer.invoke(IpcChannel.ProvidersListModels, providerId),
+  /** `purpose: 'embedding'` lists the models of the server search embeddings really use (for Ollama: the bundled one), not the chat server's. */
+  listModels: (providerId: string, purpose?: 'embedding'): Promise<string[]> =>
+    ipcRenderer.invoke(IpcChannel.ProvidersListModels, providerId, purpose),
 
   getSetting: (key: string): Promise<string | null> =>
     ipcRenderer.invoke(IpcChannel.SettingsGet, key),
