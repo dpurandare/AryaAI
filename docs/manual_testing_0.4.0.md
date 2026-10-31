@@ -35,6 +35,7 @@ What changed: the Ollama that comes with the installers serves only the search e
 | **214-7** | Linux/Mac: `ss -ltn \| grep 114` or `lsof -iTCP -sTCP:LISTEN \| grep -i ollama`; Windows: `netstat -ano \| findstr 114` | With your own Ollama running, start Sachivji. | Your Ollama holds 11434; Sachivji's bundled one is on 11450 (or the next free port up to 11455), never 11434. |
 | **214-8** | Installer build, search over past chats | Settings > Search history shows the status; ask for something from an earlier chat ("search my history for …"). | Search still works; the index status is ready and no rebuild is requested. |
 | **214-9** | Clean machine or after deleting the app data folder (first run) | First run, step "Local embeddings". | The embedding model downloads and the step turns Ready (the bundled server is on its new port). |
+| **214-10** | Installer build, Settings > Search history | Open Settings > Search history with your own Ollama running, then again with it stopped. | The embedding-model list for "Ollama (local)" shows only the bundled server's model (`nomic-embed-text`), never your chat models, and there is no red error in either case. With the list unavailable, the saved model stays shown with a grey note. (Found in 0.4.0 testing; fixed in `ff4338b`.) |
 
 ## #224 Search index notices a changed embedding model
 
@@ -129,7 +130,8 @@ What changed: optionally, a hosted model answers a message when "Ollama (local)"
 | 214-7 | Bundled port never 11434 | Linux: Pass (11434 yours, 11450 bundled, checked with ss and ps) | Linux done; Windows VM open | |
 | 214-8 | Search history still works | Fail | Linux | The request "Search my history for any work related to Prime Numbers" came back as its own best match (relevance 0.79). Fixed on the branch (the current request is excluded from the search); needs the rebuilt installer to re-test. Second query, "Did you do any work related to Current Political situation in recent past?": the search DID find the essay session (relevance 0.83, twice) but the model (gpt-oss-custom, 20B on CPU) ignored it, searched files instead and answered "no new work": a weak-model answer, not a retrieval failure. Re-test with a stronger model |
 | 214-9 | First run embeddings | | | |
-| 224-1 | Existing index not flagged after upgrade | | | |
+| 214-10 | Embedding-model list from the bundled server | Fail | Linux | Build `ec770a5` lists the chat models of your own Ollama; fixed in `ff4338b`; retest on the rebuilt installer |
+| 224-1 | Existing index not flagged after upgrade | Pass | Linux | 318 / 318 indexed after the update, no rebuild requested |
 | 224-2 | Changed model flagged, rebuild fixes | | | |
 | 225-1 | Fallback choices limited to providers with a key; off without the tick | | | |
 | 225-2 | Fallback saved with consent | | | |
